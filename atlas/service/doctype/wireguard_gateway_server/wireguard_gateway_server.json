@@ -15,13 +15,11 @@
   "virtual_machine",
   "wireguard_mesh_ipv6",
   "dns_health_check_id",
-  "server",
   "gateway_column",
   "listen_port",
   "private_key",
   "gateway_public_key",
   "shape_section",
-  "virtual_machine_image",
   "cpu_millicores",
   "shape_column",
   "memory_mib",
@@ -105,16 +103,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "fetch_from": "virtual_machine.server",
-   "fieldname": "server",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Metal Server",
-   "options": "Metal Server",
-   "read_only": 1
-  },
-  {
    "default": "51820",
    "fieldname": "listen_port",
    "fieldtype": "Int",
@@ -139,17 +127,9 @@
   {
    "collapsible": 1,
    "collapsible_depends_on": "eval: false",
-   "description": "Rebuild creates the new virtual machine with this shape.",
    "fieldname": "shape_section",
    "fieldtype": "Section Break",
-   "label": "Virtual Machine Shape",
-   "show_description_on_click": 1
-  },
-  {
-   "fieldname": "virtual_machine_image",
-   "fieldtype": "Data",
-   "label": "Virtual Machine Image",
-   "read_only": 1
+   "label": "Virtual Machine Specs"
   },
   {
    "fieldname": "cpu_millicores",

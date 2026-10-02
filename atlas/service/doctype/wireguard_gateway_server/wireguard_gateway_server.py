@@ -17,6 +17,7 @@ from frappe.utils.synchronization import filelock
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
 from atlas.metal_server.core.atlas_peer import generate_private_key, get_public_key
+from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 if TYPE_CHECKING:
 	from collections.abc import Iterator
@@ -26,7 +27,7 @@ ORPHANED_GATEWAY_MINUTES = 30
 ANYWHERE = ["0.0.0.0/0", "::/0"]
 REGIONAL_SUBDOMAIN = "wireguard"
 # The record keeps the shape of its virtual machine, so Rebuild never needs the old machine.
-SHAPE_FIELDS = ("virtual_machine_image", "cpu_millicores", "memory_mib", "disk_mib")
+SHAPE_FIELDS = ("cpu_millicores", "memory_mib", "disk_mib")
 
 
 def get_gateway_firewall(region_id: int, listen_port: int) -> dict[str, Any]:
@@ -65,10 +66,8 @@ class WireguardGatewayServer(Document):
 		memory_mib: DF.Int
 		private_key: DF.Password | None
 		pushed_config_hash: DF.Data | None
-		server: DF.Link | None
 		status: DF.Literal["Pending", "Provisioning", "Active", "Failed", "Archived"]
 		virtual_machine: DF.Link | None
-		virtual_machine_image: DF.Data | None
 		wireguard_mesh_ipv6: DF.Data | None
 	# end: auto-generated types
 
@@ -111,6 +110,7 @@ class WireguardGatewayServer(Document):
 		values = frappe.parse_json(request) if isinstance(request, str) else request
 		if not isinstance(values, dict):
 			frappe.throw(_("Wireguard Gateway Server creation data must be an object."))
+		values = {**values, "virtual_machine_image": VirtualMachineImage.get_latest_base_image().name}
 		_validate_create_request(values)
 
 		gateway = frappe.new_doc("Wireguard Gateway Server")
@@ -167,7 +167,11 @@ class WireguardGatewayServer(Document):
 				frappe.throw(_("WireGuard Gateway Server {0} is archived.").format(self.name))
 
 			values = {field: gateway.get(field) for field in SHAPE_FIELDS}
-			values |= {"public_ipv4": public_ipv4, "listen_port": gateway.listen_port}
+			values |= {
+				"public_ipv4": public_ipv4,
+				"listen_port": gateway.listen_port,
+				"virtual_machine_image": VirtualMachineImage.get_latest_base_image().name,
+			}
 			_validate_create_request(values)
 
 			gateway.leave_cluster("rebuild")
@@ -323,8 +327,6 @@ def _validate_create_request(values: dict[str, Any]) -> None:
 		raise AssertionError from error
 
 	image = VirtualMachineService.get_image(request.virtual_machine_image, request.tenant_id)
-	if image.image_type != "system":
-		frappe.throw(_("Select a System Virtual Machine Image."))
 	image.validate_compatibility(request.disk_mib)
 
 	_validate_ipv4_allocation(request.public_ipv4)

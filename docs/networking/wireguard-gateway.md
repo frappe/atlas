@@ -57,7 +57,7 @@ Each node owns one `fdac:<region>:<node>::/48`. Atlas reserves `fdaa::/16`, `fda
 
 ## Add a node
 
-Atlas creates each node as a privileged tenant-0 VM with a public IPv4 address. It generates the node WireGuard key and sends it in `/etc/atlas/wireguard-gateway.toml` with the member list, the cluster password, the JWKS settings, and the wildcard certificate.
+Atlas creates each node as a privileged tenant-0 VM with a public IPv4 address. The VM boots the latest Ubuntu base image: the highest Ubuntu version, then the newest build. It generates the node WireGuard key and sends it in `/etc/atlas/wireguard-gateway.toml` with the member list, the cluster password, the JWKS settings, and the wildcard certificate.
 
 Atlas publishes `wireguard-NNN.<wildcard>`, installs the package, and configures the new node. Atlas then adds the node to the cluster and updates the other members. It waits for `/readyz` before it adds the node to the health-checked `wireguard.<wildcard>` name. A slow install does not add a voting member. A scheduled job checks for changed configurations each minute.
 
@@ -65,7 +65,7 @@ The firewall admits UDP on the listen port, TCP 443, and ICMP from any address. 
 
 ## Rebuild or archive a node
 
-If a node fails, its assigned devices disconnect. To replace its VM, select **Dangerous Actions > Rebuild** and a free tenant-0 IPv4 allocation. The gateway record keeps the VM image and shape, so Rebuild needs only a new address.
+If a node fails, its assigned devices disconnect. To replace its VM, select **Dangerous Actions > Rebuild** and a free tenant-0 IPv4 allocation. The gateway record keeps the VM shape, so Rebuild needs only a new address. The new VM boots the latest Ubuntu base image.
 
 Archive and Rebuild remove the node from DNS and stop its API before they update the surviving cluster members. If SSH cannot stop the API, Atlas asks Metal to stop the VM and waits for confirmation. Atlas then updates the survivors and terminates the old VM. If an action fails, the record shows `Failed` and the action name. Run the action again after you correct the failure.
 

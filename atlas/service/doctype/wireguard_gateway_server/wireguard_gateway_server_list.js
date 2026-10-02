@@ -6,14 +6,6 @@ function showCreateWireguardGatewayServerDialog() {
 		title: __("Create Wireguard Gateway Server"),
 		fields: [
 			{
-				fieldname: "virtual_machine_image",
-				fieldtype: "Link",
-				label: __("Virtual Machine Image"),
-				options: "Virtual Machine Image",
-				reqd: 1,
-				filters: { enabled: 1, status: "Available", image_type: "system" },
-			},
-			{
 				fieldname: "cpu_millicores",
 				fieldtype: "Int",
 				label: __("CPU (millicores)"),

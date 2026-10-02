@@ -154,7 +154,7 @@ class TestGatewayCreation(UnitTestCase):
 		self.assertTrue(gateway.failure_message.startswith("placement:"))
 
 
-SHAPE = {"virtual_machine_image": "ubuntu", "cpu_millicores": 2000, "memory_mib": 2048, "disk_mib": 8192}
+SHAPE = {"cpu_millicores": 2000, "memory_mib": 2048, "disk_mib": 8192}
 
 
 class TestGatewayRebuild(UnitTestCase):
@@ -169,6 +169,11 @@ class TestGatewayRebuild(UnitTestCase):
 		with (
 			patch.object(gateway_module, "_validate_system_manager"),
 			patch.object(gateway_module, "_validate_create_request") as validate,
+			patch.object(
+				gateway_module.VirtualMachineImage,
+				"get_latest_base_image",
+				return_value=SimpleNamespace(name="ubuntu-26.04"),
+			),
 			patch.object(gateway_module.frappe, "get_doc", return_value=gateway_server),
 			patch.object(gateway_module.frappe, "msgprint"),
 			patch.object(gateway_module, "filelock"),
@@ -178,11 +183,13 @@ class TestGatewayRebuild(UnitTestCase):
 			)
 		return gateway_server, validate, order
 
-	def test_the_new_machine_takes_the_recorded_shape_and_the_new_address(self) -> None:
+	def test_the_new_machine_takes_the_recorded_shape_the_latest_image_and_the_new_address(self) -> None:
 		gateway_server, validate, order = self.rebuild()
 
 		self.assertEqual(
-			validate.call_args.args[0], SHAPE | {"public_ipv4": "allocation-2", "listen_port": 51820}
+			validate.call_args.args[0],
+			SHAPE
+			| {"public_ipv4": "allocation-2", "listen_port": 51820, "virtual_machine_image": "ubuntu-26.04"},
 		)
 		self.assertEqual(order, ["leave rebuild", "terminate", "create"])
 		self.assertEqual(gateway_server.update.call_args.args[0]["pushed_config_hash"], None)

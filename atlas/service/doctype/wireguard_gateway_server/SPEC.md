@@ -10,7 +10,7 @@
 - The member list holds nodes with `is_cluster_member`. Provisioning sets it after it configures the new node. `leave_cluster` clears it, removes DNS, stops the node API, and updates the surviving nodes in that order. If SSH cannot stop the API, Metal stops the VM first. Each external step follows a database commit, so Archive and Rebuild can run again after a failure.
 - `GatewayConfiguration.digest` covers the member list, credentials, and certificate. `reconcile_gateway_configurations` sends a changed configuration each minute.
 - Archive updates the surviving members before it terminates the old VM. It does not change the device table.
-- `rebuild` replaces the VM with the shape that the record stores (`SHAPE_FIELDS`) and a new IPv4 allocation. `terminate_virtual_machine` skips a VM that is already terminating or gone. The node keeps its name, number, key, and devices. The node DNS TTL is 300 seconds, so devices find the new address soon.
+- `rebuild` replaces the VM with the shape that the record stores (`SHAPE_FIELDS`) and a new IPv4 allocation. Create and Rebuild boot `VirtualMachineImage.get_latest_base_image()`. `terminate_virtual_machine` skips a VM that is already terminating or gone. The node keeps its name, number, key, and devices. The node DNS TTL is 300 seconds, so devices find the new address soon.
 
 ## Return routes
 
