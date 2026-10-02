@@ -9,13 +9,15 @@ Atlas owns each VM and its setup record. The software inside the VM owns its tra
 | HTTP proxy | Accepts public web traffic and stores replicated routes. | [Proxy overview](../networking/http-proxy/index.md), [Atlas setup](../networking/http-proxy/provisioning.md) |
 | Cargo | Runs image and object-storage services. | [Cargo setup and storage](cargo.md) |
 | IPv6 router | Translates public IPv6 addresses to VM mesh addresses. | [Router setup and packet path](../networking/ipv6-router.md) |
-| WireGuard gateway | Carries customer tunnels into the private addresses of one tenant. | [Gateway setup and packet path](../../services/wg-gateway/README.md) |
+| WireGuard gateway | Carries customer devices into the private addresses of their tenant. | [WireGuard gateway](../networking/wireguard-gateway.md) |
 
 ## What Atlas creates
 
-Atlas creates a privileged, termination-protected VM through the normal VM service. Only the HTTP proxy needs a **tenant-0 public IPv4 allocation**. Reserve it on the Public IP Pool form first.
+Atlas creates privileged, termination-protected VMs through the normal VM service. The HTTP proxy and WireGuard gateway need a **tenant-0 public IPv4 allocation**. Reserve an address on the Public IP Pool form before you create either service.
 
 The proxy guest firewall admits TCP 80 and 443 and ICMP from any address. It admits all traffic from tenant-0 mesh addresses in the region.
+
+The gateway firewall admits its WireGuard UDP port, TCP 443, and ICMP from any address. It also admits traffic from the region mesh.
 
 Atlas reaches service SSH through the VM host, not a public address. See [Atlas access to hosts](host-access.md#ssh).
 
@@ -43,12 +45,12 @@ A `Pending` record does not need a second provision request. A `Failed` record d
 
 The HTTP proxy, IPv6 router, and WireGuard gateway use the same package path. Atlas builds a reproducible archive from their service directories and publishes it as a File. Atlas Settings stores the file and its SHA-256 hash. The VM installer downloads the archive, checks the hash, and runs its setup script.
 
-An unchanged archive is not published again. Proxy setup also skips a package or configuration that already has the expected hash. Cargo uses its own installation script and does not use this package path.
+An unchanged archive is not published again. Proxy and gateway setup skip a package or configuration that already has the expected hash. Cargo uses its own installation script and does not use this package path.
 
 ::: details Source code and contracts
 
 - [Service contract](../../atlas/service/SPEC.md) lists the service records and their VM rules.
 - [Package builder](../../atlas/service/core/service_package.py) and [installer](../../atlas/scripts/install-service-package.sh) define the shared archive path.
-- [Proxy Server](../../atlas/service/doctype/proxy_server/proxy_server.py), [Cargo Server](../../atlas/service/doctype/cargo_server/cargo_server.py), [IPv6 Router Server](../../atlas/service/doctype/ipv6_router_server/ipv6_router_server.py), and [WireGuard Gateway Server](../../atlas/service/doctype/wireguard_gateway_server/wireguard_gateway_server.py) own their service records.
+- [Proxy Server](../../atlas/service/doctype/proxy_server/proxy_server.py), [Cargo Server](../../atlas/service/doctype/cargo_server/cargo_server.py), [IPv6 Router Server](../../atlas/service/doctype/ipv6_router_server/ipv6_router_server.py), and [Wireguard Gateway Server](../../atlas/service/doctype/wireguard_gateway_server/wireguard_gateway_server.py) own their service records.
 
 :::

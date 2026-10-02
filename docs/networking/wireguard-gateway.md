@@ -88,7 +88,7 @@ The leader places a new device only on a node that reported a configured `wg0` i
 
 ::: details Source code and tests
 
-- [Gateway record](../../atlas/service/doctype/wireguard_gateway_server/wireguard_gateway_server.py) and [provisioning](../../atlas/service/core/wg_gateway/provisioning.py).
+- [Gateway record](../../atlas/service/doctype/wireguard_gateway_server/wireguard_gateway_server.py), [provisioning](../../atlas/service/core/wg_gateway/provisioning.py), and [configuration](../../atlas/service/core/wg_gateway/configuration.py).
 - [Daemon](../../services/wg-gateway/daemon/gatewayd/main.py), [device table](../../services/wg-gateway/daemon/gatewayd/peers.py), and [eBPF filters](../../services/wg-gateway/bpf/gateway.c).
 - [Daemon tests](../../services/wg-gateway/daemon/tests/test_peers.py) and [provisioning tests](../../atlas/service/core/wg_gateway/test_provisioning.py).
 

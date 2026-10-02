@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "wg-gateway-.###",
+ "autoname": "wireguard-.###",
  "creation": "2026-09-24 12:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -8,14 +8,24 @@
   "status_section",
   "status",
   "status_column",
-  "installation_task",
+  "is_cluster_member",
+  "installed_package_hash",
+  "pushed_config_hash",
   "gateway_section",
   "virtual_machine",
   "wireguard_mesh_ipv6",
+  "dns_health_check_id",
   "gateway_column",
   "server",
   "listen_port",
   "gateway_public_key",
+  "private_key",
+  "shape_section",
+  "virtual_machine_image",
+  "cpu_millicores",
+  "shape_column",
+  "memory_mib",
+  "disk_mib",
   "failure_section",
   "failure_message"
  ],
@@ -40,10 +50,26 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "installation_task",
-   "fieldtype": "Link",
-   "label": "Installation Task",
-   "options": "SSH Task",
+   "default": "0",
+   "description": "The other nodes list this node. Provisioning sets it once the node is configured. Archive and Rebuild clear it first.",
+   "fieldname": "is_cluster_member",
+   "fieldtype": "Check",
+   "label": "Cluster Member",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "installed_package_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Installed Package Hash",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pushed_config_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Pushed Configuration Hash",
    "read_only": 1
   },
   {
@@ -69,6 +95,12 @@
    "unique": 1
   },
   {
+   "fieldname": "dns_health_check_id",
+   "fieldtype": "Data",
+   "label": "DNS Health Check",
+   "read_only": 1
+  },
+  {
    "fieldname": "gateway_column",
    "fieldtype": "Column Break"
   },
@@ -90,9 +122,51 @@
    "set_only_once": 1
   },
   {
+   "description": "Customer devices use this key for the node. Atlas generates the key pair.",
    "fieldname": "gateway_public_key",
    "fieldtype": "Data",
    "label": "Gateway Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "private_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "WireGuard Private Key",
+   "read_only": 1
+  },
+  {
+   "description": "Rebuild creates the new virtual machine with this shape.",
+   "fieldname": "shape_section",
+   "fieldtype": "Section Break",
+   "label": "Virtual Machine Shape"
+  },
+  {
+   "fieldname": "virtual_machine_image",
+   "fieldtype": "Data",
+   "label": "Virtual Machine Image",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cpu_millicores",
+   "fieldtype": "Int",
+   "label": "CPU (millicores)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shape_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "memory_mib",
+   "fieldtype": "Int",
+   "label": "Memory (MiB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disk_mib",
+   "fieldtype": "Int",
+   "label": "Disk (MiB)",
    "read_only": 1
   },
   {
@@ -109,10 +183,10 @@
   }
  ],
  "index_web_pages_for_search": 1,
- "modified": "2026-09-24 12:00:00.000000",
+ "modified": "2026-10-02 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Service",
- "name": "WireGuard Gateway Server",
+ "name": "Wireguard Gateway Server",
  "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [

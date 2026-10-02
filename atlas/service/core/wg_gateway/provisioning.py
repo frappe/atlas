@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -9,39 +10,46 @@ import frappe
 import requests
 from frappe import _
 
-from atlas.atlas.core.ssh import wait_for_server
+from atlas.atlas.core.ssh import SSHRunner, wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
-from atlas.auth.issuer import issue_token
 from atlas.service.core.service_package import WG_GATEWAY_PACKAGE
+from atlas.service.core.wg_gateway.configuration import DAEMON_UNIT, GatewayConfiguration
 from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
 	wireguard_gateway_lifecycle_lock,
 )
 
 if TYPE_CHECKING:
 	from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
-		WireGuardGatewayServer,
+		WireguardGatewayServer,
 	)
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 INSTALL_TIMEOUT_SECONDS = 1_800
+CONFIGURE_TIMEOUT_SECONDS = 300
 SSH_TIMEOUT_SECONDS = 600
 SSH_POLL_INTERVAL_SECONDS = 5
-DAEMON_TIMEOUT_SECONDS = 300
-DAEMON_POLL_INTERVAL_SECONDS = 5
-REQUEST_TIMEOUT_SECONDS = 5
+READY_TIMEOUT_SECONDS = 600
+READY_POLL_INTERVAL_SECONDS = 1
+REQUEST_TIMEOUT_SECONDS = 2
+NODE_DNS_TTL_SECONDS = 300
+REGIONAL_DNS_TTL_SECONDS = 120
+STOP_TIMEOUT_SECONDS = 60
+# Metal states in which the VM runs no API.
+STOPPED_STATES = frozenset({"created", "stopped", "destroyed"})
 
 
 class WireGuardGatewayProvisioner:
-	"""Make the gateway VM a network gateway, then install WireGuard."""
+	"""Set up one gateway node and add it to the regional gateway cluster."""
 
-	def __init__(self, gateway: WireGuardGatewayServer) -> None:
+	def __init__(self, gateway: WireguardGatewayServer) -> None:
 		self.gateway = gateway
+		self.settings = frappe.get_single("Atlas Settings")
 		self.logger = logging.getLogger("atlas.service.provisioning")
 
 	def run(self) -> None:
-		"""Run each gateway setup step in order."""
+		"""Run each setup step in order, then send the new membership to every node."""
 		with wireguard_gateway_lifecycle_lock(self.gateway.name):
-			self.gateway = frappe.get_doc("WireGuard Gateway Server", self.gateway.name)
+			self.gateway = frappe.get_doc("Wireguard Gateway Server", self.gateway.name)
 			if self.gateway.status == "Failed" or not self.is_virtual_machine_ready:
 				return
 
@@ -71,14 +79,22 @@ class WireGuardGatewayProvisioner:
 				frappe.log_error(title=f"WireGuard gateway provisioning failed during {phase}")
 				raise
 
+		from atlas.service.core.wg_gateway.configuration import push_configuration_to_active_gateways
+
+		push_configuration_to_active_gateways()
+
 	@property
 	def steps(self) -> tuple[tuple[str, Callable[[], None]], ...]:
-		"""Return setup steps in execution order."""
+		"""Return setup steps in execution order. Membership reaches the other nodes before DNS lists this one."""
 		return (
 			("network-gateway", self.enable_network_gateway),
+			("dns", self.update_dns_record),
 			("secure-shell", self.wait_for_ssh),
-			("installation", self.install_gateway),
-			("gateway-api", self.publish_gateway_api),
+			("package", self.install_package),
+			("configuration", self.push_configuration),
+			("cluster-membership", self.push_cluster_membership),
+			("readiness", self.wait_for_readiness),
+			("regional-dns", self.update_regional_dns_record),
 		)
 
 	@property
@@ -96,17 +112,7 @@ class WireGuardGatewayProvisioner:
 
 	@property
 	def virtual_machine(self) -> VirtualMachine:
-		"""Return the gateway virtual machine."""
 		return frappe.get_doc("Virtual Machine", self.gateway.virtual_machine)
-
-	def wait_for_ssh(self) -> None:
-		"""Wait for root SSH on the public IPv4 address."""
-		wait_for_server(
-			host=self.virtual_machine.ssh_host,
-			users=("root",),
-			timeout_seconds=SSH_TIMEOUT_SECONDS,
-			poll_interval_seconds=SSH_POLL_INTERVAL_SECONDS,
-		)
 
 	def enable_network_gateway(self) -> None:
 		"""Let WG Mesh carry client source addresses without translation."""
@@ -114,132 +120,157 @@ class WireGuardGatewayProvisioner:
 		if not virtual_machine.is_network_gateway:
 			virtual_machine.set_network_gateway(True)
 
-	def install_gateway(self) -> None:
-		"""Install the gateway package with the regional signing authority."""
-		settings = frappe.get_single("Atlas Settings")
+	def update_dns_record(self) -> None:
+		"""Point the node name, the endpoint that devices connect to, at its public IPv4 address."""
+		self.settings.dns_provider_controller.upsert_a_record(
+			self.gateway.get_domain(), self.gateway.public_ipv4, ttl=NODE_DNS_TTL_SECONDS
+		)
+
+	def wait_for_ssh(self) -> None:
+		virtual_machine = self.virtual_machine
+		wait_for_server(
+			host=virtual_machine.ssh_host,
+			users=("root",),
+			timeout_seconds=SSH_TIMEOUT_SECONDS,
+			poll_interval_seconds=SSH_POLL_INTERVAL_SECONDS,
+			proxy_command=virtual_machine.get_ssh_proxy_command(),
+		)
+
+	def install_package(self) -> None:
+		"""Install the gateway package. The network values compile into its eBPF filter."""
+		environment = WG_GATEWAY_PACKAGE.get_install_environment()
+		if self.gateway.installed_package_hash == environment["PACKAGE_SHA256"]:
+			return
+
 		task = SSHTask.create_for_script_file(
 			target_type="Virtual Machine",
 			target=self.gateway.virtual_machine,
 			script_path="install-service-package.sh",
 			environment={
-				**WG_GATEWAY_PACKAGE.get_install_environment(),
-				"REGION_ID": settings.region_id,
-				"GATEWAY_ID": int(self.gateway.name.rsplit("-", 1)[-1]),
+				**environment,
+				"REGION_ID": self.settings.region_id,
+				"GATEWAY_ID": self.gateway.gateway_id,
 				"GATEWAY_MESH": self.gateway.wireguard_mesh_ipv6,
 				"LISTEN_PORT": self.gateway.listen_port,
-				"JWKS_URL": settings.jwks_url,
-				"GWGATEWAY_AUDIENCE": settings.wg_gateway_audience_id,
-				"JWKS_ISSUERS": ",".join(["central", settings.issuer]),
 			},
 			timeout_seconds=INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
 		)
-		self.gateway.installation_task = task.name
-		self.save()
-
 		result = task.result
 		if result is None or not result.is_success:
-			frappe.throw(_("WireGuard gateway installation failed. See SSH Task {0}.").format(task.name))
+			frappe.throw(_("The WireGuard gateway install failed. See SSH Task {0}.").format(task.name))
 
-	@property
-	def proxy_url(self) -> str:
-		"""Return the regional Proxy control API URL."""
-		return f"https://proxy.{frappe.get_single('Atlas Settings').wildcard_domain}"
-
-	@property
-	def daemon_url(self) -> str:
-		"""Return the gateway daemon URL through the regional proxy."""
-		return f"https://{self.gateway.name}.{frappe.get_single('Atlas Settings').wildcard_domain}"
-
-	def daemon_headers(self) -> dict[str, str]:
-		"""Return a short-lived gateway daemon token for the public key read."""
-		settings = frappe.get_single("Atlas Settings")
-		token = issue_token(
-			settings,
-			audience=settings.wg_gateway_audience_id,
-			subject="atlas",
-			scope="gateway:read",
-		)
-		return {"Authorization": f"Bearer {token}"}
-
-	def proxy_headers(self) -> dict[str, str]:
-		"""Return the current regional Proxy bearer credential."""
-		password = frappe.get_single("Atlas Settings").get_password(
-			"proxy_cluster_password", raise_exception=False
-		)
-		if not password:
-			frappe.throw(_("Atlas Settings holds no Proxy cluster password."))
-		return {"Authorization": f"Bearer {password}"}
-
-	def update_proxy_routes(self) -> None:
-		"""Map the gateway hostname to the virtual machine mesh address."""
-		mesh_address = self.gateway.wireguard_mesh_ipv6
-		if not mesh_address:
-			frappe.throw(
-				_("WireGuard Gateway Server {0} has no mesh IPv6 address.").format(self.gateway.name)
-			)
-		response = requests.patch(
-			f"{self.proxy_url}/v1/sites/{self.gateway.name}",
-			headers=self.proxy_headers(),
-			json={"address": mesh_address},
-			timeout=REQUEST_TIMEOUT_SECONDS,
-		)
-		if not response.ok:
-			frappe.throw(
-				_("The Proxy control API refused the {0} route with status {1}.").format(
-					self.gateway.name, response.status_code
-				)
-			)
-
-	def remove_proxy_routes(self) -> None:
-		"""Remove the gateway hostname before virtual machine termination."""
-		response = requests.delete(
-			f"{self.proxy_url}/v1/sites/{self.gateway.name}",
-			headers=self.proxy_headers(),
-			timeout=REQUEST_TIMEOUT_SECONDS,
-		)
-		if not response.ok:
-			frappe.throw(
-				_("The Proxy control API refused {0} route removal with status {1}.").format(
-					self.gateway.name, response.status_code
-				)
-			)
-
-	def wait_for_daemon(self) -> None:
-		"""Wait until the gateway daemon answers through the regional proxy."""
-		deadline = time.monotonic() + DAEMON_TIMEOUT_SECONDS
-		while time.monotonic() < deadline:
-			try:
-				response = requests.get(f"{self.daemon_url}/healthz", timeout=REQUEST_TIMEOUT_SECONDS)
-				if response.ok and response.json().get("status") == "ok":
-					return
-			except (requests.RequestException, ValueError):
-				pass
-			time.sleep(DAEMON_POLL_INTERVAL_SECONDS)
-		frappe.throw(_("The WireGuard gateway daemon did not answer through the Proxy."))
-
-	def read_public_key(self) -> None:
-		"""Read the gateway public key from its daemon."""
-		public_key = ""
-		try:
-			response = requests.get(
-				f"{self.daemon_url}/config", headers=self.daemon_headers(), timeout=REQUEST_TIMEOUT_SECONDS
-			)
-			if response.ok:
-				public_key = str(response.json().get("public_key") or "").strip()
-		except (requests.RequestException, ValueError):
-			pass
-		if not public_key:
-			frappe.throw(_("The gateway reported no WireGuard public key."))
-		self.gateway.gateway_public_key = public_key
+		self.gateway.installed_package_hash = environment["PACKAGE_SHA256"]
 		self.save()
 
-	def publish_gateway_api(self) -> None:
-		"""Register the proxy route, wait for the daemon, and read its public key."""
-		self.update_proxy_routes()
-		self.wait_for_daemon()
-		self.read_public_key()
+	def push_configuration(self) -> None:
+		"""Write the node configuration and restart the gateway API."""
+		configuration = GatewayConfiguration(self.gateway)
+		if self.gateway.pushed_config_hash == configuration.digest:
+			return
+
+		virtual_machine = self.virtual_machine
+		write = SSHRunner(
+			virtual_machine.ssh_host, proxy_command=virtual_machine.get_ssh_proxy_command()
+		).run_command(configuration.get_write_command(), timeout_seconds=CONFIGURE_TIMEOUT_SECONDS)
+		if not write.is_success:
+			frappe.throw(_("The gateway did not accept its configuration: {0}").format(write.output.strip()))
+
+		task = SSHTask.create_for_command(
+			target_type="Virtual Machine",
+			target=self.gateway.virtual_machine,
+			command=configuration.get_apply_command(),
+			timeout_seconds=CONFIGURE_TIMEOUT_SECONDS,
+			run_in_background=False,
+		)
+		result = task.result
+		if result is None or not result.is_success:
+			frappe.throw(_("The gateway rejected its configuration. See SSH Task {0}.").format(task.name))
+
+		self.gateway.pushed_config_hash = configuration.digest
+		self.save()
+
+	def push_cluster_membership(self) -> None:
+		"""Make this configured node a member, and send the new member list to every other active node."""
+		self.gateway.is_cluster_member = 1
+		self.save()
+		frappe.db.commit()  # nosemgrep
+		apply_membership_to_active_gateways(excluding=self.gateway.name)
+
+	def stop_api(self) -> None:
+		"""Stop the node's API, so it accepts no write with a member list that is about to change.
+
+		SSH can fail while HTTPS still answers, so without a confirmed stop Metal stops the whole VM."""
+		if not self.gateway.virtual_machine or not frappe.db.exists(
+			"Virtual Machine", self.gateway.virtual_machine
+		):
+			return
+		virtual_machine = self.virtual_machine
+		try:
+			result = SSHRunner(
+				virtual_machine.ssh_host, proxy_command=virtual_machine.get_ssh_proxy_command()
+			).run_command(f"systemctl stop {DAEMON_UNIT}", timeout_seconds=STOP_TIMEOUT_SECONDS)
+			if result.is_success:
+				return
+		except OSError, subprocess.TimeoutExpired:
+			pass
+		self.stop_virtual_machine(virtual_machine)
+
+	def stop_virtual_machine(self, virtual_machine: VirtualMachine) -> None:
+		"""Ask Metal to stop the VM, and wait until Metal reports it stopped or gone."""
+		from atlas.vm.core.vm_service import VirtualMachineService
+
+		service = VirtualMachineService(virtual_machine)
+		service.set_power_state("stopped")
+		deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+		while time.monotonic() < deadline:
+			information = service.get_information()
+			if information is None or information.observed.state in STOPPED_STATES:
+				return
+			time.sleep(READY_POLL_INTERVAL_SECONDS)
+		frappe.throw(
+			_(
+				"Metal did not confirm that Virtual Machine {0} stopped, so its gateway API may still answer."
+			).format(virtual_machine.name)
+		)
+
+	def wait_for_readiness(self) -> None:
+		"""Wait until the node has joined the cluster and can accept writes."""
+		deadline = time.monotonic() + READY_TIMEOUT_SECONDS
+		url = f"https://{self.gateway.get_domain()}/readyz"
+		while time.monotonic() < deadline:
+			try:
+				if requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS).status_code == 204:
+					return
+			except requests.RequestException:
+				pass
+			time.sleep(READY_POLL_INTERVAL_SECONDS)
+		frappe.throw(_("Wireguard Gateway Server {0} did not become ready.").format(self.gateway.name))
+
+	def update_regional_dns_record(self) -> None:
+		"""Add this node to the regional API name. The check needs a ready cluster member, not only a tunnel."""
+		provider = self.settings.dns_provider_controller
+		if not self.gateway.dns_health_check_id:
+			self.gateway.dns_health_check_id = provider.create_https_health_check(
+				self.gateway.public_ipv4, self.gateway.get_domain(), "/readyz"
+			)
+			self.save()
+		provider.upsert_multivalue_a_record(
+			self.gateway.get_regional_domain(),
+			self.gateway.name,
+			self.gateway.public_ipv4,
+			self.gateway.dns_health_check_id,
+			ttl=REGIONAL_DNS_TTL_SECONDS,
+		)
 
 	def save(self) -> None:
-		"""Store the current gateway state."""
 		self.gateway.save(ignore_permissions=True)
+
+
+def apply_membership_to_active_gateways(excluding: str) -> None:
+	"""Send the current member list to every other active node now, before the membership change matters.
+
+	Clusters of up to three nodes need every member to acknowledge a write, so a stale list blocks writes."""
+	for name in frappe.get_all("Wireguard Gateway Server", filters={"status": "Active"}, pluck="name"):
+		if name != excluding:
+			WireGuardGatewayProvisioner(frappe.get_doc("Wireguard Gateway Server", name)).push_configuration()

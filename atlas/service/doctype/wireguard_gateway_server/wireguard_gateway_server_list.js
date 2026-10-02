@@ -1,9 +1,9 @@
 // Copyright (c) 2026, Frappe and contributors
 // For license information, please see license.txt
 
-function showCreateWireGuardGatewayServerDialog() {
+function showCreateWireguardGatewayServerDialog() {
 	const dialog = new frappe.ui.Dialog({
-		title: __("Create WireGuard Gateway Server"),
+		title: __("Create Wireguard Gateway Server"),
 		fields: [
 			{
 				fieldname: "virtual_machine_image",
@@ -41,7 +41,7 @@ function showCreateWireGuardGatewayServerDialog() {
 				label: __("Public IPv4 Allocation"),
 				options: "Public IP Allocation",
 				reqd: 1,
-				description: __("Atlas uses this address for SSH and for the WireGuard endpoint."),
+				description: __("The WireGuard endpoint and the gateway API use this address."),
 				filters: {
 					status: "Reserved",
 					version: "4",
@@ -64,10 +64,10 @@ function showCreateWireGuardGatewayServerDialog() {
 				method: "atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.create",
 				args: { request: values },
 				freeze: true,
-				freeze_message: __("Creating WireGuard Gateway Server..."),
+				freeze_message: __("Creating Wireguard Gateway Server..."),
 				callback(response) {
 					dialog.hide();
-					frappe.set_route("Form", "WireGuard Gateway Server", response.message.name);
+					frappe.set_route("Form", "Wireguard Gateway Server", response.message.name);
 				},
 			});
 		},
@@ -75,13 +75,13 @@ function showCreateWireGuardGatewayServerDialog() {
 	dialog.show();
 }
 
-frappe.listview_settings["WireGuard Gateway Server"] = {
+frappe.listview_settings["Wireguard Gateway Server"] = {
 	refresh(listview) {
 		listview.page.clear_primary_action();
 		if (!has_common(frappe.user_roles, ["System Manager"])) return;
 		listview.page.add_inner_button(
-			__("Create WireGuard Gateway Server"),
-			showCreateWireGuardGatewayServerDialog
+			__("Create Wireguard Gateway Server"),
+			showCreateWireguardGatewayServerDialog
 		);
 	},
 };

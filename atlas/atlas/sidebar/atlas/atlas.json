@@ -210,8 +210,8 @@
    "indent": 0,
    "is_default_module": 0,
    "keep_closed": 0,
-   "label": "WireGuard Gateway Server",
-   "link_to": "WireGuard Gateway Server",
+   "label": "WG Gateway Server",
+   "link_to": "Wireguard Gateway Server",
    "link_type": "DocType",
    "open_in_new_tab": 1,
    "show_arrow": 0,
@@ -338,7 +338,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-24 04:31:17.585830",
+ "modified": "2026-10-02 16:11:08.796184",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas",

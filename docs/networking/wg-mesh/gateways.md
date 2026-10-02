@@ -58,7 +58,9 @@ The router maps each public IPv6 address to a VM mesh address without a per-VM f
 
 ## Use the WireGuard gateway
 
-The [WireGuard gateway](../../../services/wg-gateway/README.md) carries customer `fdac` packets to same-tenant `fdaa` VMs without address translation. Atlas gives each gateway its own `fdac` `/48` and adds its return route only to VMs with **Accessible via WireGuard Gateway** enabled. The route is scoped `wireguard-gateway`, so it lives only in the VM namespace on the host: the guest's own `::/0` route hands replies to the host, which sends them through the gateway mesh address. The server sync keeps the route set current, and WG Mesh uses the same route to admit client packets.
+The [WireGuard gateway](../wireguard-gateway.md) carries customer `fdac` packets to same-tenant `fdaa` VMs without address translation. Each gateway node owns one `fdac` `/48`.
+
+Host sync sends the return route of every active node to Metal. Metal adds these routes only to VMs with **Accessible via WireGuard Gateway** enabled. The guest sends IPv6 traffic to the host, which forwards replies through the gateway mesh address. WG Mesh uses the same routes to admit client packets.
 
 ## Build another gateway service
 

@@ -11,20 +11,20 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 | `ProxyServer` (DocType) | One proxy node and its VM, at most five active |
 | `CargoServer` (Single) | The regional Cargo VM |
 | `IPv6RouterServer` (DocType) | One router VM and its pool, `ipv6-router-NNN` |
-| `WireGuardGatewayServer` (DocType) | One gateway VM, its daemon credential, and its proxy route, `wg-gateway-NNN` |
+| `WireguardGatewayServer` (DocType) | One gateway node, its VM, and its WireGuard key, `wireguard-NNN` |
 | `service_package` | Publishes a package when its digest changes |
 | `core/proxy`, `core/cargo`, `core/ipv6_router`, `core/wg_gateway` | Provisioning |
 | `core/warpgate` | Warpgate client, target sync, host access grants, and the UI certificate. See [People access through Warpgate](../../docs/region/host-access.md#people-access-through-warpgate). |
 
 ## Shared rules
 
-- Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. Only a Proxy VM needs a reserved tenant-0 IPv4 allocation. Its guest firewall, from `get_proxy_firewall`, admits only TCP 80 and 443 from public addresses.
+- Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. Proxy and WireGuard gateway VMs need a reserved tenant-0 IPv4 allocation. The proxy guest firewall admits TCP 80 and 443 from public addresses.
 - Atlas reaches service SSH through the VM host. See [Atlas access to hosts](../../docs/region/host-access.md#ssh).
 - A job requeues `Pending` records every minute.
 - A failure sets `Failed` with the phase and message. Nothing replaces the VM automatically.
 - A site file lock guards each record. Code reads the record again under the lock.
 - Only System Managers with System User accounts operate these records.
-- Secrets never go into an SSH Task. The Cargo installer is the only exception; the gateway daemon receives the public JWKS values instead.
+- Secrets never go into an SSH Task. The Cargo installer is the only exception. Proxy and gateway configurations go over SSH directly.
 
 ## Proxy Server
 
@@ -50,13 +50,12 @@ See the [HTTP proxy specification](../../services/http-proxy/SPEC.md).
 - Installation fails if the eBPF program is not attached.
 - Archive is refused while tenant allocations use the pool.
 
-## WireGuard Gateway Server
+## Wireguard Gateway Server
 
-- Creation needs a listen port next to the image and IPv4 allocation, plus an Active Proxy Server. It returns the daemon URL and the JWT audience for Central.
-- Central calls the daemon inside the VM through the `<gateway>.<wildcard-domain>` proxy route with an Ed25519 JWT for the `atlas-wg-gateway:<region>` audience. The daemon owns the peer list; Atlas never syncs it.
-- Archive removes the proxy route and terminates the VM; the peer list dies with it.
+- Nodes form one regional cluster like the proxy. Each node keeps the device table; Atlas stores no devices.
+- Creation needs a listen port, an image, and a tenant-0 IPv4 allocation. It returns the regional API URL for Central.
 
-See the [WireGuard gateway specification](doctype/wireguard_gateway_server/SPEC.md).
+See the [Wireguard Gateway Server specification](doctype/wireguard_gateway_server/SPEC.md).
 
 ## Related
 

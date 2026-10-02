@@ -238,6 +238,7 @@ scheduler_events = {
 			"atlas.service.doctype.ipv6_router_server.ipv6_router_server.enqueue_pending_ipv6_router_provisioning",
 			"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.enqueue_pending_gateway_provisioning",
 			"atlas.service.core.proxy.configuration.reconcile_proxy_configurations",
+			"atlas.service.core.wg_gateway.configuration.reconcile_gateway_configurations",
 			"atlas.service.core.warpgate.sync.sync_warpgate_targets",
 		],
 	},
