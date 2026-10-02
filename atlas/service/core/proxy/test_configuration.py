@@ -9,6 +9,7 @@ import bcrypt
 from frappe.tests import UnitTestCase
 from frappe.utils import now_datetime
 
+import atlas.service.core.control_cluster as control_cluster_module
 import atlas.service.core.proxy.configuration as configuration_module
 from atlas.service.core.proxy.configuration import (
 	APPLY_COMMAND,
@@ -118,8 +119,8 @@ class TestProxyConfiguration(UnitTestCase):
 		settings = _FakeSettings()
 		settings.proxy_cluster_password_rotated_on = datetime(2026, 9, 8, 12, 0)
 
-		with patch.object(configuration_module, "get_system_timezone", return_value="UTC"):
-			valid_until = _build(settings).previous_password_valid_until
+		with patch.object(control_cluster_module, "get_system_timezone", return_value="UTC"):
+			valid_until = _build(settings).credentials.previous_password_valid_until
 
 		expected = int(datetime(2026, 9, 8, 12, 10, tzinfo=UTC).timestamp())
 		self.assertEqual(valid_until, expected)

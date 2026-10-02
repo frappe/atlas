@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 	from atlas.atlas.object_storage import ObjectStorageClient
 
 WILDCARD_TLS_RENEWAL_WINDOW_DAYS = 30
-PROXY_CLUSTER_PASSWORD_LENGTH = 48
+CLUSTER_PASSWORD_LENGTH = 48
+# Each service with a control cluster has its own password fields: `<service>_cluster_password` and so on.
+CLUSTER_SERVICES = ("proxy", "wireguard_gateway")
 # A change to one of these reaches every active proxy through its own job.
 PROXY_CONFIGURATION_FIELDS = (
 	"wildcard_tls_certificate",
@@ -95,6 +97,7 @@ class AtlasSettings(Document):
 		object_storage_signed_url_expiry: DF.Int
 		placement_strategy: DF.Autocomplete
 		previous_proxy_cluster_password: DF.Password | None
+		previous_wireguard_gateway_cluster_password: DF.Password | None
 		private_network_cidr: DF.Data
 		private_network_mtu: DF.Int
 		proxy_cluster_password: DF.Password | None
@@ -138,6 +141,8 @@ class AtlasSettings(Document):
 		wildcard_tls_certificate: DF.Password | None
 		wildcard_tls_expires_on: DF.Datetime | None
 		wildcard_tls_private_key: DF.Password | None
+		wireguard_gateway_cluster_password: DF.Password | None
+		wireguard_gateway_cluster_password_rotated_on: DF.Datetime | None
 		wireguard_gateway_package_file: DF.Link | None
 		wireguard_gateway_package_hash: DF.Data | None
 		wireguard_ip_address: DF.Data | None
@@ -318,7 +323,8 @@ class AtlasSettings(Document):
 
 		ensure_certificate_authority(self)
 		ensure_atlas_client_certificate(self)
-		self.initialize_proxy_cluster_password()
+		for service in CLUSTER_SERVICES:
+			self.initialize_cluster_password(service)
 		initialize_signing_key(self)
 
 		if (
@@ -446,16 +452,16 @@ class AtlasSettings(Document):
 	def rotate_proxy_cluster_password(self) -> None:
 		"""Let a System Manager rotate the regional proxy password."""
 		frappe.only_for("System Manager")
-		self._rotate_proxy_cluster_password()
+		self._rotate_cluster_password("proxy")
 		frappe.msgprint(_("The proxy cluster password was rotated."))
 
-	def initialize_proxy_cluster_password(self) -> bool:
-		"""Create the regional proxy password when it is missing."""
-		if self.get_password("proxy_cluster_password", raise_exception=False):
+	def initialize_cluster_password(self, service: str) -> bool:
+		"""Create the regional cluster password of one service when it is missing."""
+		if self.get_password(f"{service}_cluster_password", raise_exception=False):
 			return False
 
-		self.proxy_cluster_password = frappe.generate_hash(length=PROXY_CLUSTER_PASSWORD_LENGTH)
-		self.proxy_cluster_password_rotated_on = now_datetime()
+		self.set(f"{service}_cluster_password", frappe.generate_hash(length=CLUSTER_PASSWORD_LENGTH))
+		self.set(f"{service}_cluster_password_rotated_on", now_datetime())
 		return True
 
 	def enqueue_wildcard_certificate_renewal(self) -> None:
@@ -494,13 +500,13 @@ class AtlasSettings(Document):
 
 		CatalogSynchronizer(self.server_provider_controller).sync_server_sizes()
 
-	def _rotate_proxy_cluster_password(self) -> None:
-		"""Rotate the regional proxy password and retain the previous value."""
-		current_password = self.get_password("proxy_cluster_password", raise_exception=False)
+	def _rotate_cluster_password(self, service: str) -> None:
+		"""Rotate the regional cluster password of one service and retain the previous value."""
+		current_password = self.get_password(f"{service}_cluster_password", raise_exception=False)
 		if current_password:
-			self.previous_proxy_cluster_password = current_password
-			self.proxy_cluster_password = frappe.generate_hash(length=PROXY_CLUSTER_PASSWORD_LENGTH)
-			self.proxy_cluster_password_rotated_on = now_datetime()
+			self.set(f"previous_{service}_cluster_password", current_password)
+			self.set(f"{service}_cluster_password", frappe.generate_hash(length=CLUSTER_PASSWORD_LENGTH))
+			self.set(f"{service}_cluster_password_rotated_on", now_datetime())
 
 		self.save(ignore_permissions=True)
 
@@ -521,6 +527,8 @@ def renew_expiring_wildcard_certificate() -> None:
 	settings.enqueue_wildcard_certificate_renewal()
 
 
-def rotate_proxy_cluster_password() -> None:
-	"""Rotate the regional proxy password on schedule."""
-	frappe.get_single("Atlas Settings")._rotate_proxy_cluster_password()
+def rotate_cluster_passwords() -> None:
+	"""Rotate the regional cluster password of each service on schedule."""
+	settings: AtlasSettings = frappe.get_single("Atlas Settings")
+	for service in CLUSTER_SERVICES:
+		settings._rotate_cluster_password(service)

@@ -224,7 +224,7 @@ scheduler_events = {
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
 		],
 		"0 */12 * * *": [
-			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_proxy_cluster_password",
+			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",
 		],
 		"* * * * *": [
 			"atlas.metal_server.core.public_ip_service.replenish_direct_allocations",

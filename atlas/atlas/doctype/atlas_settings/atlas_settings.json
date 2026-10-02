@@ -62,8 +62,11 @@
   "column_break_ipv6_router",
   "ipv6_router_package_hash",
   "wireguard_gateway_section",
-  "wireguard_gateway_package_file",
+  "wireguard_gateway_cluster_password",
+  "previous_wireguard_gateway_cluster_password",
+  "wireguard_gateway_cluster_password_rotated_on",
   "column_break_wireguard_gateway",
+  "wireguard_gateway_package_file",
   "wireguard_gateway_package_hash",
   "scaleway_tab",
   "scaleway_settings_section",
@@ -619,7 +622,7 @@
   {
    "fieldname": "wireguard_gateway_section",
    "fieldtype": "Section Break",
-   "label": "WireGuard Gateway"
+   "label": "Wireguard Gateway"
   },
   {
    "fieldname": "wireguard_gateway_package_file",
@@ -636,6 +639,24 @@
    "fieldname": "wireguard_gateway_package_hash",
    "fieldtype": "Data",
    "label": "Package SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_gateway_cluster_password",
+   "fieldtype": "Password",
+   "label": "Cluster Password",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_wireguard_gateway_cluster_password",
+   "fieldtype": "Password",
+   "label": "Previous Cluster Password",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_gateway_cluster_password_rotated_on",
+   "fieldtype": "Datetime",
+   "label": "Cluster Password Rotated On",
    "read_only": 1
   },
   {
@@ -916,7 +937,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-02 15:00:00.000000",
+ "modified": "2026-10-02 17:34:13.792767",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",
