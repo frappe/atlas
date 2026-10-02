@@ -82,7 +82,11 @@ class TestArtifacts(UnitTestCase):
 		"""An empty file_url must fail the same way as a missing File."""
 		with (
 			patch.object(artifacts.frappe.db, "get_value", return_value=""),
-			patch.object(artifacts.frappe, "conf", SimpleNamespace(atlas_base_url="https://atlas.test/")),
+			patch.object(
+				artifacts.frappe,
+				"conf",
+				SimpleNamespace(atlas_internal_url=None, atlas_base_url="https://atlas.test/"),
+			),
 		):
 			with self.assertRaisesRegex(frappe.ValidationError, "has no download URL"):
 				artifacts.get_download_url("metald-file")
