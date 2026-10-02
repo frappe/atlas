@@ -214,6 +214,41 @@ jobs:
         if: steps.changes.outputs.matched == 'true'
         run: make build
 
+  control-cluster:
+    name: Control cluster
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/control-cluster
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Find the changed paths
+        id: changes
+        working-directory: ${{ github.workspace }}
+        run: .github/scripts/changed-paths.sh '^(services/control-cluster/|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
+
+      - name: Set up Python
+        if: steps.changes.outputs.matched == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install test dependencies
+        if: steps.changes.outputs.matched == 'true'
+        run: python -m pip install -e ".[test]"
+
+      - name: Lint Python
+        if: steps.changes.outputs.matched == 'true'
+        run: python -m ruff check .
+
+      - name: Run unit tests
+        if: steps.changes.outputs.matched == 'true'
+        run: python -m pytest -q tests
+
   http-proxy:
     name: HTTP proxy
     runs-on: ubuntu-latest
@@ -229,7 +264,7 @@ jobs:
       - name: Find the changed paths
         id: changes
         working-directory: ${{ github.workspace }}
-        run: .github/scripts/changed-paths.sh '^(services/http-proxy/|scripts/generate-api-client\.py$|clients/atlas-proxy-client/|clients/openapi/atlas-proxy-client\.json$|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
+        run: .github/scripts/changed-paths.sh '^(services/(http-proxy|control-cluster)/|scripts/generate-api-client\.py$|clients/atlas-proxy-client/|clients/openapi/atlas-proxy-client\.json$|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
 
       - name: Set up Python
         if: steps.changes.outputs.matched == 'true'
@@ -239,7 +274,7 @@ jobs:
 
       - name: Install control daemon unit test dependencies
         if: steps.changes.outputs.matched == 'true'
-        run: python -m pip install -e "control[test]"
+        run: python -m pip install -e ../control-cluster -e "control[test]"
 
       - name: Lint Python
         if: steps.changes.outputs.matched == 'true'

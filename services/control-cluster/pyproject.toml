@@ -3,26 +3,18 @@ requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "atlas-proxy-control"
+name = "atlas-control-cluster"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "atlas-control-cluster==0.1.0",
     "bcrypt==5.0.0",
     "fastapi==0.141.1",
     "httpx==0.28.1",
     "pyjwt[crypto]==2.10.1",
-    "uvicorn==0.52.4",
 ]
-
-[project.scripts]
-proxy-control = "proxy_control.apply:main"
 
 [project.optional-dependencies]
 test = ["pytest==9.0.3", "ruff==0.16.5"]
 
 [tool.setuptools.packages.find]
-include = ["proxy_control*"]
-
-[tool.fastapi]
-entrypoint = "proxy_control.main:app"
+include = ["atlas_control*"]

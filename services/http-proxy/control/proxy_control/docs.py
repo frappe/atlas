@@ -1,7 +1,6 @@
+from atlas_control.auth import CONTROL_BEARER_SCHEME
 from fastapi import FastAPI, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-
-from .auth import CONTROL_BEARER_SCHEME
 
 REFERENCE_PATH = "/docs"
 SCHEMA_PATH = "/docs/swagger.json"

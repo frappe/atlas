@@ -87,8 +87,8 @@ For Central tokens, check whether the most recent JWKS sync succeeded and whethe
 
 - [Regional key set](../../atlas/auth/jwks.py), [Atlas issuer](../../atlas/auth/issuer.py), and [Atlas token validator](../../atlas/auth/token.py) own signing and verification.
 - [Atlas settings](../../atlas/atlas/doctype/atlas_settings/atlas_settings.py) defines issuer, audiences, and JWKS URL.
-- [Proxy configuration](../../atlas/service/core/proxy/configuration.py) passes the URL and accepted issuers. [Proxy authentication](../../services/http-proxy/control/proxy_control/auth.py) checks the token claims.
+- [Proxy configuration](../../atlas/service/core/proxy/configuration.py) passes the URL and accepted issuers. [Service authentication](../../services/control-cluster/atlas_control/auth.py) checks the token claims.
 - [Cargo installation](../../atlas/service/core/cargo/provisioning.py) passes the URL and two service tokens. [Bucket request](../../atlas/service/core/cargo/bucket.py) issues the Cargo token.
-- [JWKS tests](../../atlas/auth/test_jwks.py), [Atlas token tests](../../atlas/auth/test_token.py), and [proxy authentication tests](../../services/http-proxy/control/tests/test_auth.py) check the boundaries.
+- [JWKS tests](../../atlas/auth/test_jwks.py), [Atlas token tests](../../atlas/auth/test_token.py), and [service authentication tests](../../services/control-cluster/tests/test_auth.py) check the boundaries.
 
 :::

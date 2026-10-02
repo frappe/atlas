@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from atlas_control.cluster import ClusterSnapshot
+from atlas_control.config import ClusterPeer
 from fastapi.testclient import TestClient
-
-from proxy_control.cluster import ClusterSnapshot
-from proxy_control.config import ClusterPeer
 
 
 def _module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -48,7 +47,7 @@ def test_health_fails_when_openresty_is_unreachable(tmp_path, monkeypatch):
 def test_health_fails_when_openresty_lost_the_routes(tmp_path, monkeypatch):
 	main = _module(tmp_path, monkeypatch)
 	main.cluster.is_initialized = True
-	main.cluster.snapshot = ClusterSnapshot(sites={"erp": "2001:db8::1"})
+	main.cluster.snapshot = ClusterSnapshot(state={"sites": {"erp": "2001:db8::1"}})
 	main.proxy.request = AsyncMock(return_value=(200, {"sites": 0, "domains": 0}))
 
 	assert TestClient(main.app).get("/healthz").status_code == 503
@@ -57,7 +56,7 @@ def test_health_fails_when_openresty_lost_the_routes(tmp_path, monkeypatch):
 def test_health_passes_when_openresty_holds_the_routes(tmp_path, monkeypatch):
 	main = _module(tmp_path, monkeypatch)
 	main.cluster.is_initialized = True
-	main.cluster.snapshot = ClusterSnapshot(sites={"erp": "2001:db8::1"})
+	main.cluster.snapshot = ClusterSnapshot(state={"sites": {"erp": "2001:db8::1"}})
 	main.proxy.request = AsyncMock(return_value=(200, {"sites": 1, "domains": 0}))
 
 	assert TestClient(main.app).get("/healthz").status_code == 204
@@ -79,7 +78,7 @@ def test_a_node_without_a_leader_serves_traffic_but_is_not_ready(tmp_path, monke
 	main.cluster.is_initialized = True
 	main.cluster.is_synchronized = True
 	main.cluster.leader_id = ""
-	main.cluster.snapshot = ClusterSnapshot(sites={"erp": "2001:db8::1"})
+	main.cluster.snapshot = ClusterSnapshot(state={"sites": {"erp": "2001:db8::1"}})
 	main.proxy.request = AsyncMock(return_value=(200, {"sites": 1, "domains": 0}))
 
 	client = TestClient(main.app)

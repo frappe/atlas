@@ -144,6 +144,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 					{ text: 'HTTP proxy', link: '/services/http-proxy/SPEC' },
 					{ text: 'WG Mesh', link: '/services/wg-mesh/SPEC' },
 					{ text: 'IPv6 router', link: '/services/ipv6-router/SPEC' },
+					{ text: 'Control cluster', link: '/services/control-cluster/SPEC' },
 				],
 			},
 			{

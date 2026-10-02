@@ -2,8 +2,8 @@
 services:
   proxy:
     build:
-      context: ../..         # the service root, including nginx/ and tests/
-      dockerfile: tests/docker/Dockerfile
+      context: ../../..      # services/, so the image holds the proxy and control-cluster like the package
+      dockerfile: http-proxy/tests/docker/Dockerfile
     image: test-proxy:latest  # a name, thus proxy-noregion uses the same image
     networks:
       sixnet:
