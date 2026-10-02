@@ -10,12 +10,20 @@ from fastapi import HTTPException
 from jwt import PyJWK
 from jwt.algorithms import OKPAlgorithm
 
-from proxy_control.auth import Authentication, Authorization, NameConstraint
+from atlas_control.auth import Authentication, Authorization, NameConstraint
+from atlas_control.config import auth_loader
 
 AUDIENCE = "atlas-proxy:42"
 ATLAS_ISSUER = "atlas:42"
 PASSWORD = "correct-horse"
 PREVIOUS_PASSWORD = "previous-horse"
+SCOPES = frozenset({"*", "site:*", "domain:*"})
+CONSTRAINED_RESOURCES = frozenset({"site", "domain"})
+
+
+def authentication_for(path: Path) -> Authentication:
+	"""Authenticate like a service with constrained site and domain scopes."""
+	return Authentication(auth_loader(path, "atlas-proxy"), SCOPES, "atlas-test", CONSTRAINED_RESOURCES)
 
 
 def write_config(
@@ -26,14 +34,9 @@ def write_config(
 	previous_password_valid_until: int = 0,
 ) -> Path:
 	"""Write a configuration with the credentials that a test needs."""
-	lines = [
-		"[tls]",
-		'wildcard_domain = "*.par-1.example.com"',
-		'fullchain_pem = "leaf"',
-		'private_key_pem = "key"',
-	]
+	lines = []
 	if has_jwks or password or previous_password:
-		lines.extend(["", "[auth]"])
+		lines.append("[auth]")
 	if password:
 		lines.append(f'password_hash = "{bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()}"')
 	if previous_password:
@@ -58,7 +61,7 @@ def write_config(
 def test_require_accepts_the_current_password(tmp_path):
 	path = write_config(tmp_path / "proxy-control.toml", has_jwks=False, password=PASSWORD)
 
-	Authentication(path).require(f"Bearer {PASSWORD}")
+	authentication_for(path).require(f"Bearer {PASSWORD}")
 
 
 def test_require_accepts_the_previous_password_before_expiry(tmp_path):
@@ -70,7 +73,7 @@ def test_require_accepts_the_previous_password_before_expiry(tmp_path):
 		previous_password_valid_until=int(time.time()) + 600,
 	)
 
-	Authentication(path).require(f"Bearer {PREVIOUS_PASSWORD}")
+	authentication_for(path).require(f"Bearer {PREVIOUS_PASSWORD}")
 
 
 def test_require_rejects_the_previous_password_after_expiry(tmp_path):
@@ -83,14 +86,14 @@ def test_require_rejects_the_previous_password_after_expiry(tmp_path):
 	)
 
 	with pytest.raises(HTTPException):
-		Authentication(path).require(f"Bearer {PREVIOUS_PASSWORD}")
+		authentication_for(path).require(f"Bearer {PREVIOUS_PASSWORD}")
 
 
 def test_require_rejects_an_incorrect_password(tmp_path):
 	path = write_config(tmp_path / "proxy-control.toml", has_jwks=False, password=PASSWORD)
 
 	with pytest.raises(HTTPException):
-		Authentication(path).require("Bearer incorrect-password")
+		authentication_for(path).require("Bearer incorrect-password")
 
 
 class _FakeJWKClient:
@@ -139,7 +142,7 @@ def _token(
 
 def _authentication(path: Path, jwk: PyJWK) -> Authentication:
 	write_config(path)
-	authentication = Authentication(path)
+	authentication = authentication_for(path)
 	authentication._jwks_client = _FakeJWKClient([jwk])
 	authentication._jwks_url = "https://issuer.example.com/jwks.json"
 	return authentication
@@ -195,7 +198,7 @@ def test_an_unrestricted_scope_grants_every_resource(tmp_path):
 @pytest.mark.parametrize("authorization", [None, "token", "Basic token"])
 def test_require_rejects_a_missing_bearer_token(tmp_path, authorization):
 	with pytest.raises(HTTPException):
-		Authentication(write_config(tmp_path / "proxy-control.toml")).require(authorization)
+		authentication_for(write_config(tmp_path / "proxy-control.toml")).require(authorization)
 
 
 def test_require_rejects_the_cluster_password(tmp_path):
@@ -207,12 +210,12 @@ def test_require_rejects_the_cluster_password(tmp_path):
 		)
 
 	with pytest.raises(HTTPException):
-		Authentication(path).require("Bearer cluster-secret")
+		authentication_for(path).require("Bearer cluster-secret")
 
 
 def test_require_reads_a_changed_password_without_a_restart(tmp_path):
 	path = write_config(tmp_path / "proxy-control.toml", has_jwks=False, password=PASSWORD)
-	authentication = Authentication(path)
+	authentication = authentication_for(path)
 	authentication.require(f"Bearer {PASSWORD}")
 
 	write_config(path, has_jwks=False, password="rotated-password")
@@ -227,7 +230,7 @@ def test_require_rejects_a_missing_or_malformed_config(tmp_path):
 		if path.name == "malformed.toml":
 			path.write_text("[auth\n")
 		with pytest.raises(HTTPException):
-			Authentication(path).require("Bearer token")
+			authentication_for(path).require("Bearer token")
 
 
 @pytest.mark.parametrize(

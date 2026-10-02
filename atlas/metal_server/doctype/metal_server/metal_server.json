@@ -37,6 +37,8 @@
   "wireguard_public_key",
   "section_break_metadata",
   "provider_metadata",
+  "tags_section",
+  "tags",
   "hidden_data_section",
   "column_break_xhax",
   "metald_tls_certificate",
@@ -247,11 +249,25 @@
    "fieldname": "title",
    "fieldtype": "Data",
    "label": "Title",
-   "reqd": 1
+   "read_only": 1,
+   "unique": 1
   },
   {
    "fieldname": "column_break_lnik",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tags_section",
+   "fieldtype": "Section Break",
+   "label": "Tags"
+  },
+  {
+   "description": "Your own key and value labels for this Metal Server, such as env and local. Use them to find it again.",
+   "fieldname": "tags",
+   "fieldtype": "Table",
+   "label": "Tags",
+   "options": "Atlas Tag",
+   "show_description_on_click": 1
   }
  ],
  "grid_page_length": 50,
@@ -273,7 +289,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-09-24 01:22:16.439715",
+ "modified": "2026-10-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

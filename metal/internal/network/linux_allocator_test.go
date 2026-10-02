@@ -78,7 +78,6 @@ func TestFailedAttachIsFatalOnlyWhenRequired(t *testing.T) {
 	}
 }
 
-// failingTrafficMonitor always fails to attach.
 type failingTrafficMonitor struct{}
 
 func (*failingTrafficMonitor) Attach(traffic.AttachmentRequest) error {

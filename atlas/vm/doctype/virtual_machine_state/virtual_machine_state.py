@@ -12,6 +12,7 @@ class VirtualMachineState(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		server: DF.Link
 		status: DF.Data
 		synced_at: DF.Datetime
 		virtual_machine: DF.Link

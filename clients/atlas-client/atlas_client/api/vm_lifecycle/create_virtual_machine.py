@@ -120,6 +120,11 @@ def sync_detailed(
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
 
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
+
     Args:
         x_tenant_id (int):
         body (CreateVirtualMachinePayload): Values that create one virtual machine.
@@ -161,6 +166,11 @@ def sync(
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
 
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
+
     Args:
         x_tenant_id (int):
         body (CreateVirtualMachinePayload): Values that create one virtual machine.
@@ -196,6 +206,11 @@ async def asyncio_detailed(
 
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
+
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
 
     Args:
         x_tenant_id (int):
@@ -237,6 +252,11 @@ async def asyncio(
 
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
+
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
 
     Args:
         x_tenant_id (int):

@@ -43,6 +43,20 @@ class ConfigurationTest(unittest.TestCase):
 		self.path = Path(self.temporary_directory.name) / "atlas-vm.toml"
 		self.path.write_text(EXAMPLE.read_text())
 
+	def test_the_host_import_values_are_read(self) -> None:
+		text = self.path.read_text().replace('import_server_id = ""', 'import_server_id = "server-1"')
+		self.path.write_text(
+			text.replace(
+				'import_storage_pool_device = ""', 'import_storage_pool_device = "/root/disks/atlas.img"'
+			)
+		)
+
+		host = atlas_vm.Settings.read(self.path)
+
+		self.assertEqual(
+			(host.import_server_id, host.import_storage_pool_device), ("server-1", "/root/disks/atlas.img")
+		)
+
 	def test_example_is_valid_for_both_readers(self) -> None:
 		host = atlas_vm.Settings.read(self.path)
 		with patch.object(setup, "generate_password", return_value="generated-bootstrap-password"):
@@ -214,13 +228,31 @@ class ConfigurationTest(unittest.TestCase):
 			patch.object(stage, "bench_output", return_value="ssh-ed25519 public-key"),
 			patch.object(stage, "pilot") as pilot,
 		):
-			stage.configure_atlas()
+			stage.configure_atlas(stage.install_warpgate())
 
 		as_bench.assert_not_called()
 		self.assertEqual(pilot.call_count, 2)
 		forwarded = json.loads(pilot.call_args_list[1].kwargs["input_text"])
 		self.assertEqual(forwarded["public_ssh_key"], "ssh-ed25519 public-key")
+		self.assertEqual(
+			(forwarded["warpgate_url"], forwarded["warpgate_api_token"], forwarded["warpgate_api_token_id"]),
+			("", "", ""),
+		)
 		self.assertNotIn("bootstrap_password", forwarded)
+
+	def test_a_warpgate_table_needs_every_value_and_opens_its_ssh_port(self) -> None:
+		table = '[atlas.warpgate]\nissuer_url = "https://central.example.com/oidc"\nclient_id = "client"\nclient_secret = "secret"\n'
+		self.path.write_text(self.path.read_text() + "\n" + table)
+
+		host = atlas_vm.Settings.read(self.path)
+
+		self.assertTrue(host.has_warpgate)
+		with patch.object(atlas_vm, "find_host_key", return_value=self.path):
+			self.assertIn((2223, 2223), atlas_vm.VirtualMachine(host).port_forwards)
+
+		self.path.write_text(self.path.read_text().replace('client_secret = "secret"\n', ""))
+		with self.assertRaisesRegex(atlas_vm.AtlasVmError, "client_secret"):
+			atlas_vm.Settings.read(self.path)
 
 
 class TestNetworkRules(unittest.TestCase):
@@ -252,6 +284,8 @@ class TestNetworkRules(unittest.TestCase):
 			f"host_address={atlas_vm.HOST_ADDRESS}\n"
 			f"vm_address={atlas_vm.VM_ADDRESS}\n"
 			'forwards="443:443"\n'
+			'udp_forwards="51821:51821"\n'
+			'private_network_cidr="10.1.0.0/20"\n'
 			+ atlas_vm.NETWORK_SCRIPT_BODY.replace('case "${1:-}" in', 'rules\nexit 0\ncase "${1:-}" in')
 		)
 		script.chmod(0o755)
@@ -268,7 +302,7 @@ class TestNetworkRules(unittest.TestCase):
 			f"-t nat -A PREROUTING -d {self.uplink_address} -p tcp --dport 443 "
 			f"-j DNAT --to-destination {atlas_vm.VM_ADDRESS}:443"
 		)
-		prerouting = [rule for rule in self.rules if "-A PREROUTING" in rule]
+		prerouting = [rule for rule in self.rules if "-A PREROUTING" in rule and "-p tcp" in rule]
 		self.assertEqual(prerouting, [expected])
 
 	def test_the_host_reaches_a_forward_through_its_own_address(self) -> None:

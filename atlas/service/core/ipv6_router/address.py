@@ -10,8 +10,8 @@ from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.models import IPV6_INTERNET_DESTINATION
 
 # Must match bpf/address.h in services/ipv6-router.
-TENANT_BITS = 24
-MACHINE_BITS = 20
+TENANT_BITS = 32
+MACHINE_BITS = 16
 MAXIMUM_PREFIX_LENGTH = 128 - TENANT_BITS - MACHINE_BITS
 
 
@@ -31,11 +31,9 @@ def get_routed_ipv6(prefix: str, mesh_address: str) -> str:
 
 	tenant = (mesh >> 64) & 0xFFFFFFFF
 	machine = mesh & 0xFFFFFFFFFFFFFFFF
-	if tenant >= 1 << TENANT_BITS or machine >= 1 << MACHINE_BITS:
+	if machine >= 1 << MACHINE_BITS:
 		frappe.throw(
-			_("Mesh address {0} has a tenant or VM number that the routed IPv6 layout cannot hold.").format(
-				mesh_address
-			),
+			_("Mesh address {0} has padding that the routed IPv6 layout cannot hold.").format(mesh_address),
 			exc=AtlasUserError,
 		)
 

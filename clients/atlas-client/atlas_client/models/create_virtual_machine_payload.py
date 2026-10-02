@@ -12,7 +12,11 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
+  from ..models.affinity_all_of_payload import AffinityAllOfPayload
+  from ..models.affinity_any_of_payload import AffinityAnyOfPayload
+  from ..models.affinity_rule_payload import AffinityRulePayload
   from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata
+  from ..models.create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags
   from ..models.firewall_payload import FirewallPayload
 
 
@@ -41,6 +45,9 @@ class CreateVirtualMachinePayload:
             is_privileged (bool | Unset): Whether the guest can reach every tenant through the mesh. Default: False.
             is_termination_protected (bool | Unset): Whether deletion is blocked. Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset): Custom guest metadata.
+            placement_rules (list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset): Rules that
+                limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Placement uses only the
+                hosts that meet them.
             private_network_throughput_mibps (int | Unset): Private network throughput limit in MiB/s. Zero removes the
                 limit. Default: 0.
             public_ipv4 (None | str | Unset): Reserved public IPv4 allocation ID, or null.
@@ -49,6 +56,7 @@ class CreateVirtualMachinePayload:
                 Default: 0.
             sleep_after_idle_seconds (int | Unset): Idle time before automatic stop. Zero disables it. Default: 0.
             ssh_keys (list[str] | Unset): Authorized SSH public keys.
+            tags (CreateVirtualMachinePayloadTags | Unset): Resource tags as key-value pairs.
             user_data (str | Unset): Cloud-init user data supplied to the guest. Default: ''.
      """
 
@@ -64,12 +72,14 @@ class CreateVirtualMachinePayload:
     is_privileged: bool | Unset = False
     is_termination_protected: bool | Unset = False
     metadata: CreateVirtualMachinePayloadMetadata | Unset = UNSET
+    placement_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
     private_network_throughput_mibps: int | Unset = 0
     public_ipv4: None | str | Unset = UNSET
     public_ipv6: None | str | Unset = UNSET
     public_network_throughput_mibps: int | Unset = 0
     sleep_after_idle_seconds: int | Unset = 0
     ssh_keys: list[str] | Unset = UNSET
+    tags: CreateVirtualMachinePayloadTags | Unset = UNSET
     user_data: str | Unset = ''
 
 
@@ -77,7 +87,11 @@ class CreateVirtualMachinePayload:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.affinity_all_of_payload import AffinityAllOfPayload # noqa: PLC0415
+        from ..models.affinity_any_of_payload import AffinityAnyOfPayload # noqa: PLC0415
+        from ..models.affinity_rule_payload import AffinityRulePayload # noqa: PLC0415
         from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata # noqa: PLC0415
+        from ..models.create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags # noqa: PLC0415
         from ..models.firewall_payload import FirewallPayload # noqa: PLC0415
         cpu_millicores = self.cpu_millicores
 
@@ -107,6 +121,22 @@ class CreateVirtualMachinePayload:
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
 
+        placement_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.placement_rules, Unset):
+            placement_rules = []
+            for placement_rules_item_data in self.placement_rules:
+                placement_rules_item: dict[str, Any]
+                if isinstance(placement_rules_item_data, AffinityRulePayload):
+                    placement_rules_item = placement_rules_item_data.to_dict()
+                elif isinstance(placement_rules_item_data, AffinityAnyOfPayload):
+                    placement_rules_item = placement_rules_item_data.to_dict()
+                else:
+                    placement_rules_item = placement_rules_item_data.to_dict()
+
+                placement_rules.append(placement_rules_item)
+
+
+
         private_network_throughput_mibps = self.private_network_throughput_mibps
 
         public_ipv4: None | str | Unset
@@ -130,6 +160,10 @@ class CreateVirtualMachinePayload:
             ssh_keys = self.ssh_keys
 
 
+
+        tags: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tags, Unset):
+            tags = self.tags.to_dict()
 
         user_data = self.user_data
 
@@ -158,6 +192,8 @@ class CreateVirtualMachinePayload:
             field_dict["is_termination_protected"] = is_termination_protected
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
+        if placement_rules is not UNSET:
+            field_dict["placement_rules"] = placement_rules
         if private_network_throughput_mibps is not UNSET:
             field_dict["private_network_throughput_mibps"] = private_network_throughput_mibps
         if public_ipv4 is not UNSET:
@@ -170,6 +206,8 @@ class CreateVirtualMachinePayload:
             field_dict["sleep_after_idle_seconds"] = sleep_after_idle_seconds
         if ssh_keys is not UNSET:
             field_dict["ssh_keys"] = ssh_keys
+        if tags is not UNSET:
+            field_dict["tags"] = tags
         if user_data is not UNSET:
             field_dict["user_data"] = user_data
 
@@ -179,7 +217,11 @@ class CreateVirtualMachinePayload:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.affinity_all_of_payload import AffinityAllOfPayload # noqa: PLC0415
+        from ..models.affinity_any_of_payload import AffinityAnyOfPayload # noqa: PLC0415
+        from ..models.affinity_rule_payload import AffinityRulePayload # noqa: PLC0415
         from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata # noqa: PLC0415
+        from ..models.create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags # noqa: PLC0415
         from ..models.firewall_payload import FirewallPayload # noqa: PLC0415
         d = dict(src_dict)
         cpu_millicores = d.pop("cpu_millicores")
@@ -222,6 +264,45 @@ class CreateVirtualMachinePayload:
 
 
 
+        _placement_rules = d.pop("placement_rules", UNSET)
+        placement_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
+        if _placement_rules is not UNSET:
+            placement_rules = []
+            for placement_rules_item_data in _placement_rules:
+                def _parse_placement_rules_item(data: object) -> AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        placement_rules_item_type_0 = AffinityRulePayload.from_dict(data)
+
+
+
+                        return placement_rules_item_type_0
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        placement_rules_item_type_1 = AffinityAnyOfPayload.from_dict(data)
+
+
+
+                        return placement_rules_item_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    if not isinstance(data, dict):
+                        raise TypeError()
+                    placement_rules_item_type_2 = AffinityAllOfPayload.from_dict(data)
+
+
+
+                    return placement_rules_item_type_2
+
+                placement_rules_item = _parse_placement_rules_item(placement_rules_item_data)
+
+                placement_rules.append(placement_rules_item)
+
+
         private_network_throughput_mibps = d.pop("private_network_throughput_mibps", UNSET)
 
         def _parse_public_ipv4(data: object) -> None | str | Unset:
@@ -251,6 +332,16 @@ class CreateVirtualMachinePayload:
         ssh_keys = cast(list[str], d.pop("ssh_keys", UNSET))
 
 
+        _tags = d.pop("tags", UNSET)
+        tags: CreateVirtualMachinePayloadTags | Unset
+        if isinstance(_tags,  Unset):
+            tags = UNSET
+        else:
+            tags = CreateVirtualMachinePayloadTags.from_dict(_tags)
+
+
+
+
         user_data = d.pop("user_data", UNSET)
 
         create_virtual_machine_payload = cls(
@@ -266,12 +357,14 @@ class CreateVirtualMachinePayload:
             is_privileged=is_privileged,
             is_termination_protected=is_termination_protected,
             metadata=metadata,
+            placement_rules=placement_rules,
             private_network_throughput_mibps=private_network_throughput_mibps,
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,
             public_network_throughput_mibps=public_network_throughput_mibps,
             sleep_after_idle_seconds=sleep_after_idle_seconds,
             ssh_keys=ssh_keys,
+            tags=tags,
             user_data=user_data,
         )
 

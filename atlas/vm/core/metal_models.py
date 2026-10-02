@@ -55,6 +55,7 @@ class MetalNetwork:
 	wireguard_mesh_ipv6: str
 	routes: tuple[Route, ...]
 	is_network_gateway: bool
+	is_accessible_via_wireguard_gateway: bool
 	public_ipv6: str
 	private_network_throughput_mibps: int
 	public_network_throughput_mibps: int
@@ -284,6 +285,9 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 			wireguard_mesh_ipv6=string_field(network, "wireguard_mesh_ipv6"),
 			routes=parse_routes(network.get("routes") or []),
 			is_network_gateway=boolean_field(network, "is_network_gateway", default=False),
+			is_accessible_via_wireguard_gateway=boolean_field(
+				network, "is_accessible_via_wireguard_gateway", default=False
+			),
 			public_ipv6=string_field(network, "public_ipv6", default=""),
 			private_network_throughput_mibps=integer_field(network, "private_network_throughput_mibps"),
 			public_network_throughput_mibps=integer_field(network, "public_network_throughput_mibps"),

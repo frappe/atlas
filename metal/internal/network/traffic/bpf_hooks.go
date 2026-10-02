@@ -114,7 +114,6 @@ func (hooks *bpfHooks) attach(userID uint32, namespacePath, interfaceName string
 	return interfaceIndex, closeHook, nil
 }
 
-// closeIfNotNil closes a link that may not have been created yet.
 func closeIfNotNil(hook link.Link) error {
 	if hook == nil {
 		return nil
@@ -122,7 +121,6 @@ func closeIfNotNil(hook link.Link) error {
 	return hook.Close()
 }
 
-// loadPrograms creates both eBPF programs bound to a VM user ID.
 func (hooks *bpfHooks) loadPrograms(userID uint32) (trafficPrograms, error) {
 	specification, err := loadCollectionSpec()
 	if err != nil {
@@ -182,7 +180,6 @@ func (hooks *bpfHooks) setWatching(userID uint32, watching bool) error {
 	return hooks.watch.Update(userID, state, ebpf.UpdateAny)
 }
 
-// clear removes traffic, watch, and counter state for one user ID.
 func (hooks *bpfHooks) clear(userID uint32) error {
 	return errors.Join(
 		deleteMapValue(hooks.activity, userID),

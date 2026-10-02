@@ -4,7 +4,9 @@
 
 ## Target
 
-Set `target_type` to `Metal Server` or `Virtual Machine`. Set `target` to the target document name. The task reads the target document's `ssh_host` property for the connection address.
+Set `target_type` to `Metal Server` or `Virtual Machine`. Set `target` to the target document name. The task connects to the target's `ssh_host` through the command that the target's `get_ssh_proxy_command()` returns.
+
+A Metal Server returns no proxy command. Atlas connects to the host `wg0` address directly. A Virtual Machine returns an SSH command to its current host that runs `ip netns exec metal-<vm> nc 172.16.0.2 22`, so the guest needs no public address. See [Atlas access to hosts](../../../../docs/region/host-access.md#ssh).
 
 `SSH Task` stores no credentials. It uses the identity of the Atlas host. Make the target reachable before you create the task.
 

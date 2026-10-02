@@ -45,6 +45,7 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 		"memory_mib": 512,
 		"disk_mib": 1024,
 		"sleep_after_idle_seconds": 0,
+		"placement_rules": None,
 	}
 	values.update(overrides)
 	return SimpleNamespace(**values)
@@ -92,7 +93,48 @@ class TestMigrationStatus(UnitTestCase):
 		service.settle.assert_called_once_with("failed")
 
 
+AFFINITY_RULES = '[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db"}}]'
+
+
 class TestDestinationMetalServerSelection(UnitTestCase):
+	def test_a_chosen_destination_follows_the_placement_rules(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled", destination_metal_server=None))
+		service.update = Mock()
+
+		with (
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				return_value=source_vm(placement_rules=AFFINITY_RULES),
+			),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch(
+				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-2"
+			) as find_server,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+
+		requirements = find_server.call_args.args[0]
+		self.assertEqual(requirements.placement_rules.as_list()[0]["tags"], {"role": "db"})
+		self.assertEqual(requirements.virtual_machine, "vm-00001")
+
+	def test_a_named_destination_ignores_the_placement_rules(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled", destination_metal_server="metal-3"))
+		service.update = Mock()
+
+		with (
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				return_value=source_vm(placement_rules=AFFINITY_RULES),
+			),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch(
+				"atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-3"
+			) as reserve_server,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+
+		self.assertEqual(reserve_server.call_args.args[0].placement_rules.nodes, ())
+
 	def test_automatic_selection_retries_after_a_capacity_error(self) -> None:
 		service = MigrationService(migration_doc(destination_metal_server=None))
 		service.record_destination_metal_server_selection_failure = Mock()

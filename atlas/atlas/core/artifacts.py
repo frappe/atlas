@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import frappe
+from frappe import _
 
 
 def publish_public_file(file_name: str, label: str, content: bytes) -> str:
@@ -82,11 +83,23 @@ def get_linked_files() -> set[str]:
 
 
 def get_download_url(file_name: str) -> str:
-	"""Return the URL a host uses to download one published File.
+	"""Return the URL a Metal host or a tenant-0 VM uses to download one published File."""
+	return get_file_url(file_name, get_internal_base_url())
 
-	`atlas_base_url` in the site configuration names an address that a host can
-	reach, which the site's own URL is not during local development.
-	"""
+
+def get_internal_base_url() -> str:
+	"""Return `atlas_internal_url`, which hosts and tenant-0 VMs reach, or the public URL."""
+	return frappe.conf.atlas_internal_url or get_public_base_url()
+
+
+def get_public_base_url() -> str:
+	"""Return `atlas_base_url`, which names a public address when the site URL is not one."""
+	return frappe.conf.atlas_base_url or frappe.utils.get_url(allow_header_override=False)
+
+
+def get_file_url(file_name: str, base_url: str) -> str:
+	"""Return the URL of one File below a base URL."""
 	file_url = frappe.db.get_value("File", file_name, "file_url")
-	base_url = frappe.conf.atlas_base_url or frappe.utils.get_url(allow_header_override=False)
+	if not file_url:
+		frappe.throw(_("File {0} has no download URL. Publish it again.").format(file_name))
 	return f"{base_url.rstrip('/')}{file_url}"

@@ -27,9 +27,17 @@ The setup generates a temporary password for Pilot and the site Administrator. I
 
 The setup creates one Secure Shell key for the `pilot.user`. Atlas uses this key to manage Metal Servers. The setup keeps this key when you run it again.
 
-The setup creates the server provider network resources and the Route53 records. It also gets the provider catalogs and a wildcard certificate. Each `[[image]]` table creates one system image in site-file storage. Cargo configures object storage later.
+Set `atlas.import_server_id` to import this host as a Metal Server after Atlas setup. The import is optional and continues in the background. Set `atlas.import_storage_pool_device` only if the host needs a different storage device. See [provider server import](../../docs/region/hosts-and-providers.md#import-a-provider-server) for prerequisites and recovery.
 
-The configuration contains provider secrets. `atlas-vm` stores its copy at `/var/lib/atlas-vm/atlas-vm.toml` with mode `0600`.
+In Atlas mode, setup creates the Atlas WireGuard peer and its systemd timer. See [Atlas access to hosts](../../docs/region/host-access.md) for the network path and host SSH access.
+
+Add an `[atlas.warpgate]` table with `issuer_url`, `client_id`, and `client_secret` to run Warpgate in the VM. People then reach hosts with `ssh -p 2223 <email>:<host title>@warpgate.<wildcard>`. See [People access through Warpgate](../../docs/region/host-access.md#people-access-through-warpgate).
+
+Gateway mode runs a development WireGuard gateway instead of Atlas. Deploy it with `pilot --site SITE deploy-dev-gateway <metal-server-id>`. See [development gateway setup](../../docs/region/host-access.md#development-gateway).
+
+In Atlas mode, setup creates the server provider network resources and the Route53 records. It also gets the provider catalogs and a wildcard certificate. Each `[[image]]` table creates one system image in site-file storage. Cargo configures object storage later.
+
+The Atlas mode configuration contains provider secrets. `atlas-vm` stores its copy at `/var/lib/atlas-vm/atlas-vm.toml` with mode `0600`.
 
 ## Use the VM
 
@@ -47,7 +55,7 @@ sudo atlas-vm resize --vcpu 8 --disk 60     # This restarts the VM. A disk can o
 
 AWS uses one subnet in one availability zone, so a public IPv6 block can move to any host. An AWS region always uses unicast networking, because a VPC does not carry link-local multicast.
 
-The VM answers on port 2222, and host ports 80 and 443 reach it.
+The VM answers on host port 2222. In Atlas mode, host ports 80 and 443 also reach it. Gateway mode forwards UDP port 51821 to its WireGuard interface.
 
 ## Delete the VM
 

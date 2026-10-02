@@ -16,6 +16,7 @@ from atlas.service.core.service_package import HTTP_PROXY_PACKAGE
 
 if TYPE_CHECKING:
 	from atlas.service.doctype.proxy_server.proxy_server import ProxyServer
+	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 INSTALL_TIMEOUT_SECONDS = 1_800
 CONFIGURE_TIMEOUT_SECONDS = 300
@@ -182,12 +183,14 @@ class ProxyServerProvisioner:
 		frappe.throw(_("Proxy Server {0} did not become ready.").format(self.proxy_server.name))
 
 	def wait_for_ssh(self, save: bool = True) -> None:
-		"""Wait until the guest answers as root on its public address."""
+		"""Wait until the guest answers as root through its host."""
+		virtual_machine = self.virtual_machine
 		wait_for_server(
-			host=self.ssh_host,
+			host=virtual_machine.ssh_host,
 			users=("root",),
 			timeout_seconds=SSH_TIMEOUT_SECONDS,
 			poll_interval_seconds=SSH_POLL_INTERVAL_SECONDS,
+			proxy_command=virtual_machine.get_ssh_proxy_command(),
 		)
 		self.save_progress(save)
 
@@ -198,9 +201,10 @@ class ProxyServerProvisioner:
 			self.save_progress(save)
 			return
 
-		write = SSHRunner(self.ssh_host).run_command(
-			configuration.get_write_command(), timeout_seconds=CONFIGURE_TIMEOUT_SECONDS
-		)
+		virtual_machine = self.virtual_machine
+		write = SSHRunner(
+			virtual_machine.ssh_host, proxy_command=virtual_machine.get_ssh_proxy_command()
+		).run_command(configuration.get_write_command(), timeout_seconds=CONFIGURE_TIMEOUT_SECONDS)
 		if not write.is_success:
 			frappe.throw(
 				_("The proxy did not accept its configuration file: {0}").format(write.output.strip())
@@ -244,10 +248,9 @@ class ProxyServerProvisioner:
 		self.save_progress(save)
 
 	@property
-	def ssh_host(self) -> str:
-		"""Return the address the controller connects to."""
-		virtual_machine = frappe.get_doc("Virtual Machine", self.proxy_server.virtual_machine)
-		return virtual_machine.ssh_host
+	def virtual_machine(self) -> VirtualMachine:
+		"""Return the proxy guest."""
+		return frappe.get_doc("Virtual Machine", self.proxy_server.virtual_machine)
 
 	def save_progress(self, save: bool = True) -> None:
 		"""Store the current proxy state."""

@@ -11,6 +11,7 @@ import (
 
 // streamTTYConsole joins the viewer to the VM's shared serial console. The
 // console keeps running when the viewer leaves, and other viewers are unaffected.
+// The viewer stays connected while the VM restarts.
 func (s *Server) streamTTYConsole(ctx context.Context, connection *websocket.Conn, id string) {
 	terminal := newWebSocketTerminal(ctx, connection)
 

@@ -114,9 +114,9 @@ def sync_detailed(
 ) -> Response[ApiErrorResponse | VirtualMachineResponse]:
     """ Update network
 
-     Changes IPv4 internet access, network throughput limits, or firewall fields. `ipv4_internet_access`
-    reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6
-    address brings its own internet path.
+     Changes IPv4 internet access, WireGuard gateway access, network throughput limits, or firewall
+    fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address
+    needs it. A public IPv6 address brings its own internet path.
 
     Args:
         virtual_machine_id (str):
@@ -156,9 +156,9 @@ def sync(
 ) -> ApiErrorResponse | VirtualMachineResponse | None:
     """ Update network
 
-     Changes IPv4 internet access, network throughput limits, or firewall fields. `ipv4_internet_access`
-    reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6
-    address brings its own internet path.
+     Changes IPv4 internet access, WireGuard gateway access, network throughput limits, or firewall
+    fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address
+    needs it. A public IPv6 address brings its own internet path.
 
     Args:
         virtual_machine_id (str):
@@ -193,9 +193,9 @@ async def asyncio_detailed(
 ) -> Response[ApiErrorResponse | VirtualMachineResponse]:
     """ Update network
 
-     Changes IPv4 internet access, network throughput limits, or firewall fields. `ipv4_internet_access`
-    reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6
-    address brings its own internet path.
+     Changes IPv4 internet access, WireGuard gateway access, network throughput limits, or firewall
+    fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address
+    needs it. A public IPv6 address brings its own internet path.
 
     Args:
         virtual_machine_id (str):
@@ -235,9 +235,9 @@ async def asyncio(
 ) -> ApiErrorResponse | VirtualMachineResponse | None:
     """ Update network
 
-     Changes IPv4 internet access, network throughput limits, or firewall fields. `ipv4_internet_access`
-    reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6
-    address brings its own internet path.
+     Changes IPv4 internet access, WireGuard gateway access, network throughput limits, or firewall
+    fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address
+    needs it. A public IPv6 address brings its own internet path.
 
     Args:
         virtual_machine_id (str):

@@ -29,6 +29,8 @@ The token is valid for **30 seconds** and works **once**. A reload cannot reuse 
 
 TTY output is collected while the VM runs, even with no viewer. A slow viewer is disconnected so it cannot block the guest.
 
+A TTY session stays open when the VM stops or restarts. It shows the output of the next boot. Metal discards input that you type while the VM is stopped.
+
 SSH needs a reachable guest and its SSH service. Metal creates a temporary key for that session, adds it through the guest metadata service, and removes it when the session ends. [SSH key changes](ssh-keys.md) explains the guest's key lookup.
 
 ::: warning The console is access to the guest

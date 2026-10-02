@@ -175,7 +175,7 @@ class SSHTask(Document):
 		self._mark_running()
 		try:
 			target = frappe.get_doc(self.target_type, self.target)
-			runner = SSHRunner(target.ssh_host, self.port, self.ssh_user)
+			runner = SSHRunner(target.ssh_host, self.port, self.ssh_user, target.get_ssh_proxy_command())
 			result = runner.run_command(
 				self.script,
 				data=self._environment(),

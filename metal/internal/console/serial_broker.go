@@ -10,12 +10,19 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 )
 
-// defaultScrollbackBytes is the console history a new viewer receives.
-const defaultScrollbackBytes = 128 << 10
+const (
+	// defaultScrollbackBytes is the console history a new viewer receives.
+	defaultScrollbackBytes = 128 << 10
+
+	// consoleWaitInterval is how often a viewer checks for the next console of a
+	// VM that is restarting.
+	consoleWaitInterval = 500 * time.Millisecond
+)
 
 var (
 	// ErrConsoleNotFound reports that a VM has no open console.
@@ -23,6 +30,9 @@ var (
 
 	// ErrConsoleBusy reports that a console has too many viewers.
 	ErrConsoleBusy = errors.New("console: too many viewers")
+
+	// ErrViewerTooSlow reports that a viewer fell behind the console output.
+	ErrViewerTooSlow = errors.New("console: viewer too slow")
 )
 
 // Winsize is a viewer terminal size applied to the PTY.
@@ -156,17 +166,27 @@ func (b *SerialBroker) Close(id string) error {
 	return errors.Join(b.descriptorStore.Remove(id), openConsole.close())
 }
 
-// Attach streams a VM's console to one viewer until it disconnects.
+// Attach streams a VM's console to one viewer until it disconnects. The viewer
+// stays attached when the VM restarts and continues on the next console.
 func (b *SerialBroker) Attach(ctx context.Context, id string, client io.ReadWriter, resize <-chan Winsize) error {
-	b.mutex.Lock()
-	openConsole := b.consoles[id]
-	b.mutex.Unlock()
-
+	openConsole := b.currentConsole(id)
 	if openConsole == nil {
 		return ErrConsoleNotFound
 	}
 
-	return openConsole.attach(ctx, client, resize)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go b.copyInput(ctx, id, client, cancel)
+
+	for openConsole != nil {
+		if err := openConsole.attach(ctx, client, resize); err != nil {
+			return err
+		}
+		openConsole = b.waitForConsole(ctx, id)
+	}
+
+	return nil
 }
 
 // Shutdown releases every console. The stored descriptors keep the PTYs open.
@@ -178,6 +198,50 @@ func (b *SerialBroker) Shutdown() {
 
 	for _, openConsole := range openConsoles {
 		_ = openConsole.release()
+	}
+}
+
+// currentConsole returns the open console of a VM, or nil.
+func (b *SerialBroker) currentConsole(id string) *console {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.consoles[id]
+}
+
+// waitForConsole returns the next open console of a VM, or nil when ctx ends.
+func (b *SerialBroker) waitForConsole(ctx context.Context, id string) *console {
+	ticker := time.NewTicker(consoleWaitInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if openConsole := b.currentConsole(id); openConsole != nil {
+				return openConsole
+			}
+		}
+	}
+}
+
+// copyInput forwards viewer input to the current console of a VM. Input sent
+// while the VM has no console is dropped.
+func (b *SerialBroker) copyInput(ctx context.Context, id string, client io.Reader, cancel context.CancelFunc) {
+	defer cancel()
+
+	buffer := make([]byte, inputBufferBytes)
+	for {
+		count, err := client.Read(buffer)
+		if count > 0 {
+			if openConsole := b.currentConsole(id); openConsole != nil {
+				openConsole.writeMaster(buffer[:count])
+			}
+		}
+		if err != nil || ctx.Err() != nil {
+			return
+		}
 	}
 }
 

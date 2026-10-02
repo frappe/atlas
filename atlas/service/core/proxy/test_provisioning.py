@@ -151,7 +151,13 @@ class TestApplySteps(UnitTestCase):
 			patch.object(provisioning, "ProxyConfiguration") as configuration,
 			patch.object(provisioning, "SSHRunner") as ssh_runner,
 			patch.object(provisioning.SSHTask, "create_for_command") as create_task,
-			patch.object(provisioner.__class__, "ssh_host", new=property(lambda self: "203.0.113.9")),
+			patch.object(
+				provisioner.__class__,
+				"virtual_machine",
+				new=property(
+					lambda self: SimpleNamespace(ssh_host="vm-00001", get_ssh_proxy_command=lambda: "proxy")
+				),
+			),
 		):
 			configuration.return_value.digest = "digest-2"
 			ssh_runner.return_value.run_command.return_value = SSHResult("no space left", 1)
@@ -170,7 +176,13 @@ class TestApplySteps(UnitTestCase):
 			patch.object(provisioning, "ProxyConfiguration") as configuration,
 			patch.object(provisioning, "SSHRunner") as ssh_runner,
 			patch.object(provisioning.SSHTask, "create_for_command") as create_task,
-			patch.object(provisioner.__class__, "ssh_host", new=property(lambda self: "203.0.113.9")),
+			patch.object(
+				provisioner.__class__,
+				"virtual_machine",
+				new=property(
+					lambda self: SimpleNamespace(ssh_host="vm-00001", get_ssh_proxy_command=lambda: "proxy")
+				),
+			),
 		):
 			configuration.return_value.digest = "digest-3"
 			ssh_runner.return_value.run_command.return_value = SSHResult("", 0)
@@ -190,6 +202,10 @@ class TestApplySteps(UnitTestCase):
 				provisioning.frappe,
 				"get_single",
 				return_value={"http_proxy_package_file": "file-1", "http_proxy_package_hash": "sha-1"},
+			),
+			patch(
+				"atlas.service.core.service_package.get_download_url",
+				return_value="https://atlas.test/files/file-1",
 			),
 			patch.object(provisioning.SSHTask, "create_for_script_file") as create_task,
 		):

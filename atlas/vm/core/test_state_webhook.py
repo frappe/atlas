@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
+from uuid import uuid7
 
 import frappe
 from frappe.integrations.doctype.webhook.webhook import get_context
@@ -82,7 +83,7 @@ class TestStateWebhookConfiguration(UnitTestCase):
 		self.assertEqual([document.webhook_docevent for document in saved], ["on_update", "on_trash"])
 		self.assertEqual(
 			[document.condition for document in saved],
-			['doc.is_new() or doc.has_value_changed("status")', None],
+			['doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("server")', None],
 		)
 		self.assertEqual([document.is_dynamic_url for document in saved], [0, 0])
 		self.assertEqual([document.background_jobs_queue for document in saved], [None, None])
@@ -120,6 +121,7 @@ class TestStateWebhookCondition(IntegrationTestCase):
 			{
 				"name": self.name,
 				"virtual_machine": self.name,
+				"server": str(uuid7()),
 				"status": "running",
 				"synced_at": now_datetime(),
 			}
@@ -142,6 +144,12 @@ class TestStateWebhookCondition(IntegrationTestCase):
 	def test_a_status_change_sends_a_delivery(self) -> None:
 		state = self.load_saved_state()
 		state.status = "stopped"
+
+		self.assertTrue(self.meets_condition(state))
+
+	def test_a_server_change_sends_a_delivery(self) -> None:
+		state = self.load_saved_state()
+		state.server = str(uuid7())
 
 		self.assertTrue(self.meets_condition(state))
 

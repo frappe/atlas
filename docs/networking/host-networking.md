@@ -32,6 +32,8 @@ Metal needs no per-VM guest-address allocator. WG Mesh discovers which host owns
 | `host` | Host uplink. IPv4 uses namespace NAT. | `0.0.0.0/0` via `host` |
 | Mesh address in `fdaa::/16` | Gateway VM through WG Mesh. IPv6 only. | `2000::/3` via `fdaa:1::56` |
 
+A VM with `is_accessible_via_wireguard_gateway` also gets the [WireGuard gateway](wg-mesh/gateways.md#use-the-wireguard-gateway) return routes. Host sync sends them, and they never appear in `network.routes`.
+
 ## Attach a public address
 
 Direct public addresses need a route via `host` for replies.
@@ -93,7 +95,9 @@ Each peer uses:
 
 At startup, `metald` runs WG Mesh `configure` to install or replace its programs without interruption. VM mesh registration follows veth creation and is removed before link deletion.
 
-Gateway VMs and VMs with public IPv6 blocks route `::/0` through the host. Tenant-0 VMs cross tenants only when host sync lists them as privileged. See [mesh gateways](wg-mesh/gateways.md).
+Metal syncs changed VM mesh state on the next reconciliation pass. It skips unchanged registrations, so it does not scan the WG Mesh route map every five seconds. Restarting `metald` syncs all VMs.
+
+Every guest routes `::/0` through the host. The VM namespace routes decide which destinations leave, so a VM without routes still reaches only the mesh. Tenant-0 VMs cross tenants only when host sync lists them as privileged. See [mesh gateways](wg-mesh/gateways.md).
 
 ## Guest address updates
 

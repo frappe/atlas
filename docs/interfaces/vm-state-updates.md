@@ -12,10 +12,10 @@ The default `central_id` is `1`. Other IDs need developer mode or the `allow_mul
 
 | Event | Trigger |
 | --- | --- |
-| `vm.state` | Atlas first saves a host report or the reported status changes. |
+| `vm.state` | Atlas first saves a host report, the reported status changes, or the VM moves to another host. |
 | `vm.state.deleted` | Atlas deletes the state record. |
 
-A host report with the same status sends no new `vm.state` message. Atlas includes the VM ID, status, and `observed_at` time in a JSON request. It sends `X-FC-Source: atlas` and includes `X-FC-Region` when the region has a name. Frappe signs the request with the shared secret.
+A host report with the same status and host sends no new `vm.state` message. Atlas includes the VM ID, host server, status, and `observed_at` time in a JSON request. It sends `X-FC-Source: atlas` and includes `X-FC-Region` when the region has a name. Frappe signs the request with the shared secret.
 
 The configured request timeout is 10 seconds, with at most 3 retries. For the current VM state, read Metal. The [host report guide](../region/host-sync.md) explains how the Atlas cache gets its data.
 

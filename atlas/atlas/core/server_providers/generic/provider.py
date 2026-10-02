@@ -47,7 +47,7 @@ class GenericProvider(ServerProvider):
 	@override
 	def validate_server(self, server: "MetalServer") -> None:
 		"""Require the storage pool device that host registration stores."""
-		self.storage_pool_device(server)
+		self.get_storage_pool_device(server)
 
 	@override
 	def validate_credentials(self) -> bool:
@@ -86,12 +86,8 @@ class GenericProvider(ServerProvider):
 
 	@override
 	def storage_pool_device(self, server: "MetalServer") -> str:
-		"""Return the storage pool device that host registration chose."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		device = metadata.get("storage_pool_device") if isinstance(metadata, dict) else None
-		if not device:
-			raise GenericError(f"Metal Server {server.name} has no registered storage pool device")
-		return device
+		"""Refuse a host without the storage pool device that registration stores."""
+		raise GenericError(f"Metal Server {server.name} has no registered storage pool device")
 
 	@override
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:

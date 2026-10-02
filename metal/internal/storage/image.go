@@ -109,8 +109,12 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 	if err != nil {
 		return err
 	}
+	// The manifest is written last and disks clone only after it exists, so
+	// artifacts without one are an unfinished import that is safe to remove.
 	if !found && artifactsExist {
-		return fmt.Errorf("%w: image reference %q has no manifest", ErrImageConflict, imageReference)
+		if err := store.removeImageArtifacts(ctx, imageReference); err != nil {
+			return fmt.Errorf("remove incomplete image %q: %w", imageReference, err)
+		}
 	}
 
 	// An import that does not reach the manifest write leaves nothing behind.
@@ -120,8 +124,9 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 			if completed {
 				return
 			}
-			_ = os.RemoveAll(store.imageDirectory(imageReference))
-			_ = platform.Run(context.Background(), "zfs", "destroy", "-r", store.pool.baseDataset(imageReference))
+			if err := store.removeImageArtifacts(context.Background(), imageReference); err != nil {
+				store.logger.Warn("remove incomplete image", "image", imageReference, "error", err)
+			}
 		}()
 	}
 
@@ -144,6 +149,14 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 		completed = true
 	}
 	return nil
+}
+
+// removeImageArtifacts deletes the base dataset and directory of one image.
+func (store *ImageStore) removeImageArtifacts(ctx context.Context, imageReference string) error {
+	if err := destroyIfPresent(ctx, store.pool.baseDataset(imageReference)); err != nil {
+		return err
+	}
+	return os.RemoveAll(store.imageDirectory(imageReference))
 }
 
 // hasImageSource reports whether a policy names remote image content.

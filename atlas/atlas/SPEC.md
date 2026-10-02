@@ -46,7 +46,7 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 
 ## SSH tasks
 
-- `target` is a Dynamic Link. The task connects to the target's `ssh_host`.
+- `target` is a Dynamic Link. The task connects to the target's `ssh_host` through its `get_ssh_proxy_command()`. A VM uses its host as the proxy.
 - A task stores no credentials. It uses the Atlas host identity.
 - `script` and `environment` are plain text. Use `SSHRunner` directly for secret data.
 

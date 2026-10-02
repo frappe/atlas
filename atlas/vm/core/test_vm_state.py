@@ -44,6 +44,8 @@ class TestVirtualMachineState(UnitTestCase):
 
 		inserted, updated = calls["saved"]
 		self.assertEqual(inserted.virtual_machine, "vm-00001")
+		self.assertEqual(inserted.server, "metal-1")
+		self.assertEqual(updated.server, "metal-1")
 		self.assertEqual(updated.status, "running")
 		self.assertEqual(updated.synced_at, datetime(2026, 9, 9, 10, 0))
 

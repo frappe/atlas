@@ -34,3 +34,17 @@ func TestParseVMStateRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestParseControllerAcceptsOnlyATenantZeroMeshAddress(t *testing.T) {
+	if address, err := parseController(""); err != nil || address != [16]byte{} {
+		t.Fatalf("an empty controller must clear the map, got %v, %v", address, err)
+	}
+	if _, err := parseController("fdaa:1::ffff:ffff:ffff:ffff"); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"fdab:1::7", "fdaa:1:0:2::1", "10.1.0.2"} {
+		if _, err := parseController(text); err == nil {
+			t.Errorf("accepted controller %q", text)
+		}
+	}
+}

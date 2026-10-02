@@ -13,6 +13,7 @@ from frappe.utils import add_days, get_datetime, now_datetime
 from atlas.atlas.doctype.atlas_settings.atlas_settings import WILDCARD_TLS_RENEWAL_WINDOW_DAYS
 from atlas.auth.jwks import sync_central_jwks
 from atlas.metal_server.core.catalog_sync import CatalogSynchronizer
+from atlas.service.core.warpgate.installation import WarpgateTokenManager, publish_warpgate_ui
 
 # The setup input carries the fields of the selected server provider only.
 PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -45,7 +46,14 @@ PROVIDER_IMMUTABLE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 )
 
 OPTIONAL_STRING_FIELDS = frozenset(
-	{"central_jwks_url", "default_metal_machine_size", "default_metal_machine_image"}
+	{
+		"central_jwks_url",
+		"default_metal_machine_size",
+		"default_metal_machine_image",
+		"warpgate_url",
+		"warpgate_api_token",
+		"warpgate_api_token_id",
+	}
 )
 
 
@@ -73,6 +81,9 @@ class AtlasSetupConfiguration:
 	auto_spawn_metal_server: bool
 	default_metal_machine_size: str
 	default_metal_machine_image: str
+	warpgate_url: str = ""
+	warpgate_api_token: str = ""
+	warpgate_api_token_id: str = ""
 	scaleway_organization_id: str = ""
 	scaleway_project_id: str = ""
 	scaleway_zone: str = ""
@@ -199,9 +210,12 @@ class AtlasSetup:
 		self._sync_catalogs()
 		self._sync_central_keys()
 		self._issue_wildcard_certificate()
+		publish_warpgate_ui(self.settings)
 		self._validate_result()
 		# A site command has no request transaction. Keep the completed reconciliation.
 		frappe.db.commit()  # nosemgrep
+		# Warpgate cannot roll back token deletion, so store the new token first.
+		WarpgateTokenManager(self.settings).delete_other_tokens()
 
 	def _apply_settings(self) -> None:
 		self.settings.update(self.configuration.settings_values())
@@ -281,8 +295,9 @@ class AtlasSetup:
 		catalog.sync_server_images()
 
 	def _sync_central_keys(self) -> None:
+		# The scheduler retries every 5 minutes, so setup goes on without the keys.
 		if not sync_central_jwks():
-			frappe.throw(_("Atlas could not get the configured Central JSON Web Key Set."))
+			print("atlas: Central JSON Web Key Set is not available yet. See Error Log.")
 		self.settings.reload()
 
 	def _issue_wildcard_certificate(self) -> None:

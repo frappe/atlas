@@ -16,7 +16,7 @@ import (
 
 const vmLockPath = "/run/lock/atlas-wg-mesh.lock"
 
-var uplinkName, wireGuardName string
+var uplinkName, wireGuardName, controllerText string
 
 var resetForce bool
 var statusJSON bool
@@ -25,8 +25,16 @@ var configureCommand = &cobra.Command{
 	Use:   "configure",
 	Short: "install or refresh Atlas WG Mesh on this host",
 	Args:  cobra.NoArgs,
-	RunE: func(*cobra.Command, []string) error {
-		return configureHost(uplinkName, wireGuardName)
+	RunE: func(command *cobra.Command, _ []string) error {
+		var controller *[16]byte
+		if command.Flags().Changed("controller") {
+			address, err := parseController(controllerText)
+			if err != nil {
+				return err
+			}
+			controller = &address
+		}
+		return configureHost(uplinkName, wireGuardName, controller)
 	},
 }
 
@@ -60,6 +68,7 @@ var versionCommand = &cobra.Command{
 func init() {
 	configureCommand.Flags().StringVar(&uplinkName, "uplink", "", "mesh uplink interface")
 	configureCommand.Flags().StringVar(&wireGuardName, "wireguard", "", "WireGuard interface")
+	configureCommand.Flags().StringVar(&controllerText, "controller", "", "Atlas tenant-0 mesh address on wg0")
 	configureCommand.MarkFlagRequired("uplink")
 	configureCommand.MarkFlagRequired("wireguard")
 	resetCommand.Flags().BoolVar(&resetForce, "force", false, "remove mesh state while local VMs remain")
@@ -68,8 +77,23 @@ func init() {
 	rootCommand.AddCommand(configureCommand, resetCommand, statusCommand, versionCommand)
 }
 
-// configureHost installs the mesh or replaces its BPF without detaching a live hook.
-func configureHost(uplinkName, wireGuardName string) error {
+// parseController accepts an empty value or a tenant-0 VM address.
+func parseController(text string) ([16]byte, error) {
+	if text == "" {
+		return [16]byte{}, nil
+	}
+	address, err := parseMeshAddress(text)
+	if err != nil {
+		return [16]byte{}, err
+	}
+	if address[4]|address[5]|address[6]|address[7] != 0 {
+		return [16]byte{}, fmt.Errorf("controller %s is not a tenant-0 address", text)
+	}
+	return address, nil
+}
+
+// configureHost installs the mesh or replaces its BPF without detaching a live hook. A nil controller keeps the stored address.
+func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error {
 	unlock, err := lockFile(vmLockPath, true)
 	if err != nil {
 		return err
@@ -121,6 +145,11 @@ func configureHost(uplinkName, wireGuardName string) error {
 		rollbackError := rollbackHooks(hooks, oldHash, oldHashError == nil)
 		candidate.cleanup()
 		return errors.Join(err, rollbackError)
+	}
+	if controller != nil {
+		if err := writeMap("controller_address", uint32(0), *controller); err != nil {
+			return fmt.Errorf("write the controller address: %w", err)
+		}
 	}
 
 	fmt.Printf("Atlas WG Mesh runs on %s and %s\n", uplinkName, wireGuardName)

@@ -6,7 +6,10 @@ REQUEST_TIMEOUT_SECONDS = 10
 MAXIMUM_RETRIES = 3
 
 DELIVERIES = {
-	"on_update": ("vm.state", 'doc.is_new() or doc.has_value_changed("status")'),
+	"on_update": (
+		"vm.state",
+		'doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("server")',
+	),
 	"on_trash": ("vm.state.deleted", None),
 }
 
@@ -42,6 +45,7 @@ def configure_state_webhooks(
 				{
 					"event": event_name,
 					"virtual_machine": "{{ doc.virtual_machine }}",
+					"server": "{{ doc.server }}",
 					"status": "{{ doc.status }}",
 					"observed_at": "{{ doc.synced_at }}",
 				}

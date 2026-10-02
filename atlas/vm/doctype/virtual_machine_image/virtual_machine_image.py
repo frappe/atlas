@@ -150,6 +150,41 @@ class VirtualMachineImage(Document):
 			"kernel": {"url": self.get_artifact_url("kernel", expiry_seconds), "sha256": self.kernel_sha256},
 		}
 
+	@staticmethod
+	def get_latest_base_image(architecture: str = "amd64") -> VirtualMachineImage:
+		"""Return the Ubuntu base System image with the highest version. The newest build wins a tie."""
+		names = frappe.get_all(
+			"Virtual Machine Image",
+			filters={
+				"image_type": "system",
+				"status": "Available",
+				"enabled": 1,
+				"tenant_id": 0,
+				"architecture": architecture,
+			},
+			pluck="name",
+			order_by="creation desc",
+		)
+		images = [
+			cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names
+		]
+		base_images = [image for image in images if image.ubuntu_base_version]
+		if not base_images:
+			frappe.throw(
+				_("No available Ubuntu base image for {0}. Build one with build-ubuntu-base-image.").format(
+					architecture
+				)
+			)
+		return max(base_images, key=lambda image: image.ubuntu_base_version)
+
+	@property
+	def ubuntu_base_version(self) -> tuple[int, ...]:
+		"""Return the Ubuntu version of a base image, such as (26, 4), or an empty tuple for another image."""
+		tags = {tag.key: tag.value for tag in self.tags}
+		if tags.get("purpose") != "base" or tags.get("os") != "Ubuntu":
+			return ()
+		return tuple(int(part) for part in tags["os_version"].split("."))
+
 	@property
 	def is_shared(self) -> bool:
 		"""Return whether every tenant can read and boot this image."""
