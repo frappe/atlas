@@ -31,6 +31,8 @@ Set `atlas.import_server_id` to import this host as a Metal Server after Atlas s
 
 In Atlas mode, setup creates the Atlas WireGuard peer and its systemd timer. See [Atlas access to hosts](../../docs/region/host-access.md) for the network path and host SSH access.
 
+Add an `[atlas.warpgate]` table with `issuer_url`, `client_id`, and `client_secret` to run Warpgate in the VM. People then reach hosts with `ssh -p 2223 <email>:<host title>@warpgate.<wildcard>`. See [People access through Warpgate](../../docs/region/host-access.md#people-access-through-warpgate).
+
 Gateway mode runs a development WireGuard gateway instead of Atlas. Deploy it with `pilot --site SITE deploy-dev-gateway <metal-server-id>`. See [development gateway setup](../../docs/region/host-access.md#development-gateway).
 
 In Atlas mode, setup creates the server provider network resources and the Route53 records. It also gets the provider catalogs and a wildcard certificate. Each `[[image]]` table creates one system image in site-file storage. Cargo configures object storage later.

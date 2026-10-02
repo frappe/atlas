@@ -16,6 +16,7 @@ Tests sit beside the code as `test_*.py`.
 | Migration and resize | [VM migration](../compute/migration.md) | [VM module](../../atlas/vm/SPEC.md) | [Migration](../../atlas/vm/core/vm_migration.py), [resize](../../atlas/vm/core/vm_resize.py) |
 | Images | [Images](../storage/image-records.md) | [VM module](../../atlas/vm/SPEC.md) | [Image transfer](../../atlas/vm/core/vm_image_transfer.py) |
 | Hosts and providers | [Hosts and providers](../region/hosts-and-providers.md) | [Metal Server module](../../atlas/metal_server/SPEC.md) | [Provisioning](../../atlas/metal_server/core/provisioning.py), [providers](../../atlas/atlas/core/server_providers/) |
+| People access to hosts | [Host access](../region/host-access.md#people-access-through-warpgate) | [Service module](../../atlas/service/SPEC.md) | [Warpgate](../../atlas/service/core/warpgate/), [host API](../../atlas/api/routes/hosts.py) |
 | Host sync | [Host sync](../region/host-sync.md) | [Metal Server module](../../atlas/metal_server/SPEC.md) | [Usage job](../../atlas/metal_server/usage.py) |
 | Public IPs | [Public IPs](../networking/public-ips.md) | [Metal Server module](../../atlas/metal_server/SPEC.md) | [Public IP service](../../atlas/metal_server/core/public_ip_service.py) |
 | Service VM lifecycle | [Service VMs](../region/service-vms.md) | [Service module](../../atlas/service/SPEC.md) | [Service records](../../atlas/service/doctype/) |

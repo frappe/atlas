@@ -33,6 +33,13 @@ central_jwks_url = ""
 import_server_id = ""
 import_storage_pool_device = ""
 
+# To enable host access through Warpgate, register an OIDC client in Central.
+# Set its redirect URI as described in docs/region/host-access.md.
+# [atlas.warpgate]
+# issuer_url = "https://central.example.com/oidc"
+# client_id = "warpgate-region"
+# client_secret = "change-me"
+
 [atlas.vm_scheduling]
 use_dedicated_sleepy_vm_hosts = true
 placement_strategy = "balanced"

@@ -13,6 +13,7 @@ from frappe.model.document import Document
 from frappe.utils import add_days, convert_utc_to_system_timezone, flt, get_datetime, now_datetime
 
 from atlas.service.core.proxy.configuration import push_configuration_to_active_proxies
+from atlas.service.core.warpgate.installation import install_warpgate_certificate
 
 if TYPE_CHECKING:
 	from atlas.atlas.core.dns_providers.base import DnsProvider
@@ -472,6 +473,7 @@ class AtlasSettings(Document):
 		self.wildcard_tls_certificate = issued.certificate_pem
 		self.wildcard_tls_private_key = issued.private_key_pem
 		self.save(ignore_permissions=True)
+		install_warpgate_certificate(self)
 
 	# Internal methods
 

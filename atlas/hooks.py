@@ -244,6 +244,7 @@ scheduler_events = {
 	"daily": [
 		"atlas.atlas.doctype.atlas_settings.atlas_settings.renew_expiring_wildcard_certificate",
 		"atlas.metal_server.doctype.metal_server.metal_server.renew_expiring_tls_certificates",
+		"atlas.service.core.warpgate.installation.renew_warpgate_token",
 	],
 }
 

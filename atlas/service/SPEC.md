@@ -13,6 +13,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 | `IPv6RouterServer` (DocType) | One router VM and its pool, `ipv6-router-NNN` |
 | `service_package` | Publishes a package when its digest changes |
 | `core/proxy`, `core/cargo`, `core/ipv6_router` | Provisioning |
+| `core/warpgate` | Warpgate client, target sync, host access grants, and the UI certificate. See [People access through Warpgate](../../docs/region/host-access.md#people-access-through-warpgate). |
 
 ## Shared rules
 
@@ -52,3 +53,13 @@ See the [HTTP proxy specification](../../services/http-proxy/SPEC.md).
 
 - [IPv6 router service](../../docs/networking/ipv6-router.md)
 - [HTTP proxy](../../docs/networking/http-proxy/index.md)
+
+## Warpgate
+
+- Warpgate runs in the Atlas VM, not in a service VM. A tenant-0 VM cannot reach host `wg0`, and the host firewall admits SSH only from the Atlas address.
+- `WarpgateClient` is the only code that calls the Warpgate admin API. The version is pinned in `scripts/install-warpgate.py`.
+- The target description `Managed by Atlas: <Metal Server name>` marks Atlas targets. The sync never touches other targets.
+- A renamed host renames its target and its `host:<title>` role. Grants point at the role ID, so they stay.
+- Atlas stores no grants. Warpgate ends a grant at `expires_at`.
+- `WarpgateTokenManager` keeps one token: the one whose ID is in `warpgate_api_token_id`. Each `install-warpgate.py` run issues a token, and `configure-atlas` stores it with its ID.
+- The sync reports one failure message at most once an hour while it stays the same.

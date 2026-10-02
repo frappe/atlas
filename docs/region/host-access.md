@@ -108,6 +108,70 @@ Set it to an Atlas listener on the Atlas mesh address, for example `http://[fdaa
 
 Without `atlas_internal_url`, clients use `atlas_base_url` or the site URL.
 
+## People access through Warpgate
+
+People reach hosts through [Warpgate](https://warpgate.null.page/), an SSH bastion. Each region runs one Warpgate in the Atlas VM. Warpgate connects to the host `wg0` address from the Atlas address, so the host firewall needs no new rule. Atlas stores no people and no grants. Warpgate owns them.
+
+```text
+person ──ssh -p 2223 <email>:<host title>@warpgate.<wildcard>──> Warpgate (Atlas VM) ──root@<host wg0>:22──> host
+person ──https://warpgate.<wildcard>──> nginx (region wildcard certificate) ──> Warpgate 127.0.0.1:8888
+Central ──/api/atlas/hosts/{id}/access/grant──> Atlas ──admin API──> Warpgate
+```
+
+Example: `ssh -p 2223 alice@frappe.io:metal-par-1-2@warpgate.par-1.frappe.cloud`. Warpgate prints a link. The person opens it, signs in to Central, and approves the login. People need no SSH keys.
+
+### Access
+
+Signing in gives no host access. Each access is a grant of one Warpgate role with an end time:
+
+| Role | Opens | Granted by |
+| --- | --- | --- |
+| `host:<host title>` | One host | `POST /api/atlas/hosts/{id}/access/grant` |
+| `all-hosts` | Every host | The same route with `all` as the ID |
+| `warpgate:admin` | The Warpgate admin UI, not hosts | Central role `Atlas Warpgate Admin`, at sign-in |
+
+The grant and revoke routes, and `GET /api/atlas/hosts`, need scope `*` and tenant 0. A grant registers the person in Warpgate when needed, so Central can grant before the first sign-in. `expires_at` must be at most 24 hours away. Set site config `warpgate_grant_max_hours` to change the limit. Warpgate ends the access by itself at `expires_at`. A Warpgate admin can also grant a role in the Warpgate admin UI.
+
+### What Atlas keeps in step
+
+A job runs every minute. It makes the Warpgate targets match the hosts that have a `wg0` key:
+
+- One target for each host, named after the host title, `root` on the host `wg0` address.
+- The roles `all-hosts` and `host:<host title>` on each target. A renamed host keeps its target, role, and grants.
+- The first time a running host is seen, Atlas adds the Warpgate client keys to root `authorized_keys` and gives Warpgate the host key. Warpgate refuses any other host key.
+- Targets and roles of deleted hosts are removed. Targets that Atlas did not create are left alone.
+
+Atlas names a new host `metal-<region name>-<counter>`, such as `metal-waw-3-4`. The title is read-only. It must be one lowercase DNS label and unique across all hosts, including deleted ones.
+
+### Install
+
+Central must provide an OpenID Connect (OIDC) issuer that Warpgate can reach. Register Warpgate as an OIDC client in Central. Set its redirect URI to `https://warpgate.<wildcard>/@warpgate/api/sso/return`.
+
+Add the client details to `atlas-vm.toml` on the host that runs atlas-vm:
+
+```toml
+[atlas.warpgate]
+issuer_url = "https://central.example.com/oidc"
+client_id = "warpgate-region"
+client_secret = "change-me"
+```
+
+Use Central's issuer URL for `issuer_url`. Use the client ID and secret from the Warpgate client registration. The separate `atlas.central_jwks_url` lets Atlas validate Central API tokens.
+
+To grant Warpgate admin access, Central must send `Atlas Warpgate Admin` in the OIDC `roles` claim. Warpgate maps that value to `warpgate:admin`.
+
+atlas-vm setup then installs a pinned Warpgate. It creates the `atlas` user with target, role, user, and configuration permissions. Configuration permission lets Atlas add known host keys. Setup stores the user's API token in **Atlas Settings**.
+
+Setup also opens TCP 2223 on the Atlas host, adds the nginx server, and creates `warpgate.<wildcard>` as a CNAME to the Atlas site. Atlas copies the region wildcard certificate to nginx when it issues or renews it.
+
+Only the Warpgate SSH and HTTP listeners are on. The HTTP listener is on loopback behind nginx.
+
+The Warpgate `admin` and `atlas` passwords are in `/root/warpgate-admin-password` and `/root/warpgate-atlas-password`. Only root can read them. If setup fails, run it again. It continues from the last completed step.
+
+The Atlas token lasts one year. Atlas Settings stores the token and its ID. A daily job replaces the stored token 30 days before it expires and deletes every other atlas token. If the token expired, run atlas-vm setup again: each run issues a new token.
+
+In development, run Warpgate on the machine that runs Atlas, so it uses the local `atlas0`. Set **URL**, **API Token**, and **API Token ID** in the Warpgate section of Atlas Settings by hand.
+
 ## Recovery
 
 | Problem | Action |
@@ -116,6 +180,7 @@ Without `atlas_internal_url`, clients use `atlas_base_url` or the site URL.
 | New host stops at `wireguard-link` | Check that `atlas0.conf` lists the host and that the timer applied it: `systemctl status atlas-wireguard-atlas0.service`. |
 | Atlas key lost | Restore the site backup with its `site_config.json`, because the encryption key is in that file. A new key needs the provider console on every host: clear `wireguard_public_key` in Atlas Settings, run `configure-atlas-wireguard`, then run `configure-wireguard.sh` on each host. |
 | Host firewall blocks access | From the private network or console, run `systemctl disable --now atlas-host-firewall && nft delete table inet atlas_host`. |
+| Warpgate refuses a person | Check that the grant is active for the right email and host. A target appears within a minute after the host gets its `wg0` key. Read Error Log for "Warpgate target sync failed". |
 
 ::: details Source code and tests
 
@@ -123,6 +188,7 @@ Without `atlas_internal_url`, clients use `atlas_base_url` or the site URL.
 - [Timer installer](../../scripts/install-atlas-wireguard.sh) applies a file and its input filter as root.
 - [WireGuard script](../../atlas/scripts/configure-wireguard.sh) adds the Atlas peer to a host.
 - [Host firewall script](../../atlas/scripts/install-host-firewall.sh) writes the host rules.
+- [Warpgate sync, access, and client](../../atlas/service/core/warpgate/) and the [installer](../../scripts/install-warpgate.py).
 - [atlas-vm](../../scripts/atlas-vm/atlas_vm.py) runs the gateway VM.
 - [WG Mesh VM hook](../../services/wg-mesh/bpf/vm.h) routes tenant-0 traffic to the controller.
 - [Atlas peer tests](../../atlas/metal_server/core/test_atlas_peer.py) and [provisioning tests](../../atlas/metal_server/core/test_provisioning.py) check identity and setup order.

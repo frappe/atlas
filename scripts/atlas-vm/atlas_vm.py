@@ -47,6 +47,7 @@ FIRECRACKER_VERSION = "v1.16.1"
 HOST_ADDRESS = "172.16.100.1"
 VM_ADDRESS = "172.16.100.2"
 FORWARD_PORTS = (80, 443)
+WARPGATE_SSH_PORT = 2223
 GATEWAY_PORT = 51821
 GATEWAY_DEVELOPER_ADDRESS = "172.16.100.3"
 SCALEWAY_ZONES = {
@@ -141,6 +142,7 @@ class Settings:
 	import_storage_pool_device: str = ""
 	private_network_cidr: str = ""
 	developer_public_key: str = ""
+	has_warpgate: bool = False
 
 	@classmethod
 	def read(cls, path: Path) -> Settings:
@@ -167,6 +169,7 @@ class Settings:
 			setup_script_url=f"{raw}/{branch}/scripts/atlas-vm/setup.py",
 			import_server_id=atlas.get("import_server_id", ""),
 			import_storage_pool_device=atlas.get("import_storage_pool_device", ""),
+			has_warpgate="warpgate" in atlas,
 			private_network_cidr=atlas.get("private_network_cidr", ""),
 			developer_public_key=document.get("gateway", {}).get("developer_public_key", ""),
 		)
@@ -242,6 +245,7 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 			"aws",
 			"route53",
 			"letsencrypt",
+			"warpgate",
 		},
 		path,
 		"atlas",
@@ -273,6 +277,11 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 	_validate_provider_configuration(atlas, path, provider)
 	_validate_route53_configuration(_required_table(atlas, "route53", path, "atlas"), path)
 	_validate_letsencrypt_configuration(_required_table(atlas, "letsencrypt", path, "atlas"), path)
+	if "warpgate" in atlas:
+		warpgate = _required_table(atlas, "warpgate", path, "atlas")
+		_validate_keys(warpgate, {"issuer_url", "client_id", "client_secret"}, path, "atlas.warpgate")
+		for key in ("issuer_url", "client_id", "client_secret"):
+			_required_string(warpgate, key, path, "atlas.warpgate")
 
 
 def _validate_vm_scheduling_configuration(scheduling: dict, path: Path) -> None:
@@ -779,6 +788,8 @@ class VirtualMachine:
 	@property
 	def port_forwards(self) -> list[tuple[int, int]]:
 		ports = () if self.settings.developer_public_key else FORWARD_PORTS
+		if self.settings.has_warpgate:
+			ports = (*ports, WARPGATE_SSH_PORT)
 		return [(self.settings.ssh_port, 22)] + [(port, port) for port in ports]
 
 	def ssh_arguments(self, command: list[str] | None = None) -> list[str]:

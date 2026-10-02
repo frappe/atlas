@@ -36,9 +36,10 @@ Atlas creates regional signing and Metal trust material as part of settings setu
 | `atlas_internal_url` | Site URL that hosts and tenant-0 VMs use for Atlas files and APIs. |
 | `atlas_base_url` | Public site URL when the normal site URL is not public. It is the fallback for internal clients. |
 | `atlas_wireguard_mtu` | MTU of `atlas0`. Restart the interface after a change. |
+| `warpgate_grant_max_hours` | Longest Warpgate host access grant, 24 hours by default. |
 | `is_unicast_network_enabled` | Uses unicast discovery when the host network cannot carry multicast. |
 
-The first three values are site configuration keys. See [Atlas access to hosts](host-access.md) for setup and recovery.
+The first four values are site configuration keys. See [Atlas access to hosts](host-access.md) for setup and recovery.
 
 ## Limits and recovery
 
