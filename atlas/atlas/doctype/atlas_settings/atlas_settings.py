@@ -250,8 +250,18 @@ class AtlasSettings(Document):
 			)
 
 		self.region_name = self.region_name.strip().lower()
+		self._validate_region_name()
 
 		self.validate_wildcard_certificate()
+
+	def _validate_region_name(self) -> None:
+		from atlas.metal_server.doctype.metal_server.metal_server import HOST_TITLE
+
+		# Host titles are metal-<region name>-<counter>, and the counter only grows.
+		if not HOST_TITLE.fullmatch(f"metal-{self.region_name}-999999"):
+			frappe.throw(
+				_("Region name {0} must make host titles one lowercase DNS label.").format(self.region_name)
+			)
 
 	def _validate_sleepy_vm_overcommit_factor(self) -> None:
 		factor = flt(self.sleepy_vm_overcommit_factor)

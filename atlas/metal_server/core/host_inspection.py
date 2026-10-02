@@ -370,7 +370,6 @@ class HostInspection:
 		server: "MetalServer" = frappe.new_doc("Metal Server")
 		server.update(
 			{
-				"title": report.hostname,
 				"provider_server_id": provider_server_id
 				or f"generic-{datetime.now(UTC):%d-%m-%Y}-{frappe.generate_hash(length=6)}",
 				"server_size": ensure_server_size(report, disk.size_gib),

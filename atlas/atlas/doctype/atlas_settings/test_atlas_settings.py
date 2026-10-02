@@ -98,6 +98,12 @@ class TestRegionID(UnitTestCase):
 
 		self.settings.server_provider_controller.validate_settings.assert_called_once()
 
+	def test_a_region_name_that_breaks_host_titles_is_refused(self) -> None:
+		self.atlas_settings._validate_region_name(SimpleNamespace(region_name="par-1"))
+		for region_name in ("new_york", "par 1", "a" * 60):
+			with self.assertRaisesRegex(frappe.ValidationError, "DNS label"):
+				self.atlas_settings._validate_region_name(SimpleNamespace(region_name=region_name))
+
 
 class TestSleepyVMOvercommitFactor(UnitTestCase):
 	def test_valid_factors_are_stored_as_numbers(self) -> None:

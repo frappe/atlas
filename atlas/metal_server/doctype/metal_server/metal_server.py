@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.model.naming import make_autoname
 from frappe.utils import add_days, cint, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
@@ -30,6 +32,9 @@ from atlas.metal_server.usage import enqueue_server_sync
 if TYPE_CHECKING:
 	from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
+
+# Warpgate uses the title as a target name and in `email:title` logins.
+HOST_TITLE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 class MetalServer(Document):
@@ -104,6 +109,9 @@ class MetalServer(Document):
 		size = frappe.get_doc("Metal Server Size", self.server_size)
 		self.architecture = size.architecture
 
+	def before_insert(self) -> None:
+		self.title = make_autoname(f"metal-{self.settings.region_name}-.#", doc=self)
+
 	def ensure_provider_server(self) -> None:
 		"""Create the provider host once, including after a worker retry."""
 		if self.provider_server_id:
@@ -126,9 +134,17 @@ class MetalServer(Document):
 		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
 
 	def validate(self) -> None:
-		"""Fill the mesh address and check the tags."""
+		"""Fill the mesh address and check the title and tags."""
+		self._validate_title()
 		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
+
+	def _validate_title(self) -> None:
+		if not self.is_new() and not self.has_value_changed("title"):
+			return
+
+		if not HOST_TITLE.fullmatch(self.title or ""):
+			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
 
 	def after_insert(self) -> None:
 		"""Start provisioning in the background."""

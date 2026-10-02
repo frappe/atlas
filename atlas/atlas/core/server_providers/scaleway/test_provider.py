@@ -178,8 +178,8 @@ class TestScalewayProvider(UnitTestCase):
 			provider.import_server(server)
 
 		self.assertEqual(
-			(server.server_size, server.server_image, server.title),
-			("EM-A116X-SSD", "Ubuntu_24.04", "atlas-vm-host"),
+			(server.server_size, server.server_image),
+			("EM-A116X-SSD", "Ubuntu_24.04"),
 		)
 		self.assertEqual(server.public_ipv4_address, "203.0.113.4")
 		provider.catalog.get_private_network_option_id.assert_called_once_with("size", "monthly")

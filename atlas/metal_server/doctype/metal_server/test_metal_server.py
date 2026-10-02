@@ -119,7 +119,9 @@ class TestServer(UnitTestCase):
 
 	def test_validate_trims_the_tags_and_fills_the_mesh_address(self) -> None:
 		tags = [SimpleNamespace(key=" env ", value=" local ")]
-		server = SimpleNamespace(get=lambda fieldname: tags, _set_wireguard_ip_address_if_not_set=Mock())
+		server = SimpleNamespace(
+			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+		)
 
 		MetalServer.validate(server)
 
@@ -128,7 +130,9 @@ class TestServer(UnitTestCase):
 
 	def test_validate_rejects_a_repeated_tag_key(self) -> None:
 		tags = [SimpleNamespace(key="env", value="local"), SimpleNamespace(key="env", value="dev")]
-		server = SimpleNamespace(get=lambda fieldname: tags, _set_wireguard_ip_address_if_not_set=Mock())
+		server = SimpleNamespace(
+			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+		)
 
 		with self.assertRaises(frappe.ValidationError):
 			MetalServer.validate(server)
@@ -800,6 +804,35 @@ class TestServer(UnitTestCase):
 
 		server.provider_metadata = "{}"
 		self.assertEqual(ServerProvider.get_storage_pool_device(provider, server), "/dev/md2")
+
+	def test_a_new_host_title_is_one_dns_label(self) -> None:
+		server = SimpleNamespace(name=SERVER_NAME, title="par-1-host-3", is_new=lambda: True)
+		MetalServer._validate_title(server)
+
+		for title in ("Par 1", "host:1", "-host", ""):
+			server.title = title
+			with self.assertRaises(frappe.ValidationError):
+				MetalServer._validate_title(server)
+
+	def test_a_new_host_gets_a_region_title(self) -> None:
+		server = SimpleNamespace(title="typed-title", settings=SimpleNamespace(region_name="waw-3"))
+		with patch(
+			"atlas.metal_server.doctype.metal_server.metal_server.make_autoname", return_value="metal-waw-3-4"
+		) as make_autoname:
+			MetalServer.before_insert(server)
+
+		make_autoname.assert_called_once_with("metal-waw-3-.#", doc=server)
+		self.assertEqual(server.title, "metal-waw-3-4")
+
+	def test_a_renamed_host_title_is_checked_and_an_unchanged_one_is_not(self) -> None:
+		server = SimpleNamespace(
+			name=SERVER_NAME, title="Renamed Host", is_new=lambda: False, has_value_changed=lambda field: True
+		)
+		with self.assertRaises(frappe.ValidationError):
+			MetalServer._validate_title(server)
+
+		server.has_value_changed = lambda field: False
+		MetalServer._validate_title(server)
 
 	def test_ssh_uses_wg0_once_the_host_has_a_wireguard_key(self) -> None:
 		server = self._server(status="Running")

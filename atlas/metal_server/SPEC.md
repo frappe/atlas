@@ -30,6 +30,7 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - Creation reuses the stored identity key, so a lost provider response cannot create a second host.
 - `metald` listens only on the host WireGuard address. The provider returns the storage pool device. Host installation never searches for a disk.
 - `ssh_host` is the host WireGuard address once the host has a WireGuard key. Only setup before that uses the public address.
+- `title` is one lowercase DNS label, unique across all hosts, including deleted ones (a database unique index). It is read-only; `before_insert` sets it to `metal-<region_name>-<counter>`. Warpgate names the host target and role after it.
 - The Atlas peer lives in the host `wg0.conf`, not in host sync. Metal removes only the peers it added.
 - Certificate renewal restarts `metal.service` and shares the metald job lock with install and upgrade.
 - Placement reads Metal Server Usage rows that `usage` writes after each `POST /v1/sync`.

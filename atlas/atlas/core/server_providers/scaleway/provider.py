@@ -129,7 +129,6 @@ class ScalewayProvider(ServerProvider):
 			lambda metadata: metadata.get("id") == operating_system_id,
 			f"operating system {operating_system_id}",
 		)
-		server.title = remote_server.get("name") or server.provider_server_id
 		size = frappe.get_doc("Metal Server Size", server.server_size)
 		self.servers.ensure_private_network_option(
 			remote_server, self.catalog.get_private_network_option_id(size, subscription_period)

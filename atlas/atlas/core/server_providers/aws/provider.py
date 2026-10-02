@@ -143,10 +143,6 @@ class AwsProvider(ServerProvider):
 				f"No Metal Server Image matches image {instance['ImageId']}. Sync the Metal Server Image catalog first."
 			)
 		server.server_image = versions[0].name
-		tags = {
-			tag.get("Key"): tag.get("Value") for tag in instance.get("Tags") or [] if isinstance(tag, Mapping)
-		}
-		server.title = tags.get("Name") or server.provider_server_id
 		self.apply_provider_server(server, self.servers.to_provider_server(instance))
 
 	@override

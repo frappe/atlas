@@ -373,7 +373,6 @@ class TestAwsProvider(UnitTestCase):
 			"ImageId": "ami-old",
 			"SubnetId": "subnet-atlas",
 			"InstanceType": "c7i.xlarge",
-			"Tags": [{"Key": "Name", "Value": "osa-host"}],
 		}
 		provider.client.call.return_value = {
 			"Images": [
@@ -390,7 +389,7 @@ class TestAwsProvider(UnitTestCase):
 		with patch("atlas.atlas.core.server_providers.aws.provider.frappe.db.exists", return_value=True):
 			provider.import_server(server)
 
-		self.assertEqual((server.server_image, server.title), ("Ubuntu_24.04", "osa-host"))
+		self.assertEqual(server.server_image, "Ubuntu_24.04")
 
 	def provider(self) -> AwsProvider:
 		provider = object.__new__(AwsProvider)
