@@ -16,7 +16,6 @@ from frappe.utils.synchronization import filelock
 
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
-from atlas.vm.core.models import ROUTE_SCOPE_WIREGUARD_GATEWAY, Route
 
 if TYPE_CHECKING:
 	from collections.abc import Iterator
@@ -252,21 +251,17 @@ def gateway_client_prefix(region: int, name: str) -> str:
 	return str(ipaddress.IPv6Network((address, 48)))
 
 
-def active_gateway_routes() -> list[Route]:
-	"""Return the scoped /48 return route of every Active gateway."""
+def get_wireguard_gateway_routes() -> list[dict[str, str]]:
+	"""Return the return route of every Active gateway, which each host adds to opted-in VMs."""
 	region = frappe.get_single("Atlas Settings").region_id
 	return [
-		Route(
-			gateway_client_prefix(region, gateway.name),
-			gateway.wireguard_mesh_ipv6,
-			ROUTE_SCOPE_WIREGUARD_GATEWAY,
-		)
+		{"destination": gateway_client_prefix(region, gateway.name), "via": gateway.wireguard_mesh_ipv6}
 		for gateway in frappe.get_all(
 			"WireGuard Gateway Server",
-			filters={"status": "Active"},
+			filters={"status": "Active", "wireguard_mesh_ipv6": ["is", "set"]},
 			fields=["name", "wireguard_mesh_ipv6"],
+			order_by="name asc",
 		)
-		if gateway.wireguard_mesh_ipv6
 	]
 
 

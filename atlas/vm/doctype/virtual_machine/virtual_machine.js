@@ -65,15 +65,15 @@ frappe.ui.form.on("Virtual Machine", {
 				Boolean(frm.doc.public_ipv6 || frm.doc.routed_ipv6),
 				ACTIONS,
 			],
-			[__("Edit Routes"), () => showRoutesDialog(frm), true, ACTIONS],
 			[
-				frm.doc.is_accessible_via_wg_gateway
-					? __("Disable WireGuard Gateway Access")
-					: __("Enable WireGuard Gateway Access"),
-				() => showWgGatewayAccessDialog(frm),
+				frm.doc.is_accessible_via_wireguard_gateway
+					? __("Disable WG Gateway Access")
+					: __("Enable WG Gateway Access"),
+				() => setWireGuardGatewayAccess(frm),
 				!frm.doc.is_network_gateway,
 				ACTIONS,
 			],
+			[__("Edit Routes"), () => showRoutesDialog(frm), true, ACTIONS],
 			[
 				frm.doc.is_termination_protected
 					? __("Disable Termination Protection")
@@ -783,21 +783,20 @@ function showNetworkGatewayDialog(frm) {
 	);
 }
 
-function showWgGatewayAccessDialog(frm) {
-	const enabling = !frm.doc.is_accessible_via_wg_gateway;
-	const message = enabling
-		? __(
-				"Let WireGuard gateway clients reach {0}? Each active gateway's return route is installed in this VM's namespace on its host. The routes inside the VM never change.",
-				[frm.doc.name.bold()]
-		  )
-		: __("Remove the WireGuard gateway return routes of {0}?", [frm.doc.name.bold()]);
+function setWireGuardGatewayAccess(frm) {
+	const is_enabled = !frm.doc.is_accessible_via_wireguard_gateway;
+	const message = is_enabled
+		? __("Let customer devices on this tenant's WireGuard gateways reach {0}?", [
+				frm.doc.name.bold(),
+		  ])
+		: __("Stop WireGuard gateway access to {0}?", [frm.doc.name.bold()]);
 
 	frappe.confirm(message, () =>
 		frm
 			.call({
-				method: "set_wg_gateway_accessible",
+				method: "set_wireguard_gateway_access",
 				doc: frm.doc,
-				args: { enabled: enabling },
+				args: { is_enabled },
 				freeze: true,
 			})
 			.then(() => frm.reload_doc())

@@ -8,7 +8,7 @@ The scheduler selects Metal Servers that are `Running` with completed setup.
 
 | Direction | Data |
 | --- | --- |
-| Atlas → Metal | Complete WireGuard peer set, privileged VM addresses, image cache policy, and transport mode. |
+| Atlas → Metal | Complete WireGuard peer set, privileged VM addresses, WireGuard gateway return routes, image cache policy, and transport mode. |
 | Metal → Atlas | Capacity, VM states, and private interface MAC address. |
 
 ```mermaid
@@ -19,7 +19,7 @@ sequenceDiagram
     participant Records as Atlas records
     Scheduler->>Atlas: Queue each ready host
     Atlas->>Metal: Send complete policy sets
-    Metal->>Metal: Apply peers, mesh policy, image policy
+    Metal->>Metal: Apply peers, mesh policy, gateway routes, image policy
     Metal-->>Atlas: Capacity, VM states, private MAC
     Atlas->>Records: Store capacity and state cache
 ```

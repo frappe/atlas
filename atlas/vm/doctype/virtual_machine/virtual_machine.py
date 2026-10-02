@@ -52,8 +52,6 @@ class VirtualMachine(Document):
 		cpu_millicores: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
-		gateway_routes: DF.Code | None
-		is_accessible_via_wg_gateway: DF.Check
 		is_draft: DF.Check
 		is_network_gateway: DF.Check
 		is_privileged: DF.Check
@@ -196,24 +194,15 @@ class VirtualMachine(Document):
 
 	@property
 	def routes(self) -> str:
-		"""Return the unscoped routes that Metal holds."""
+		"""Return the routes that Metal holds."""
 		information = self.get_metal_vm_info()
 		routes = information.desired.network.routes if information else ()
-		return json.dumps([route.as_dict() for route in routes if not route.is_wireguard_gateway], indent=2)
+		return json.dumps([route.as_dict() for route in routes], indent=2)
 
 	@property
-	def gateway_routes(self) -> str:
-		"""Return the scoped WireGuard gateway routes that Metal holds."""
+	def is_accessible_via_wireguard_gateway(self) -> bool:
 		information = self.get_metal_vm_info()
-		routes = information.desired.network.routes if information else ()
-		return json.dumps([route.as_dict() for route in routes if route.is_wireguard_gateway], indent=2)
-
-	@property
-	def is_accessible_via_wg_gateway(self) -> bool:
-		"""Report whether WireGuard gateway return routes reach this VM."""
-		information = self.get_metal_vm_info()
-		routes = information.desired.network.routes if information else ()
-		return any(route.is_wireguard_gateway for route in routes)
+		return bool(information and information.desired.network.is_accessible_via_wireguard_gateway)
 
 	@property
 	def ssh_host(self) -> str:
@@ -333,34 +322,31 @@ class VirtualMachine(Document):
 		changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
 		if self.is_network_gateway:
 			self.validate_network_gateway()
+			if self.is_accessible_via_wireguard_gateway:
+				frappe.throw(
+					_("Disable WireGuard gateway access before this VM becomes a gateway."),
+					exc=AtlasUserError,
+				)
 			if service.has_gateway_routes():
 				frappe.throw(
 					_("Remove the gateway routes of this VM before it becomes a gateway."), exc=AtlasUserError
 				)
-			# A network gateway drops the scoped routes with the role.
-			routes = [
-				route
-				for route in service.get_routes()
-				if not route.is_wireguard_gateway and route.destination != IPV6_INTERNET_DESTINATION
-			]
-			changes["routes"] = [
-				route.as_dict() for route in [*routes, Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST)]
-			]
+			changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
 		service.update_network(changes)
 		self.save()
 
 	@frappe.whitelist(methods=["POST"])
-	def set_wg_gateway_accessible(self, enabled: bool | int | str) -> None:
-		"""Install or remove the scoped WireGuard gateway routes of this VM."""
+	def set_wireguard_gateway_access(self, is_enabled: bool | int | str) -> None:
+		"""Let customer devices on this tenant's WireGuard gateways reach this VM, or stop it."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		self.validate_network_change()
-		enabled = strict_bool(enabled, "enabled")
-		if enabled and self.is_network_gateway:
-			frappe.throw(
-				_("A network gateway cannot use WireGuard client return routes."), exc=AtlasUserError
-			)
-		VirtualMachineService(self).set_wg_gateway_accessible(enabled)
+		is_enabled = strict_bool(is_enabled, "is_enabled")
+		if is_enabled and self.is_network_gateway:
+			frappe.throw(_("A network gateway cannot use WireGuard gateway access."), exc=AtlasUserError)
+		service = VirtualMachineService(self)
+		service.lock_network()
+		service.update_network({"is_accessible_via_wireguard_gateway": is_enabled})
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:

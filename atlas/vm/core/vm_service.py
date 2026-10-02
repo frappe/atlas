@@ -324,6 +324,7 @@ class VirtualMachineService:
 			"wireguard_mesh_ipv6": current_network.wireguard_mesh_ipv6,
 			"routes": [route.as_dict() for route in current_network.routes],
 			"is_network_gateway": current_network.is_network_gateway,
+			"is_accessible_via_wireguard_gateway": current_network.is_accessible_via_wireguard_gateway,
 			"public_ipv6": current_network.public_ipv6,
 			"private_network_throughput_mibps": current_network.private_network_throughput_mibps,
 			"public_network_throughput_mibps": current_network.public_network_throughput_mibps,
@@ -373,34 +374,9 @@ class VirtualMachineService:
 		frappe.db.get_value("Virtual Machine", self.virtual_machine.name, "name", for_update=True)
 
 	def set_routes(self, value: Any) -> dict[str, Any]:
-		"""Replace the complete route list, keeping the scoped gateway routes."""
+		"""Replace the complete route list. Metal owns the routes."""
 		self.lock_network()
-		routes = self.validate_routes(value)
-		gateway_routes = [route for route in self.get_routes() if route.is_wireguard_gateway]
-		return self.update_network({"routes": [route.as_dict() for route in [*routes, *gateway_routes]]})
-
-	def sync_gateway_routes(self, desired: list[Route]) -> None:
-		"""Replace only the scoped gateway routes, keeping every normal route."""
-		self.lock_network()
-		current = self.get_routes()
-		wanted = [route for route in current if not route.is_wireguard_gateway] + desired
-		if set(current) == set(wanted):
-			return
-		self.update_network({"routes": [route.as_dict() for route in wanted]})
-
-	def set_wg_gateway_accessible(self, enabled: bool) -> None:
-		"""Install or remove the WireGuard gateway return routes of this VM."""
-		from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
-			active_gateway_routes,
-		)
-
-		desired = active_gateway_routes()
-		if enabled and not desired:
-			frappe.throw(
-				_("Provision an Active WireGuard Gateway Server before you enable gateway access."),
-				exc=AtlasUserError,
-			)
-		self.sync_gateway_routes(desired if enabled else [])
+		return self.update_network({"routes": [route.as_dict() for route in self.validate_routes(value)]})
 
 	def validate_routes(self, value: Any) -> tuple[Route, ...]:
 		"""Parse a route list. An attached public IPv6 address owns the IPv6 Internet route."""
@@ -438,8 +414,7 @@ class VirtualMachineService:
 		return list(self.require_information().desired.network.routes)
 
 	def has_gateway_routes(self) -> bool:
-		# Scoped routes belong to the gateway sync, not to the route editor.
-		return any(not route.is_via_host and not route.is_wireguard_gateway for route in self.get_routes())
+		return any(not route.is_via_host for route in self.get_routes())
 
 	def get_routes_with(self, route: Route) -> list[dict[str, str]]:
 		routes = [current for current in self.get_routes() if current.destination != route.destination]
@@ -449,7 +424,7 @@ class VirtualMachineService:
 		return [route.as_dict() for route in self.get_routes() if route.destination != destination]
 
 	def get_route_editor_rows(self) -> list[dict[str, str]]:
-		"""Add known gateway VM names for the route editor, skipping scoped routes."""
+		"""Add known gateway VM names for the route editor."""
 		gateway_names = {
 			get_virtual_machine_mesh_address(gateway): gateway.name
 			for gateway in frappe.get_all(
@@ -459,7 +434,6 @@ class VirtualMachineService:
 		return [
 			route.as_dict() | {"gateway_virtual_machine": gateway_names.get(route.via, "")}
 			for route in self.get_routes()
-			if not route.is_wireguard_gateway
 		]
 
 	def get_public_ipv6(self) -> str:

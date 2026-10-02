@@ -29,17 +29,16 @@
   "disk_iops",
   "section_break_network",
   "mac",
-  "wireguard_mesh_ipv6",
-  "is_accessible_via_wg_gateway",
+  "public_ipv4",
   "public_ipv6",
   "routed_ipv6",
   "column_break_network",
-  "public_ipv4",
+  "wireguard_mesh_ipv6",
   "private_network_throughput_mibps",
   "public_network_throughput_mibps",
+  "is_accessible_via_wireguard_gateway",
   "other_data_section",
   "routes",
-  "gateway_routes",
   "ssh_keys",
   "firewall_summary",
   "metadata",
@@ -228,16 +227,6 @@
    "show_description_on_click": 1
   },
   {
-   "description": "Return routes for WireGuard gateway clients. The gateway route sync owns them, and they stay in the VM namespace on the host.",
-   "fieldname": "gateway_routes",
-   "fieldtype": "Code",
-   "is_virtual": 1,
-   "label": "Gateway Routes",
-   "options": "JSON",
-   "read_only": 1,
-   "show_description_on_click": 1
-  },
-  {
    "default": "0",
    "description": "This VM carries traffic for other VMs, so it may send a source address it does not own.",
    "fieldname": "is_network_gateway",
@@ -247,8 +236,9 @@
    "show_description_on_click": 1
   },
   {
-   "description": "Return routes for WireGuard gateway clients reach this VM through the VM namespace on its host.",
-   "fieldname": "is_accessible_via_wg_gateway",
+   "default": "0",
+   "description": "Customer devices on a WireGuard gateway of this tenant can reach this VM.",
+   "fieldname": "is_accessible_via_wireguard_gateway",
    "fieldtype": "Check",
    "is_virtual": 1,
    "label": "Accessible via WireGuard Gateway",
@@ -386,7 +376,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-02 00:00:00.000000",
+ "modified": "2026-10-02 16:12:39.232054",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
