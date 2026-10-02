@@ -4,6 +4,14 @@
 frappe.ui.form.on("Wireguard Gateway Server", {
 	refresh(frm) {
 		frm.disable_save();
+		frappe.db.get_single_value("Atlas Settings", "wildcard_domain").then((wildcard_domain) => {
+			if (wildcard_domain) {
+				frm.add_web_link(
+					`https://${frm.doc.name}.${wildcard_domain}/docs`,
+					__("Open gateway API docs")
+				);
+			}
+		});
 		if (!has_common(frappe.user_roles, ["System Manager"]) || frm.doc.status === "Archived") {
 			return;
 		}

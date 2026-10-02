@@ -1,14 +1,16 @@
-from atlas_control.auth import CONTROL_BEARER_SCHEME
 from fastapi import FastAPI, Response
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.routing import APIRoute
+
+from .auth import CONTROL_BEARER_SCHEME
 
 REFERENCE_PATH = "/docs"
 SCHEMA_PATH = "/docs/swagger.json"
 
-REFERENCE_PAGE = f"""<!doctype html>
+REFERENCE_PAGE = """<!doctype html>
 <html lang="en">
 	<head>
-		<title>Atlas Proxy Control API</title>
+		<title>{title} API</title>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 	</head>
@@ -17,11 +19,11 @@ REFERENCE_PAGE = f"""<!doctype html>
 		<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 		<script>
 			Scalar.createApiReference("#app", {{
-				url: "{SCHEMA_PATH}",
+				url: "{schema_path}",
 				defaultHttpClient: {{ targetKey: "shell", clientKey: "curl" }},
 				persistAuth: false,
 				authentication: {{
-					preferredSecurityScheme: "{CONTROL_BEARER_SCHEME}",
+					preferredSecurityScheme: "{security_scheme}",
 				}},
 				agent: {{
 					disabled: true,
@@ -33,9 +35,15 @@ REFERENCE_PAGE = f"""<!doctype html>
 """
 
 
+def operation_id(route: APIRoute) -> str:
+	return route.name
+
+
 def add_routes(app: FastAPI) -> None:
-	"""Add API reference routes."""
-	reference_response = HTMLResponse(REFERENCE_PAGE)
+	"""Add API reference routes. The page title comes from the app title."""
+	reference_response = HTMLResponse(
+		REFERENCE_PAGE.format(title=app.title, schema_path=SCHEMA_PATH, security_scheme=CONTROL_BEARER_SCHEME)
+	)
 	schema_response = JSONResponse(app.openapi())
 
 	@app.get(REFERENCE_PATH, include_in_schema=False)

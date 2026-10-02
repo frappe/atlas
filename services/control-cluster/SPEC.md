@@ -10,13 +10,14 @@
 | `atlas_control/auth.py` | `Authentication` for bearer passwords and issuer-bound Ed25519 JWTs, and `Authorization` |
 | `atlas_control/cluster.py` | `ClusterManager`, `Mutation`, `ClusterSnapshot`, and the `StateMachine` protocol |
 | `atlas_control/routes.py` | The `/internal/cluster/*` peer routes |
+| `atlas_control/docs.py` | The Scalar API reference at `/docs`, its OpenAPI schema, and route operation IDs |
 | `tests/` | Authentication and cluster tests |
 
 ## Extension points
 
 - A service passes its scopes, its user agent, and its constrained resources to `Authentication`. Only the proxy uses name constraints.
 - A service implements `StateMachine`: `initial_state`, `is_serving`, `prepare`, `restore`, and `apply`. Heartbeat replies carry `is_serving`. `prepare` runs once on the leader with the serving members, for a choice such as placement. `apply` validates the mutation kind and value, and changes the service before it changes the state.
-- A service mounts `create_cluster_router(cluster)` and serves its own public API.
+- A service mounts `create_cluster_router(cluster)` and serves its own public API. It calls `docs.add_routes(app)` to publish the API reference.
 
 ## Invariants
 

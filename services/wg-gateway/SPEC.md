@@ -6,7 +6,7 @@
 
 - `setup.sh` takes `REGION_ID`, `GATEWAY_ID`, `GATEWAY_MESH`, and `LISTEN_PORT`. It compiles `bpf/gateway.c` with them, creates `wg0`, and installs the daemon with the [control-cluster](../control-cluster/SPEC.md) package.
 - Atlas writes `/etc/atlas/wireguard-gateway.toml`: `[gateway]` with the node key, `[[nodes]]` with every member, `[auth]`, `[cluster]`, and `[tls]`. The daemon refuses a partial file.
-- The daemon serves HTTPS on `[::]:443`: `POST /v1/peers`, `PUT /v1/peers`, `DELETE /v1/peers/{tenant_id}/{client_id}`, `GET /v1/peers`, `/healthz`, and `/readyz`.
+- The daemon serves HTTPS on `[::]:443`: `POST`, `PUT`, `DELETE`, and `GET` on `/v1/peers`, `/healthz`, `/readyz`, `/docs`, and `/docs/swagger.json`.
 
 ## Invariants
 

@@ -80,6 +80,15 @@ def test_a_restore_replaces_the_table_and_keeps_the_nodes(client):
 	]
 
 
+def test_a_removal_names_the_peer_in_the_body_and_can_repeat(client):
+	client.post("/v1/peers", json={"tenant_id": 42, "client_id": 9, "public_key": KEY_A})
+
+	for _ in range(2):
+		response = client.request("DELETE", "/v1/peers", json={"tenant_id": 42, "client_id": 9})
+		assert response.status_code == 204
+	assert client.get("/v1/peers").json() == []
+
+
 def test_a_caller_without_credentials_is_refused(client):
 	assert client.get("/v1/peers", headers={"Authorization": ""}).status_code == 401
 
@@ -111,3 +120,26 @@ def test_a_repeated_registration_goes_through_the_cluster(client, monkeypatch):
 
 	assert len(calls) == 1
 	assert response["endpoint"] == "wireguard-001.par-1.example.com:51820"
+
+
+def test_the_reference_documents_every_device_route(client):
+	anonymous = {"Authorization": ""}
+	page = client.get("/docs", headers=anonymous)
+	assert page.status_code == 200
+	assert "<title>Atlas WireGuard gateway API</title>" in page.text
+	schema = client.get("/docs/swagger.json", headers=anonymous).json()
+	paths = schema["paths"]
+	settings = schema["components"]["schemas"]["PeerSettings"]["properties"]
+
+	assert sorted(paths["/v1/peers"]) == ["delete", "get", "post", "put"]
+	assert paths["/v1/peers"]["post"]["operationId"] == "register_peer"
+	assert not [path for path in paths if path.startswith(("/internal", "/docs"))]
+	for path, methods in paths.items():
+		for operation in methods.values():
+			assert operation["summary"] and operation["description"]
+			if path.startswith("/v1/"):
+				assert operation["security"] == [{"BearerAuth": []}]
+	assert all(field["examples"] for field in settings.values())
+	assert paths["/v1/peers"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+		"$ref": "#/components/schemas/PeerSettings"
+	}

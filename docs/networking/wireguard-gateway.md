@@ -31,9 +31,11 @@ The answer holds the WireGuard settings of the device:
 | `endpoint` | `wireguard-002.par-1.example.com:51820` | The node that serves the device. |
 | `public_key` | `<node public key>` | Public key of that node. |
 
-A repeated request with the same key returns the same settings. A new device goes to the node with the fewest devices. `DELETE /v1/peers/{tenant_id}/{client_id}` removes a device, and `GET /v1/peers` lists every device with its `node_id`.
+A repeated request with the same key returns the same settings. A new device goes to the node with the fewest devices. `DELETE /v1/peers` with `{"tenant_id": 42, "client_id": 9}` removes a device, and `GET /v1/peers` lists every device with its `node_id`.
 
 `PUT /v1/peers` replaces the complete table, for example to restore it from Central's records. Send each device's `node_id` from the list, because the device address carries the node number. A device without `node_id` goes to the node with the fewest devices.
+
+Each node serves its API reference at `https://wireguard-NNN.<wildcard>/docs`, and the gateway form links to it.
 
 A JWT needs the scope `peers:update` to change devices or `peers:read` to list them. A token with a `tenant` claim is refused. The [control cluster](../../services/control-cluster/SPEC.md) validates tokens the same way as the HTTP proxy.
 
@@ -69,7 +71,7 @@ Archive and Rebuild remove the node from DNS and stop its API before they update
 
 Rebuild keeps the node name, number, WireGuard key, and device assignments. The new node restores the device table from the other members. Devices reconnect after their node name points to the new address. A single-node cluster has no peer from which to restore its table. Restore it with `PUT /v1/peers`.
 
-Before you archive a node, remove its devices with `DELETE /v1/peers/{tenant_id}/{client_id}`. Archive does not change the device table. A device of an archived node stays in the table with an empty `endpoint` and `public_key` until you remove it. A table restore keeps that device too.
+Before you archive a node, remove its devices with `DELETE /v1/peers`. Archive does not change the device table. A device of an archived node stays in the table with an empty `endpoint` and `public_key` until you remove it. A table restore keeps that device too.
 
 ## Check cluster health
 

@@ -2,14 +2,13 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import httpx
+from atlas_control import docs
 from atlas_control.auth import Authentication, Authorization
 from atlas_control.cluster import ClusterManager, Mutation
 from atlas_control.routes import create_cluster_router
 from fastapi import Body, Depends, FastAPI, Path, Response, status
-from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import docs
 from .client import ProxyClient
 from .config import ConfigError, load, load_auth
 from .mappings import MappingStore
@@ -83,16 +82,11 @@ async def lifespan(_: FastAPI):
 		await proxy.close()
 
 
-def operation_id(route: APIRoute) -> str:
-	"""Return the route function name as the OpenAPI operation ID."""
-	return route.name
-
-
 app = FastAPI(
 	title="Atlas proxy control",
 	description="Route sites and custom domains to backend IPv6 addresses. Sync all routes after a controller restart, or change one route when an address changes.",
 	lifespan=lifespan,
-	generate_unique_id_function=operation_id,
+	generate_unique_id_function=docs.operation_id,
 	docs_url=None,
 	redoc_url=None,
 	openapi_url=None,
