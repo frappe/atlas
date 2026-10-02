@@ -34,6 +34,7 @@ class VirtualMachineNetwork:
             public_ipv4 (None | str): IPv4 address configured on the guest, or null.
             public_ipv6 (None | str): IPv6 prefix assigned to the guest, or null.
             public_network_throughput_mibps (int): Public network throughput limit in MiB/s.
+            wireguard_gateway_access (bool): Whether customer devices on the tenant's WireGuard gateways reach the VM.
      """
 
     firewall: FirewallResponse
@@ -44,6 +45,7 @@ class VirtualMachineNetwork:
     public_ipv4: None | str
     public_ipv6: None | str
     public_network_throughput_mibps: int
+    wireguard_gateway_access: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -72,6 +74,8 @@ class VirtualMachineNetwork:
 
         public_network_throughput_mibps = self.public_network_throughput_mibps
 
+        wireguard_gateway_access = self.wireguard_gateway_access
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -84,6 +88,7 @@ class VirtualMachineNetwork:
             "public_ipv4": public_ipv4,
             "public_ipv6": public_ipv6,
             "public_network_throughput_mibps": public_network_throughput_mibps,
+            "wireguard_gateway_access": wireguard_gateway_access,
         })
 
         return field_dict
@@ -137,6 +142,8 @@ class VirtualMachineNetwork:
 
         public_network_throughput_mibps = d.pop("public_network_throughput_mibps")
 
+        wireguard_gateway_access = d.pop("wireguard_gateway_access")
+
         virtual_machine_network = cls(
             firewall=firewall,
             ipv4_internet_access=ipv4_internet_access,
@@ -146,6 +153,7 @@ class VirtualMachineNetwork:
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,
             public_network_throughput_mibps=public_network_throughput_mibps,
+            wireguard_gateway_access=wireguard_gateway_access,
         )
 
 

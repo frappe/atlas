@@ -622,6 +622,10 @@ class NetworkUpdatePayload(PatchPayload):
 		ge=0,
 		description="New public network throughput limit in MiB/s. Zero removes the limit.",
 	)
+	wireguard_gateway_access: bool = Field(
+		default=False,
+		description="Let customer devices on the tenant's WireGuard gateways reach the VM. A network gateway cannot use it.",
+	)
 	firewall: FirewallUpdatePayload | None = Field(default=None, description="Firewall fields to replace.")
 
 
@@ -842,6 +846,9 @@ class VirtualMachineNetwork(BaseModel):
 	mac: str | None = Field(description="Observed network interface MAC address, or null.")
 	private_network_throughput_mibps: int = Field(description="Private network throughput limit in MiB/s.")
 	public_network_throughput_mibps: int = Field(description="Public network throughput limit in MiB/s.")
+	wireguard_gateway_access: bool = Field(
+		description="Whether customer devices on the tenant's WireGuard gateways reach the VM."
+	)
 	firewall: FirewallResponse = Field(description="Desired firewall configuration.")
 
 
@@ -882,6 +889,7 @@ class VirtualMachineDetailResponse(BaseModel):
 						"mac": "52:54:00:12:34:56",
 						"private_network_throughput_mibps": 0,
 						"public_network_throughput_mibps": 0,
+						"wireguard_gateway_access": False,
 						"firewall": {"enabled": False, "inbound": [], "outbound": []},
 					},
 					"guest": {
@@ -959,6 +967,8 @@ class VirtualMachineDetailResponse(BaseModel):
 				public_network_throughput_mibps=(
 					desired.network.public_network_throughput_mibps if desired else 0
 				),
+				wireguard_gateway_access=bool(desired)
+				and desired.network.is_accessible_via_wireguard_gateway,
 				firewall=FirewallResponse.model_validate(
 					desired.network.firewall.as_dict()
 					if desired

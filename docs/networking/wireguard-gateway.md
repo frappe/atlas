@@ -39,7 +39,7 @@ A JWT needs the scope `peers:update` to change devices or `peers:read` to list t
 
 ## Reach a VM
 
-A VM accepts gateway traffic only when **Actions > Enable WireGuard Gateway Access** is on. Host sync adds each active node's return route to the VM namespace. The guest sends IPv6 traffic to the host, and the namespace selects the next hop.
+A VM accepts gateway traffic only when its WireGuard gateway access is on. Set `wireguard_gateway_access` with `PATCH /api/atlas/virtual-machines/{id}/network`, or use **Actions > Enable WireGuard Gateway Access** in Desk. Host sync adds each active node's return route to the VM namespace. The guest sends IPv6 traffic to the host, and the namespace selects the next hop.
 
 If the VM has its own route to the same destination, Metal keeps that route. The custom route can prevent replies from reaching devices on that gateway node.
 

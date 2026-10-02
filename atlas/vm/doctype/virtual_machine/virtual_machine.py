@@ -338,15 +338,7 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def set_wireguard_gateway_access(self, is_enabled: bool | int | str) -> None:
 		"""Let customer devices on this tenant's WireGuard gateways reach this VM, or stop it."""
-		self.check_permission("write")
-		self.ensure_not_migrating()
-		self.validate_network_change()
-		is_enabled = strict_bool(is_enabled, "is_enabled")
-		if is_enabled and self.is_network_gateway:
-			frappe.throw(_("A network gateway cannot use WireGuard gateway access."), exc=AtlasUserError)
-		service = VirtualMachineService(self)
-		service.lock_network()
-		service.update_network({"is_accessible_via_wireguard_gateway": is_enabled})
+		self.update_network({"wireguard_gateway_access": strict_bool(is_enabled, "is_enabled")})
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:
