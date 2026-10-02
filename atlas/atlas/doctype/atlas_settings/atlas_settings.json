@@ -41,16 +41,21 @@
   "column_break_abbx",
   "central_jwks",
   "networking_tab",
-  "atlas_wireguard_peer_connectivity_section",
-  "wireguard_ip_address",
-  "column_break_uuos",
-  "wireguard_public_key",
-  "wireguard_private_key",
   "private_network_config_section",
   "private_network_cidr",
   "column_break_jzip",
   "private_network_mtu",
   "is_unicast_network_enabled",
+  "atlas_wireguard_peer_connectivity_section",
+  "wireguard_ip_address",
+  "column_break_uuos",
+  "wireguard_public_key",
+  "wireguard_private_key",
+  "warpgate_section",
+  "warpgate_url",
+  "column_break_warpgate",
+  "warpgate_api_token",
+  "warpgate_api_token_id",
   "ipv6_router_section",
   "use_ipv6_router_for_auto_assignment",
   "ipv6_router_package_file",
@@ -843,18 +848,49 @@
    "description": "Atlas's own wireguard config. Use to connect to all other hosts.",
    "fieldname": "atlas_wireguard_peer_connectivity_section",
    "fieldtype": "Section Break",
-   "label": "Wireguard Config"
+   "label": "Wireguard Config",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "column_break_uuos",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warpgate_section",
+   "fieldtype": "Section Break",
+   "label": "Warpgate"
+  },
+  {
+   "description": "The Warpgate admin address on the Atlas machine, such as https://127.0.0.1:8888. Empty turns off the Warpgate target sync and host access API.",
+   "fieldname": "warpgate_url",
+   "fieldtype": "Data",
+   "label": "URL",
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "column_break_warpgate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "API token of the atlas user in Warpgate.",
+   "fieldname": "warpgate_api_token",
+   "fieldtype": "Password",
+   "label": "API Token",
+   "show_description_on_click": 1
+  },
+  {
+   "description": "Warpgate ID of the API token. Renewal and cleanup keep this token.",
+   "fieldname": "warpgate_api_token_id",
+   "fieldtype": "Data",
+   "label": "API Token ID",
+   "show_description_on_click": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-02 02:05:36.893228",
+ "modified": "2026-10-02 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

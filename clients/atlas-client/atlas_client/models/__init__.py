@@ -28,6 +28,11 @@ from .firewall_rule_payload_protocol import FirewallRulePayloadProtocol
 from .firewall_rule_response import FirewallRuleResponse
 from .firewall_rule_response_protocol import FirewallRuleResponseProtocol
 from .firewall_update_payload import FirewallUpdatePayload
+from .host_access_grant_payload import HostAccessGrantPayload
+from .host_access_response import HostAccessResponse
+from .host_access_revoke_payload import HostAccessRevokePayload
+from .host_response import HostResponse
+from .host_response_tags import HostResponseTags
 from .image_download_response import ImageDownloadResponse
 from .image_download_response_artifact import ImageDownloadResponseArtifact
 from .image_response import ImageResponse
@@ -44,6 +49,7 @@ from .metadata_replacement_payload import MetadataReplacementPayload
 from .metadata_replacement_payload_metadata import MetadataReplacementPayloadMetadata
 from .network_update_payload import NetworkUpdatePayload
 from .out_of_capacity_error import OutOfCapacityError
+from .page_host_response import PageHostResponse
 from .page_image_response import PageImageResponse
 from .page_public_ip_response import PagePublicIPResponse
 from .page_virtual_machine_list_response import PageVirtualMachineListResponse
@@ -107,6 +113,11 @@ __all__ = (
     "FirewallRuleResponse",
     "FirewallRuleResponseProtocol",
     "FirewallUpdatePayload",
+    "HostAccessGrantPayload",
+    "HostAccessResponse",
+    "HostAccessRevokePayload",
+    "HostResponse",
+    "HostResponseTags",
     "ImageDownloadResponse",
     "ImageDownloadResponseArtifact",
     "ImageResponse",
@@ -123,6 +134,7 @@ __all__ = (
     "MetadataReplacementPayloadMetadata",
     "NetworkUpdatePayload",
     "OutOfCapacityError",
+    "PageHostResponse",
     "PageImageResponse",
     "PagePublicIPResponse",
     "PageVirtualMachineListResponse",

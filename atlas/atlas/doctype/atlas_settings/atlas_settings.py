@@ -127,6 +127,9 @@ class AtlasSettings(Document):
 		sleepy_vm_overcommit_factor: DF.Float
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_ipv6_router_for_auto_assignment: DF.Check
+		warpgate_api_token: DF.Password | None
+		warpgate_api_token_id: DF.Data | None
+		warpgate_url: DF.Data | None
 		wg_mesh_binary_hash: DF.Data | None
 		wg_mesh_binary_x86_64_file: DF.Link | None
 		wg_mesh_source_hash: DF.Data | None

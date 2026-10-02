@@ -1008,3 +1008,48 @@ class ConsoleTokenResponse(BaseModel):
 	token: str = Field(description="Single-use console token.")
 	mode: Literal["tty", "ssh"] = Field(description="Console protocol opened by the token.")
 	expires_in: int = Field(ge=0, description="Seconds until the token expires.")
+
+
+class HostResponse(BaseModel):
+	"""One Metal host that people can be granted SSH access to."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+					"title": "metal-osa-2-1",
+					"status": "running",
+					"tags": {"rack": "r1"},
+				}
+			]
+		}
+	)
+
+	id: str = Field(description="Metal Server ID. Use it in the access routes.")
+	title: str = Field(description="Host name. People type it in `ssh <email>:<title>@warpgate.<domain>`.")
+	status: str = Field(description="Host lifecycle state.")
+	tags: dict[str, str] = Field(description="Host tags as key-value pairs.")
+
+
+class HostAccessGrantPayload(StrictModel):
+	"""Open one host, or every host, to one person until a time."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+	expires_at: datetime = Field(
+		description="End of the access, with a time zone. At most 24 hours away by default."
+	)
+
+
+class HostAccessRevokePayload(StrictModel):
+	"""Close one host, or every host, to one person now."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+
+
+class HostAccessResponse(BaseModel):
+	"""One active access grant."""
+
+	host_id: str = Field(description="Metal Server ID, or `all`.")
+	email: str = Field(description="Email of the person, in lowercase.")
+	expires_at: datetime = Field(description="End of the access.")
