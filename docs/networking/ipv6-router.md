@@ -18,13 +18,13 @@ The VM can move while its mesh and public addresses stay the same. WG Mesh finds
 ## How the address maps
 
 ```text
-public  = <block prefix> | reserved, all zero | tenant 24 bits | VM 20 bits
-private = fdaa | region 16 bits | tenant 32 bits | VM 64 bits
+public  = <block prefix> | tenant 32 bits | VM 16 bits
+private = fdaa | region 16 bits | tenant 32 bits | padding 48 bits | VM 16 bits
 ```
 
-For block `2001:db8:1:2:3::/80`, mesh address `fdaa:1:0:abcd::5` maps to `2001:db8:1:2:3:a:bcd0:5`.
+For block `2001:db8:1:2:3::/80`, mesh address `fdaa:1:0:2a::7` maps to `2001:db8:1:2:3:0:2a:7`. The tenant and the VM number keep their own hextets.
 
-The block must be inside `2000::/3`, with a prefix from `/3` to `/84`. A VM whose tenant ID is 2^24 or more, or whose VM number is 2^20 or more, gets no public address.
+The block must be inside `2000::/3`, with a prefix from `/3` to `/80`. In a shorter block, the bits between the block and the host part are zero. A mesh address with padding, such as the Atlas address, has no public address.
 
 ::: details Try the IPv6 address mapping in Python
 
@@ -34,21 +34,21 @@ This example derives the public address and recovers the tenant and VM number fr
 from ipaddress import IPv6Address, IPv6Network
 
 block = IPv6Network("2001:db8:1:2:3::/80")
-mesh = IPv6Address("fdaa:1:0:abcd::5")
+mesh = IPv6Address("fdaa:1:0:2a::7")
 region = 1
 
 tenant = (int(mesh) >> 64) & 0xFFFFFFFF
 vm = int(mesh) & 0xFFFFFFFFFFFFFFFF
-assert tenant < 1 << 24 and vm < 1 << 20
+assert vm < 1 << 16
 
-public = IPv6Address(int(block.network_address) | (tenant << 20) | vm)
+public = IPv6Address(int(block.network_address) | (tenant << 16) | vm)
 suffix = int(public) - int(block.network_address)
-decoded_tenant, decoded_vm = divmod(suffix, 1 << 20)
+decoded_tenant, decoded_vm = divmod(suffix, 1 << 16)
 decoded_mesh = IPv6Address(
     (0xFDAA << 112) | (region << 96) | (decoded_tenant << 64) | decoded_vm
 )
 print(public, decoded_mesh)
-# 2001:db8:1:2:3:a:bcd0:5 fdaa:1:0:abcd::5
+# 2001:db8:1:2:3:0:2a:7 fdaa:1:0:2a::7
 ```
 
 :::
@@ -61,8 +61,8 @@ The [gateway packet example](wg-mesh/gateways.md#how-the-packet-changes) shows t
 
 A `tc` eBPF program on the router's `eth0` ingress rewrites the address and fixes the checksum. For an ICMPv6 error, it also rewrites the address inside the quoted packet. It drops:
 
-- A packet to a block address with a reserved bit set.
-- A mesh source from another region, or a tenant or VM number that does not fit the public layout.
+- A packet to a block address with a set bit between the block and the host part.
+- A mesh source from another region, or a mesh source with padding.
 - A translated packet that is not TCP, UDP, ICMPv6, or a fragment of one of them.
 
 ## Block unassigned traffic

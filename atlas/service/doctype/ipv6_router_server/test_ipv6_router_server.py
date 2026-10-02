@@ -48,7 +48,7 @@ class TestIPv6PoolValidation(UnitTestCase):
 			self.validate(public_ip_pool(), has_allocations=True)
 
 	def test_a_small_pool_is_refused(self) -> None:
-		with self.assertRaisesRegex(frappe.ValidationError, "/84"):
+		with self.assertRaisesRegex(frappe.ValidationError, "/80"):
 			self.validate(public_ip_pool(prefix="2001:db8::/96"))
 
 

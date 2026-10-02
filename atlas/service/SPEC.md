@@ -46,7 +46,7 @@ See the [HTTP proxy specification](../../services/http-proxy/SPEC.md).
 
 ## IPv6 Router Server
 
-- The pool needs a prefix of `/84` or shorter, no gateway, and no allocations.
+- The pool needs a prefix of `/80` or shorter, no gateway, and no allocations.
 - Installation fails if the eBPF program is not attached.
 - Archive is refused while tenant allocations use the pool.
 
