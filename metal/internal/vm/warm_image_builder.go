@@ -167,7 +167,7 @@ func (manager *Manager) RunTemporary(
 	defer manager.releaseTemporary(identifier, userID)
 
 	desired := DesiredRecord{ID: identifier, UserID: userID, GroupID: userID, Specification: cloneSpecification(specification)}
-	networkInterface, err := manager.network.Ensure(ctx, networkRequest(desired))
+	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
 	if err != nil {
 		_ = manager.network.Release(context.WithoutCancel(ctx), NetworkReleaseRequest{
 			VirtualMachineID: identifier, UserID: userID,

@@ -112,15 +112,3 @@ func TestHostReachedDestinationsListIPv6Routes(t *testing.T) {
 		t.Fatalf("a VM without routes reached %v", got)
 	}
 }
-
-// A scoped route stays out of the guest metadata.
-func TestHostReachedDestinationsSkipWireGuardGatewayRoutes(t *testing.T) {
-	network := NetworkConfiguration{Routes: []Route{
-		{Destination: "2000::/3", Via: RouteViaHost},
-		{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: RouteScopeWireGuardGateway},
-	}}
-
-	if got := HostReachedDestinations(network); !slices.Equal(got, []string{"2000::/3"}) {
-		t.Fatalf("destinations = %v", got)
-	}
-}

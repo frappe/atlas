@@ -6,7 +6,7 @@ For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-
 
 ## Purpose
 
-The `host` package applies the controller-owned sets: WireGuard peers, image policies, and privileged VM addresses. Each complete set replaces the previous one.
+The `host` package applies the controller-owned sets: WireGuard peers, image policies, privileged VM addresses, and WireGuard gateway return routes. Each complete set replaces the previous one.
 
 ## Types
 
@@ -28,9 +28,10 @@ The `host` package applies the controller-owned sets: WireGuard peers, image pol
 1. Apply the privileged VM addresses.
 2. Apply the WireGuard peers.
 3. Set the image policies.
-4. Wake the reconcilers.
-5. List the VM state once.
-6. Return the `SyncResult`.
+4. Set the WireGuard gateway return routes. `vm.Manager` stores them and adds them to each VM with `is_accessible_via_wireguard_gateway`. A VM route with the same destination wins.
+5. Wake the reconcilers.
+6. List the VM state once.
+7. Return the `SyncResult`.
 
 `Wake` must follow the writes, so reconcilers act on the new policies at once.
 

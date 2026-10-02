@@ -237,6 +237,13 @@ type fakeRuntimeServices struct {
 	unicast    bool
 	peerSyncs  int
 	snapshots  map[string]storage.StagedSnapshot
+
+	gatewayRoutes []vm.Route
+}
+
+func (services *fakeRuntimeServices) SetWireGuardGatewayRoutes(_ context.Context, routes []vm.Route) error {
+	services.gatewayRoutes = append([]vm.Route(nil), routes...)
+	return nil
 }
 
 func (services *fakeRuntimeServices) ApplyPrivilegedAddresses(
@@ -344,7 +351,7 @@ func newServerWithServices(
 		manager.services = services
 	}
 	hostService, err := host.NewService(host.Dependencies{
-		Mesh: services, WireGuard: wireGuardManager, Images: services,
+		Mesh: services, WireGuard: wireGuardManager, Images: services, GatewayRoutes: services,
 		VirtualMachines: virtualMachineManager, Storage: fakeCapacityProvider{}, Wake: func() {},
 	})
 	if err != nil {
@@ -917,7 +924,7 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 			"kernel":{"url":"https://atlas.example/kernel","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 			"cache_image":true
 		}],
-		"privileged_vm_addresses":["fdaa:1:0:0::1"]
+		"privileged_vm_addresses":["fdaa:1:0:0::1"],"wireguard_gateway_routes":[]
 	}`
 	recorder := do(t, server, http.MethodPost, "/v1/sync", request, http.StatusOK)
 	if len(services.privileged) != 1 || services.privileged[0] != "fdaa:1:0:0::1" {
@@ -939,41 +946,6 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	}
 }
 
-// The sync response carries each VM's desired routes for the controller sync.
-func TestSyncReturnsVirtualMachineRoutes(t *testing.T) {
-	wireGuardManager := &fakeWireGuardManager{}
-	services := newFakeRuntimeServices()
-	driver := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
-	server := newServerWithServices(t, driver, services, wireGuardManager)
-	driver.virtualMachines["vm-00001"] = &fakeVM{info: vm.Information{
-		ID:    "vm-00001",
-		State: vm.StateRunning,
-		Routes: []vm.Route{
-			{Destination: "2000::/3", Via: "host"},
-			{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: vm.RouteScopeWireGuardGateway},
-		},
-	}}
-
-	recorder := do(
-		t, server, http.MethodPost, "/v1/sync",
-		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]}`,
-		http.StatusOK,
-	)
-
-	var response syncResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	report := response.VirtualMachines["vm-00001"]
-	if report.Status != string(vm.StateRunning) || len(report.Routes) != 2 {
-		t.Fatalf("virtual machine report = %+v", report)
-	}
-	gatewayRoute := report.Routes[1]
-	if gatewayRoute.Destination != "fdac:1:1::/48" || gatewayRoute.Scope != vm.RouteScopeWireGuardGateway {
-		t.Fatalf("gateway route = %+v", gatewayRoute)
-	}
-}
-
 // A host not-found has no addressed resource. A 404 tells the controller to
 // stop, so the sync must report a retryable host fault instead.
 func TestSyncReportsHostNotFoundAsUnavailable(t *testing.T) {
@@ -982,7 +954,7 @@ func TestSyncReportsHostNotFoundAsUnavailable(t *testing.T) {
 
 	recorder := do(
 		t, server, http.MethodPost, "/v1/sync",
-		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]}`,
+		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[],"wireguard_gateway_routes":[]}`,
 		http.StatusServiceUnavailable,
 	)
 
@@ -1003,7 +975,7 @@ func TestSyncRequiresControllerCollections(t *testing.T) {
 	do(t, server, http.MethodPost, "/v1/sync", `{"wireguard_peers":[],"images":[]}`, http.StatusBadRequest)
 	do(
 		t, server, http.MethodPost, "/v1/sync",
-		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]}`,
+		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[],"wireguard_gateway_routes":[]}`,
 		http.StatusOK,
 	)
 }
@@ -1018,7 +990,7 @@ func TestSyncSelectsUnicastNDPMode(t *testing.T) {
 			{"node":"server-11","mesh_address":"fdab:1::11","public_key":"key11","address":"10.20.0.11:7373","public_address":"10.20.0.11","private_network_mac_address":"aa:bb:cc:dd:ee:11"}
 		],
 		"images":[],
-		"privileged_vm_addresses":[],
+		"privileged_vm_addresses":[],"wireguard_gateway_routes":[],
 		"unicast":true
 	}`
 	do(t, server, http.MethodPost, "/v1/sync", request, http.StatusOK)
@@ -1035,9 +1007,26 @@ func TestSyncRejectsAPeerWithoutAPublicIPv4Address(t *testing.T) {
 			{"node":"server-11","mesh_address":"fdab:1::11","public_key":"key11","address":"10.20.0.11:7373","private_network_mac_address":"aa:bb:cc:dd:ee:11"}
 		],
 		"images":[],
-		"privileged_vm_addresses":[]
+		"privileged_vm_addresses":[],"wireguard_gateway_routes":[]
 	}`
 	do(t, server, http.MethodPost, "/v1/sync", request, http.StatusBadRequest)
+}
+
+func TestSyncStoresTheWireGuardGatewayRoutes(t *testing.T) {
+	services := newFakeRuntimeServices()
+	driver := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
+	server := newServerWithServices(t, driver, services, &fakeWireGuardManager{})
+
+	do(t, server, http.MethodPost, "/v1/sync", `{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[],
+		"wireguard_gateway_routes":[{"destination":"fdac:1:1::/48","via":"fdaa:1::1"}]}`, http.StatusOK)
+	if len(services.gatewayRoutes) != 1 || services.gatewayRoutes[0].Via != "fdaa:1::1" {
+		t.Fatalf("gateway routes = %+v", services.gatewayRoutes)
+	}
+
+	for _, routes := range []string{"", `,"wireguard_gateway_routes":[{"destination":"fdac:1:1::/48","via":"host"}]`} {
+		do(t, server, http.MethodPost, "/v1/sync",
+			`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]`+routes+`}`, http.StatusBadRequest)
+	}
 }
 
 func TestSyncRejectsAPeerWithoutAMACAddress(t *testing.T) {
@@ -1047,7 +1036,7 @@ func TestSyncRejectsAPeerWithoutAMACAddress(t *testing.T) {
 			{"node":"server-11","mesh_address":"fdab:1::11","public_key":"key11","address":"10.20.0.11:7373","public_address":"10.20.0.11"}
 		],
 		"images":[],
-		"privileged_vm_addresses":[]
+		"privileged_vm_addresses":[],"wireguard_gateway_routes":[]
 	}`
 	do(t, server, http.MethodPost, "/v1/sync", request, http.StatusBadRequest)
 }
@@ -1059,7 +1048,7 @@ func TestSyncSelectsMulticastNDPMode(t *testing.T) {
 
 	do(
 		t, server, http.MethodPost, "/v1/sync",
-		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]}`,
+		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[],"wireguard_gateway_routes":[]}`,
 		http.StatusOK,
 	)
 

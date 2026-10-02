@@ -21,6 +21,8 @@ type syncRequest struct {
 	WireGuardPeers        []wireGuardPeerRequest `json:"wireguard_peers"`
 	Images                []imageRequest         `json:"images"`
 	PrivilegedVMAddresses []string               `json:"privileged_vm_addresses"`
+	// WireGuardGatewayRoutes are the return routes of every active WireGuard gateway.
+	WireGuardGatewayRoutes []routeRequest `json:"wireguard_gateway_routes"`
 	// Unicast selects the unicast NDP transport. The transport builds its peer set from the WireGuard peers.
 	Unicast bool `json:"unicast"`
 }
@@ -49,8 +51,6 @@ type syncResponse struct {
 // virtualMachineStateResponse is the state of one virtual machine on this host.
 type virtualMachineStateResponse struct {
 	Status string `json:"status"`
-	// Routes are the desired VM routes the host holds.
-	Routes []routeResponse `json:"routes"`
 }
 
 // capacityResponse is what the controller needs to place the next VM.
@@ -94,6 +94,9 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	if request.PrivilegedVMAddresses == nil {
 		return badRequest("privileged_vm_addresses is required")
 	}
+	if err := request.validateWireGuardGatewayRoutes(); err != nil {
+		return badRequest(err.Error())
+	}
 	for _, image := range request.Images {
 		if err := image.validate(); err != nil {
 			return badRequest(err.Error())
@@ -106,6 +109,7 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	result, err := s.hostService.Synchronize(c.Request().Context(), host.DesiredState{
 		WireGuardPeers: request.wireGuardPeers(), Images: request.imagePolicies(),
 		PrivilegedVirtualMachineAddresses: request.PrivilegedVMAddresses,
+		WireGuardGatewayRoutes:            toRouteSpecifications(request.WireGuardGatewayRoutes),
 		UnicastEnabled:                    request.Unicast,
 	})
 	if err != nil {
@@ -114,7 +118,7 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, syncResponse{
 		Capacity:          capacityResponseFromHost(result.Capacity),
-		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachines),
+		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachineStates),
 		PrivateNetworkMAC: result.PrivateNetworkMAC,
 	})
 }
@@ -198,14 +202,33 @@ func capacityResponseFromHost(capacity host.Capacity) capacityResponse {
 	}
 }
 
-// virtualMachineStateResponses converts host reports into the response form.
-func virtualMachineStateResponses(reports map[string]host.VirtualMachineReport) map[string]virtualMachineStateResponse {
-	responses := make(map[string]virtualMachineStateResponse, len(reports))
-	for identifier, report := range reports {
-		responses[identifier] = virtualMachineStateResponse{
-			Status: string(report.State),
-			Routes: toRoutes(report.Routes),
-		}
+// virtualMachineStateResponses converts host states into the response form.
+func virtualMachineStateResponses(states map[string]vm.State) map[string]virtualMachineStateResponse {
+	responses := make(map[string]virtualMachineStateResponse, len(states))
+	for identifier, state := range states {
+		responses[identifier] = virtualMachineStateResponse{Status: string(state)}
 	}
 	return responses
+}
+
+// validateWireGuardGatewayRoutes requires the complete set of IPv6 routes via gateway mesh addresses.
+func (request syncRequest) validateWireGuardGatewayRoutes() error {
+	// A missing field would read as an empty set and remove every return route.
+	if request.WireGuardGatewayRoutes == nil {
+		return fmt.Errorf("wireguard_gateway_routes is required")
+	}
+	destinations := make(map[string]bool, len(request.WireGuardGatewayRoutes))
+	for _, route := range request.WireGuardGatewayRoutes {
+		if err := route.validate(); err != nil {
+			return fmt.Errorf("wireguard_gateway_routes: %w", err)
+		}
+		if route.Via == vm.RouteViaHost {
+			return fmt.Errorf("wireguard_gateway_routes destination %s must use a gateway mesh address", route.Destination)
+		}
+		if destinations[route.Destination] {
+			return fmt.Errorf("wireguard_gateway_routes destination %s is listed twice", route.Destination)
+		}
+		destinations[route.Destination] = true
+	}
+	return nil
 }

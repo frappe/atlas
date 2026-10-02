@@ -108,30 +108,24 @@ func (request diskRequest) specification() vm.Disk {
 
 // networkRequest is the complete desired VM network.
 type networkRequest struct {
-	PublicIPv4                    string           `json:"public_ipv4"`
-	Routes                        []routeRequest   `json:"routes"`
-	IsNetworkGateway              bool             `json:"is_network_gateway"`
-	PublicIPv6                    string           `json:"public_ipv6"`
-	WireGuardMeshIPv6             string           `json:"wireguard_mesh_ipv6"`
-	PrivateNetworkThroughputMiBps int              `json:"private_network_throughput_mibps"`
-	PublicNetworkThroughputMiBps  int              `json:"public_network_throughput_mibps"`
-	Firewall                      *firewallRequest `json:"firewall"`
+	PublicIPv4                      string           `json:"public_ipv4"`
+	Routes                          []routeRequest   `json:"routes"`
+	IsNetworkGateway                bool             `json:"is_network_gateway"`
+	IsAccessibleViaWireGuardGateway bool             `json:"is_accessible_via_wireguard_gateway"`
+	PublicIPv6                      string           `json:"public_ipv6"`
+	WireGuardMeshIPv6               string           `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMiBps   int              `json:"private_network_throughput_mibps"`
+	PublicNetworkThroughputMiBps    int              `json:"public_network_throughput_mibps"`
+	Firewall                        *firewallRequest `json:"firewall"`
 }
 
 type routeRequest struct {
 	Destination string `json:"destination"`
 	Via         string `json:"via" example:"host"`
-	// Scope keeps a route in the VM namespace. Only the WireGuard gateway scope exists.
-	Scope string `json:"scope,omitempty" example:"wireguard-gateway"`
 }
 
 // Only the host can carry IPv4 because gateway VMs use the IPv6 mesh.
 func (route routeRequest) validate() error {
-	if route.Scope != "" && route.Scope != vm.RouteScopeWireGuardGateway {
-		return fmt.Errorf(
-			"network.routes scope %q must be empty or %q", route.Scope, vm.RouteScopeWireGuardGateway,
-		)
-	}
 	destination, err := netip.ParsePrefix(route.Destination)
 	if err != nil || destination.Masked().String() != route.Destination || destination.Addr().Is4In6() {
 		return fmt.Errorf("network.routes destination %q must be a canonical IP prefix", route.Destination)
@@ -153,7 +147,7 @@ func (route routeRequest) validate() error {
 func toRouteSpecifications(routes []routeRequest) []vm.Route {
 	specifications := make([]vm.Route, len(routes))
 	for index, route := range routes {
-		specifications[index] = vm.Route{Destination: route.Destination, Via: route.Via, Scope: route.Scope}
+		specifications[index] = vm.Route{Destination: route.Destination, Via: route.Via}
 	}
 	return specifications
 }
@@ -331,6 +325,9 @@ func (request networkRequest) validate() error {
 	if err := request.validateRoutes(); err != nil {
 		return err
 	}
+	if request.IsNetworkGateway && request.IsAccessibleViaWireGuardGateway {
+		return fmt.Errorf("a network gateway cannot use WireGuard gateway return routes")
+	}
 	return request.validatePublicAddresses()
 }
 
@@ -383,14 +380,15 @@ func isCanonicalIPv6Prefix(value string) bool {
 // specification converts the request into the domain network configuration.
 func (request networkRequest) specification() vm.NetworkConfiguration {
 	return vm.NetworkConfiguration{
-		PublicIPv4:                    request.PublicIPv4,
-		WireGuardMeshIPv6:             request.WireGuardMeshIPv6,
-		Routes:                        toRouteSpecifications(request.Routes),
-		IsNetworkGateway:              request.IsNetworkGateway,
-		PublicIPv6:                    request.PublicIPv6,
-		PrivateNetworkThroughputMiBps: request.PrivateNetworkThroughputMiBps,
-		PublicNetworkThroughputMiBps:  request.PublicNetworkThroughputMiBps,
-		Firewall:                      request.Firewall.specification(),
+		PublicIPv4:                      request.PublicIPv4,
+		WireGuardMeshIPv6:               request.WireGuardMeshIPv6,
+		Routes:                          toRouteSpecifications(request.Routes),
+		IsNetworkGateway:                request.IsNetworkGateway,
+		IsAccessibleViaWireGuardGateway: request.IsAccessibleViaWireGuardGateway,
+		PublicIPv6:                      request.PublicIPv6,
+		PrivateNetworkThroughputMiBps:   request.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:    request.PublicNetworkThroughputMiBps,
+		Firewall:                        request.Firewall.specification(),
 	}
 }
 

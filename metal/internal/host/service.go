@@ -17,23 +17,18 @@ type DesiredState struct {
 	WireGuardPeers                    []network.WireGuardPeer
 	Images                            []vm.Image
 	PrivilegedVirtualMachineAddresses []string
+	// WireGuardGatewayRoutes are the return routes that opted-in VMs add to their network.
+	WireGuardGatewayRoutes []vm.Route
 	// UnicastEnabled selects the unicast NDP transport.
 	UnicastEnabled bool
 }
 
 // SyncResult contains what the controller reads back from one sync exchange.
 type SyncResult struct {
-	Capacity        Capacity
-	VirtualMachines map[string]VirtualMachineReport
+	Capacity             Capacity
+	VirtualMachineStates map[string]vm.State
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string
-}
-
-// VirtualMachineReport is the host state of one virtual machine.
-type VirtualMachineReport struct {
-	State vm.State
-	// Routes are the desired VM routes the host holds.
-	Routes []vm.Route
 }
 
 // Capacity contains current host compute and storage capacity.
@@ -69,6 +64,11 @@ type VirtualMachineSource interface {
 	List(context.Context) ([]vm.Information, error)
 }
 
+// WireGuardGatewayRouteStore replaces the controller-owned WireGuard gateway return routes.
+type WireGuardGatewayRouteStore interface {
+	SetWireGuardGatewayRoutes(context.Context, []vm.Route) error
+}
+
 // StorageCapacitySource supplies current pool capacity.
 type StorageCapacitySource interface {
 	Capacity(context.Context) (storage.Capacity, error)
@@ -84,6 +84,7 @@ type Dependencies struct {
 	Mesh                  Mesh
 	WireGuard             WireGuardManager
 	Images                ImagePolicyStore
+	GatewayRoutes         WireGuardGatewayRouteStore
 	VirtualMachines       VirtualMachineSource
 	Storage               StorageCapacitySource
 	MigrationReservations MigrationReservations
@@ -97,6 +98,7 @@ type Service struct {
 	mesh                  Mesh
 	wireGuard             WireGuardManager
 	images                ImagePolicyStore
+	gatewayRoutes         WireGuardGatewayRouteStore
 	virtualMachines       VirtualMachineSource
 	storage               StorageCapacitySource
 	migrationReservations MigrationReservations
@@ -105,7 +107,7 @@ type Service struct {
 
 // NewService returns a host service with explicit dependencies.
 func NewService(dependencies Dependencies) (*Service, error) {
-	if dependencies.WireGuard == nil || dependencies.Images == nil ||
+	if dependencies.WireGuard == nil || dependencies.Images == nil || dependencies.GatewayRoutes == nil ||
 		dependencies.VirtualMachines == nil || dependencies.Storage == nil || dependencies.Wake == nil {
 		return nil, fmt.Errorf("host service dependencies are required")
 	}
@@ -114,6 +116,7 @@ func NewService(dependencies Dependencies) (*Service, error) {
 		mesh:                  dependencies.Mesh,
 		wireGuard:             dependencies.WireGuard,
 		images:                dependencies.Images,
+		gatewayRoutes:         dependencies.GatewayRoutes,
 		virtualMachines:       dependencies.VirtualMachines,
 		storage:               dependencies.Storage,
 		migrationReservations: dependencies.MigrationReservations,
@@ -142,6 +145,9 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 	if err := service.images.SetImagePolicies(ctx, desired.Images); err != nil {
 		return SyncResult{}, fmt.Errorf("apply image policies: %w", err)
 	}
+	if err := service.gatewayRoutes.SetWireGuardGatewayRoutes(ctx, desired.WireGuardGatewayRoutes); err != nil {
+		return SyncResult{}, fmt.Errorf("apply WireGuard gateway routes: %w", err)
+	}
 
 	service.wake()
 
@@ -155,12 +161,12 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 		return SyncResult{}, err
 	}
 
-	reports := make(map[string]VirtualMachineReport, len(virtualMachines))
+	states := make(map[string]vm.State, len(virtualMachines))
 	for _, information := range virtualMachines {
-		reports[information.ID] = VirtualMachineReport{State: information.State, Routes: information.Routes}
+		states[information.ID] = information.State
 	}
 
-	result := SyncResult{Capacity: capacity, VirtualMachines: reports}
+	result := SyncResult{Capacity: capacity, VirtualMachineStates: states}
 	if service.mesh != nil {
 		mac, err := service.mesh.PrivateNetworkMAC()
 		if err != nil {

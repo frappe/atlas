@@ -58,26 +58,16 @@ type Disk struct {
 // RouteViaHost sends a destination through the Metal host uplink.
 const RouteViaHost = "host"
 
-// RouteScopeWireGuardGateway keeps a return route in the VM namespace, out of the guest.
-const RouteScopeWireGuardGateway = "wireguard-gateway"
-
 // Route sends one destination range through the host or through a gateway VM.
-// Via is RouteViaHost or the WG Mesh address of a gateway VM. Scope is empty
-// for a guest route, or RouteScopeWireGuardGateway for a namespace-only route.
+// Via is RouteViaHost or the WG Mesh address of a gateway VM.
 type Route struct {
 	Destination string `json:"destination"`
 	Via         string `json:"via"`
-	Scope       string `json:"scope,omitempty"`
 }
 
 // IsViaHost reports whether the host uplink carries the route.
 func (route Route) IsViaHost() bool {
 	return route.Via == RouteViaHost
-}
-
-// IsWireGuardGateway reports a namespace-only WireGuard gateway route.
-func (route Route) IsWireGuardGateway() bool {
-	return route.Scope == RouteScopeWireGuardGateway
 }
 
 // IsIPv4 reports whether the route destination is an IPv4 prefix.
@@ -90,10 +80,11 @@ type NetworkConfiguration struct {
 	PublicIPv4        string `json:"public_ipv4"`
 	WireGuardMeshIPv6 string `json:"wireguard_mesh_ipv6"`
 	// Routes send each destination range through the host or a gateway VM. A VM without routes reaches only the mesh.
-	// A scoped route stays in the VM namespace instead.
 	Routes []Route `json:"routes,omitempty"`
 	// IsNetworkGateway lets this VM send a source address it does not own, so it can carry traffic for other VMs.
 	IsNetworkGateway bool `json:"is_network_gateway,omitempty"`
+	// IsAccessibleViaWireGuardGateway adds the host's WireGuard gateway return routes to the VM network.
+	IsAccessibleViaWireGuardGateway bool `json:"is_accessible_via_wireguard_gateway,omitempty"`
 	// PublicIPv6 is a public address or block. The host maps a /128 to the mesh address and routes a larger block into the VM.
 	PublicIPv6                    string                `json:"public_ipv6,omitempty"`
 	PrivateNetworkThroughputMiBps int                   `json:"private_network_throughput_mibps"`
@@ -106,6 +97,7 @@ func (configuration NetworkConfiguration) Equal(other NetworkConfiguration) bool
 	return configuration.PublicIPv4 == other.PublicIPv4 &&
 		slices.Equal(configuration.Routes, other.Routes) &&
 		configuration.IsNetworkGateway == other.IsNetworkGateway &&
+		configuration.IsAccessibleViaWireGuardGateway == other.IsAccessibleViaWireGuardGateway &&
 		configuration.PublicIPv6 == other.PublicIPv6 &&
 		configuration.WireGuardMeshIPv6 == other.WireGuardMeshIPv6 &&
 		configuration.PrivateNetworkThroughputMiBps == other.PrivateNetworkThroughputMiBps &&
@@ -225,38 +217,39 @@ func isObservedState(state State) bool {
 
 // Information describes a virtual machine.
 type Information struct {
-	ID                            string
-	State                         State
-	DesiredState                  State
-	Error                         *PublicOperationError
-	CPUMillicores                 int
-	MemoryMiB                     int
-	DiskMiB                       int
-	DiskUsedMiB                   int
-	DiskThroughputMiBps           int
-	DiskIOPS                      int
-	Image                         Image
-	SSHKeys                       []string
-	Hostname                      string
-	Metadata                      map[string]string
-	SleepAfterIdleSeconds         int
-	MAC                           string
-	PublicIPv4                    string
-	WireGuardMeshIPv6             string
-	Routes                        []Route
-	IsNetworkGateway              bool
-	PublicIPv6                    string
-	PrivateNetworkThroughputMiBps int
-	PublicNetworkThroughputMiBps  int
-	Firewall                      FirewallConfiguration
-	DesiredGeneration             uint64
-	DesiredRestartGeneration      uint64
-	ObservedGeneration            uint64
-	ObservedRestartGeneration     uint64
-	Phase                         string
-	OperationID                   string
-	OperationStartedAt            time.Time
-	UpdatedAt                     time.Time
+	ID                              string
+	State                           State
+	DesiredState                    State
+	Error                           *PublicOperationError
+	CPUMillicores                   int
+	MemoryMiB                       int
+	DiskMiB                         int
+	DiskUsedMiB                     int
+	DiskThroughputMiBps             int
+	DiskIOPS                        int
+	Image                           Image
+	SSHKeys                         []string
+	Hostname                        string
+	Metadata                        map[string]string
+	SleepAfterIdleSeconds           int
+	MAC                             string
+	PublicIPv4                      string
+	WireGuardMeshIPv6               string
+	Routes                          []Route
+	IsNetworkGateway                bool
+	IsAccessibleViaWireGuardGateway bool
+	PublicIPv6                      string
+	PrivateNetworkThroughputMiBps   int
+	PublicNetworkThroughputMiBps    int
+	Firewall                        FirewallConfiguration
+	DesiredGeneration               uint64
+	DesiredRestartGeneration        uint64
+	ObservedGeneration              uint64
+	ObservedRestartGeneration       uint64
+	Phase                           string
+	OperationID                     string
+	OperationStartedAt              time.Time
+	UpdatedAt                       time.Time
 }
 
 // PublicOperationError contains safe reconciliation error data.
@@ -267,11 +260,11 @@ type PublicOperationError struct {
 }
 
 // HostReachedDestinations lists the IPv6 destinations that a guest and its
-// namespace send to the host. Scoped routes stay in the namespace.
+// namespace send to the host. The host uplink or a gateway VM then carries them.
 func HostReachedDestinations(network NetworkConfiguration) []string {
 	var destinations []string
 	for _, route := range network.Routes {
-		if !route.IsIPv4() && !route.IsWireGuardGateway() {
+		if !route.IsIPv4() {
 			destinations = append(destinations, route.Destination)
 		}
 	}
