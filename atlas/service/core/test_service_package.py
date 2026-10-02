@@ -19,7 +19,13 @@ class TestServicePackage(UnitTestCase):
 		"""Create a component tree in a repository, with ignored and tracked files."""
 		directory = tempfile.TemporaryDirectory()
 		self.addCleanup(directory.cleanup)
-		component = Path(directory.name)
+		component = Path(directory.name) / "http-proxy"
+		component.mkdir()
+
+		shared = Path(directory.name) / "control-cluster"
+		shared.mkdir()
+		(shared / "pyproject.toml").write_text("[project]\n")
+		self.run_git(shared, "init", "--quiet")
 
 		(component / "nginx").mkdir()
 		(component / "control").mkdir()
@@ -63,6 +69,7 @@ class TestServicePackage(UnitTestCase):
 			self.archived_names(),
 			[
 				"http-proxy/.gitignore",
+				"http-proxy/control-cluster/pyproject.toml",
 				"http-proxy/control/main.py",
 				"http-proxy/nginx/setup.sh",
 			],
@@ -134,3 +141,11 @@ class TestServicePackage(UnitTestCase):
 		(component / "proxy.ext4").write_text("a different build output\n")
 
 		self.assertEqual(before, hashlib.sha256(HTTP_PROXY_PACKAGE.build_archive()).hexdigest())
+
+	def test_the_digest_follows_a_changed_shared_component(self) -> None:
+		component = self.build_component()
+		before = hashlib.sha256(HTTP_PROXY_PACKAGE.build_archive()).hexdigest()
+
+		(component.parent / "control-cluster" / "pyproject.toml").write_text("[project]\nname = 'changed'\n")
+
+		self.assertNotEqual(before, hashlib.sha256(HTTP_PROXY_PACKAGE.build_archive()).hexdigest())

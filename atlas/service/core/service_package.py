@@ -20,6 +20,8 @@ class ServicePackage:
 	name: str
 	label: str
 	setup_script: str
+	# Sibling components that the archive carries below `<name>/<component>/`.
+	shared_components: tuple[str, ...] = ()
 
 	@property
 	def settings_file_field(self) -> str:
@@ -79,28 +81,35 @@ class ServicePackage:
 		}
 
 	def build_archive(self) -> bytes:
-		"""Return a reproducible archive of regular component files."""
-		component = self.component_path
+		"""Return a reproducible archive of regular component files and the shared components."""
+		sources = [(self.component_path, self.name)] + [
+			(self.component_path.parent / shared, f"{self.name}/{shared}")
+			for shared in self.shared_components
+		]
 		buffer = io.BytesIO()
 		with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
-			for path in self.get_source_paths():
-				content = path.read_bytes()
-				info = tarfile.TarInfo(f"{self.name}/{path.relative_to(component)}")
-				info.size = len(content)
-				info.mtime = 0
-				info.mode = 0o755 if path.stat().st_mode & 0o100 else 0o644
-				info.uid = info.gid = 0
-				info.uname = info.gname = "root"
-				archive.addfile(info, io.BytesIO(content))
+			for directory, prefix in sources:
+				self.add_directory(archive, directory, prefix)
 
 		return buffer.getvalue()
 
-	def get_source_paths(self) -> list[Path]:
-		"""Return unignored component files in a stable order."""
-		component = self.component_path
+	def add_directory(self, archive: tarfile.TarFile, directory: Path, prefix: str) -> None:
+		"""Add the regular files of one directory below one archive prefix."""
+		for path in self.get_source_paths(directory):
+			content = path.read_bytes()
+			info = tarfile.TarInfo(f"{prefix}/{path.relative_to(directory)}")
+			info.size = len(content)
+			info.mtime = 0
+			info.mode = 0o755 if path.stat().st_mode & 0o100 else 0o644
+			info.uid = info.gid = 0
+			info.uname = info.gname = "root"
+			archive.addfile(info, io.BytesIO(content))
+
+	def get_source_paths(self, directory: Path) -> list[Path]:
+		"""Return unignored files of one directory in a stable order."""
 		result = subprocess.run(
 			["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-			cwd=component,
+			cwd=directory,
 			capture_output=True,
 			check=False,
 		)
@@ -115,11 +124,13 @@ class ServicePackage:
 		if any("\n" in name or "\r" in name for name in names):
 			frappe.throw(_("{0} source names must not contain line breaks.").format(self.label))
 
-		paths = [component / name for name in names]
+		paths = [directory / name for name in names]
 		return sorted(path for path in paths if path.is_file() and not path.is_symlink())
 
 
-HTTP_PROXY_PACKAGE = ServicePackage("http-proxy", "HTTP proxy package", "nginx/setup.sh")
+HTTP_PROXY_PACKAGE = ServicePackage(
+	"http-proxy", "HTTP proxy package", "nginx/setup.sh", ("control-cluster",)
+)
 IPV6_ROUTER_PACKAGE = ServicePackage("ipv6-router", "IPv6 router package", "setup.sh")
 WG_GATEWAY_PACKAGE = ServicePackage("wg-gateway", "WireGuard gateway package", "setup.sh")
 SERVICE_PACKAGES = (HTTP_PROXY_PACKAGE, IPV6_ROUTER_PACKAGE, WG_GATEWAY_PACKAGE)
