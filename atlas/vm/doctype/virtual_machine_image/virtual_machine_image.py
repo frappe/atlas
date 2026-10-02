@@ -123,11 +123,19 @@ class VirtualMachineImage(Document):
 			frappe.throw(_("A Virtual Machine still refers to this image."), exc=AtlasConflictError)
 
 	def validate_rescue_image(self) -> None:
-		"""Require an enabled System image that can cold boot."""
+		"""Require an enabled System rescue image that can cold boot."""
 		self.validate_is_available()
-		if not self.enabled or self.image_type != "system" or self.memory_snapshot:
+		tags = {tag.key: tag.value for tag in self.tags}
+		if (
+			not self.enabled
+			or self.image_type != "system"
+			or self.memory_snapshot
+			or tags.get("purpose") != "rescue"
+		):
 			frappe.throw(
-				_("The rescue image must be an enabled System image without a memory snapshot."),
+				_(
+					"The rescue image must be an enabled System image tagged purpose=rescue without a memory snapshot."
+				),
 				exc=AtlasUserError,
 			)
 
