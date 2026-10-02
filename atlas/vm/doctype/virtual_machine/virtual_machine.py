@@ -69,8 +69,8 @@ class VirtualMachine(Document):
 	# end: auto-generated types
 
 	def autoname(self) -> None:
-		"""Assign a permanent virtual machine ID."""
-		self.name = make_autoname("vm-.#######", doc=self)
+		"""Assign a permanent virtual machine ID. Each tenant has its own counter."""
+		self.name = make_autoname(f"vm-{self.tenant_id}-.####", doc=self)
 
 	@request_cache
 	def get_metal_vm_info(self) -> MetalVirtualMachine | None:

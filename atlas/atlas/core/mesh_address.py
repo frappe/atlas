@@ -14,9 +14,10 @@ if TYPE_CHECKING:
 
 MESH_PREFIX = 0xFDAA
 MESH_NETWORK = ipaddress.IPv6Network((MESH_PREFIX << 112, 16))
-MAXIMUM_VIRTUAL_MACHINE_NUMBER = 0xFFFFFFFFFFFFFFFF
-# Atlas takes the last tenant-0 VM number, so no VM can use its address.
-ATLAS_VIRTUAL_MACHINE_NUMBER = MAXIMUM_VIRTUAL_MACHINE_NUMBER
+# A VM address is fdaa | region 16 | tenant 32 | padding 48 | VM number 16. The padding is zero.
+MAXIMUM_VIRTUAL_MACHINE_NUMBER = 0xFFFF
+# Atlas fills the padding and VM number, so no VM can use its address.
+ATLAS_VIRTUAL_MACHINE_NUMBER = (1 << 64) - 1
 WIREGUARD_PREFIX = 0xFDAB
 # The prefix and the region take the first 32 bits, so the low 96 bits of the UUID are the peer part.
 WIREGUARD_PEER_MASK = (1 << 96) - 1
@@ -41,10 +42,6 @@ def get_virtual_machine_mesh_address(
 	if virtual_machine_number > MAXIMUM_VIRTUAL_MACHINE_NUMBER:
 		frappe.throw(
 			_("Virtual Machine number {0} is too large for a mesh address.").format(virtual_machine_number)
-		)
-	if virtual_machine.tenant_id == 0 and virtual_machine_number == ATLAS_VIRTUAL_MACHINE_NUMBER:
-		frappe.throw(
-			_("Virtual Machine number {0} is the Atlas mesh address.").format(virtual_machine_number)
 		)
 
 	address = (

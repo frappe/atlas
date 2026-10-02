@@ -359,16 +359,16 @@ class TestVirtualMachineRequest(UnitTestCase):
 
 
 class TestVirtualMachineDocument(UnitTestCase):
-	def test_autoname_assigns_permanent_virtual_machine_id(self) -> None:
-		virtual_machine = frappe.new_doc("Virtual Machine")
-
-		with patch.object(
-			virtual_machine_module, "make_autoname", return_value="vm-0000042"
-		) as make_autoname:
+	def test_each_tenant_numbers_its_virtual_machines_from_one(self) -> None:
+		self.addCleanup(frappe.db.delete, "Series", {"name": ["in", ["vm-4000000001-", "vm-4000000002-"]]})
+		names = []
+		for tenant_id in (4_000_000_001, 4_000_000_001, 4_000_000_002):
+			virtual_machine = frappe.new_doc("Virtual Machine")
+			virtual_machine.tenant_id = tenant_id
 			virtual_machine.autoname()
+			names.append(virtual_machine.name)
 
-		self.assertEqual(virtual_machine.name, "vm-0000042")
-		make_autoname.assert_called_once_with("vm-.#######", doc=virtual_machine)
+		self.assertEqual(names, ["vm-4000000001-0001", "vm-4000000001-0002", "vm-4000000002-0001"])
 
 	# New records have no Server, so virtual-field reads must skip Metal lookup.
 	def test_new_document_reads_virtual_fields_without_a_server(self) -> None:

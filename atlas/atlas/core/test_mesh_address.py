@@ -17,21 +17,18 @@ class TestMeshAddress(UnitTestCase):
 		self.get_settings_patch.start()
 		self.addCleanup(self.get_settings_patch.stop)
 
-	def test_a_wide_vm_number_fills_the_64_bit_field(self) -> None:
-		virtual_machine = frappe._dict(name="vm-18446744073709551615", tenant_id=7)
+	def test_the_largest_vm_number_leaves_the_padding_zero(self) -> None:
+		virtual_machine = frappe._dict(name="vm-7-65535", tenant_id=7)
 
-		address = get_virtual_machine_mesh_address(virtual_machine)
+		self.assertEqual(get_virtual_machine_mesh_address(virtual_machine), "fdaa:1:0:7::ffff")
 
-		self.assertEqual(address, "fdaa:1:0:7:ffff:ffff:ffff:ffff")
+	def test_the_vm_number_comes_after_the_tenant_in_the_name(self) -> None:
+		virtual_machine = frappe._dict(name="vm-42-0007", tenant_id=42)
 
-	def test_a_tenant_zero_vm_cannot_take_the_atlas_address(self) -> None:
-		virtual_machine = frappe._dict(name="vm-18446744073709551615", tenant_id=0)
+		self.assertEqual(get_virtual_machine_mesh_address(virtual_machine), "fdaa:1:0:2a::7")
 
-		with self.assertRaises(frappe.ValidationError):
-			get_virtual_machine_mesh_address(virtual_machine)
-
-	def test_a_vm_number_above_64_bits_is_refused(self) -> None:
-		virtual_machine = frappe._dict(name="vm-18446744073709551616", tenant_id=7)
+	def test_a_vm_number_above_16_bits_is_refused(self) -> None:
+		virtual_machine = frappe._dict(name="vm-7-65536", tenant_id=7)
 
 		with self.assertRaises(frappe.ValidationError):
 			get_virtual_machine_mesh_address(virtual_machine)
