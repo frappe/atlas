@@ -7,6 +7,9 @@ import frappe
 from frappe.utils import now_datetime
 
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
+from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
+	get_wireguard_gateway_routes,
+)
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.vm_state import store_reported_states
 
@@ -72,6 +75,7 @@ def sync_server(
 			wireguard_peers,
 			get_desired_images(),
 			privileged_vm_addresses,
+			get_wireguard_gateway_routes(),
 			unicast,
 		)
 		values = get_usage_values(response.get("capacity"))

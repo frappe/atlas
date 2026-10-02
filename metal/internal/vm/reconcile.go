@@ -67,7 +67,7 @@ func (manager *Manager) reconcileActive(
 	var networkInterface NetworkInterface
 	err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseNetwork, func() error {
 		var ensureError error
-		networkInterface, ensureError = manager.network.Ensure(ctx, networkRequest(desired))
+		networkInterface, ensureError = manager.network.Ensure(ctx, manager.networkRequest(desired))
 		return ensureError
 	})
 	if err != nil {

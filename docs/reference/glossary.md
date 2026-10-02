@@ -55,7 +55,7 @@ Find a term by topic. **Atlas** names the whole project. **Atlas app** names its
 
 | Term | Meaning |
 | --- | --- |
-| Mesh address | The stable `fdaa::/16` IPv6 address that Atlas derives for a VM from region, tenant, and VM number. |
+| Mesh address | The stable `fdaa::/16` IPv6 address that Atlas derives for a VM from region, tenant, and VM number. See [address formats](../networking/address-formats.md). |
 | Direct public IP | A public address that reaches the VM through its host or provider. |
 | Routed public IPv6 | A `/128` from a router block that reaches the VM through the IPv6 router VM. |
 | Public address request | The current Atlas request to attach or detach a public address. Its version prevents an old job from completing a newer request. |

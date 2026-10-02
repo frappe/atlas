@@ -37,6 +37,9 @@ def configuration(**changes: object) -> AtlasSetupConfiguration:
 		"auto_spawn_metal_server": False,
 		"default_metal_machine_size": "",
 		"default_metal_machine_image": "",
+		"warpgate_url": "",
+		"warpgate_api_token": "",
+		"warpgate_api_token_id": "",
 	}
 	values.update(changes)
 	return AtlasSetupConfiguration.from_dict(values)
@@ -111,6 +114,19 @@ class TestAtlasSetup(UnitTestCase):
 	def setup(self, settings: object, **changes: object) -> AtlasSetup:
 		with patch("atlas.atlas.core.setup.frappe.get_single", return_value=settings):
 			return AtlasSetup(configuration(**changes))
+
+	def test_setup_keeps_old_warpgate_token_until_new_token_is_committed(self) -> None:
+		setup = MagicMock(spec=AtlasSetup)
+		setup.settings = MagicMock()
+		with (
+			patch("atlas.atlas.core.setup.publish_warpgate_ui"),
+			patch("atlas.atlas.core.setup.WarpgateTokenManager") as token_manager,
+			patch("atlas.atlas.core.setup.frappe.db.commit", side_effect=RuntimeError("commit failed")),
+		):
+			with self.assertRaisesRegex(RuntimeError, "commit failed"):
+				AtlasSetup.run(setup)
+
+		token_manager.return_value.delete_other_tokens.assert_not_called()
 
 	def test_an_aws_region_uses_unicast_networking(self) -> None:
 		settings = MagicMock(is_unicast_network_enabled=0)

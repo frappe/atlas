@@ -90,10 +90,10 @@ apt-get install -y --no-install-recommends "python${PYTHON_VERSION}" "python${PY
 
 install -d /opt/atlas/proxy-control
 "python${PYTHON_VERSION}" -m venv /opt/atlas/proxy-control
-/opt/atlas/proxy-control/bin/pip install --no-cache-dir "$SERVICE_DIR/control"
+/opt/atlas/proxy-control/bin/pip install --no-cache-dir "$SERVICE_DIR/control-cluster" "$SERVICE_DIR/control"
 
 # Ensure that the codebase is compatible with the guest Python version.
-/opt/atlas/proxy-control/bin/python -m compileall -q /opt/atlas/proxy-control/lib/python3*/site-packages/proxy_control
+/opt/atlas/proxy-control/bin/python -m compileall -q /opt/atlas/proxy-control/lib/python3*/site-packages/{atlas_control,proxy_control}
 
 # Create runtime state, the configuration file, and certificate files.
 install -d -m 0750 /etc/atlas

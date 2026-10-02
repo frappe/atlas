@@ -38,17 +38,37 @@ class TestArtifacts(UnitTestCase):
 		"""A host cannot reach the site URL of a local bench."""
 		with (
 			patch.object(artifacts.frappe.db, "get_value", return_value="/files/metald-linux-amd64"),
-			patch.object(artifacts.frappe, "conf", SimpleNamespace(atlas_base_url="https://atlas.test/")),
+			patch.object(
+				artifacts.frappe,
+				"conf",
+				SimpleNamespace(atlas_internal_url=None, atlas_base_url="https://atlas.test/"),
+			),
 		):
 			url = artifacts.get_download_url("metald-file")
 
 		self.assertEqual(url, "https://atlas.test/files/metald-linux-amd64")
 
+	def test_download_url_prefers_the_internal_listener(self) -> None:
+		"""Host and tenant-0 VM downloads stay private when Atlas has a mesh listener."""
+		conf = SimpleNamespace(
+			atlas_internal_url="http://[fdaa:1::ffff:ffff:ffff:ffff]:8000",
+			atlas_base_url="https://atlas.test",
+		)
+		with (
+			patch.object(artifacts.frappe.db, "get_value", return_value="/files/metald-linux-amd64"),
+			patch.object(artifacts.frappe, "conf", conf),
+		):
+			url = artifacts.get_download_url("metald-file")
+
+		self.assertEqual(url, "http://[fdaa:1::ffff:ffff:ffff:ffff]:8000/files/metald-linux-amd64")
+
 	def test_download_url_falls_back_to_the_site_url(self) -> None:
 		"""The request Host never names the address a host downloads from."""
 		with (
 			patch.object(artifacts.frappe.db, "get_value", return_value="/files/metald-linux-amd64"),
-			patch.object(artifacts.frappe, "conf", SimpleNamespace(atlas_base_url=None)),
+			patch.object(
+				artifacts.frappe, "conf", SimpleNamespace(atlas_internal_url=None, atlas_base_url=None)
+			),
 			patch.object(
 				artifacts.frappe.utils, "get_url", return_value="http://atlas.localhost:8000"
 			) as get_url,
@@ -57,6 +77,19 @@ class TestArtifacts(UnitTestCase):
 
 		self.assertEqual(url, "http://atlas.localhost:8000/files/metald-linux-amd64")
 		self.assertFalse(get_url.call_args.kwargs["allow_header_override"])
+
+	def test_download_url_refuses_a_file_without_url(self) -> None:
+		"""An empty file_url must fail the same way as a missing File."""
+		with (
+			patch.object(artifacts.frappe.db, "get_value", return_value=""),
+			patch.object(
+				artifacts.frappe,
+				"conf",
+				SimpleNamespace(atlas_internal_url=None, atlas_base_url="https://atlas.test/"),
+			),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "has no download URL"):
+				artifacts.get_download_url("metald-file")
 
 
 class TestPublishedFiles(IntegrationTestCase):

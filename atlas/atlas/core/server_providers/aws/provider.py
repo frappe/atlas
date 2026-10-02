@@ -118,6 +118,34 @@ class AwsProvider(ServerProvider):
 		return self.servers.ensure(request)
 
 	@override
+	def import_server(self, server: "MetalServer") -> None:
+		"""Match an existing instance to the catalog. Its storage volume must exist already."""
+		instance = self.servers.fetch(server.provider_server_id)
+		if not instance.get("ImageId"):
+			raise AwsError(f"AWS instance {server.provider_server_id} has no image")
+		# Public addresses attach to the primary interface, so it must be in the Atlas subnet.
+		if instance.get("SubnetId") != self.configuration.subnet_id:
+			raise AwsError(
+				f"AWS instance {server.provider_server_id} is in subnet {instance.get('SubnetId')}, "
+				f"not the Atlas subnet {self.configuration.subnet_id}"
+			)
+		instance_type = instance.get("InstanceType")
+		if not isinstance(instance_type, str) or not frappe.db.exists("Metal Server Size", instance_type):
+			raise AwsError(
+				f"No Metal Server Size matches {instance_type}. Sync the Metal Server Size catalog first."
+			)
+		server.server_size = instance_type
+		# The catalog keeps only the newest image of each version, so match the version.
+		images = self.client.call("ec2", "describe_images", ImageIds=[instance["ImageId"]]).get("Images", [])
+		versions = self.catalog.get_server_images(images)
+		if not versions or not frappe.db.exists("Metal Server Image", versions[0].name):
+			raise AwsError(
+				f"No Metal Server Image matches image {instance['ImageId']}. Sync the Metal Server Image catalog first."
+			)
+		server.server_image = versions[0].name
+		self.apply_provider_server(server, self.servers.to_provider_server(instance))
+
+	@override
 	def prepare_server(self, server: "MetalServer") -> None:
 		"""Prepare the AWS instance before Secure Shell access."""
 		self.wait_for_server_ready(server)
@@ -142,16 +170,6 @@ class AwsProvider(ServerProvider):
 			},
 		)
 		self.wait_for_private_address(server)
-
-	@override
-	def metald_listen_address(self, server: "MetalServer") -> str:
-		"""Return the primary interface address behind the internet gateway."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		instance = metadata.get("instance") if isinstance(metadata, Mapping) else None
-		address = instance.get("PrivateIpAddress") if isinstance(instance, Mapping) else None
-		if not isinstance(address, str) or not address:
-			raise AwsError("Atlas server has no AWS primary private IPv4 address")
-		return address
 
 	@override
 	def storage_pool_device(self, server: "MetalServer") -> str:
@@ -303,9 +321,7 @@ class AwsProvider(ServerProvider):
 		"""Return the guest device name that carries the AWS default route."""
 		from atlas.atlas.core.ssh import SSHRunner
 
-		result = SSHRunner(server.public_ipv4_address).run_command(
-			"ip -4 -o route show default", timeout_seconds=15
-		)
+		result = SSHRunner(server.ssh_host).run_command("ip -4 -o route show default", timeout_seconds=15)
 		fields = result.output.split()
 		if result.exit_code != 0 or "dev" not in fields:
 			raise AwsError(f"Atlas server {server.name} has no default route device")

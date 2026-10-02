@@ -249,7 +249,8 @@
    "fieldname": "title",
    "fieldtype": "Data",
    "label": "Title",
-   "reqd": 1
+   "read_only": 1,
+   "unique": 1
   },
   {
    "fieldname": "column_break_lnik",
@@ -288,7 +289,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-01 00:00:00.000000",
+ "modified": "2026-10-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

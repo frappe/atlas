@@ -622,6 +622,10 @@ class NetworkUpdatePayload(PatchPayload):
 		ge=0,
 		description="New public network throughput limit in MiB/s. Zero removes the limit.",
 	)
+	wireguard_gateway_access: bool = Field(
+		default=False,
+		description="Let customer devices on the tenant's WireGuard gateways reach the VM. A network gateway cannot use it.",
+	)
 	firewall: FirewallUpdatePayload | None = Field(default=None, description="Firewall fields to replace.")
 
 
@@ -842,6 +846,9 @@ class VirtualMachineNetwork(BaseModel):
 	mac: str | None = Field(description="Observed network interface MAC address, or null.")
 	private_network_throughput_mibps: int = Field(description="Private network throughput limit in MiB/s.")
 	public_network_throughput_mibps: int = Field(description="Public network throughput limit in MiB/s.")
+	wireguard_gateway_access: bool = Field(
+		description="Whether customer devices on the tenant's WireGuard gateways reach the VM."
+	)
 	firewall: FirewallResponse = Field(description="Desired firewall configuration.")
 
 
@@ -882,6 +889,7 @@ class VirtualMachineDetailResponse(BaseModel):
 						"mac": "52:54:00:12:34:56",
 						"private_network_throughput_mibps": 0,
 						"public_network_throughput_mibps": 0,
+						"wireguard_gateway_access": False,
 						"firewall": {"enabled": False, "inbound": [], "outbound": []},
 					},
 					"guest": {
@@ -959,6 +967,8 @@ class VirtualMachineDetailResponse(BaseModel):
 				public_network_throughput_mibps=(
 					desired.network.public_network_throughput_mibps if desired else 0
 				),
+				wireguard_gateway_access=bool(desired)
+				and desired.network.is_accessible_via_wireguard_gateway,
 				firewall=FirewallResponse.model_validate(
 					desired.network.firewall.as_dict()
 					if desired
@@ -1008,3 +1018,48 @@ class ConsoleTokenResponse(BaseModel):
 	token: str = Field(description="Single-use console token.")
 	mode: Literal["tty", "ssh"] = Field(description="Console protocol opened by the token.")
 	expires_in: int = Field(ge=0, description="Seconds until the token expires.")
+
+
+class HostResponse(BaseModel):
+	"""One Metal host that people can be granted SSH access to."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+					"title": "metal-osa-2-1",
+					"status": "running",
+					"tags": {"rack": "r1"},
+				}
+			]
+		}
+	)
+
+	id: str = Field(description="Metal Server ID. Use it in the access routes.")
+	title: str = Field(description="Host name. People type it in `ssh <email>:<title>@warpgate.<domain>`.")
+	status: str = Field(description="Host lifecycle state.")
+	tags: dict[str, str] = Field(description="Host tags as key-value pairs.")
+
+
+class HostAccessGrantPayload(StrictModel):
+	"""Open one host, or every host, to one person until a time."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+	expires_at: datetime = Field(
+		description="End of the access, with a time zone. At most 24 hours away by default."
+	)
+
+
+class HostAccessRevokePayload(StrictModel):
+	"""Close one host, or every host, to one person now."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+
+
+class HostAccessResponse(BaseModel):
+	"""One active access grant."""
+
+	host_id: str = Field(description="Metal Server ID, or `all`.")
+	email: str = Field(description="Email of the person, in lowercase.")
+	expires_at: datetime = Field(description="End of the access.")

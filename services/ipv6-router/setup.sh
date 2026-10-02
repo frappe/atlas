@@ -34,7 +34,8 @@ printf '%s\n' "${modules[@]}" > /etc/modules-load.d/atlas-ipv6-router.conf
 
 step "write the configuration"
 install -d -m 0755 "$state_dir"
-# The public host part needs 44 bits, so the prefix can be at most /84.
+
+# The public host part needs 48 bits, so the prefix can be at most /80.
 read -r mesh_region public_prefix < <(python3 - "$REGION_ID" "$PUBLIC_IPV6_PREFIX" "$state_dir/config.h" <<'PYTHON'
 import ipaddress
 import sys
@@ -51,8 +52,8 @@ if not 0 <= region_id <= 0xFFFF:
 	sys.exit(f"REGION_ID {region_id} is not a 16-bit number")
 if not network.subnet_of(ipaddress.IPv6Network("2000::/3")):
 	sys.exit(f"PUBLIC_IPV6_PREFIX {network} is outside 2000::/3")
-if network.prefixlen > 84:
-	sys.exit(f"PUBLIC_IPV6_PREFIX {network} is longer than /84")
+if network.prefixlen > 80:
+	sys.exit(f"PUBLIC_IPV6_PREFIX {network} is longer than /80")
 
 words = {
 	"PUBLIC_HIGH": int(network.network_address) >> 64,

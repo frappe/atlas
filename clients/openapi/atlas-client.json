@@ -767,6 +767,119 @@
         "title": "FirewallUpdatePayload",
         "type": "object"
       },
+      "HostAccessGrantPayload": {
+        "additionalProperties": false,
+        "description": "Open one host, or every host, to one person until a time.",
+        "properties": {
+          "email": {
+            "description": "Email that the person signs in to Central with.",
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "End of the access, with a time zone. At most 24 hours away by default.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "expires_at"
+        ],
+        "title": "HostAccessGrantPayload",
+        "type": "object"
+      },
+      "HostAccessResponse": {
+        "description": "One active access grant.",
+        "properties": {
+          "email": {
+            "description": "Email of the person, in lowercase.",
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "End of the access.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "host_id": {
+            "description": "Metal Server ID, or `all`.",
+            "title": "Host Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "email",
+          "expires_at"
+        ],
+        "title": "HostAccessResponse",
+        "type": "object"
+      },
+      "HostAccessRevokePayload": {
+        "additionalProperties": false,
+        "description": "Close one host, or every host, to one person now.",
+        "properties": {
+          "email": {
+            "description": "Email that the person signs in to Central with.",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "HostAccessRevokePayload",
+        "type": "object"
+      },
+      "HostResponse": {
+        "description": "One Metal host that people can be granted SSH access to.",
+        "examples": [
+          {
+            "id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+            "status": "running",
+            "tags": {
+              "rack": "r1"
+            },
+            "title": "metal-osa-2-1"
+          }
+        ],
+        "properties": {
+          "id": {
+            "description": "Metal Server ID. Use it in the access routes.",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "Host lifecycle state.",
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Host tags as key-value pairs.",
+            "title": "Tags",
+            "type": "object"
+          },
+          "title": {
+            "description": "Host name. People type it in `ssh <email>:<title>@warpgate.<domain>`.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "tags"
+        ],
+        "title": "HostResponse",
+        "type": "object"
+      },
       "ImageDownloadResponse": {
         "description": "Signed downloads for one image.",
         "examples": [
@@ -1187,6 +1300,12 @@
             "default": null,
             "description": "New public network throughput limit in MiB/s. Zero removes the limit.",
             "title": "Public Network Throughput Mibps"
+          },
+          "wireguard_gateway_access": {
+            "default": false,
+            "description": "Let customer devices on the tenant's WireGuard gateways reach the VM. A network gateway cannot use it.",
+            "title": "Wireguard Gateway Access",
+            "type": "boolean"
           }
         },
         "title": "NetworkUpdatePayload",
@@ -1221,6 +1340,49 @@
           "fields"
         ],
         "title": "OutOfCapacityError",
+        "type": "object"
+      },
+      "Page[HostResponse]": {
+        "examples": [
+          {
+            "has_more": false,
+            "items": [],
+            "limit": 20,
+            "offset": 0
+          }
+        ],
+        "properties": {
+          "has_more": {
+            "description": "Whether another page follows this page.",
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "description": "Resources in this page.",
+            "items": {
+              "$ref": "#/components/schemas/HostResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "description": "Requested maximum page size.",
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Number of matching resources skipped before this page.",
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "offset",
+          "limit",
+          "has_more"
+        ],
+        "title": "Page[HostResponse]",
         "type": "object"
       },
       "Page[ImageResponse]": {
@@ -1765,7 +1927,8 @@
               "private_network_throughput_mibps": 0,
               "public_ipv4": "203.0.113.10",
               "public_ipv6": "2001:db8:5::7/128",
-              "public_network_throughput_mibps": 0
+              "public_network_throughput_mibps": 0,
+              "wireguard_gateway_access": false
             },
             "public_ipv4": null,
             "public_ipv6": null,
@@ -2204,6 +2367,11 @@
             "description": "Public network throughput limit in MiB/s.",
             "title": "Public Network Throughput Mibps",
             "type": "integer"
+          },
+          "wireguard_gateway_access": {
+            "description": "Whether customer devices on the tenant's WireGuard gateways reach the VM.",
+            "title": "Wireguard Gateway Access",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2214,6 +2382,7 @@
           "mac",
           "private_network_throughput_mibps",
           "public_network_throughput_mibps",
+          "wireguard_gateway_access",
           "firewall"
         ],
         "title": "VirtualMachineNetwork",
@@ -2414,6 +2583,355 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/atlas/hosts": {
+      "get": {
+        "description": "Returns the Metal hosts that are not deleted, with their tags, in title order. Pass `tag` to narrow them.",
+        "operationId": "list_hosts",
+        "parameters": [
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Number of matching resources to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Number of matching resources to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Maximum number of resources to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "Maximum number of resources to return.",
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Comma separated key:value tags. A resource must carry every pair, such as tag=os:Ubuntu,channel:lts.",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Comma separated key:value tags. A resource must carry every pair, such as tag=os:Ubuntu,channel:lts.",
+              "title": "Tag"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page[HostResponse]"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "List hosts",
+        "tags": [
+          "Hosts"
+        ]
+      }
+    },
+    "/api/atlas/hosts/{host_id}/access/grant": {
+      "post": {
+        "description": "Opens one host, or every host when the ID is `all`, to one person until `expires_at`. Atlas registers the person in Warpgate when needed, so they can sign in with Central afterwards.",
+        "operationId": "grant_host_access",
+        "parameters": [
+          {
+            "description": "Host id.",
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "alice@frappe.io",
+                "expires_at": "2026-10-02T14:00:00Z"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/HostAccessGrantPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostAccessResponse"
+                }
+              }
+            },
+            "description": "The person can open the host until expires_at. A repeated grant moves the end time."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The host does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "This region has no Warpgate, or it did not answer. Retry later."
+          }
+        },
+        "summary": "Grant host access",
+        "tags": [
+          "Hosts"
+        ]
+      }
+    },
+    "/api/atlas/hosts/{host_id}/access/revoke": {
+      "post": {
+        "description": "Closes one host, or every host when the ID is `all`, to one person now.",
+        "operationId": "revoke_host_access",
+        "parameters": [
+          {
+            "description": "Host id.",
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "alice@frappe.io"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/HostAccessRevokePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The person can no longer open the host. Revoking twice is safe."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The host does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "This region has no Warpgate, or it did not answer. Retry later."
+          }
+        },
+        "summary": "Revoke host access",
+        "tags": [
+          "Hosts"
+        ]
+      }
+    },
     "/api/atlas/images": {
       "get": {
         "description": "Returns one page of enabled System and Machine images owned by the tenant in newest-first order. A disabled image cannot boot a virtual machine, so the list leaves it out. Pass `image_type` as `system` or `machine` to return only that type. Omit it to return both.",
@@ -4877,7 +5395,7 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/network": {
       "patch": {
-        "description": "Changes IPv4 internet access, network throughput limits, or firewall fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6 address brings its own internet path.",
+        "description": "Changes IPv4 internet access, WireGuard gateway access, network throughput limits, or firewall fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6 address brings its own internet path.",
         "operationId": "update_virtual_machine_network",
         "parameters": [
           {
@@ -5729,6 +6247,10 @@
     {
       "description": "Read and delete tenant virtual machine images.",
       "name": "Images"
+    },
+    {
+      "description": "List Metal hosts and grant people temporary SSH access to them through Warpgate. Tenant 0 only.",
+      "name": "Hosts"
     }
   ]
 }

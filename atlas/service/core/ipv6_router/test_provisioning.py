@@ -50,12 +50,8 @@ class TestRouterReadiness(UnitTestCase):
 		with patch.object(provisioning.frappe, "get_doc", return_value=machine):
 			return IPv6RouterServerProvisioner(router()).is_virtual_machine_ready
 
-	# The network step would overwrite the address that the IPv4 reconcile job sends to Metal.
-	def test_the_router_waits_until_metal_holds_the_public_ipv4(self) -> None:
-		self.assertFalse(self.is_ready(""))
-
-	def test_the_router_is_ready_with_the_public_ipv4(self) -> None:
-		self.assertTrue(self.is_ready("151.115.112.94"))
+	def test_the_router_needs_no_public_ipv4(self) -> None:
+		self.assertTrue(self.is_ready(""))
 
 
 class TestRouterNetwork(UnitTestCase):

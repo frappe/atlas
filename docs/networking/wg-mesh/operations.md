@@ -21,8 +21,10 @@ The built command does not need Clang or bpftool on the target host.
 ## Configure a host
 
 ```sh
-sudo atlas-wg-mesh configure --uplink eno1.1680 --wireguard wg0
+sudo atlas-wg-mesh configure --uplink eno1.1680 --wireguard wg0 --controller fdaa:1::ffff:ffff:ffff:ffff
 ```
+
+`--controller` sets the Atlas mesh address. Without it, the stored address stays.
 
 The uplink needs IPv4, IPv6, and an Ethernet MAC address.
 

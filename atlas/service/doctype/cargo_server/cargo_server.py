@@ -112,7 +112,9 @@ class CargoServer(Document):
 
 			password = generate_installer_password()
 			virtual_machine = frappe.get_doc("Virtual Machine", cargo_server.virtual_machine)
-			result = SSHRunner(virtual_machine.ssh_host).run_command(
+			result = SSHRunner(
+				virtual_machine.ssh_host, proxy_command=virtual_machine.get_ssh_proxy_command()
+			).run_command(
 				PILOT_ADMIN_PASSWORD_RESET_COMMAND,
 				data={"PILOT_ADMIN_PASSWORD": password},
 			)
@@ -208,10 +210,6 @@ class CargoServer(Document):
 		):
 			frappe.throw(_("Select a System Virtual Machine Image."))
 
-		address = values.get("public_ipv4")
-		if not isinstance(address, str) or not address.strip():
-			frappe.throw(_("Select a reserved public IPv4 allocation."))
-
 	def _create_virtual_machine(self, values: dict[str, Any]) -> bool:
 		from atlas.vm.core.vm_service import VirtualMachineCreateError, VirtualMachineService
 
@@ -225,7 +223,6 @@ class CargoServer(Document):
 			"is_termination_protected": True,
 			"hostname": "cargo",
 			"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
-			"public_ipv4": values["public_ipv4"],
 		}
 		try:
 			result = VirtualMachineService.create(request)
@@ -246,7 +243,9 @@ class CargoServer(Document):
 
 		virtual_machine = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		command = "enable-pilot-release-tracker" if enabled else "disable-pilot-release-tracker"
-		result = SSHRunner(virtual_machine.ssh_host).run_command(
+		result = SSHRunner(
+			virtual_machine.ssh_host, proxy_command=virtual_machine.get_ssh_proxy_command()
+		).run_command(
 			PILOT_RELEASE_TRACKER_COMMAND,
 			data={"CARGO_SITE": self.domain, "PILOT_RELEASE_TRACKER_COMMAND": command},
 		)

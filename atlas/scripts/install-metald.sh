@@ -6,10 +6,12 @@ set -eu
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
 : "${METALD_SHA256:?METALD_SHA256 is required}"
 : "${MESH_UPLINK_INTERFACE:?MESH_UPLINK_INTERFACE is required}"
+: "${PRIVATE_NETWORK_CIDR:?PRIVATE_NETWORK_CIDR is required}"
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
 : "${ATLAS_COMMON_NAME:?ATLAS_COMMON_NAME is required}"
+: "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
 firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
@@ -54,10 +56,10 @@ service_is_stable() {
 
 
 step "install required packages"
-if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null; then
+if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null || ! command -v nc >/dev/null; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt update -qq
-	apt install -y -qq curl iptables openssl tar zfsutils-linux
+	apt install -y -qq curl iptables netcat-openbsd openssl tar zfsutils-linux
 else
 	skip "packages"
 fi
@@ -147,6 +149,7 @@ interface = "$wireguard_interface"
 [wg_mesh]
 binary_path = "$mesh_binary_path"
 uplink = "$MESH_UPLINK_INTERFACE"
+controller_address = "$ATLAS_MESH_ADDRESS"
 EOF
 }
 
@@ -181,6 +184,11 @@ if [ -f "$config_file" ]; then
 	sed -i "/^auth_token_hash[[:space:]]*=/d" "$config_file"
 	if grep -q '^\[wg_mesh\]' "$config_file"; then
 		sed -i "s|^uplink = .*|uplink = \"$MESH_UPLINK_INTERFACE\"|" "$config_file"
+		if grep -q '^controller_address[[:space:]]*=' "$config_file"; then
+			sed -i "s|^controller_address[[:space:]]*=.*|controller_address = \"$ATLAS_MESH_ADDRESS\"|" "$config_file"
+		else
+			sed -i "/^uplink = /a controller_address = \"$ATLAS_MESH_ADDRESS\"" "$config_file"
+		fi
 		sed -i "s|^binary_path = \"/usr/local/bin/atlas-wg-mesh\"|binary_path = \"$mesh_binary_path\"|" "$config_file"
 	else
 		mesh_sections
@@ -213,18 +221,21 @@ fi
 
 step "network setup"
 install -d -m 0755 /usr/local/lib/metal
-cat > /usr/local/lib/metal/network-setup <<'EOF'
+cat > /usr/local/lib/metal/network-setup <<EOF
 #!/bin/sh
 set -eu
 
-uplink=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
-[ -n "$uplink" ] || {
+uplink=\$(ip -4 route show default | awk 'NR == 1 { print \$5 }')
+[ -n "\$uplink" ] || {
 	echo "metald network setup requires an IPv4 default route" >&2
 	exit 1
 }
 
-iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE 2>/dev/null ||
-	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE
+iptables -C FORWARD -i vh+ -d "$PRIVATE_NETWORK_CIDR" -j DROP 2>/dev/null ||
+	iptables -A FORWARD -i vh+ -d "$PRIVATE_NETWORK_CIDR" -j DROP
+
+iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE 2>/dev/null ||
+	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE
 EOF
 chmod 0755 /usr/local/lib/metal/network-setup
 
@@ -233,8 +244,8 @@ step "systemd units"
 cat > /etc/systemd/system/metal.service <<EOF
 [Unit]
 Description=metal daemon
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target wg-quick@$wireguard_interface.service
+After=network-online.target wg-quick@$wireguard_interface.service
 RequiresMountsFor=$base_dir
 
 [Service]

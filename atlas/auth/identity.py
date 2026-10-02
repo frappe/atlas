@@ -65,6 +65,15 @@ def require_central_identity() -> AtlasIdentity:
 	return identity
 
 
+def require_tenant_zero_operator() -> AtlasIdentity:
+	"""Return the identity of a caller with every scope, acting for tenant 0."""
+	identity = current_identity()
+	if identity is None or identity.scope != "*" or get_current_tenant_id() != 0:
+		raise frappe.PermissionError
+
+	return identity
+
+
 def get_current_tenant_id() -> int:
 	"""Return the tenant that the current request acts for."""
 	identity = current_identity()

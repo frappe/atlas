@@ -114,8 +114,8 @@ class TestCargoInstallation(UnitTestCase):
 		self.assertEqual(server.status, "Failed")
 		self.assertEqual(server.failure_message, "proxy-routes: proxy unavailable")
 
-	def test_ssh_wait_uses_the_virtual_machine_public_address(self) -> None:
-		virtual_machine = SimpleNamespace(ssh_host="203.0.113.9")
+	def test_ssh_wait_goes_through_the_guest_host(self) -> None:
+		virtual_machine = SimpleNamespace(ssh_host="vm-00001", get_ssh_proxy_command=lambda: "ssh host nc")
 		provisioner = CargoServerProvisioner(cargo_server())
 		with (
 			patch.object(
@@ -126,10 +126,11 @@ class TestCargoInstallation(UnitTestCase):
 			provisioner.wait_for_ssh()
 
 		wait_for_server.assert_called_once_with(
-			host="203.0.113.9",
+			host="vm-00001",
 			users=("root",),
 			timeout_seconds=600,
 			poll_interval_seconds=5,
+			proxy_command="ssh host nc",
 		)
 
 	def test_installation_uses_a_visible_ssh_task(self) -> None:

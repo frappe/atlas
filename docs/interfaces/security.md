@@ -29,7 +29,7 @@ Metal uses TLS 1.3 with no shared secret.
 | Coordination | `9001` | Any regional node certificate. Source-side migration routes only. |
 | One-shot snapshot stream | `9002` | Any regional node certificate. |
 
-Coordination and snapshot listeners bind only to the WireGuard address. The destination also checks the source server certificate against the source address.
+All three listeners bind only to the WireGuard address. The host firewall admits `9000` only from the Atlas WireGuard address and `9001` and `9002` only from host addresses. See [Atlas access to hosts](../region/host-access.md#host-firewall). The destination also checks the source server certificate against the source address.
 
 ### Certificate lifetime
 
@@ -91,7 +91,7 @@ A console connection uses a one-use Redis token. [Console access](../compute/con
 - [Atlas request authentication](../../atlas/auth/request.py), [token validator](../../atlas/auth/token.py), and [tenant permission hooks](../../atlas/auth/overrides.py) own Atlas API identity.
 - [Metal TLS setup](../../metal/cmd/metald/tls.go) owns listener certificate checks.
 - [Atlas Metal certificates](../../atlas/atlas/core/tls/metal.py) owns regional issuance and private client files.
-- [Proxy authentication](../../services/http-proxy/control/proxy_control/auth.py) owns route API credentials and scopes.
+- [Service authentication](../../services/control-cluster/atlas_control/auth.py) owns route API credentials. The proxy defines its scopes in [main.py](../../services/http-proxy/control/proxy_control/main.py).
 - [Mesh tenant checks](../../services/wg-mesh/bpf/maps.h) own private packet isolation.
 - [Console token](../../atlas/vm/core/console_token.py) and [realtime bridge](../../atlas/realtime/handlers.py) own browser console access.
 - [Atlas identity tests](../../atlas/auth/test_identity.py), [Metal TLS tests](../../metal/cmd/metald/tls_test.go), and [console tests](../../atlas/realtime/test_handlers.py) show the intended access boundaries.

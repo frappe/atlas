@@ -36,7 +36,7 @@ The `artifact_storage` field selects the artifact location:
 
 ### Bootstrap without object storage
 
-Build the first System image with `--storage site-file`. Set `atlas_base_url` to an address the host can reach.
+Build the first System image with `--storage site-file`. Set `atlas_internal_url` to an address the host can reach.
 
 Site Files are public, so only System images can use them. The tenant download route refuses Site File images.
 

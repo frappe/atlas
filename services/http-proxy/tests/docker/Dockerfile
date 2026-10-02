@@ -1,6 +1,7 @@
 FROM ubuntu:24.04
 
-COPY . /src/proxy
+COPY http-proxy /src/proxy
+COPY control-cluster /src/proxy/control-cluster
 RUN chmod +x /src/proxy/nginx/setup.sh && /src/proxy/nginx/setup.sh
 
 RUN printf 'test.x.frappe.dev\n' > /var/lib/nginx/region \

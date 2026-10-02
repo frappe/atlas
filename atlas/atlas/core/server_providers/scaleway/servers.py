@@ -95,6 +95,17 @@ class ScalewayServers:
 			"GET", f"/baremetal/v1/zones/{self.configuration.zone}/servers/{provider_server_id}"
 		)
 
+	def ensure_private_network_option(self, remote_server: Mapping, option_id: str) -> None:
+		"""Add the private network option that a server created outside Atlas can lack."""
+		if any(option.get("id") == option_id for option in remote_server.get("options") or []):
+			return
+
+		self.client.request(
+			"POST",
+			f"/baremetal/v1/zones/{self.configuration.zone}/servers/{remote_server['id']}/options/{option_id}",
+			json={},
+		)
+
 	def ensure_private_network(self, provider_server_id: str) -> Mapping:
 		"""Return the private network attachment, and create it when it does not exist."""
 		private_network = self.private_network(provider_server_id)

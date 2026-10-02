@@ -85,7 +85,7 @@ class AwsVolumes:
 		)
 		environment = {"TARGET": kind}
 		if kind == "storage":
-			environment["STORAGE_POOL_DEVICE"] = self.provider.storage_pool_device(server)
+			environment["STORAGE_POOL_DEVICE"] = self.provider.get_storage_pool_device(server)
 		task = SSHTask.create_for_script_file(
 			target_type=server.doctype,
 			target=server.name,

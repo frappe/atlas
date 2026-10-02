@@ -18,6 +18,7 @@ This package converges one VM network and applies the host WireGuard peer set. I
 - `Ensure` stores no applied VM-network state. It reads host resources and accepts resources that already exist, so another pass can repair a partial failure.
 - Remove unwanted links and routes before adding new ones. Add the veth first and mesh registration last so the first attracted packet has a complete path.
 - Apply both firewall tables before exposing the VM through a veth, public address, or mesh registration. If the second table update fails, restore the first. The drift cache is memory only.
+- `Mesh.syncVM` skips `wg-mesh vm sync` for unchanged arguments and veth index. The cache is memory only, so a metald restart syncs every VM. The `ip` route steps run on every pass.
 - A VM with a mesh address needs a veth pair. Only a warm-image capture VM has neither. `Release` removes mesh registration before deleting the namespace.
 - `routes.go` restores the `default` prefix and host route lengths that `ip` omits. IPv4 NAT exists only while an IPv4 route uses `host`.
 - Public-address rules are found by their `metal-public-ipv4-<vm-id>` or `metal-public-ipv6-<vm-id>` comments. Treat each rule set as one unit. For `iptables -C`, only exit code 1 means absent.

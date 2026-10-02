@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0 */
 /* The address layouts and the stateless mapping between them.
  *
- *   public  = prefix | reserved, all zero | tenant 24 bits | virtual machine 20 bits
- *   private = fdaa | region 16 bits | tenant 32 bits | virtual machine 64 bits
+ *   public  = prefix, at most /80 | tenant 32 bits | virtual machine 16 bits
+ *   private = fdaa | region 16 bits | tenant 32 bits | padding 48 bits, zero | virtual machine 16 bits
  */
 #ifndef ATLAS_IPV6_ROUTER_ADDRESS_H
 #define ATLAS_IPV6_ROUTER_ADDRESS_H
@@ -18,9 +18,9 @@
 #define MESH_PREFIX 0xfdaaULL
 #define MESH_REGION ((MESH_PREFIX << 16) | REGION_ID)
 
-#define TENANT_BITS 24
-#define MACHINE_BITS 20
-#define TENANT_LIMIT (1ULL << TENANT_BITS)
+#define TENANT_BITS 32
+#define MACHINE_BITS 16
+#define TENANT_MASK ((1ULL << TENANT_BITS) - 1)
 #define MACHINE_LIMIT (1ULL << MACHINE_BITS)
 #define HOST_MASK ((1ULL << (TENANT_BITS + MACHINE_BITS)) - 1)
 
@@ -68,7 +68,7 @@ static __always_inline bool is_in_block(const struct address *address)
 	return (address->high & PUBLIC_HIGH_MASK) == PUBLIC_HIGH && (address->low & PUBLIC_LOW_MASK) == PUBLIC_LOW;
 }
 
-/* A block address maps to a virtual machine only when its reserved bits are zero. */
+/* A block address maps to a virtual machine only when the bits between the block and the host part are zero. */
 static __always_inline bool is_mapped_public(const struct address *address)
 {
 	return address->high == PUBLIC_HIGH && (address->low & ~HOST_MASK) == PUBLIC_LOW;
@@ -79,17 +79,17 @@ static __always_inline struct address to_private(const struct address *public)
 {
 	struct address private;
 
-	private.high = (MESH_REGION << 32) | ((public->low >> MACHINE_BITS) & (TENANT_LIMIT - 1));
+	private.high = (MESH_REGION << 32) | ((public->low >> MACHINE_BITS) & TENANT_MASK);
 	private.low = public->low & (MACHINE_LIMIT - 1);
 	return private;
 }
 
-/* Returns false for another region, or a tenant or machine number that the public layout cannot hold. */
+/* Returns false for another region, or an address with padding, such as the Atlas address. */
 static __always_inline bool to_public(const struct address *private, struct address *public)
 {
-	__u64 tenant = private->high & 0xffffffffULL;
+	__u64 tenant = private->high & TENANT_MASK;
 
-	if ((private->high >> 32) != MESH_REGION || tenant >= TENANT_LIMIT || private->low >= MACHINE_LIMIT)
+	if ((private->high >> 32) != MESH_REGION || private->low >= MACHINE_LIMIT)
 		return false;
 
 	public->high = PUBLIC_HIGH;

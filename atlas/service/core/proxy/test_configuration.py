@@ -9,6 +9,7 @@ import bcrypt
 from frappe.tests import UnitTestCase
 from frappe.utils import now_datetime
 
+import atlas.service.core.control_cluster as control_cluster_module
 import atlas.service.core.proxy.configuration as configuration_module
 from atlas.service.core.proxy.configuration import (
 	APPLY_COMMAND,
@@ -51,6 +52,7 @@ class _FakeSettings:
 
 class _FakeProxyServer:
 	name = "proxy-001"
+	virtual_machine = None
 
 	def __init__(self, password: str = "a-control-password") -> None:
 		self.password = password
@@ -117,8 +119,8 @@ class TestProxyConfiguration(UnitTestCase):
 		settings = _FakeSettings()
 		settings.proxy_cluster_password_rotated_on = datetime(2026, 9, 8, 12, 0)
 
-		with patch.object(configuration_module, "get_system_timezone", return_value="UTC"):
-			valid_until = _build(settings).previous_password_valid_until
+		with patch.object(control_cluster_module, "get_system_timezone", return_value="UTC"):
+			valid_until = _build(settings).credentials.previous_password_valid_until
 
 		expected = int(datetime(2026, 9, 8, 12, 10, tzinfo=UTC).timestamp())
 		self.assertEqual(valid_until, expected)
@@ -188,6 +190,17 @@ class TestProxyConfiguration(UnitTestCase):
 			command.index(f"restart {DAEMON_UNIT}"),
 		)
 		self.assertLess(command.index(APPLY_COMMAND), command.index(f"enable {DAEMON_UNIT}"))
+
+	def test_the_apply_command_points_peer_names_at_the_mesh(self) -> None:
+		"""Replication must stay on the mesh, so each peer name resolves to its mesh address."""
+		configuration = _build()
+		configuration.proxy_server.virtual_machine = "vm-0000082"
+
+		with patch("atlas.atlas.core.mesh_address.frappe.get_single", return_value=_FakeSettings()):
+			command = configuration.get_apply_command()
+
+		self.assertIn("sed -i '/ # atlas-proxy-peer$/d' /etc/hosts", command)
+		self.assertIn("fdaa:1::52 proxy-001.par-1.example.com # atlas-proxy-peer", command)
 
 
 class TestPushToActiveProxies(UnitTestCase):

@@ -44,7 +44,9 @@ class TestGenericProvider(UnitTestCase):
 		run_setup_script.assert_not_called()
 
 	def test_storage_pool_device_is_the_registered_device(self) -> None:
-		self.assertEqual(GenericProvider(self.settings()).storage_pool_device(self.server()), "/dev/nvme1n1")
+		self.assertEqual(
+			GenericProvider(self.settings()).get_storage_pool_device(self.server()), "/dev/nvme1n1"
+		)
 
 	def test_public_address_attaches_as_itself(self) -> None:
 		provider = GenericProvider(self.settings())

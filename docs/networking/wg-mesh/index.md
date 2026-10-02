@@ -6,7 +6,7 @@ This page lists the exact rules and state of WG Mesh. Read [how VMs reach each o
 
 | Range | Use |
 | --- | --- |
-| `fdaa::/16` | VM addresses: `fdaa \| region 16 bits \| tenant 32 bits \| VM ID 64 bits`. |
+| `fdaa::/16` | VM addresses: `fdaa \| region 16 bits \| tenant 32 bits \| padding 48 bits \| VM 16 bits`. See [address formats](../address-formats.md). |
 | `fdab::/16` | Host WireGuard addresses. |
 
 For example, `fdaa:1:0:2::3` is region `1`, tenant `2`, VM `3`. The data path reads the tenant field for isolation.
@@ -32,6 +32,7 @@ flowchart LR
 | `local_vms` | VM address to local interface. |
 | `remote_vms` | Remote VM address to host WireGuard address. Least recently used entries are evicted. |
 | `privileged_vms` | Tenant-0 addresses that can reach every tenant. |
+| `controller_address` | The Atlas tenant-0 address. The VM hook passes traffic to it to Linux, which routes it through `wg0`. |
 | `peer_list` | Peer IPv4, MAC, and WireGuard addresses. |
 | `discovery_limits` | NDP request limit for each VM interface. |
 | `gateways` | Interfaces of the gateway VMs on this host. |
@@ -51,10 +52,11 @@ The VM hook checks each packet a VM sends, in this order:
 2. Send a destination that has a gateway route to its gateway.
 3. Drop a packet whose source address the VM does not own.
 4. Drop a packet to another tenant, unless one side is privileged.
-5. Drop a foreign source to a local VM that has no gateway route back to that source.
-6. Leave local delivery to Linux.
-7. Tunnel a known remote destination through WireGuard.
-8. Start an NDP lookup for an unknown destination. Each interface can start 10 lookups a second, with a burst of 50.
+5. Leave a VM-sourced packet to the Atlas controller address to Linux, which routes it through `wg0`.
+6. Drop a foreign source to a local VM that has no gateway route back to that source.
+7. Leave local delivery to Linux.
+8. Tunnel a known remote destination through WireGuard.
+9. Start an NDP lookup for an unknown destination. Each interface can start 10 lookups a second, with a burst of 50.
 
 ## Lookup (NDP)
 
