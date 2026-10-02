@@ -16,8 +16,8 @@ static __always_inline int valid_client(const struct in6_addr *client, const str
 	       client->s6_addr16[3] == vm->s6_addr16[2] &&
 	       client->s6_addr16[4] == vm->s6_addr16[3] &&
 	       (client->s6_addr16[3] || client->s6_addr16[4]) &&
-	       (client->s6_addr16[5] || client->s6_addr16[6]) &&
-	       client->s6_addr16[7] == 0;
+	       client->s6_addr16[5] == 0 && client->s6_addr16[6] == 0 &&
+	       client->s6_addr16[7];
 }
 
 SEC("tc/client")

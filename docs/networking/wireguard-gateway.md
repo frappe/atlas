@@ -26,10 +26,12 @@ The answer holds the WireGuard settings of the device:
 
 | Field | Example | Use |
 | --- | --- | --- |
-| `address` | `fdac:1:2:0:2a:0:9:0/128` | Interface address of the device. |
+| `address` | `fdac:1:2:0:2a::9/128` | Interface address of the device. |
 | `allowed_ips` | `["fdaa:1:0:2a::/64"]` | The VM addresses of the tenant. |
 | `endpoint` | `wireguard-002.par-1.example.com:51820` | The node that serves the device. |
 | `public_key` | `<node public key>` | Public key of that node. |
+
+The `tenant_id` is from 1 to 4,294,967,295, and the `client_id` is from 1 to 65,535.
 
 A repeated request with the same key returns the same settings. A new device goes to the node with the fewest devices. `DELETE /v1/peers` with `{"tenant_id": 42, "client_id": 9}` removes a device, and `GET /v1/peers` lists every device with its `node_id`.
 
@@ -50,7 +52,7 @@ The gateway eBPF filters drop a packet unless the device and the VM belong to th
 ## Addresses
 
 ```text
-fdac | region 16 | node 16 | tenant 32 | client 32 | zero 16
+fdac | region 16 | node 16 | tenant 32 | padding 32 | client 16
 ```
 
 Each node owns one `fdac:<region>:<node>::/48`. Atlas reserves `fdaa::/16`, `fdab::/16`, and `fdac::/16`. A customer network that uses one of these ranges conflicts with the routes of its devices, so it must use another range.

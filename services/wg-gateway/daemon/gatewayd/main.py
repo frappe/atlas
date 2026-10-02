@@ -70,7 +70,7 @@ class PeerSettings(BaseModel):
 
 	tenant_id: int = Field(examples=[42], description="Tenant of the peer.")
 	client_id: int = Field(examples=[9], description="Peer number within the tenant.")
-	address: str = Field(examples=["fdac:1:2:0:2a:0:9:0/128"], description="Interface address of the peer.")
+	address: str = Field(examples=["fdac:1:2:0:2a::9/128"], description="Interface address of the peer.")
 	allowed_ips: list[str] = Field(
 		examples=[["fdaa:1:0:2a::/64"]],
 		description="The VM addresses of the tenant. The peer puts them in its own AllowedIPs.",

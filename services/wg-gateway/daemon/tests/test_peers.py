@@ -7,7 +7,7 @@ from atlas_control.config import AuthConfig, ClusterConfig
 from fastapi import HTTPException
 
 from gatewayd.config import ConfigError, GatewayConfig, Node, load
-from gatewayd.peers import PEERS_KIND, PeerState
+from gatewayd.peers import PEERS_KIND, PeerState, validate_device
 
 KEY_A = "A" * 43 + "="
 KEY_B = "B" * 43 + "="
@@ -50,7 +50,7 @@ def test_credentials_carry_the_node_tenant_and_client_in_the_address(tmp_path):
 
 	credentials = register(peers, {}, "42:9", KEY_A, "wireguard-007")
 
-	assert credentials["address"] == "fdac:2:7:0:2a:0:9:0/128"
+	assert credentials["address"] == "fdac:2:7:0:2a::9/128"
 	assert credentials["allowed_ips"] == ["fdaa:2:0:2a::/64"]
 	assert credentials["endpoint"] == "wireguard-007.par-1.example.com:51821"
 	assert credentials["public_key"] == "node-7-public"
@@ -103,7 +103,7 @@ def test_only_this_node_applies_its_devices(tmp_path):
 
 	assert peers.applied.count("[Peer]") == 1
 	assert f"PublicKey = {KEY_A}" in peers.applied
-	assert "AllowedIPs = fdac:2:1:0:1:0:1:0/128" in peers.applied
+	assert "AllowedIPs = fdac:2:1:0:1::1/128" in peers.applied
 
 
 def test_a_repeated_registration_keeps_the_first_node(tmp_path):
@@ -162,7 +162,7 @@ def test_a_device_of_an_archived_node_is_kept_without_an_endpoint(tmp_path):
 	asyncio.run(peers.apply(state, Mutation(kind=PEERS_KIND, action="replace", value=table)))
 	credentials = peers.get_credentials("1:1", state[PEERS_KIND]["1:1"])
 
-	assert credentials["address"] == "fdac:2:2:0:1:0:1:0/128"
+	assert credentials["address"] == "fdac:2:2:0:1::1/128"
 	assert (credentials["endpoint"], credentials["public_key"]) == ("", "")
 	with pytest.raises(HTTPException):
 		register(peers, state, "1:2", KEY_B, "wireguard-002")
@@ -224,3 +224,9 @@ def test_a_failed_apply_leaves_the_table_unchanged(tmp_path):
 	with pytest.raises(HTTPException):
 		register(peers, state, "1:1", KEY_A, "wireguard-001")
 	assert state == {PEERS_KIND: {}}
+
+
+def test_a_client_number_must_fit_one_hextet():
+	validate_device(1, 65535, KEY_A)
+	with pytest.raises(HTTPException):
+		validate_device(1, 65536, KEY_A)

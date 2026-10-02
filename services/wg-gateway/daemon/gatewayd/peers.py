@@ -14,7 +14,8 @@ from .config import GatewayConfig, Node
 PEERS_KIND = "peers"
 CLIENT_PREFIX = 0xFDAC
 MESH_PREFIX = 0xFDAA
-FIELD_LIMIT = (1 << 32) - 1
+TENANT_LIMIT = (1 << 32) - 1
+CLIENT_LIMIT = (1 << 16) - 1
 PUBLIC_KEY_PATTERN = re.compile(r"[A-Za-z0-9+/]{43}=")
 NODE_ID_PATTERN = re.compile(r"wireguard-[0-9]{3,5}")
 INTERFACE = "wg0"
@@ -28,9 +29,12 @@ def get_identity(tenant_id: int, client_id: int) -> str:
 
 def validate_device(tenant_id: int, client_id: int, public_key: str) -> None:
 	"""Reject a device that the address layout or WireGuard cannot hold."""
-	for label, value in (("tenant_id", tenant_id), ("client_id", client_id)):
-		if not 1 <= value <= FIELD_LIMIT:
-			raise HTTPException(status_code=400, detail=f"{label} must be from 1 to {FIELD_LIMIT}")
+	for label, value, limit in (
+		("tenant_id", tenant_id, TENANT_LIMIT),
+		("client_id", client_id, CLIENT_LIMIT),
+	):
+		if not 1 <= value <= limit:
+			raise HTTPException(status_code=400, detail=f"{label} must be from 1 to {limit}")
 	if not PUBLIC_KEY_PATTERN.fullmatch(public_key):
 		raise HTTPException(status_code=400, detail="public_key must be a 44-character WireGuard key")
 
@@ -179,13 +183,7 @@ class PeerState:
 		# The node number is part of the record name, so an archived node still gives the address.
 		gateway_id = int(peer["node_id"].rsplit("-", 1)[-1])
 		region = self.config.region_id
-		address = (
-			(CLIENT_PREFIX << 112)
-			| (region << 96)
-			| (gateway_id << 80)
-			| (tenant_id << 48)
-			| (client_id << 16)
-		)
+		address = (CLIENT_PREFIX << 112) | (region << 96) | (gateway_id << 80) | (tenant_id << 48) | client_id
 		tenant_network = (MESH_PREFIX << 112) | (region << 96) | (tenant_id << 64)
 		return {
 			"tenant_id": tenant_id,
