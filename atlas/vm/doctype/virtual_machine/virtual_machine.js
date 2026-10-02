@@ -65,6 +65,14 @@ frappe.ui.form.on("Virtual Machine", {
 				Boolean(frm.doc.public_ipv6 || frm.doc.routed_ipv6),
 				ACTIONS,
 			],
+			[
+				frm.doc.is_accessible_via_wireguard_gateway
+					? __("Disable WG Gateway Access")
+					: __("Enable WG Gateway Access"),
+				() => setWireGuardGatewayAccess(frm),
+				!frm.doc.is_network_gateway,
+				ACTIONS,
+			],
 			[__("Edit Routes"), () => showRoutesDialog(frm), true, ACTIONS],
 			[
 				frm.doc.is_termination_protected
@@ -769,6 +777,26 @@ function showNetworkGatewayDialog(frm) {
 				method: "set_network_gateway",
 				doc: frm.doc,
 				args: { is_network_gateway: !frm.doc.is_network_gateway },
+				freeze: true,
+			})
+			.then(() => frm.reload_doc())
+	);
+}
+
+function setWireGuardGatewayAccess(frm) {
+	const is_enabled = !frm.doc.is_accessible_via_wireguard_gateway;
+	const message = is_enabled
+		? __("Let customer devices on this tenant's WireGuard gateways reach {0}?", [
+				frm.doc.name.bold(),
+		  ])
+		: __("Stop WireGuard gateway access to {0}?", [frm.doc.name.bold()]);
+
+	frappe.confirm(message, () =>
+		frm
+			.call({
+				method: "set_wireguard_gateway_access",
+				doc: frm.doc,
+				args: { is_enabled },
 				freeze: true,
 			})
 			.then(() => frm.reload_doc())

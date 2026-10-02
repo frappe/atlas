@@ -35,7 +35,7 @@ flowchart TB
 |---|---|
 | `Open` | Allocates the master and starts the drain. Keeps it out of the store. |
 | `Persist` | Adds the master to the store after the unit holds the slave. |
-| `Attach` | Adds a viewer. |
+| `Attach` | Adds a viewer. The viewer follows the VM to its next console after a restart. |
 | `Close` | Releases the master. |
 | `Shutdown` | Releases local masters. |
 | `Adopt` | Restores stored masters, removes stale masters and links. |
@@ -56,6 +56,8 @@ Do not close a master while its VM runs. Linux then sends SIGHUP to Firecracker 
 ## Lifecycle
 
 A console lives from VM launch to VM stop. The runtime calls `Open`, `Persist`, and `Close`. metald calls `Adopt` and `Shutdown`.
+
+A viewer lives until it disconnects or is dropped. `Attach` owns its input goroutine, so input goes to the current console and a restart does not leave a second reader on the viewer.
 
 ## Related
 

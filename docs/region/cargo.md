@@ -11,7 +11,7 @@ flowchart LR
 
 ## Before you provision
 
-Use the **Provision** action on Cargo Server. Select an Available System image and a reserved tenant-0 IPv4 allocation. An Active HTTP proxy must already exist because Cargo's public routes go through it.
+Use the **Provision** action on Cargo Server. Select an Available System image. Cargo needs no public IPv4 address. An Active HTTP proxy must already exist because Cargo's public routes go through it.
 
 | Resource | Provision form default |
 | --- | --- |
@@ -25,7 +25,7 @@ The storage-node count must be at least the replication factor. The [service VM 
 
 Atlas waits for the VM to leave draft state. A job then runs these steps:
 
-1. Wait for root SSH on the VM's public IPv4 address.
+1. Wait for root SSH through the VM host.
 2. Run `install-cargo.sh` in a synchronous SSH Task.
 3. Point `cargo` and `cargo-pilot` proxy routes at the VM's mesh IPv6 address.
 4. Call Cargo's ping endpoint through the regional proxy and expect `pong`.

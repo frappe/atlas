@@ -73,6 +73,22 @@ func expectConsoleOutput(t *testing.T, broker *SerialBroker, id string, want str
 	waitFor(t, func() bool { return bytes.Contains(client.written(), []byte(want)) })
 }
 
+// openSlave opens a console PTY slave through its link, as the VM unit does.
+func openSlave(t *testing.T, directory string, id string) *os.File {
+	t.Helper()
+	link, err := os.Readlink(filepath.Join(directory, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slave, err := os.OpenFile(link, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { slave.Close() })
+
+	return slave
+}
+
 // TestShutdownKeepsMastersSoAdoptRestoresRunningConsoles preserves guest output across a restart.
 func TestShutdownKeepsMastersSoAdoptRestoresRunningConsoles(t *testing.T) {
 	directory := t.TempDir()
@@ -83,15 +99,7 @@ func TestShutdownKeepsMastersSoAdoptRestoresRunningConsoles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	link, err := os.Readlink(filepath.Join(directory, "vm-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	slave, err := os.OpenFile(link, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer slave.Close()
+	slave := openSlave(t, directory, "vm-1")
 
 	// The unit holds the slave now, which is when the master can be stored.
 	if err := broker.Persist("vm-1"); err != nil {
@@ -281,5 +289,45 @@ func TestPTYMasterSurvivesOnlyWithAStore(t *testing.T) {
 	}
 	if _, err := slave.Write([]byte("lost\r\n")); err == nil {
 		t.Fatal("write to a slave without a master succeeded, want an error")
+	}
+}
+
+// A viewer stays attached while the VM restarts and sees the next console.
+func TestAttachFollowsTheNextConsoleAfterARestart(t *testing.T) {
+	directory := t.TempDir()
+	broker := NewSerialBroker(directory, newFakeDescriptorStore())
+	defer broker.Shutdown()
+
+	if err := broker.Open("vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	firstSlave := openSlave(t, directory, "vm-1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := newFakeClient()
+	result := make(chan error, 1)
+	go func() { result <- broker.Attach(ctx, "vm-1", client, make(chan Winsize)) }()
+
+	if _, err := firstSlave.Write([]byte("before restart\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return bytes.Contains(client.written(), []byte("before restart")) })
+
+	if err := broker.Close("vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Open("vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	secondSlave := openSlave(t, directory, "vm-1")
+	if _, err := secondSlave.Write([]byte("after restart\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return bytes.Contains(client.written(), []byte("after restart")) })
+
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatalf("Attach = %v, want nil", err)
 	}
 }

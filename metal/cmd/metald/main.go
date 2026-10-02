@@ -148,6 +148,7 @@ func connectMesh(options options) (*network.Mesh, error) {
 	mesh, err := network.NewMesh(network.MeshConfig{
 		CommandPath:        options.mesh.binaryPath,
 		UplinkName:         options.mesh.uplinkName,
+		ControllerAddress:  options.mesh.controllerAddress,
 		WireGuardName:      options.wireGuardName,
 		WireGuardStatePath: wireGuardStatePath(options),
 	})
@@ -336,6 +337,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	hostDependencies := host.Dependencies{
 		WireGuard:             wireGuardManager,
 		Images:                stores.Images,
+		GatewayRoutes:         virtualMachineManager,
 		VirtualMachines:       virtualMachineManager,
 		Storage:               stores.Pool,
 		MigrationReservations: migrationReservations,

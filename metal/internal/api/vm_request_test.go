@@ -104,6 +104,18 @@ func TestPublicIPv6ValidationRejectsANonCanonicalPrefix(t *testing.T) {
 	}
 }
 
+func TestNetworkValidationRejectsAGatewayThatUsesWireGuardGatewayRoutes(t *testing.T) {
+	request := networkRequest{
+		WireGuardMeshIPv6:               "fdaa:1::49",
+		Firewall:                        &firewallRequest{Inbound: []firewallRuleRequest{}, Outbound: []firewallRuleRequest{}},
+		IsNetworkGateway:                true,
+		IsAccessibleViaWireGuardGateway: true,
+	}
+	if err := request.validate(); err == nil || !strings.Contains(err.Error(), "WireGuard gateway") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestGuestValidationBoundsMetadataServiceValues(t *testing.T) {
 	request := guestRequest{
 		Hostname: strings.Repeat("h", maximumHostnameLength),

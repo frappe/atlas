@@ -47,20 +47,6 @@ func (virtualMachine virtualMachine) records() (DesiredRecord, ObservedRecord, e
 	return DesiredRecord{}, ObservedRecord{}, lastError
 }
 
-// networkRequest builds the complete desired host network state for a record.
-// Traffic tracking stays attached while a VM is stopped so its cumulative
-// counters survive Stop/Start. Only idle shutdown requires tracking to succeed.
-func networkRequest(record DesiredRecord) NetworkRequest {
-	return NetworkRequest{
-		VirtualMachineID:      record.ID,
-		UserID:                record.UserID,
-		GroupID:               record.GroupID,
-		Configuration:         record.Specification.Network,
-		TrackTraffic:          record.State == StateRunning || record.State == StatePaused || record.State == StateStopped,
-		RequireTrafficMonitor: record.State == StateRunning && record.Specification.SleepAfterIdleSeconds > 0,
-	}
-}
-
 // runtimeMachine builds runtime input with a copied specification.
 func runtimeMachine(record DesiredRecord, networkInterface NetworkInterface) RuntimeMachine {
 	return RuntimeMachine{

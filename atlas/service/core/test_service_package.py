@@ -11,7 +11,7 @@ from unittest.mock import PropertyMock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.service.core.service_package import HTTP_PROXY_PACKAGE, ServicePackage
+from atlas.service.core.service_package import HTTP_PROXY_PACKAGE, SERVICE_PACKAGES, ServicePackage
 
 
 class TestServicePackage(UnitTestCase):
@@ -19,7 +19,13 @@ class TestServicePackage(UnitTestCase):
 		"""Create a component tree in a repository, with ignored and tracked files."""
 		directory = tempfile.TemporaryDirectory()
 		self.addCleanup(directory.cleanup)
-		component = Path(directory.name)
+		component = Path(directory.name) / "http-proxy"
+		component.mkdir()
+
+		shared = Path(directory.name) / "control-cluster"
+		shared.mkdir()
+		(shared / "pyproject.toml").write_text("[project]\n")
+		self.run_git(shared, "init", "--quiet")
 
 		(component / "nginx").mkdir()
 		(component / "control").mkdir()
@@ -63,6 +69,7 @@ class TestServicePackage(UnitTestCase):
 			self.archived_names(),
 			[
 				"http-proxy/.gitignore",
+				"http-proxy/control-cluster/pyproject.toml",
 				"http-proxy/control/main.py",
 				"http-proxy/nginx/setup.sh",
 			],
@@ -134,3 +141,20 @@ class TestServicePackage(UnitTestCase):
 		(component / "proxy.ext4").write_text("a different build output\n")
 
 		self.assertEqual(before, hashlib.sha256(HTTP_PROXY_PACKAGE.build_archive()).hexdigest())
+
+	def test_the_digest_follows_a_changed_shared_component(self) -> None:
+		component = self.build_component()
+		before = hashlib.sha256(HTTP_PROXY_PACKAGE.build_archive()).hexdigest()
+
+		(component.parent / "control-cluster" / "pyproject.toml").write_text("[project]\nname = 'changed'\n")
+
+		self.assertNotEqual(before, hashlib.sha256(HTTP_PROXY_PACKAGE.build_archive()).hexdigest())
+
+	def test_each_package_links_its_file_from_atlas_settings(self) -> None:
+		"""delete_unlinked_files deletes a published File that no File link field names."""
+		meta = frappe.get_meta("Atlas Settings")
+		for package in SERVICE_PACKAGES:
+			file_field = meta.get_field(package.settings_file_field)
+			self.assertIsNotNone(file_field, package.name)
+			self.assertEqual((file_field.fieldtype, file_field.options), ("Link", "File"), package.name)
+			self.assertIsNotNone(meta.get_field(package.settings_hash_field), package.name)

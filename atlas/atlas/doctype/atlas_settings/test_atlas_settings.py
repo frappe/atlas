@@ -30,7 +30,7 @@ class TestProxyClusterPassword(UnitTestCase):
 			AtlasSettings.rotate_proxy_cluster_password(settings)
 
 		only_for.assert_called_once_with("System Manager")
-		settings._rotate_proxy_cluster_password.assert_called_once()
+		settings._rotate_cluster_password.assert_called_once_with("proxy")
 
 	def test_rotation_retains_one_previous_password(self) -> None:
 		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -38,15 +38,15 @@ class TestProxyClusterPassword(UnitTestCase):
 		settings = MagicMock()
 		settings.get_password.return_value = "current-password"
 		with patch("frappe.generate_hash", return_value="new-password"):
-			AtlasSettings._rotate_proxy_cluster_password(settings)
+			AtlasSettings._rotate_cluster_password(settings, "proxy")
 
-		self.assertEqual(settings.previous_proxy_cluster_password, "current-password")
-		self.assertEqual(settings.proxy_cluster_password, "new-password")
+		settings.set.assert_any_call("previous_proxy_cluster_password", "current-password")
+		settings.set.assert_any_call("proxy_cluster_password", "new-password")
 		settings.save.assert_called_once_with(ignore_permissions=True)
 
 
 class TestRegionalCredentials(UnitTestCase):
-	def test_a_save_creates_the_proxy_password_and_the_signing_key(self) -> None:
+	def test_a_save_creates_the_cluster_passwords_and_the_signing_key(self) -> None:
 		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 		settings = MagicMock(is_setup_completed=False)
@@ -59,7 +59,10 @@ class TestRegionalCredentials(UnitTestCase):
 		):
 			AtlasSettings.before_save(settings)
 
-		settings.initialize_proxy_cluster_password.assert_called_once_with()
+		self.assertEqual(
+			[call.args for call in settings.initialize_cluster_password.call_args_list],
+			[("proxy",), ("wireguard_gateway",)],
+		)
 		initialize_signing_key.assert_called_once_with(settings)
 		ensure_certificate_authority.assert_called_once_with(settings)
 		ensure_atlas_client_certificate.assert_called_once_with(settings)
@@ -97,6 +100,12 @@ class TestRegionID(UnitTestCase):
 			self.atlas_settings.validate(self.settings)
 
 		self.settings.server_provider_controller.validate_settings.assert_called_once()
+
+	def test_a_region_name_that_breaks_host_titles_is_refused(self) -> None:
+		self.atlas_settings._validate_region_name(SimpleNamespace(region_name="par-1"))
+		for region_name in ("new_york", "par 1", "a" * 60):
+			with self.assertRaisesRegex(frappe.ValidationError, "DNS label"):
+				self.atlas_settings._validate_region_name(SimpleNamespace(region_name=region_name))
 
 
 class TestSleepyVMOvercommitFactor(UnitTestCase):

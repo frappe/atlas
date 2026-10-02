@@ -50,6 +50,7 @@ A create or resize that cannot place the VM returns `503`:
 | --- | --- |
 | `out_of_capacity` | Retry later when capacity is available. |
 | `placement_busy` | Retry after the response's `Retry-After` interval. |
+| `affinity_unsatisfied` | No host with room meets the affinity rules of the VM. Change the rules, or add a host that meets them. |
 
 See [host selection](../compute/placement.md) for capacity rules.
 

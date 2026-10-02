@@ -278,7 +278,7 @@ class TestMetalClientPaths(UnitTestCase):
 			"atlas.vm.core.metal_client.requests.Session.request",
 			return_value=build_response(200, {"capacity": {}}),
 		) as request:
-			client.sync([], [], [], unicast=True)
+			client.sync([], [], [], [], unicast=True)
 
 		self.assertEqual(
 			request.call_args.kwargs["json"],
@@ -286,6 +286,7 @@ class TestMetalClientPaths(UnitTestCase):
 				"wireguard_peers": [],
 				"images": [],
 				"privileged_vm_addresses": [],
+				"wireguard_gateway_routes": [],
 				"unicast": True,
 			},
 		)
@@ -359,46 +360,22 @@ COMPUTE_REQUEST = {
 class TestMetalClientConnection(UnitTestCase):
 	@patch("atlas.vm.core.metal_client.client_certificate_files", return_value=("atlas.crt", "atlas.key"))
 	@patch("atlas.vm.core.metal_client.ca_file", return_value="ca.crt")
-	def test_client_uses_the_validated_private_ipv4_address_by_default(
-		self, _ca_file: Mock, _certificate_files: Mock
-	) -> None:
-		server = SimpleNamespace(
-			name="Server-1",
-			private_ipv4_address="10.0.0.2",
-			settings=SimpleNamespace(use_public_ip_for_metald=False),
-		)
+	def test_client_uses_the_server_wireguard_address(self, _ca_file: Mock, _certificate_files: Mock) -> None:
+		server = SimpleNamespace(name="Server-1", wireguard_ip_address="fdab:1::12")
 		client = MetalClient(server)
 
-		self.assertEqual(client.base_url, "https://10.0.0.2:9000")
+		self.assertEqual(client.base_url, "https://[fdab:1::12]:9000")
 		self.assertEqual(client.ca_file, "ca.crt")
 		self.assertEqual(client.client_certificate, ("atlas.crt", "atlas.key"))
 
-	@patch("atlas.vm.core.metal_client.client_certificate_files", return_value=("atlas.crt", "atlas.key"))
-	@patch("atlas.vm.core.metal_client.ca_file", return_value="ca.crt")
-	def test_client_uses_the_public_ipv4_address_when_configured(
-		self, _ca_file: Mock, _certificate_files: Mock
-	) -> None:
-		server = SimpleNamespace(
-			name="Server-1",
-			public_ipv4_address="203.0.113.8",
-			settings=SimpleNamespace(use_public_ip_for_metald=True),
-		)
-		client = MetalClient(server)
-
-		self.assertEqual(client.base_url, "https://203.0.113.8:9000")
-
 	@patch("atlas.vm.core.metal_client.client_certificate_files")
 	@patch("atlas.vm.core.metal_client.ca_file")
-	def test_client_rejects_an_invalid_private_ipv4_address(
+	def test_client_rejects_an_invalid_wireguard_address(
 		self, ca_file_mock: Mock, certificate_files: Mock
 	) -> None:
-		server = SimpleNamespace(
-			name="Server-1",
-			private_ipv4_address="not-an-address",
-			settings=SimpleNamespace(use_public_ip_for_metald=False),
-		)
+		server = SimpleNamespace(name="Server-1", wireguard_ip_address="10.0.0.2")
 
-		with self.assertRaisesRegex(MetalClientError, "invalid private IPv4 address"):
+		with self.assertRaisesRegex(MetalClientError, "invalid WireGuard IP address"):
 			MetalClient(server)
 
 		ca_file_mock.assert_not_called()
@@ -528,7 +505,11 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 			return_value=build_response(200, {"capacity": {}}),
 		) as request:
 			result = client.sync(
-				[{"node": "node-1"}], [{"ref": "sha256:image"}], ["fdaa:1::1"], unicast=False
+				[{"node": "node-1"}],
+				[{"ref": "sha256:image"}],
+				["fdaa:1::1"],
+				[{"destination": "fdac:1:1::/48", "via": "fdaa:1::7"}],
+				unicast=False,
 			)
 
 		self.assertEqual(result, {"capacity": {}})
@@ -539,6 +520,7 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 				"wireguard_peers": [{"node": "node-1"}],
 				"images": [{"ref": "sha256:image"}],
 				"privileged_vm_addresses": ["fdaa:1::1"],
+				"wireguard_gateway_routes": [{"destination": "fdac:1:1::/48", "via": "fdaa:1::7"}],
 				"unicast": False,
 			},
 		)
@@ -556,7 +538,7 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 			"disk": lambda: client.set_virtual_machine_disk("VM-00001", {}),
 			"compute": lambda: client.set_virtual_machine_compute("VM-00001", COMPUTE_REQUEST),
 			"snapshot_upload": lambda: client.start_snapshot_upload("image-1", {}),
-			"sync": lambda: client.sync([], [], [], unicast=False),
+			"sync": lambda: client.sync([], [], [], [], unicast=False),
 		}
 
 		for operation_name, write_operation in write_operations.items():
@@ -651,7 +633,7 @@ class TestMetalClientMigrations(UnitTestCase):
 			self.assertTrue(caught.exception.uncertain)
 
 	def test_api_url_rejects_a_server_without_an_address(self) -> None:
-		server = Mock(private_ipv4_address="", settings=SimpleNamespace(use_public_ip_for_metald=False))
+		server = Mock(wireguard_ip_address="")
 		server.name = "metal-1"
 
 		with self.assertRaises(MetalClientError):

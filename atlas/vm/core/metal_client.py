@@ -66,29 +66,23 @@ class MetalClient:
 
 	@classmethod
 	def get_api_url(cls, server: "MetalServer") -> str:
-		"""Return the selected Metald IPv4 address for one server."""
-		if server.settings.use_public_ip_for_metald:
-			label, address = "public IPv4 address", server.public_ipv4_address
-		else:
-			label, address = "private IPv4 address", server.private_ipv4_address
-		if not address:
-			raise MetalClientError(f"Server {server.name} has no {label}")
-		try:
-			ipv4_address = ipaddress.IPv4Address(address)
-		except (ipaddress.AddressValueError, TypeError) as error:
-			raise MetalClientError(f"Server {server.name} has an invalid {label}") from error
-		return f"https://{ipv4_address}:{cls.api_port}"
+		"""Return the Metal control address on the server wg0."""
+		return f"https://[{cls.get_wireguard_address(server)}]:{cls.api_port}"
 
 	@classmethod
 	def get_coordination_url(cls, server: "MetalServer") -> str:
 		"""Return the Metal coordination address for one server."""
+		return f"https://[{cls.get_wireguard_address(server)}]:{cls.coordination_port}"
+
+	@staticmethod
+	def get_wireguard_address(server: "MetalServer") -> ipaddress.IPv6Address:
+		"""Return the validated wg0 address of one server."""
 		if not server.wireguard_ip_address:
 			raise MetalClientError(f"Server {server.name} has no WireGuard IP address")
 		try:
-			wireguard_address = ipaddress.IPv6Address(server.wireguard_ip_address)
+			return ipaddress.IPv6Address(server.wireguard_ip_address)
 		except (ipaddress.AddressValueError, TypeError) as error:
 			raise MetalClientError(f"Server {server.name} has an invalid WireGuard IP address") from error
-		return f"https://[{wireguard_address}]:{cls.coordination_port}"
 
 	def get_console_connection(self, virtual_machine_id: str, mode: str = "tty") -> dict[str, str]:
 		"""Return the websocket URL for a VM console. The bridge holds the client certificate."""
@@ -284,6 +278,7 @@ class MetalClient:
 		wireguard_peers: list[dict[str, Any]],
 		images: list[dict[str, Any]],
 		privileged_vm_addresses: list[str],
+		wireguard_gateway_routes: list[dict[str, str]],
 		unicast: bool,
 	) -> dict[str, Any]:
 		"""Exchange controller and host state."""
@@ -291,6 +286,7 @@ class MetalClient:
 			"wireguard_peers": wireguard_peers,
 			"images": images,
 			"privileged_vm_addresses": privileged_vm_addresses,
+			"wireguard_gateway_routes": wireguard_gateway_routes,
 			"unicast": unicast,
 		}
 		return self._request("POST", "/v1/sync", json=request, uncertain_on_failure=True)

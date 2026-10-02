@@ -49,7 +49,7 @@ A VM read fails, or Metal Server synchronization writes a Metal connection Error
 **Check**
 
 1. Open the Metal Server document.
-2. Check its Metal address and the `use_public_ip_for_metald` setting.
+2. Run `wg show atlas0` on the Atlas machine and check the handshake with the host. See [Atlas access to hosts](../region/host-access.md#recovery).
 3. Check recent Error Logs.
 4. On the host, run `systemctl status metal.service` and `journalctl -u metal.service --since "15 minutes ago"`.
 

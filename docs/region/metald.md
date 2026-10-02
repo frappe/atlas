@@ -42,7 +42,7 @@ At startup, Metal compares running VM units with adopted console handles. If sys
 
 | Setting | Default | What to check |
 | --- | --- | --- |
-| Control address | `127.0.0.1:8080` | Installed hosts need an Atlas-reachable address. A Unix socket is also accepted. |
+| Control address | `127.0.0.1:8080` | Installation binds the host WireGuard address. See [Atlas access to hosts](host-access.md). A Unix socket is also accepted. |
 | Coordination address | `127.0.0.1:9001` | Use the host's WireGuard address when installed. |
 | Snapshot port | `9002` | Binds on the coordination host address, not a wildcard. |
 | `base_dir` | `/var/lib/metal` | Holds VM records and host state. |

@@ -11,8 +11,8 @@ The HTTP proxy has two parts. OpenResty and Lua serve public traffic from local 
 | Change | Read first | Code |
 | --- | --- | --- |
 | Public request path | [OpenResty routes](../networking/http-proxy/openresty.md) | [HTTP Lua](../../services/http-proxy/nginx/lua/http/router.lua), [TLS Lua](../../services/http-proxy/nginx/lua/stream/) |
-| Route API or authorization | [Control daemon](../networking/http-proxy/control-daemon.md) | [API](../../services/http-proxy/control/proxy_control/main.py), [authentication](../../services/http-proxy/control/proxy_control/auth.py) |
-| Cluster membership or replication | [High availability](../networking/http-proxy/high-availability.md) | [Cluster](../../services/http-proxy/control/proxy_control/cluster.py) |
+| Route API or authorization | [Control daemon](../networking/http-proxy/control-daemon.md) | [API](../../services/http-proxy/control/proxy_control/main.py), [authentication](../../services/control-cluster/atlas_control/auth.py) |
+| Cluster membership or replication | [High availability](../networking/http-proxy/high-availability.md) | [Cluster](../../services/control-cluster/atlas_control/cluster.py), [route state](../../services/http-proxy/control/proxy_control/routes.py) |
 | Node configuration or install | [Install](../networking/http-proxy/install.md) | [Configuration](../../services/http-proxy/control/proxy_control/config.py), [Atlas setup](../../atlas/service/core/proxy/configuration.py) |
 
 Read the [component specification](../../services/http-proxy/SPEC.md) for interfaces and ownership. The [code map](code-map.md) links this service to the rest of Atlas.
@@ -25,11 +25,10 @@ control/
     main.py                 FastAPI map API and startup wiring.
     config.py               Read /etc/atlas/proxy-control.toml.
     apply.py                The proxy-control command.
-    auth.py                 JWKS bearer token authentication.
     certificates.py         Validate and install wildcard certificates.
     client.py               Send HTTP requests through the Unix socket.
-    cluster.py              Leader election and route replication.
     mappings.py             Read and change route maps.
+    routes.py               The route state that the cluster replicates.
     server.py               Start the IPv4 and IPv6 daemon listeners.
   tests/                    Unit tests for the control daemon.
   pyproject.toml            Python package and the proxy-control command.
@@ -51,9 +50,11 @@ tests/
 
 ## Make a change
 
-Change the matching file for API, cluster, configuration, authentication, map, or certificate changes:
+Change the matching file for API, route state, configuration, map, or certificate changes:
 
-- `main.py`, `cluster.py`, `config.py`, `apply.py`, `auth.py`, `mappings.py`, or `certificates.py`
+- `main.py`, `routes.py`, `config.py`, `apply.py`, `mappings.py`, or `certificates.py`
+
+Authentication and clustering live in the shared [control-cluster](../../services/control-cluster/README.md) package. A change there also affects the WireGuard gateway.
 
 When you add a configuration key, update `config.py`, [the install guide](../networking/http-proxy/install.md), and `atlas/service/core/proxy/configuration.py`. Atlas writes the installed configuration.
 
@@ -74,7 +75,7 @@ Run these commands from `services/http-proxy/`. Create a virtual environment and
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install --editable 'control[test]'
+python -m pip install --editable ../control-cluster --editable 'control[test]'
 ```
 
 Start the control daemon with its default configuration:
@@ -90,7 +91,7 @@ The daemon listens on port `9000`. Install OpenResty with [Setup](../networking/
 Run the control daemon tests from the service root:
 
 ```sh
-python -m pip install --editable 'control[test]'
+python -m pip install --editable ../control-cluster --editable 'control[test]'
 python -m pytest -q control/tests
 ```
 
@@ -98,9 +99,9 @@ Run a focused test for one area:
 
 ```sh
 python -m pytest -q control/tests/test_config.py
-python -m pytest -q control/tests/test_auth.py
 python -m pytest -q control/tests/test_apply.py
-python -m pytest -q control/tests/test_cluster.py
+python -m pytest -q control/tests/test_routes.py
+python -m pytest -q ../control-cluster/tests
 ```
 
 ## Check a change

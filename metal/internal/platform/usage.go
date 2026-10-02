@@ -12,7 +12,6 @@ import (
 	"strings"
 )
 
-// cgroupRoot is the cgroup v2 unified hierarchy mount point.
 const cgroupRoot = "/sys/fs/cgroup"
 
 // Usage describes a unit's current cgroup resource use.
@@ -23,9 +22,7 @@ type Usage struct {
 	CPUUsageMicroseconds uint64
 }
 
-// readUsage reads the memory and CPU usage of the cgroup at controlGroup, a
-// path as systemd's ControlGroup unit property reports it (for example
-// "/system.slice/system-metal\x2dvm.slice/metal-vm@vm-1.service").
+// controlGroup is the path reported by systemd's ControlGroup property.
 func readUsage(controlGroup string) (Usage, error) {
 	memoryBytes, err := readMemoryCurrent(cgroupFile(controlGroup, "memory.current"))
 	if err != nil {
@@ -38,7 +35,6 @@ func readUsage(controlGroup string) (Usage, error) {
 	return Usage{MemoryBytes: memoryBytes, CPUUsageMicroseconds: cpuMicroseconds}, nil
 }
 
-// cgroupFile returns the absolute path of one file inside a cgroup.
 func cgroupFile(controlGroup, name string) string {
 	return filepath.Join(cgroupRoot, controlGroup, name)
 }
@@ -56,7 +52,6 @@ func readMemoryCurrent(path string) (uint64, error) {
 	return parseMemoryCurrent(data)
 }
 
-// parseMemoryCurrent parses memory.current's single integer, in bytes.
 func parseMemoryCurrent(data []byte) (uint64, error) {
 	value, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
 	if err != nil {

@@ -25,7 +25,7 @@ func TestNetworkRequestKeepsTrafficTrackingUntilDestruction(t *testing.T) {
 					SleepAfterIdleSeconds: tc.idle,
 				},
 			}
-			request := networkRequest(record)
+			request := (&Manager{}).networkRequest(record)
 			if got := request.TrackTraffic; got != tc.wantTrack {
 				t.Fatalf("TrackTraffic = %v, want %v", got, tc.wantTrack)
 			}

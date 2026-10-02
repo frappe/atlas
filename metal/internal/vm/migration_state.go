@@ -86,7 +86,7 @@ func (host *MigrationHost) EnsureMigrationNetwork(ctx context.Context, virtualMa
 	if err != nil {
 		return err
 	}
-	networkInterface, err := manager.network.Ensure(ctx, networkRequest(desired))
+	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
 	if err != nil {
 		return err
 	}

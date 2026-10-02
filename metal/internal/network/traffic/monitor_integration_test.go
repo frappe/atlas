@@ -79,7 +79,6 @@ func TestMonitorObservesPacketsWithoutAGuest(t *testing.T) {
 	waitForNewTraffic(t, monitor, target, withoutReader.PacketSequence)
 }
 
-// assertReceivedCounterAdvanced waits for the received counter to advance.
 func assertReceivedCounterAdvanced(t *testing.T, monitor *Monitor, target Target, previous TrafficCounters) TrafficCounters {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -97,7 +96,6 @@ func assertReceivedCounterAdvanced(t *testing.T, monitor *Monitor, target Target
 	return TrafficCounters{}
 }
 
-// assertSentCounterAdvanced waits for the sent counter to advance.
 func assertSentCounterAdvanced(t *testing.T, monitor *Monitor, target Target, previous TrafficCounters) TrafficCounters {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

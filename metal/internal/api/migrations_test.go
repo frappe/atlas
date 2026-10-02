@@ -113,7 +113,7 @@ func newMigrationTestServerWithWake(t *testing.T, migrations MigrationManager, w
 	services := newFakeRuntimeServices()
 	manager := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}, services: services}
 	hostService, err := host.NewService(host.Dependencies{
-		Mesh: services, WireGuard: &fakeWireGuardManager{}, Images: services,
+		Mesh: services, WireGuard: &fakeWireGuardManager{}, Images: services, GatewayRoutes: services,
 		VirtualMachines: manager, Storage: fakeCapacityProvider{}, Wake: func() {},
 	})
 	if err != nil {

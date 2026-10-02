@@ -1,6 +1,6 @@
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Annotated
 
 import bcrypt
@@ -9,16 +9,14 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 
-from .config import AuthConfig, ConfigError, load
+from .config import AuthConfig
 
 CONTROL_BEARER_SCHEME = "BearerAuth"
-KNOWN_SCOPES = frozenset({"*", "site:*", "domain:*"})
-CONSTRAINED_RESOURCES = frozenset({"site", "domain"})
 CONSTRAINT_KEYS = frozenset({"prefix", "suffix", "names"})
 bearer = HTTPBearer(
 	scheme_name=CONTROL_BEARER_SCHEME,
 	bearerFormat="password or JWT",
-	description="Use the regional proxy password or a valid JWT.",
+	description="Use the regional service password or a valid JWT.",
 	auto_error=False,
 )
 
@@ -43,7 +41,7 @@ class NameConstraint:
 
 @dataclass(frozen=True)
 class Authorization:
-	"""The verified Proxy authority for one request."""
+	"""The verified authority for one request."""
 
 	scopes: frozenset[str]
 	constraints: dict[str, NameConstraint] = field(default_factory=dict)
@@ -76,10 +74,19 @@ class Authorization:
 
 
 class Authentication:
-	"""Authenticate bearer passwords and issuer-bound JWTs."""
+	"""Authenticate bearer passwords and issuer-bound JWTs for one service."""
 
-	def __init__(self, path: Path | None = None) -> None:
-		self.path = path
+	def __init__(
+		self,
+		load_auth: Callable[[], AuthConfig],
+		scopes: frozenset[str],
+		user_agent: str,
+		constrained_resources: frozenset[str] = frozenset(),
+	) -> None:
+		self.load_auth = load_auth
+		self.scopes = scopes
+		self.user_agent = user_agent
+		self.constrained_resources = constrained_resources
 		self._jwks_client: PyJWKClient | None = None
 		self._jwks_url = ""
 
@@ -88,7 +95,8 @@ class Authentication:
 		if scheme.lower() != "bearer" or not token:
 			raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
-		auth = self._auth()
+		# Read the credentials on each request, so a rotated password applies at once.
+		auth = self.load_auth()
 		if self._matches_password(auth, token):
 			return Authorization(frozenset({"*"}))
 
@@ -104,13 +112,6 @@ class Authentication:
 		"""Authenticate one API request."""
 		authorization = f"{credentials.scheme} {credentials.credentials}" if credentials else None
 		return self.require(authorization)
-
-	def _auth(self) -> AuthConfig:
-		"""Return the current credentials."""
-		try:
-			return load(self.path).auth
-		except ConfigError:
-			return AuthConfig()
 
 	def _matches_password(self, auth: AuthConfig, password: str) -> bool:
 		password_hashes = [auth.password_hash]
@@ -155,17 +156,53 @@ class Authentication:
 			)
 			if claims.get("aud") != auth.jwks_audience_id:
 				return None
-			return _authorization_from_claims(claims)
+			return self._authorization_from_claims(claims)
 		except jwt.PyJWTError, ValueError, TypeError:
 			return None
 
 	def _jwks_client_instance(self, auth: AuthConfig) -> PyJWKClient:
 		"""Return a JWKS client for the configured URL."""
 		if self._jwks_client is None or self._jwks_url != auth.jwks_url:
-			self._jwks_client = PyJWKClient(auth.jwks_url, headers={"User-Agent": "atlas-proxy-control"})
+			self._jwks_client = PyJWKClient(auth.jwks_url, headers={"User-Agent": self.user_agent})
 			self._jwks_url = auth.jwks_url
 
 		return self._jwks_client
+
+	def _authorization_from_claims(self, claims: dict[str, object]) -> Authorization | None:
+		subject = claims.get("sub")
+		scope = claims.get("scope")
+		if not isinstance(subject, str) or not subject or not isinstance(scope, str):
+			return None
+		if "tenant" in claims:
+			return None
+		if not all(_is_timestamp(claims.get(name)) for name in ("iat", "exp")):
+			return None
+		if "nbf" in claims and not _is_timestamp(claims["nbf"]):
+			return None
+
+		scopes = frozenset(scope.split())
+		if not scopes or not scopes <= self.scopes:
+			return None
+
+		constraints = self._name_constraints(claims.get("constraints", {}))
+		if constraints is None:
+			return None
+
+		return Authorization(scopes, constraints)
+
+	def _name_constraints(self, value: object) -> dict[str, NameConstraint] | None:
+		"""Return one constraint for each constrained resource, or None when a claim is not usable."""
+		if not isinstance(value, dict) or set(value) - self.constrained_resources:
+			return None
+
+		constraints = {}
+		for resource, claim in value.items():
+			constraint = _name_constraint(claim)
+			if constraint is None:
+				return None
+			constraints[resource] = constraint
+
+		return constraints
 
 
 def _issuer_for_key_id(key_id: str, issuers: tuple[str, ...]) -> str | None:
@@ -173,44 +210,6 @@ def _issuer_for_key_id(key_id: str, issuers: tuple[str, ...]) -> str | None:
 		if key_id.startswith(f"{issuer}:"):
 			return issuer
 	return None
-
-
-def _authorization_from_claims(claims: dict[str, object]) -> Authorization | None:
-	subject = claims.get("sub")
-	scope = claims.get("scope")
-	if not isinstance(subject, str) or not subject or not isinstance(scope, str):
-		return None
-	if "tenant" in claims:
-		return None
-	if not all(_is_timestamp(claims.get(name)) for name in ("iat", "exp")):
-		return None
-	if "nbf" in claims and not _is_timestamp(claims["nbf"]):
-		return None
-
-	scopes = frozenset(scope.split())
-	if not scopes or not scopes <= KNOWN_SCOPES:
-		return None
-
-	constraints = _name_constraints(claims.get("constraints", {}))
-	if constraints is None:
-		return None
-
-	return Authorization(scopes, constraints)
-
-
-def _name_constraints(value: object) -> dict[str, NameConstraint] | None:
-	"""Return one constraint for each constrained resource, or None when a claim is not usable."""
-	if not isinstance(value, dict) or set(value) - CONSTRAINED_RESOURCES:
-		return None
-
-	constraints = {}
-	for resource, claim in value.items():
-		constraint = _name_constraint(claim)
-		if constraint is None:
-			return None
-		constraints[resource] = constraint
-
-	return constraints
 
 
 def _name_constraint(claim: object) -> NameConstraint | None:

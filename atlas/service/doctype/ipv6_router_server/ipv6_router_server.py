@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -108,7 +109,8 @@ class IPv6RouterServer(Document):
 			try:
 				if pool:
 					pool.begin_provider_detach()
-					pool.reconcile()
+					# Archive runs in a request. A worker detaches the block from the host.
+					pool.queue_reconcile()
 				if router.virtual_machine and frappe.db.exists("Virtual Machine", router.virtual_machine):
 					virtual_machine = frappe.get_doc("Virtual Machine", router.virtual_machine)
 					virtual_machine.set_termination_protection(False)
@@ -127,6 +129,9 @@ class IPv6RouterServer(Document):
 			router.save(ignore_permissions=True)
 			if pool:
 				pool.gateway = None
+				# A direct provider pool hands out its whole prefix.
+				if pool.source == "Provider":
+					pool.allocation_prefix_length = ipaddress.ip_network(pool.prefix, strict=False).prefixlen
 				pool.save(ignore_permissions=True)
 
 		frappe.msgprint(_("IPv6 Router Server {0} is archived.").format(self.name))
@@ -162,7 +167,6 @@ class IPv6RouterServer(Document):
 			"is_termination_protected": True,
 			"hostname": self.name,
 			"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
-			"public_ipv4": values["public_ipv4"],
 		}
 		try:
 			result = VirtualMachineService.create(request)
@@ -201,7 +205,6 @@ def _validate_create_request(values: dict[str, Any]) -> None:
 		"is_termination_protected": True,
 		"hostname": "ipv6-router",
 		"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
-		"public_ipv4": values.get("public_ipv4"),
 	}
 	try:
 		request = VirtualMachineCreateRequest.from_value(virtual_machine_request)
@@ -214,17 +217,7 @@ def _validate_create_request(values: dict[str, Any]) -> None:
 		frappe.throw(_("Select a System Virtual Machine Image."))
 	image.validate_compatibility(request.disk_mib)
 
-	_validate_ipv4_allocation(request.public_ipv4)
 	_validate_ipv6_pool(values.get("public_ip_pool"))
-
-
-def _validate_ipv4_allocation(allocation_name: object) -> None:
-	"""Require a free IPv4 allocation reserved by tenant 0."""
-	if not isinstance(allocation_name, str) or not frappe.db.exists("Public IP Allocation", allocation_name):
-		frappe.throw(_("Select a reserved public IPv4 allocation."))
-	allocation = frappe.get_doc("Public IP Allocation", allocation_name)
-	if allocation.version != "4" or allocation.status != "Reserved" or allocation.tenant_id != 0:
-		frappe.throw(_("Select a free public IPv4 allocation reserved by tenant 0."))
 
 
 def _validate_ipv6_pool(pool_name: object) -> None:

@@ -12,7 +12,7 @@ api/            Tenant API routes and models
 atlas/          Settings, providers, TLS, host binaries
 auth/           Tokens, regional keys, identity, permissions
 metal_server/   Provider hosts and catalog records
-service/        Atlas services on VMs: Cargo, proxy, IPv6 router
+service/        Atlas services on VMs: Cargo, proxy, IPv6 router, WG gateway
 vm/             VM records, images, and orchestration
 realtime/       Browser console bridge
 simulator/      Placement trials, not run in the app

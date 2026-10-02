@@ -17,6 +17,8 @@ type DesiredState struct {
 	WireGuardPeers                    []network.WireGuardPeer
 	Images                            []vm.Image
 	PrivilegedVirtualMachineAddresses []string
+	// WireGuardGatewayRoutes are the return routes that opted-in VMs add to their network.
+	WireGuardGatewayRoutes []vm.Route
 	// UnicastEnabled selects the unicast NDP transport.
 	UnicastEnabled bool
 }
@@ -62,6 +64,11 @@ type VirtualMachineSource interface {
 	List(context.Context) ([]vm.Information, error)
 }
 
+// WireGuardGatewayRouteStore replaces the controller-owned WireGuard gateway return routes.
+type WireGuardGatewayRouteStore interface {
+	SetWireGuardGatewayRoutes(context.Context, []vm.Route) error
+}
+
 // StorageCapacitySource supplies current pool capacity.
 type StorageCapacitySource interface {
 	Capacity(context.Context) (storage.Capacity, error)
@@ -77,6 +84,7 @@ type Dependencies struct {
 	Mesh                  Mesh
 	WireGuard             WireGuardManager
 	Images                ImagePolicyStore
+	GatewayRoutes         WireGuardGatewayRouteStore
 	VirtualMachines       VirtualMachineSource
 	Storage               StorageCapacitySource
 	MigrationReservations MigrationReservations
@@ -90,6 +98,7 @@ type Service struct {
 	mesh                  Mesh
 	wireGuard             WireGuardManager
 	images                ImagePolicyStore
+	gatewayRoutes         WireGuardGatewayRouteStore
 	virtualMachines       VirtualMachineSource
 	storage               StorageCapacitySource
 	migrationReservations MigrationReservations
@@ -98,7 +107,7 @@ type Service struct {
 
 // NewService returns a host service with explicit dependencies.
 func NewService(dependencies Dependencies) (*Service, error) {
-	if dependencies.WireGuard == nil || dependencies.Images == nil ||
+	if dependencies.WireGuard == nil || dependencies.Images == nil || dependencies.GatewayRoutes == nil ||
 		dependencies.VirtualMachines == nil || dependencies.Storage == nil || dependencies.Wake == nil {
 		return nil, fmt.Errorf("host service dependencies are required")
 	}
@@ -107,6 +116,7 @@ func NewService(dependencies Dependencies) (*Service, error) {
 		mesh:                  dependencies.Mesh,
 		wireGuard:             dependencies.WireGuard,
 		images:                dependencies.Images,
+		gatewayRoutes:         dependencies.GatewayRoutes,
 		virtualMachines:       dependencies.VirtualMachines,
 		storage:               dependencies.Storage,
 		migrationReservations: dependencies.MigrationReservations,
@@ -134,6 +144,9 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 	}
 	if err := service.images.SetImagePolicies(ctx, desired.Images); err != nil {
 		return SyncResult{}, fmt.Errorf("apply image policies: %w", err)
+	}
+	if err := service.gatewayRoutes.SetWireGuardGatewayRoutes(ctx, desired.WireGuardGatewayRoutes); err != nil {
+		return SyncResult{}, fmt.Errorf("apply WireGuard gateway routes: %w", err)
 	}
 
 	service.wake()

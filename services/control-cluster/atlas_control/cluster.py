@@ -5,7 +5,7 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 import httpx
@@ -13,9 +13,10 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import ClusterConfig, ClusterPeer
-from .mappings import MappingStore
 
 HEARTBEAT_INTERVAL_SECONDS = 0.1
+# A member that reported serving in a heartbeat this recently counts as serving.
+MEMBER_LIVE_SECONDS = 1.0
 ELECTION_TIMEOUT_SECONDS = (0.3, 0.45)
 PEER_TIMEOUT_SECONDS = 0.2
 # One peer call retries once with the previous cluster password.
@@ -26,15 +27,14 @@ FORWARDED_WRITE_TIMEOUT_SECONDS = PEER_REPAIR_CALLS * PEER_CALL_ATTEMPTS * PEER_
 
 
 class Mutation(BaseModel):
-	"""One ordered routing-map mutation."""
+	"""One ordered state mutation. The state machine validates `kind` and `value`."""
 
 	model_config = ConfigDict(extra="forbid")
 
-	kind: Literal["sites", "domains"]
+	kind: str
 	action: Literal["replace", "update", "delete"]
 	key: str = ""
-	address: str = ""
-	values: dict[str, str] = Field(default_factory=dict)
+	value: Any = None
 	operation_id: str = ""
 
 
@@ -73,7 +73,7 @@ class HeartbeatRequest(BaseModel):
 
 
 class ClusterSnapshot(BaseModel):
-	"""Complete durable routing state."""
+	"""Complete durable cluster state: election data and the service state."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -82,8 +82,30 @@ class ClusterSnapshot(BaseModel):
 	generation: int = 0
 	mutation_term: int = 0
 	operation_id: str = ""
-	sites: dict[str, str] = Field(default_factory=dict)
-	domains: dict[str, str] = Field(default_factory=dict)
+	state: dict[str, Any] = Field(default_factory=dict)
+
+
+class StateMachine(Protocol):
+	"""The service state that the cluster replicates. Every mutation must be safe to repeat."""
+
+	async def initial_state(self) -> dict[str, Any]:
+		"""Return the state of a node that has no stored snapshot."""
+
+	async def restore(self, state: dict[str, Any]) -> None:
+		"""Apply one complete state to the service."""
+
+	def is_serving(self) -> bool:
+		"""Report whether this node serves its traffic. Heartbeat replies carry it to the leader."""
+
+	async def prepare(
+		self, state: dict[str, Any], mutation: Mutation, serving_members: frozenset[str]
+	) -> Mutation:
+		"""Resolve a choice that only the leader can make, such as placement on a serving member.
+
+		The leader runs it once before replication, so every node applies the same result."""
+
+	async def apply(self, state: dict[str, Any], mutation: Mutation) -> dict[str, object]:
+		"""Validate one mutation, apply it to the service and to `state`, and return the response body."""
 
 
 @dataclass(frozen=True)
@@ -118,23 +140,12 @@ class SnapshotStore:
 		os.replace(temporary_path, self.path)
 
 
-# Cluster flow:
-#
-# - A node restores its local snapshot, then gets a newer snapshot from the peer with the highest generation.
-# - A follower starts an election when leader heartbeats stop. A candidate becomes the leader after a majority vote.
-# - Any ready node accepts a mutation. A follower sends the mutation to the current leader.
-# - The leader serializes mutations, assigns a new generation, updates its state, and sends the mutation to all peers in parallel.
-# - Clusters with up to 3 nodes need all acknowledgements. Clusters with 4 or 5 nodes need a majority.
-# - Heartbeats identify stale nodes by generation and operation ID. A stale node gets the complete leader snapshot.
-# - A failed write can exist on some nodes. All public mutation types are idempotent, so the caller can send the mutation again.
-
-
 class ClusterManager:
-	"""Elect one leader and replicate proxy map mutations."""
+	"""Elect one leader and replicate state machine mutations."""
 
-	def __init__(self, configuration: ClusterConfig, mappings: MappingStore):
+	def __init__(self, configuration: ClusterConfig, state_machine: StateMachine):
 		self.configuration = configuration
-		self.mappings = mappings
+		self.state_machine = state_machine
 		self.store = SnapshotStore(configuration.state_path)
 		self.snapshot = ClusterSnapshot()
 		self.role = "follower"
@@ -148,6 +159,7 @@ class ClusterManager:
 		self.synchronization_lock = asyncio.Lock()
 		self.client = httpx.AsyncClient(timeout=PEER_TIMEOUT_SECONDS)
 		self.background_task: asyncio.Task[None] | None = None
+		self.acknowledged_at: dict[str, float] = {}
 
 	@property
 	def is_enabled(self) -> bool:
@@ -161,11 +173,16 @@ class ClusterManager:
 			return False
 		return self.is_synchronized and (not self.is_enabled or bool(self.leader_id))
 
-	def has_snapshot_routes(self, counts: dict[str, object]) -> bool:
-		"""Report whether OpenResty holds the routes of the current snapshot."""
-		return (not self.snapshot.sites or int(counts.get("sites", 0)) > 0) and (
-			not self.snapshot.domains or int(counts.get("domains", 0)) > 0
-		)
+	@property
+	def serving_members(self) -> frozenset[str]:
+		"""Return the members that serve traffic: this node by its own check, peers by a recent heartbeat.
+
+		Only the leader tracks peers."""
+		now = time.monotonic()
+		serving = {node_id for node_id, at in self.acknowledged_at.items() if now - at <= MEMBER_LIVE_SECONDS}
+		if self.state_machine.is_serving():
+			serving.add(self.configuration.node_id)
+		return frozenset(serving)
 
 	@property
 	def member_count(self) -> int:
@@ -176,13 +193,10 @@ class ClusterManager:
 		"""Restore local state and start cluster coordination."""
 		stored = await asyncio.to_thread(self.store.load)
 		if stored is None:
-			stored = ClusterSnapshot(
-				sites=await self.mappings.get("sites"),
-				domains=await self.mappings.get("domains"),
-			)
+			stored = ClusterSnapshot(state=await self.state_machine.initial_state())
 			await self._save(stored)
 		self.snapshot = stored
-		await self._apply_snapshot_to_openresty(stored)
+		await self.state_machine.restore(stored.state)
 		self.is_initialized = True
 		self.is_synchronized = True
 		self._reset_election_deadline()
@@ -255,7 +269,7 @@ class ClusterManager:
 				}
 			)
 			await self._save(installed)
-			await self._apply_snapshot_to_openresty(installed)
+			await self.state_machine.restore(installed.state)
 			self.snapshot = installed
 			self.is_synchronized = True
 
@@ -302,6 +316,7 @@ class ClusterManager:
 			"accepted": True,
 			"generation": self.snapshot.generation,
 			"operation_id": self.snapshot.operation_id,
+			"serving": self.state_machine.is_serving(),
 		}
 
 	async def bootstrap(self) -> None:
@@ -410,11 +425,9 @@ class ClusterManager:
 			generation=self.snapshot.generation,
 			operation_id=self.snapshot.operation_id,
 		)
+		peers = self._other_peers()
 		responses = await asyncio.gather(
-			*(
-				self._peer_post(peer, "/internal/cluster/heartbeat", request.model_dump())
-				for peer in self._other_peers()
-			),
+			*(self._peer_post(peer, "/internal/cluster/heartbeat", request.model_dump()) for peer in peers),
 			return_exceptions=True,
 		)
 		higher_term = max(
@@ -425,6 +438,12 @@ class ClusterManager:
 			await self._set_term(higher_term)
 			self._reset_election_deadline()
 			return
+		now = time.monotonic()
+		for peer, item in zip(peers, responses, strict=True):
+			if isinstance(item, dict) and item.get("accepted") and item.get("serving"):
+				self.acknowledged_at[peer.node_id] = now
+			else:
+				self.acknowledged_at.pop(peer.node_id, None)
 		accepted = 1 + sum(bool(item.get("accepted")) for item in responses if isinstance(item, dict))
 		if accepted < self._majority:
 			self.role = "follower"
@@ -432,6 +451,7 @@ class ClusterManager:
 			self._reset_election_deadline()
 
 	async def _replicate_mutation(self, mutation: Mutation) -> MutationResult:
+		mutation = await self.state_machine.prepare(self.snapshot.state, mutation, self.serving_members)
 		base_snapshot = self.snapshot.model_copy(deep=True)
 		generation = base_snapshot.generation + 1
 		body = await self._apply(mutation, generation)
@@ -502,27 +522,12 @@ class ClusterManager:
 		return HTTPException(status_code=response.status_code, detail=detail)
 
 	async def _apply(self, mutation: Mutation, generation: int) -> dict[str, object]:
-		body: dict[str, object]
-		if mutation.action == "replace":
-			values = self.mappings.without_reserved(mutation.kind, mutation.values)
-			body = await self.mappings.replace(mutation.kind, values)
-			setattr(self.snapshot, mutation.kind, dict(values))
-		elif mutation.action == "update":
-			body = await self.mappings.update(mutation.kind, mutation.key, mutation.address)
-			getattr(self.snapshot, mutation.kind)[mutation.key] = mutation.address
-		else:
-			await self.mappings.delete(mutation.kind, mutation.key)
-			getattr(self.snapshot, mutation.kind).pop(mutation.key, None)
-			body = {}
+		body = await self.state_machine.apply(self.snapshot.state, mutation)
 		self.snapshot.generation = generation
 		self.snapshot.mutation_term = self.snapshot.term
 		self.snapshot.operation_id = mutation.operation_id
 		await self._save(self.snapshot)
 		return body
-
-	async def _apply_snapshot_to_openresty(self, snapshot: ClusterSnapshot) -> None:
-		await self.mappings.replace("sites", snapshot.sites)
-		await self.mappings.replace("domains", snapshot.domains)
 
 	async def _set_term(self, term: int) -> None:
 		self.snapshot.term = term

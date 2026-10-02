@@ -143,8 +143,9 @@ DNS=2606:4700:4700::1001
 Destination=169.254.169.254/32
 Scope=link
 
+# The VM namespace routes decide which IPv6 destinations leave the host.
 [Route]
-Destination=fdaa::/16
+Destination=::/0
 Gateway=fe80::1
 EOF
 }

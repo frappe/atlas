@@ -141,7 +141,7 @@
     "securitySchemes": {
       "BearerAuth": {
         "bearerFormat": "password or JWT",
-        "description": "Use the regional proxy password or a valid JWT.",
+        "description": "Use the regional service password or a valid JWT.",
         "scheme": "bearer",
         "type": "http"
       }
