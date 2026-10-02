@@ -118,8 +118,20 @@ Atlas is in active development and is not deployed to production.
 ### Commits
 
 - Use a short Conventional Commit subject: `type(scope): Sentence case`.
-- Use one of `feat`, `fix`, `refactor`, `test`, `docs`, `build`, or `chore`. Use a component as the scope: `atlas`, `metal`, `http-proxy`, `ipv6-router`, or `wg-mesh`.
+- Use one of `feat`, `fix`, `refactor`, `test`, `docs`, `build`, or `chore`. Use a component as the scope: `atlas`, `metal`, `http-proxy`, `ipv6-router`, `wg-mesh` or `wireguard-gateway`.
 - Do not add an AI co-author, session data, or agent data.
+
+### Commit sequence
+
+Use this flow when a change needs more than one commit.
+
+1. Plan the complete commit list first. Give each commit one purpose and a subject. Show the list to the user.
+2. Make each commit build and pass its tests alone. Put a file in the first commit that needs it, and stage an earlier version of the file when a later commit completes it.
+3. Review the diff of each commit before you stage it. Remove comments that repeat the code, and shorten verbose comments, docstrings, and documentation. Make names, structure, and error handling match the surrounding code of that component.
+4. Stage one commit at a time. Show the staged paths and diff summary, then commit when the user says `next`.
+5. Before each commit, check the staged tree, not the working tree. Export it with `git checkout-index -a --prefix=<directory>/` and run the formatter, static checks, and focused tests there. Report checks that run only on the working tree.
+6. If a pre-commit hook changes files and stops the commit, stage the changed files and commit again.
+7. After the last commit, confirm that the working tree has no unstaged change. Push only when the user asks.
 
 ### Pull requests
 
