@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	platform "github.com/frappe/atlas/metal/internal/platform"
 )
@@ -48,6 +49,10 @@ type Mesh struct {
 	wireGuardName      string
 	wireGuardStatePath string
 	controllerAddress  string
+
+	// A sync walks the whole route map, so unchanged registrations are cached.
+	registrationMutex sync.Mutex
+	registrations     map[string]string
 }
 
 // NewMesh returns a mesh registrar for one host.
@@ -74,6 +79,7 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 		wireGuardName:      configuration.WireGuardName,
 		wireGuardStatePath: configuration.WireGuardStatePath,
 		controllerAddress:  configuration.ControllerAddress,
+		registrations:      make(map[string]string),
 	}, nil
 }
 
@@ -111,6 +117,7 @@ func (mesh *Mesh) EnsureHost(ctx context.Context) error {
 
 // removeVM unregisters one VM address. An address this host does not own is not an error.
 func (mesh *Mesh) removeVM(ctx context.Context, address, interfaceName string) error {
+	mesh.forgetRegistration(address)
 	return platform.Run(ctx, mesh.commandPath, "vm", "remove", "--interface", interfaceName, "--address", address)
 }
 
@@ -168,7 +175,39 @@ func (mesh *Mesh) syncVM(ctx context.Context, request request) error {
 	for _, route := range request.RoutesViaGateway() {
 		arguments = append(arguments, "--route", route.Destination+"="+route.Via)
 	}
-	return platform.Run(ctx, mesh.commandPath, arguments...)
+
+	// A recreated veth gets a new index and needs the WG Mesh hook again, so the index is part of the state.
+	interfaceIndex, err := os.ReadFile("/sys/class/net/" + hostVirtualEthernet + "/ifindex")
+	if err != nil {
+		return fmt.Errorf("read the index of %s: %w", hostVirtualEthernet, err)
+	}
+	return mesh.registerVM(ctx, request.WireGuardMeshIPv6, strings.TrimSpace(string(interfaceIndex)), arguments)
+}
+
+// registerVM syncs changed state.
+func (mesh *Mesh) registerVM(ctx context.Context, address, interfaceIndex string, arguments []string) error {
+	requestedState := interfaceIndex + "\x00" + strings.Join(arguments, "\x00")
+	mesh.registrationMutex.Lock()
+	lastRequestedState, registered := mesh.registrations[address]
+	mesh.registrationMutex.Unlock()
+	if registered && lastRequestedState == requestedState {
+		return nil
+	}
+	if err := platform.Run(ctx, mesh.commandPath, arguments...); err != nil {
+		mesh.forgetRegistration(address)
+		return err
+	}
+
+	mesh.registrationMutex.Lock()
+	defer mesh.registrationMutex.Unlock()
+	mesh.registrations[address] = requestedState
+	return nil
+}
+
+func (mesh *Mesh) forgetRegistration(address string) {
+	mesh.registrationMutex.Lock()
+	defer mesh.registrationMutex.Unlock()
+	delete(mesh.registrations, address)
 }
 
 // convergeGatewayRoute sends host traffic in a gateway namespace to the guest.

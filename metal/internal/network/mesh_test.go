@@ -160,3 +160,45 @@ func TestMeshSelectsMulticastWithoutTheFlag(t *testing.T) {
 		t.Fatalf("call = %q", got)
 	}
 }
+
+func TestMeshSyncsChangedVMRegistrations(t *testing.T) {
+	mesh, callsPath := recordingMesh(t)
+	address := "fdaa:1::5"
+	arguments := []string{"vm", "sync", "--address", address, "--route", "fdac:1:1::/48=fdaa:1::1"}
+	changedArguments := append(slices.Clone(arguments), "--route", "fdac:1:2::/48=fdaa:1::2")
+
+	for _, step := range []struct {
+		interfaceIndex string
+		arguments      []string
+	}{
+		{"41", arguments},
+		{"41", arguments},
+		{"41", changedArguments},
+		{"42", changedArguments},
+	} {
+		if err := mesh.registerVM(t.Context(), address, step.interfaceIndex, step.arguments); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls := len(readCalls(t, callsPath)); calls != 3 {
+		t.Fatalf("syncs = %d, want the first, the changed route, and the new interface", calls)
+	}
+}
+
+func TestARemovedVMSyncsAgainWhenItReturns(t *testing.T) {
+	mesh, callsPath := recordingMesh(t)
+	arguments := []string{"vm", "sync", "--address", "fdaa:1::5"}
+
+	for _, step := range []func() error{
+		func() error { return mesh.registerVM(t.Context(), "fdaa:1::5", "41", arguments) },
+		func() error { return mesh.removeVM(t.Context(), "fdaa:1::5", "veth-1") },
+		func() error { return mesh.registerVM(t.Context(), "fdaa:1::5", "41", arguments) },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls := len(readCalls(t, callsPath)); calls != 3 {
+		t.Fatalf("calls = %d, want sync, remove, sync", calls)
+	}
+}
