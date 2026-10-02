@@ -1,290 +1,124 @@
-"""Peer API for one WireGuard gateway. The daemon owns the peer list."""
+from contextlib import asynccontextmanager
+from typing import Annotated
 
-from __future__ import annotations
+from atlas_control.auth import Authentication, Authorization
+from atlas_control.cluster import ClusterManager, Mutation
+from atlas_control.routes import create_cluster_router
+from fastapi import Depends, FastAPI, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 
-import ipaddress
-import json
-import os
-import re
-import subprocess
-import threading
-from dataclasses import dataclass
-from typing import Any
+from .config import ConfigError, load, load_auth
+from .peers import PEERS_KIND, PeerState, get_identity, validate_device
 
-from fastapi import FastAPI, HTTPException, Request
+SCOPES = frozenset({"*", "peers:*", "peers:read", "peers:update"})
 
-from .auth import GatewayAuthorization
+try:
+	config = load()
+except ConfigError as error:
+	raise SystemExit(f"atlas-wg-gateway: {error}") from error
 
-FDAC_PREFIX = 0xFDAC
-TENANT_LIMIT = 1 << 32
-CLIENT_LIMIT = 1 << 32
-PUBLIC_KEY_PATTERN = re.compile(r"[A-Za-z0-9+/]{43}=")
-
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-_apply_lock = threading.Lock()
+auth = Authentication(load_auth, SCOPES, "atlas-wg-gateway")
+peer_state = PeerState(config)
+cluster = ClusterManager(config.cluster, peer_state)
 
 
-@dataclass(frozen=True)
-class Config:
-	"""The daemon configuration written by setup.sh."""
+class PeerRegistration(BaseModel):
+	"""One customer device."""
 
-	bind: str
-	region: int
-	gateway_id: int
-	listen_port: int
-	state_dir: str
-	interface: str
+	model_config = ConfigDict(extra="forbid")
+
+	tenant_id: int = Field(description="Tenant that owns the VMs the device reaches.")
+	client_id: int = Field(description="Device number, unique within the tenant.")
+	public_key: str = Field(description="WireGuard public key of the device.")
 
 
-def _config() -> Config:
-	"""Read the daemon configuration."""
-	return Config(
-		bind=os.environ.get("WG_GATEWAY_BIND", ""),
-		region=int(os.environ.get("WG_GATEWAY_REGION", "0")),
-		gateway_id=int(os.environ.get("WG_GATEWAY_ID", "0")),
-		listen_port=int(os.environ.get("WG_GATEWAY_LISTEN_PORT", "51820")),
-		state_dir=os.environ.get("WG_GATEWAY_STATE_DIR", "/opt/atlas/wg-gateway"),
-		interface=os.environ.get("WG_GATEWAY_INTERFACE", "wg0"),
+class Device(PeerRegistration):
+	"""One device of a restored table."""
+
+	node_id: str = Field(
+		default="", description="Node that served the device. Keep it, so the address stays."
 	)
 
 
-def _checked_int(label: str, value: object, low: int, high: int) -> int:
-	"""Return value as an int inside its field, or reject the request."""
-	if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-		raise HTTPException(status_code=400, detail=f"{label} must be an integer from {low} to {high}.")
-	return value
+class PeerTable(BaseModel):
+	"""The complete device table, for a restore."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	peers: list[Device] = Field(
+		description="Every device. A device without node_id is assigned like a new one."
+	)
 
 
-def _path_int(label: str, value: str, high: int) -> int:
-	"""Return a URL path value as an int inside its field, or reject the request."""
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+	await cluster.start()
 	try:
-		number = int(value, 10)
-	except (TypeError, ValueError):
-		raise HTTPException(status_code=400, detail=f"{label} must be an integer.")
-	return _checked_int(label, number, 1, high)
+		yield
+	finally:
+		await cluster.close()
 
 
-def _checked_key(value: object) -> str:
-	"""Return the key or reject anything that is not a WireGuard public key."""
-	if not isinstance(value, str) or not PUBLIC_KEY_PATTERN.fullmatch(value.strip()):
-		raise HTTPException(
-			status_code=400, detail="Public key must be a 44-character base64 WireGuard public key."
-		)
-	return value.strip()
-
-
-def _client_fdac(region: int, gateway_id: int, tenant: int, client: int) -> str:
-	"""Return the fdac address of one WireGuard client."""
-	address = (FDAC_PREFIX << 112) | (region << 96) | (gateway_id << 80) | (tenant << 48) | (client << 16)
-	return str(ipaddress.IPv6Address(address))
-
-
-def _peers_path(config: Config) -> str:
-	"""Return the stored peer list path."""
-	return os.path.join(config.state_dir, "peers.json")
-
-
-def _load_peers(config: Config) -> list[dict[str, Any]]:
-	"""Return the stored peers, or an empty list on a fresh gateway."""
-	try:
-		with open(_peers_path(config), encoding="utf-8") as handle:  # nosemgrep
-			data = json.load(handle)
-	except FileNotFoundError:
-		return []
-	if not isinstance(data, dict) or not isinstance(data.get("peers"), list):
-		raise HTTPException(status_code=500, detail="The stored peer list is not readable.")
-	return data["peers"]
-
-
-def _write_private(path: str, content: str) -> None:
-	"""Write a state file with owner-only access."""
-	mode = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-	with os.fdopen(mode, "w", encoding="utf-8") as handle:
-		handle.write(content)
-	os.chmod(path, 0o600)
-
-
-def _store_peers(config: Config, peers: list[dict[str, Any]]) -> None:
-	"""Store the peer list."""
-	_write_private(_peers_path(config), json.dumps({"peers": peers}, indent=2))
-
-
-def _render_wireguard_conf(config: Config, peers: list[dict[str, Any]]) -> str:
-	"""Return the wg setconf content with the interface section first."""
-	with open(os.path.join(config.state_dir, "privatekey"), encoding="utf-8") as handle:  # nosemgrep
-		private_key = handle.read().strip()
-	lines = ["[Interface]", f"PrivateKey = {private_key}", f"ListenPort = {config.listen_port}", ""]
-	for peer in peers:
-		lines += [
-			"[Peer]",
-			f"PublicKey = {peer['public_key']}",
-			f"AllowedIPs = {peer['fdac']}/128",
-			"",
-		]
-	return "\n".join(lines) + "\n"
-
-
-def _apply(config: Config, peers: list[dict[str, Any]]) -> None:
-	"""Replace the WireGuard peers with the desired state."""
-	peers_conf = os.path.join(config.state_dir, "peers.conf")
-	_write_private(peers_conf, _render_wireguard_conf(config, peers))
-	try:
-		subprocess.run(
-			["wg", "setconf", config.interface, peers_conf],
-			check=True,
-			capture_output=True,
-			text=True,
-		)
-	except subprocess.CalledProcessError as error:
-		raise HTTPException(
-			status_code=502,
-			detail=f"The gateway rejected the update: {(error.stderr or '').strip() or error}",
-		)
-
-
-def _validated_peers(config: Config, peers: object) -> list[dict[str, Any]]:
-	"""Return the peer records with fdac addresses, or reject the list."""
-	if not isinstance(peers, list):
-		raise HTTPException(
-			status_code=400, detail="Peers must be a list of tenant, client, and public key objects."
-		)
-	wanted: list[dict[str, Any]] = []
-	seen: set[tuple[int, int]] = set()
-	seen_keys: set[str] = set()
-	for index, peer in enumerate(peers):
-		if not isinstance(peer, dict):
-			raise HTTPException(status_code=400, detail=f"Peer {index} must be an object.")
-		key = _checked_key(peer.get("public_key"))
-		tenant = _checked_int("Tenant ID", peer.get("tenant_id"), 1, TENANT_LIMIT - 1)
-		client = _checked_int("Client ID", peer.get("client_id"), 1, CLIENT_LIMIT - 1)
-		if (tenant, client) in seen:
-			raise HTTPException(status_code=400, detail=f"Client {client} of tenant {tenant} appears twice.")
-		seen.add((tenant, client))
-		if key in seen_keys:
-			raise HTTPException(status_code=400, detail="One public key appears for two clients.")
-		seen_keys.add(key)
-		wanted.append(
-			{
-				"tenant_id": tenant,
-				"client_id": client,
-				"public_key": key,
-				"fdac": _client_fdac(config.region, config.gateway_id, tenant, client),
-			}
-		)
-	return wanted
+app = FastAPI(
+	title="Atlas WireGuard gateway", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+)
+app.include_router(create_cluster_router(cluster))
+GatewayAuthorization = Annotated[Authorization, Depends(auth.require_request)]
 
 
 @app.get("/healthz")
-def health() -> dict[str, str]:
-	"""Report that the daemon answers. Public, like the proxy control daemon."""
-	return {"status": "ok"}
+async def healthz() -> Response:
+	"""Report whether this node serves its devices: state loaded and wg0 configured."""
+	is_healthy = cluster.is_initialized and peer_state.is_interface_ready()
+	code = status.HTTP_204_NO_CONTENT if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+	return Response(status_code=code)
 
 
-@app.get("/config")
-def read_config(authorization: GatewayAuthorization) -> dict[str, Any]:
-	"""Return the connection values a customer needs for this gateway."""
-	authorization.require("gateway", "read")
-	config = _config()
-	with open(os.path.join(config.state_dir, "publickey"), encoding="utf-8") as handle:  # nosemgrep
-		public_key = handle.read().strip()
-	return {
-		"public_key": public_key,
-		"listen_port": config.listen_port,
-		"region_id": config.region,
-		"gateway_id": config.gateway_id,
-		"mesh": config.bind,
-	}
+@app.get("/readyz")
+async def readyz() -> Response:
+	"""Report whether this node can accept writes. The regional DNS health check uses it."""
+	code = status.HTTP_204_NO_CONTENT if cluster.is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+	return Response(status_code=code)
 
 
-@app.get("/peers")
-def list_peers(authorization: GatewayAuthorization) -> dict[str, Any]:
-	"""Return the peers of this gateway."""
+@app.post("/v1/peers")
+async def register_peer(
+	registration: PeerRegistration, authorization: GatewayAuthorization
+) -> dict[str, object]:
+	"""Register one device on the live node with the fewest devices, and return its WireGuard settings."""
+	authorization.require("peers", "update")
+	validate_device(registration.tenant_id, registration.client_id, registration.public_key)
+	identity = get_identity(registration.tenant_id, registration.client_id)
+
+	# Every request goes through the cluster: a retry must also retry a write that missed replication.
+	value = {"public_key": registration.public_key}
+	result = await cluster.mutate(Mutation(kind=PEERS_KIND, action="update", key=identity, value=value))
+	return result.body
+
+
+@app.delete("/v1/peers/{tenant_id}/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_peer(tenant_id: int, client_id: int, authorization: GatewayAuthorization) -> Response:
+	"""Remove one device. A missing device is not an error."""
+	authorization.require("peers", "update")
+	await cluster.mutate(Mutation(kind=PEERS_KIND, action="delete", key=get_identity(tenant_id, client_id)))
+	return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.put("/v1/peers")
+async def replace_peers(table: PeerTable, authorization: GatewayAuthorization) -> dict[str, object]:
+	"""Replace the complete device table, such as after a restore."""
+	authorization.require("peers", "update")
+	value = PeerState.build_table([device.model_dump() for device in table.peers])
+	result = await cluster.mutate(Mutation(kind=PEERS_KIND, action="replace", value=value))
+	return result.body
+
+
+@app.get("/v1/peers")
+async def list_peers(authorization: GatewayAuthorization) -> list[dict[str, object]]:
+	"""Return the settings of every registered device."""
 	authorization.require("peers", "read")
-	return {"peers": _load_peers(_config())}
-
-
-@app.put("/peers")
-async def replace_peers(request: Request, authorization: GatewayAuthorization) -> dict[str, Any]:
-	"""Replace the complete peer list of this gateway."""
-	authorization.require("peers", "update")
-	config = _config()
-	try:
-		body = await request.json()
-	except ValueError:
-		raise HTTPException(
-			status_code=400, detail="Peers must be a list of tenant, client, and public key objects."
-		)
-	wanted = _validated_peers(config, body.get("peers") if isinstance(body, dict) else None)
-	with _apply_lock:
-		current = {(peer["tenant_id"], peer["client_id"]): peer for peer in _load_peers(config)}
-		wanted_map = {(peer["tenant_id"], peer["client_id"]): peer for peer in wanted}
-		added = len([identity for identity in wanted_map if identity not in current])
-		removed = len([identity for identity in current if identity not in wanted_map])
-		updated = len(
-			[
-				identity
-				for identity in wanted_map
-				if identity in current
-				and current[identity]["public_key"] != wanted_map[identity]["public_key"]
-			]
-		)
-		_store_peers(config, wanted)
-		_apply(config, wanted)
-	return {"peers": wanted, "added": added, "removed": removed, "updated": updated}
-
-
-@app.put("/peers/{tenant_id}/{client_id}")
-async def upsert_peer(
-	tenant_id: str, client_id: str, request: Request, authorization: GatewayAuthorization
-) -> dict[str, Any]:
-	"""Add one client to this gateway and sync it."""
-	authorization.require("peers", "update")
-	config = _config()
-	tenant = _path_int("Tenant ID", tenant_id, TENANT_LIMIT - 1)
-	client = _path_int("Client ID", client_id, CLIENT_LIMIT - 1)
-	try:
-		body = await request.json()
-	except ValueError:
-		raise HTTPException(status_code=400, detail="The request must carry a public key object.")
-	key = _checked_key(body.get("public_key") if isinstance(body, dict) else None)
-	with _apply_lock:
-		peers = _load_peers(config)
-		for peer in peers:
-			if (peer["tenant_id"], peer["client_id"]) == (tenant, client):
-				if peer["public_key"] != key:
-					raise HTTPException(
-						status_code=400,
-						detail=f"Client {client} of tenant {tenant} already uses another public key.",
-					)
-				_apply(config, peers)
-				return peer
-			if peer["public_key"] == key:
-				raise HTTPException(
-					status_code=400, detail="This public key is already a peer of this gateway."
-				)
-		record = {
-			"tenant_id": tenant,
-			"client_id": client,
-			"public_key": key,
-			"fdac": _client_fdac(config.region, config.gateway_id, tenant, client),
-		}
-		peers.append(record)
-		_store_peers(config, peers)
-		_apply(config, peers)
-		return record
-
-
-@app.delete("/peers/{tenant_id}/{client_id}")
-def delete_peer(tenant_id: str, client_id: str, authorization: GatewayAuthorization) -> dict[str, Any]:
-	"""Delete one client of this gateway and sync it. Missing peers are gone."""
-	authorization.require("peers", "update")
-	config = _config()
-	tenant = _path_int("Tenant ID", tenant_id, TENANT_LIMIT - 1)
-	client = _path_int("Client ID", client_id, CLIENT_LIMIT - 1)
-	with _apply_lock:
-		peers = [
-			peer for peer in _load_peers(config) if (peer["tenant_id"], peer["client_id"]) != (tenant, client)
-		]
-		_store_peers(config, peers)
-		_apply(config, peers)
-		return {"gone": True}
+	peers = cluster.snapshot.state.get(PEERS_KIND, {})
+	return [
+		peer_state.get_credentials(identity, peer) | {"node_id": peer["node_id"]}
+		for identity, peer in sorted(peers.items())
+	]

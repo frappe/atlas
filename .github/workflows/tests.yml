@@ -249,6 +249,45 @@ jobs:
         if: steps.changes.outputs.matched == 'true'
         run: python -m pytest -q tests
 
+  wg-gateway:
+    name: WireGuard gateway
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/wg-gateway
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Find the changed paths
+        id: changes
+        working-directory: ${{ github.workspace }}
+        run: .github/scripts/changed-paths.sh '^(services/(wg-gateway|control-cluster)/|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
+
+      - name: Set up Python
+        if: steps.changes.outputs.matched == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install daemon test dependencies
+        if: steps.changes.outputs.matched == 'true'
+        run: python -m pip install -e ../control-cluster -e "daemon[test]"
+
+      - name: Lint Python
+        if: steps.changes.outputs.matched == 'true'
+        run: python -m ruff check daemon
+
+      - name: Run daemon unit tests
+        if: steps.changes.outputs.matched == 'true'
+        run: python -m pytest -q daemon/tests
+
+      - name: Check the installer syntax
+        if: steps.changes.outputs.matched == 'true'
+        run: bash -n setup.sh
+
   http-proxy:
     name: HTTP proxy
     runs-on: ubuntu-latest

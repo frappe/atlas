@@ -7,9 +7,6 @@ set -euo pipefail
 : "${GATEWAY_ID:?GATEWAY_ID is required}"
 : "${GATEWAY_MESH:?GATEWAY_MESH is required}"
 : "${LISTEN_PORT:?LISTEN_PORT is required}"
-: "${JWKS_URL:?JWKS_URL is required}"
-: "${GWGATEWAY_AUDIENCE:?GWGATEWAY_AUDIENCE is required}"
-: "${JWKS_ISSUERS:?JWKS_ISSUERS is required}"
 
 source_dir=$(cd "$(dirname "$0")" && pwd)
 state_dir=/opt/atlas/wg-gateway
@@ -51,27 +48,11 @@ sysctl -q -p /etc/sysctl.d/90-atlas-wg-gateway.conf
 step "create the WireGuard interface"
 install -d -m 0750 "$state_dir"
 
-if [ ! -f "$state_dir/privatekey" ]; then
-	wg genkey | tee "$state_dir/privatekey" | wg pubkey > "$state_dir/publickey"
-	chmod 0600 "$state_dir/privatekey"
-fi
-
-# Atlas replaces peers.conf on every peer change. The first copy carries the
-# generated key and the port, so wg setconf alone configures the interface.
-if [ ! -f "$state_dir/peers.conf" ]; then
-	install -m 0600 /dev/null "$state_dir/peers.conf"
-	{
-		echo "[Interface]"
-		echo "PrivateKey = $(cat "$state_dir/privatekey")"
-		echo "ListenPort = $LISTEN_PORT"
-	} > "$state_dir/peers.conf"
-fi
-
+# A customer tunnel packet fits eth0: its MTU minus the outer IPv4 (20), UDP (8), and WireGuard (32) headers.
+wireguard_mtu=$(( $(cat /sys/class/net/eth0/mtu) - 60 ))
 ip link add wg0 type wireguard 2>/dev/null || true
-# A customer tunnel packet fits the 1380 mesh MTU on eth0: 1380 - 20 - 8 - 32.
-ip link set wg0 mtu 1320
+ip link set wg0 mtu "$wireguard_mtu"
 ip link set wg0 up
-wg setconf wg0 "$state_dir/peers.conf"
 read -r gateway_address gateway_prefix mesh0 mesh1 mesh2 mesh3 < <(python3 - "$REGION_ID" "$GATEWAY_ID" "$GATEWAY_MESH" <<'PYTHON'
 import ipaddress
 import sys
@@ -87,7 +68,8 @@ PYTHON
 )
 ip -6 addr replace "$gateway_address/128" dev wg0
 ip -6 route replace "$gateway_prefix" dev wg0
-printf 'WG_GATEWAY_ADDRESS=%s/128\nWG_GATEWAY_PREFIX=%s\n' "$gateway_address" "$gateway_prefix" > "$state_dir/network.env"
+printf 'WG_GATEWAY_ADDRESS=%s/128\nWG_GATEWAY_PREFIX=%s\nWG_GATEWAY_MTU=%s\n' \
+	"$gateway_address" "$gateway_prefix" "$wireguard_mtu" > "$state_dir/network.env"
 
 
 step "compile the tenant filter"
@@ -113,32 +95,17 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/deads
 apt-get update -qq
 apt-get install -y -qq "python${python_version}" "python${python_version}-venv"
 "python${python_version}" -m venv "$state_dir/venv"
-"$state_dir/venv/bin/pip" install --no-cache-dir --quiet "$source_dir/daemon"
-"$state_dir/venv/bin/python" -m compileall -q "$state_dir/venv"/lib/python3*/site-packages/gatewayd
-
-step "start the gateway API"
-install -m 0600 /dev/null "$state_dir/daemon.env"
-cat > "$state_dir/daemon.env" <<EOF
-WG_GATEWAY_JWKS_URL=$JWKS_URL
-WG_GATEWAY_AUDIENCE_ID=$GWGATEWAY_AUDIENCE
-WG_GATEWAY_JWKS_ISSUERS=$JWKS_ISSUERS
-WG_GATEWAY_BIND=$GATEWAY_MESH
-WG_GATEWAY_PORT=80
-WG_GATEWAY_REGION=$REGION_ID
-WG_GATEWAY_ID=$GATEWAY_ID
-WG_GATEWAY_LISTEN_PORT=$LISTEN_PORT
-EOF
+"$state_dir/venv/bin/pip" install --no-cache-dir --quiet "$source_dir/control-cluster" "$source_dir/daemon"
+"$state_dir/venv/bin/python" -m compileall -q "$state_dir/venv"/lib/python3*/site-packages/{atlas_control,gatewayd}
 install -m 0644 "$source_dir/systemd/atlas-wg-gateway-api.service" /etc/systemd/system/atlas-wg-gateway-api.service
-
 systemctl daemon-reload
+# Atlas writes /etc/atlas/wireguard-gateway.toml next and starts the API.
 systemctl enable atlas-wg-gateway-api.service
-systemctl restart atlas-wg-gateway-api.service
 
 
 step "check the gateway"
-wg show wg0 >/dev/null
+ip link show wg0 >/dev/null
 tc filter show dev wg0 ingress | grep -q gateway.bpf.o
 tc filter show dev eth0 ingress | grep -q gateway.bpf.o
-systemctl is-active atlas-wg-gateway-api.service >/dev/null
 
 echo "the WireGuard gateway listens on port $LISTEN_PORT and routes $gateway_prefix"

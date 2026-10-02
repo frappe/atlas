@@ -1,21 +1,22 @@
 # WireGuard gateway component specification
 
-[Root specification](../../SPEC.md) · [Overview](README.md)
-
-## Purpose
-
-One gateway forwards customer `fdac` packets to the same tenant's `fdaa` VMs. It keeps the client source address. Each eligible VM routes replies through the gateway's mesh address.
+[Root specification](../../SPEC.md) · Behavior: [WireGuard gateway](../../docs/networking/wireguard-gateway.md)
 
 ## Interfaces
 
-`setup.sh` compiles `bpf/gateway.c` as a tc object and installs the `systemd/` services. The `daemon/` package owns `peers.json` and applies `peers.conf` with `wg setconf`.
+- `setup.sh` takes `REGION_ID`, `GATEWAY_ID`, `GATEWAY_MESH`, and `LISTEN_PORT`. It compiles `bpf/gateway.c` with them, creates `wg0`, and installs the daemon with the [control-cluster](../control-cluster/SPEC.md) package.
+- Atlas writes `/etc/atlas/wireguard-gateway.toml`: `[gateway]` with the node key, `[[nodes]]` with every member, `[auth]`, `[cluster]`, and `[tls]`. The daemon refuses a partial file.
+- The daemon serves HTTPS on `[::]:443`: `POST /v1/peers`, `PUT /v1/peers`, `DELETE /v1/peers/{tenant_id}/{client_id}`, `GET /v1/peers`, `/healthz`, and `/readyz`.
 
-The installer takes `REGION_ID`, `GATEWAY_ID`, `GATEWAY_MESH`, `LISTEN_PORT`, `JWKS_URL`, `GWGATEWAY_AUDIENCE`, and `JWKS_ISSUERS`. The daemon binds to the gateway mesh address and validates Ed25519 JWTs for the `atlas-wg-gateway:<region>` audience. It accepts issuer prefixes `central` and `atlas:<region>` and scopes `*`, `peers:*`, `peers:read`, `peers:update`, and `gateway:read`.
+## Invariants
 
-## Address and packet contract
+- `PeerState` holds every device as `"<tenant>:<client>" → {public_key, node_id}`. A mutation changes one device, or replaces the complete table.
+- A node writes only its own devices to `wg0`. A device keeps its node, because its address carries the node number.
+- A public key belongs to one device. A device keeps its first public key until it is removed.
+- A new device needs a current node that serves: the leader places it only on a member whose heartbeat reports a configured `wg0`.
+- The configuration must list this node in `[cluster]`, also for a single node. The table keeps devices of an archived node, and their address comes from the node number in `node_id`.
+- The eBPF filters require the same region and tenant in the device and VM addresses. No address translation occurs.
 
-The client address is `fdac | region 16 | gateway ID 16 | tenant ID 32 | client ID 32 | zero 16`. The gateway has `fdac:<region>:<gateway ID>::1/128` on `wg0` and routes its `/48` there. WireGuard allows each peer's single `/128`.
+## Validation
 
-The `wg0` ingress program requires a client source for this gateway and a destination with the same region and tenant in `fdaa`. The `eth0` ingress program checks the tenant and gateway ID of replies to `fdac`. Both drop mismatches. No address translation occurs.
-
-Atlas owns the gateway VM and its network gateway role. The daemon owns peers. Atlas's existing server sync adds each active gateway's `/48` route, scoped `wireguard-gateway`, to every VM that holds an opted-in route set. The scope keeps the route in the VM namespace on the host: Metal converges it there and passes it to the WG Mesh return-route map, but the guest metadata never lists it, so the routes inside the VM never change.
+From this directory, run `python -m pip install --editable ../control-cluster --editable 'daemon[test]'`, `python -m ruff check daemon`, and `python -m pytest -q daemon/tests`.

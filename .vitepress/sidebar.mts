@@ -71,6 +71,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 				],
 			},
 			{ text: 'IPv6 router', link: '/docs/networking/ipv6-router' },
+			{ text: 'WireGuard gateway', link: '/docs/networking/wireguard-gateway' },
 		],
 	},
 	{
@@ -144,6 +145,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 					{ text: 'HTTP proxy', link: '/services/http-proxy/SPEC' },
 					{ text: 'WG Mesh', link: '/services/wg-mesh/SPEC' },
 					{ text: 'IPv6 router', link: '/services/ipv6-router/SPEC' },
+					{ text: 'WireGuard gateway', link: '/services/wg-gateway/SPEC' },
 					{ text: 'Control cluster', link: '/services/control-cluster/SPEC' },
 				],
 			},

@@ -33,4 +33,5 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | Metal | `metal/` |
 | WG Mesh | `services/wg-mesh/` |
 | Control cluster | `services/control-cluster/` |
+| WireGuard gateway | `services/wg-gateway/` and `services/control-cluster/` |
 | HTTP proxy | `services/http-proxy/` and the proxy API client |

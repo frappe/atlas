@@ -132,7 +132,9 @@ HTTP_PROXY_PACKAGE = ServicePackage(
 	"http-proxy", "HTTP proxy package", "nginx/setup.sh", ("control-cluster",)
 )
 IPV6_ROUTER_PACKAGE = ServicePackage("ipv6-router", "IPv6 router package", "setup.sh")
-WG_GATEWAY_PACKAGE = ServicePackage("wg-gateway", "WireGuard gateway package", "setup.sh")
+WG_GATEWAY_PACKAGE = ServicePackage(
+	"wg-gateway", "WireGuard gateway package", "setup.sh", ("control-cluster",)
+)
 SERVICE_PACKAGES = (HTTP_PROXY_PACKAGE, IPV6_ROUTER_PACKAGE, WG_GATEWAY_PACKAGE)
 
 

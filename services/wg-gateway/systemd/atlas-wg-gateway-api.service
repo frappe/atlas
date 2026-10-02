@@ -2,11 +2,12 @@
 Description=Atlas WireGuard gateway API
 After=network-online.target atlas-wg-gateway.service
 Wants=network-online.target
+Requires=atlas-wg-gateway.service
+ConditionPathExists=/etc/atlas/wireguard-gateway.toml
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/atlas/wg-gateway
-EnvironmentFile=/opt/atlas/wg-gateway/daemon.env
 ExecStart=/opt/atlas/wg-gateway/venv/bin/wg-gatewayd
 Restart=always
 
