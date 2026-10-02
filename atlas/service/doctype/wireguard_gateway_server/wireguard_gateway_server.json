@@ -15,11 +15,11 @@
   "virtual_machine",
   "wireguard_mesh_ipv6",
   "dns_health_check_id",
-  "gateway_column",
   "server",
+  "gateway_column",
   "listen_port",
-  "gateway_public_key",
   "private_key",
+  "gateway_public_key",
   "shape_section",
   "virtual_machine_image",
   "cpu_millicores",
@@ -115,7 +115,7 @@
    "read_only": 1
   },
   {
-   "default": 51820,
+   "default": "51820",
    "fieldname": "listen_port",
    "fieldtype": "Int",
    "label": "Listen Port",
@@ -125,21 +125,25 @@
    "description": "Customer devices use this key for the node. Atlas generates the key pair.",
    "fieldname": "gateway_public_key",
    "fieldtype": "Data",
-   "label": "Gateway Public Key",
-   "read_only": 1
+   "label": "Public Key",
+   "read_only": 1,
+   "show_description_on_click": 1
   },
   {
    "fieldname": "private_key",
    "fieldtype": "Password",
    "hidden": 1,
-   "label": "WireGuard Private Key",
+   "label": "Private Key",
    "read_only": 1
   },
   {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval: false",
    "description": "Rebuild creates the new virtual machine with this shape.",
    "fieldname": "shape_section",
    "fieldtype": "Section Break",
-   "label": "Virtual Machine Shape"
+   "label": "Virtual Machine Shape",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "virtual_machine_image",
@@ -183,7 +187,8 @@
   }
  ],
  "index_web_pages_for_search": 1,
- "modified": "2026-10-02 18:00:00.000000",
+ "links": [],
+ "modified": "2026-10-02 20:23:02.118658",
  "modified_by": "Administrator",
  "module": "Service",
  "name": "Wireguard Gateway Server",

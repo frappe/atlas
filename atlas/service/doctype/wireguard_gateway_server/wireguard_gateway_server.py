@@ -61,7 +61,7 @@ class WireguardGatewayServer(Document):
 		gateway_public_key: DF.Data | None
 		installed_package_hash: DF.Data | None
 		is_cluster_member: DF.Check
-		listen_port: DF.Int | None
+		listen_port: DF.Int
 		memory_mib: DF.Int
 		private_key: DF.Password | None
 		pushed_config_hash: DF.Data | None
