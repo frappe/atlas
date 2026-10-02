@@ -4,7 +4,14 @@
 frappe.ui.form.on("Atlas Settings", {
 	setup(frm) {
 		frm.set_query("rescue_virtual_machine_image", () => ({
-			filters: { enabled: 1, image_type: "system", status: "Available", memory_snapshot: 0 },
+			filters: [
+				["Virtual Machine Image", "enabled", "=", 1],
+				["Virtual Machine Image", "image_type", "=", "system"],
+				["Virtual Machine Image", "status", "=", "Available"],
+				["Virtual Machine Image", "memory_snapshot", "=", 0],
+				["Atlas Tag", "key", "=", "purpose"],
+				["Atlas Tag", "value", "=", "rescue"],
+			],
 		}));
 	},
 	refresh(frm) {

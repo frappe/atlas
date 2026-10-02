@@ -878,7 +878,7 @@
    "fieldtype": "Link",
    "label": "Rescue Virtual Machine Image",
    "options": "Virtual Machine Image",
-   "description": "Enabled System image with rescue tools and the Atlas reboot hook. New sessions use this image."
+   "description": "Enabled System image tagged purpose=rescue with repair tools and the Atlas reboot hook. New sessions use this image."
   },
   {
    "fieldname": "wireguard_ip_address",

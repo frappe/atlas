@@ -25,7 +25,13 @@ from atlas.metal_server.core.atlas_peer import AtlasPeer
 from atlas.metal_server.core.development_gateway import DevelopmentGateway
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 from atlas.service.core.service_package import SERVICE_PACKAGES
-from atlas.vm.core.image_builder import build_ubuntu_image, publish_ubuntu_image
+from atlas.vm.core.image_builder import (
+	ImagePurpose,
+	build_ubuntu_image,
+	build_ubuntu_rescue_image,
+	get_available_ubuntu_images,
+	publish_ubuntu_image,
+)
 
 
 @click.command("configure-atlas")
@@ -120,7 +126,6 @@ def build_service_packages(context: CliCtxObj) -> None:
 @click.option("--version", type=click.Choice(["22.04", "24.04"]), required=True)
 @click.option("--architecture", type=click.Choice(["amd64"]), default="amd64", show_default=True)
 @click.option("--minimal", is_flag=True, help="Build the Ubuntu minimal cloud image.")
-@click.option("--rescue", is_flag=True, help="Include rescue tools and the reboot notification hook.")
 @click.option("--title")
 @click.option(
 	"--skip-existing",
@@ -143,7 +148,6 @@ def build_ubuntu_base_image(
 	version: str,
 	architecture: str,
 	minimal: bool,
-	rescue: bool,
 	title: str | None,
 	skip_existing: bool,
 	storage: str,
@@ -155,7 +159,7 @@ def build_ubuntu_base_image(
 	if minimal and version != "24.04":
 		raise click.UsageError("minimal images are available only for Ubuntu 24.04")
 
-	title = title or f"ubuntu-{version}" + ("-rescue" if rescue else "") + ("-minimal" if minimal else "")
+	title = title or f"ubuntu-{version}" + ("-minimal" if minimal else "")
 	target_sites = context.sites
 	if skip_existing:
 		target_sites = [site for site in context.sites if not is_image_available(site, title, architecture)]
@@ -164,9 +168,54 @@ def build_ubuntu_base_image(
 		return
 
 	click.echo(f"Building {title} for {architecture}")
-	image_path, kernel_path = build_ubuntu_image(
-		version, architecture, minimal, output_directory, rescue=rescue
-	)
+	image_path, kernel_path = build_ubuntu_image(version, architecture, minimal, output_directory)
+	_publish_image_to_sites(target_sites, title, version, architecture, image_path, kernel_path, storage)
+
+
+@click.command("build-ubuntu-rescue-image")
+@click.option("--title", default="ubuntu-24.04-rescue", show_default=True)
+@click.option(
+	"--skip-existing", is_flag=True, help="Skip sites with an Available rescue image of this title."
+)
+@click.option(
+	"--storage",
+	type=click.Choice(["object-storage", "site-file"]),
+	default="object-storage",
+	show_default=True,
+)
+@click.option(
+	"--output-directory", type=click.Path(path_type=Path), default=Path("./dist"), show_default=True
+)
+@pass_context
+def build_ubuntu_rescue_image_command(
+	context: CliCtxObj, title: str, skip_existing: bool, storage: str, output_directory: Path
+) -> None:
+	"""Build and publish an independent Ubuntu 24.04 amd64 rescue image."""
+	if not context.sites:
+		raise SiteNotSpecifiedError
+	target_sites = context.sites
+	if skip_existing:
+		target_sites = [
+			site for site in context.sites if not is_image_available(site, title, "amd64", "rescue")
+		]
+	if not target_sites:
+		click.echo(f"Image {title} is already available")
+		return
+	click.echo(f"Building {title} for amd64")
+	image_path, kernel_path = build_ubuntu_rescue_image(output_directory)
+	_publish_image_to_sites(target_sites, title, "24.04", "amd64", image_path, kernel_path, storage, "rescue")
+
+
+def _publish_image_to_sites(
+	target_sites: list[str],
+	title: str,
+	version: str,
+	architecture: str,
+	image_path: Path,
+	kernel_path: Path,
+	storage: str,
+	purpose: ImagePurpose = "base",
+) -> None:
 	for site in target_sites:
 		try:
 			frappe.init(site)
@@ -180,6 +229,7 @@ def build_ubuntu_base_image(
 					image_path,
 					kernel_path,
 					"Site File" if storage == "site-file" else "Object Storage",
+					purpose=purpose,
 				)
 			except ObjectStorageError as error:
 				raise click.UsageError(str(error)) from error
@@ -189,22 +239,12 @@ def build_ubuntu_base_image(
 			frappe.destroy()
 
 
-def is_image_available(site: str, title: str, architecture: str) -> bool:
+def is_image_available(site: str, title: str, architecture: str, purpose: ImagePurpose = "base") -> bool:
 	"""Return true when a site has the requested system image."""
 	try:
 		frappe.init(site)
 		frappe.connect()
-		return bool(
-			frappe.db.exists(
-				"Virtual Machine Image",
-				{
-					"title": title,
-					"status": "Available",
-					"image_type": "system",
-					"architecture": architecture,
-				},
-			)
-		)
+		return bool(get_available_ubuntu_images(title, architecture, purpose))
 	finally:
 		frappe.destroy()
 

@@ -13,11 +13,11 @@ An image records its kernel, root filesystem, architecture, sizes, and SHA-256 d
 
 The Ubuntu builder publishes a kernel and root filesystem as a new Available System image. Each build gets a new record and its own artifact paths.
 
-The builder checks earlier Available images with the same title and architecture. If one has the same digests, the build changes nothing.
+The builder checks earlier Available images with the same title, architecture, and purpose tag. If one has the same digests, the build changes nothing.
 
-After publication, the builder retires the earlier images.
+After base image publication, the builder retires the earlier base images. Rescue builds retain earlier images. See [rescue image preparation](../compute/rescue.md#prepare-the-image).
 
-Atlas protects each new System image from termination. The builder removes this protection from the earlier images before it retires them.
+Atlas protects each new System image from termination. The base image builder removes this protection from earlier base images before it retires them.
 
 ::: info Guest disk errors
 New Ubuntu System images set ext4 to remount the root filesystem read-only when it detects an error. This stops further writes to a damaged filesystem.
@@ -116,7 +116,8 @@ See [Metal storage](host-storage.md) for local staging and cleanup. See the [Atl
 ::: details Source code and tests
 
 - [Image DocType](../../atlas/vm/doctype/virtual_machine_image/virtual_machine_image.py) owns image metadata and visibility.
-- [System image builder](../../atlas/vm/core/image_builder.py) publishes base artifacts.
+- [System image builder](../../atlas/vm/core/image_builder.py) publishes base and rescue artifacts with separate purpose tags.
+- [Rescue image recipe](../../atlas/vm/scripts/build_ubuntu_rescue_image.sh) builds the independent repair image. See [rescue operation](../compute/rescue.md).
 - [Ubuntu image script](../../atlas/vm/scripts/build_ubuntu_server_image.sh) builds the guest root filesystem and sets its error behavior.
 - [Machine image transfer](../../atlas/vm/core/vm_image_transfer.py) owns snapshot progress.
 - [Storage migration](../../atlas/vm/core/vm_image_storage_migration.py) moves bootstrap files to object storage.

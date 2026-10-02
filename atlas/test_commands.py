@@ -81,7 +81,7 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			)
 
 		self.assertEqual(result.exit_code, 0, result.output)
-		build.assert_called_once_with("24.04", "amd64", False, Path("dist"), rescue=False)
+		build.assert_called_once_with("24.04", "amd64", False, Path("dist"))
 		initialize.assert_called_once_with("missing.local")
 		publish.assert_called_once_with(
 			"ubuntu-24.04",
@@ -90,5 +90,46 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			image_path,
 			kernel_path,
 			"Site File",
+			purpose="base",
 		)
 		destroy.assert_called_once_with()
+
+
+class TestBuildUbuntuRescueImageCommand(UnitTestCase):
+	def test_rescue_command_builds_once_and_publishes_with_its_own_purpose(self) -> None:
+		with (
+			patch.object(commands, "is_image_available", side_effect=[True, False]) as available,
+			patch.object(
+				commands, "build_ubuntu_rescue_image", return_value=(Path("rootfs"), Path("kernel"))
+			) as build,
+			patch.object(commands, "_publish_image_to_sites") as publish,
+		):
+			result = CliRunner().invoke(
+				commands.build_ubuntu_rescue_image_command,
+				["--skip-existing"],
+				obj=command_context("existing.local", "new.local"),
+			)
+		self.assertEqual(result.exit_code, 0, result.output)
+		self.assertEqual(available.call_args.args, ("new.local", "ubuntu-24.04-rescue", "amd64", "rescue"))
+		build.assert_called_once_with(Path("dist"))
+		publish.assert_called_once_with(
+			["new.local"],
+			"ubuntu-24.04-rescue",
+			"24.04",
+			"amd64",
+			Path("rootfs"),
+			Path("kernel"),
+			"object-storage",
+			"rescue",
+		)
+
+	def test_failed_rescue_build_does_not_publish(self) -> None:
+		with (
+			patch.object(commands, "build_ubuntu_rescue_image", side_effect=RuntimeError("build failed")),
+			patch.object(commands, "_publish_image_to_sites") as publish,
+		):
+			result = CliRunner().invoke(
+				commands.build_ubuntu_rescue_image_command, [], obj=command_context("test.local")
+			)
+		self.assertIsInstance(result.exception, RuntimeError)
+		publish.assert_not_called()

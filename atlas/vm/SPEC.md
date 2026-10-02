@@ -15,6 +15,7 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/placement/affinity.py` | Affinity rule types, their validation, and their stored JSON form. |
 | `core/vm_migration.py` and `core/vm_resize.py` | Host moves and shape changes. |
 | `core/metal_client.py` and `core/metal_models.py` | Metal transport, errors, and typed responses. |
+| `core/image_builder.py` and `scripts/build_ubuntu*_image.sh` | Independent base and rescue recipes, shared guest setup, and purpose-specific publication. |
 | `core/vm_image_transfer.py`, `core/vm_image_deletion.py`, and `core/multipart_upload.py` | Image publication and removal. |
 | `core/vm_state.py` and `core/state_webhook.py` | Last host reports and messages to Central. |
 | `doctype/virtual_machine_image/` | Durable image records and visibility. |
@@ -47,7 +48,7 @@ This file identifies code owners and rules that a code change must preserve. The
 
 ## Rescue
 
-`VirtualMachineService.set_rescue` selects the Atlas Settings image for a new session. The image is pinned by Metal. `MetalRescue` and rescue generations preserve requested and applied state in typed responses. The DocType and tenant API keep tenant and write permissions at their existing boundaries. See [rescue mode](../../docs/compute/rescue.md).
+`VirtualMachineService.set_rescue` selects the Atlas Settings image for a new session. The image must have `purpose=rescue`. Metal pins the image for the session. Publishing a rescue build does not retire older builds or select it in Atlas Settings. `MetalRescue` and rescue generations preserve requested and applied state in typed responses. The DocType and tenant API keep tenant and write permissions at their existing boundaries. See [rescue mode](../../docs/compute/rescue.md).
 
 ## Validation
 

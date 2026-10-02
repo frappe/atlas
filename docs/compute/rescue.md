@@ -4,17 +4,19 @@ Rescue mode boots a repair system in the same VM. The original disk is attached 
 
 ## Prepare the image
 
-Build an Ubuntu 24.04 rescue image. The builder includes filesystem tools, SSH access through the VM's keys, and a reboot notification hook.
+Build an Ubuntu 24.04 rescue image on an amd64 Linux build host. The builder includes filesystem tools, SSH access through the VM's keys, and a reboot notification hook.
 
 ```sh
-pilot --site SITE build-ubuntu-base-image --version 24.04 --rescue
+pilot --site SITE build-ubuntu-rescue-image
 ```
 
-In Atlas Settings, select **Rescue Virtual Machine Image**. It must be an enabled, Available System image without a memory snapshot. Its architecture must match the VM. The supplied builder supports amd64.
+In Atlas Settings, select **Rescue Virtual Machine Image**. It must be an enabled, Available System image tagged `purpose=rescue` without a memory snapshot. Its architecture must match the VM. The supplied builder supports amd64.
 
-Use an image made with `--rescue`. Atlas validates the image record, but cannot inspect whether a custom image contains the tools and reboot hook. The guest kernel must support virtio-vsock. The builder installs an Ubuntu kernel with its matching modules and loads `vmw_vsock_virtio_transport`. Package installation uses the configured Ubuntu repositories. Published image hashes identify the resulting artifacts.
+Use the dedicated rescue builder. The standard base image build is independent and does not include rescue tools. Atlas validates the image record, but cannot inspect whether a custom image contains the tools and reboot hook. The guest kernel must support virtio-vsock. The builder installs an Ubuntu kernel with its matching modules and loads `vmw_vsock_virtio_transport`. Package installation uses the configured Ubuntu repositories. Published image hashes identify the resulting artifacts.
 
 The rescue image disables Snap services. Snap initialization can wait for Internet access and delay cloud-init. The installed repair tools and SSH access through metadata work without Internet access.
+
+Publishing creates a protected System image tagged `purpose=rescue`. Base image selection excludes it. A rebuild does not retire previous rescue builds or change Atlas Settings. Select a new build explicitly after validation. Keep previous images protected until their sessions have ended.
 
 Each session keeps its selected image. Changing the setting affects new sessions. Repeating an enable request does not replace an active session.
 
