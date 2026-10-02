@@ -1,4 +1,5 @@
 import os
+import socket
 
 import uvicorn
 
@@ -22,7 +23,18 @@ def main() -> None:
 		with os.fdopen(descriptor, "w") as target:
 			target.write(content + "\n")
 
-	uvicorn.run("gatewayd.main:app", host="::", port=LISTEN_PORT, ssl_certfile=certificate, ssl_keyfile=key)
+	server = uvicorn.Server(uvicorn.Config("gatewayd.main:app", ssl_certfile=certificate, ssl_keyfile=key))
+	server.run(sockets=[create_listener(LISTEN_PORT)])
+
+
+def create_listener(port: int) -> socket.socket:
+	"""Listen on IPv4 and IPv6. Devices and the DNS health check reach the node over IPv4."""
+	listener = socket.socket(socket.AF_INET6)
+	listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+	listener.bind(("::", port))
+	listener.listen(socket.SOMAXCONN)
+	return listener
 
 
 if __name__ == "__main__":

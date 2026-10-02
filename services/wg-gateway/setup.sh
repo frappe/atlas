@@ -100,7 +100,9 @@ apt-get install -y -qq "python${python_version}" "python${python_version}-venv"
 install -m 0644 "$source_dir/systemd/atlas-wg-gateway-api.service" /etc/systemd/system/atlas-wg-gateway-api.service
 systemctl daemon-reload
 # Atlas writes /etc/atlas/wireguard-gateway.toml next and starts the API.
+# An upgrade restarts a running API.
 systemctl enable atlas-wg-gateway-api.service
+systemctl try-restart atlas-wg-gateway-api.service
 
 
 step "check the gateway"
