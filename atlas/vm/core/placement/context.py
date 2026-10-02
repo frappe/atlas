@@ -354,12 +354,18 @@ class PlacementContext:
 
 		allowed = set(self._find_affinity_hosts([row.name for row in rows]))
 		matching = [row for row in rows if row.name in allowed or row.name == self.current_host_name]
-		if self.current_host_name or any(self._has_room(row) for row in matching):
+		if any(self._has_room(row) for row in matching):
 			self.apply_affinity = True
 			return matching
 
 		affinity_matching = load_affinity_matching()
 		if affinity_matching == "Enforced":
+			if self.current_host_name:
+				# A resize keeps its current host so an in-place resize can
+				# still proceed, but Enforced matching never gains a
+				# nonmatching fallback.
+				self.apply_affinity = True
+				return matching
 			frappe.throw(
 				_("No Metal Server that meets the affinity rules has capacity."), exc=AffinityUnsatisfied
 			)
