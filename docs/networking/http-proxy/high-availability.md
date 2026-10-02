@@ -4,6 +4,8 @@ The HTTP proxy cluster has 1 to 5 nodes in one region. Each node serves traffic 
 
 Atlas manages the nodes, Domain Name System (DNS) records, peer membership, certificates, and cluster passwords. See the [control daemon guide](control-daemon.md) for the public API.
 
+Peers talk over the VM mesh. Atlas writes each peer name with its mesh address into `/etc/hosts` on every node.
+
 ## Addresses and health
 
 Atlas publishes node, regional, and wildcard names in that order. [Proxy provisioning](provisioning.md#which-dns-names-atlas-publishes) lists their records and TTLs. Peers use stable node addresses. Public clients use regional DNS.

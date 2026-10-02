@@ -14,7 +14,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-/* VM address: fdaa | region 16 | tenant 32 | VM ID 64. */
+/* VM address: fdaa | region 16 | tenant 32 | padding 48 | VM 16. */
 #define VM_PREFIX 0xfdaa
 /* Host WireGuard address. */
 #define UNDERLAY_PREFIX 0xfdab

@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.server_providers.base import ProviderOperationError
 from atlas.metal_server.core.provisioning import ServerProvisioner
 
 
@@ -20,6 +21,7 @@ class TestServerProvisioner(UnitTestCase):
 		provisioner.wait_for_root_ssh = Mock(side_effect=lambda: operations("secure-shell"))
 		provider.configure_server_network.side_effect = lambda _server: operations("provider-network")
 		provisioner.host_installation.configure_wireguard.side_effect = lambda: operations("wireguard")
+		provisioner.wait_for_wireguard_ssh = Mock(side_effect=lambda: operations("wireguard-link"))
 		provisioner.host_installation.install_metal.side_effect = lambda: operations("metal")
 
 		with patch("atlas.metal_server.core.provisioning.frappe.db", SimpleNamespace(commit=Mock())):
@@ -33,6 +35,7 @@ class TestServerProvisioner(UnitTestCase):
 				"secure-shell",
 				"provider-network",
 				"wireguard",
+				"wireguard-link",
 				"metal",
 			],
 		)
@@ -67,6 +70,7 @@ class TestServerProvisioner(UnitTestCase):
 		provider = Mock()
 		provisioner = ServerProvisioner(server, provider)
 		provisioner.wait_for_root_ssh = Mock()
+		provisioner.wait_for_wireguard_ssh = Mock()
 		provisioner.host_installation = Mock()
 
 		with patch("atlas.metal_server.core.provisioning.frappe.db", SimpleNamespace(commit=Mock())):
@@ -95,6 +99,43 @@ class TestServerProvisioner(UnitTestCase):
 		self.assertEqual(server.status, "Failed")
 		self.assertIn("provider-create", log_error.call_args.kwargs["title"])
 
+	def test_wireguard_link_publishes_the_host_peer_then_waits_for_root_on_wg0(self) -> None:
+		"""Setup must not wait for the scheduler to add the new host to atlas0."""
+		provisioner = ServerProvisioner(self.server(), Mock())
+
+		with (
+			patch("atlas.metal_server.core.provisioning.AtlasPeer") as atlas_peer,
+			patch("atlas.metal_server.core.provisioning.wait_for_server") as wait_for_server,
+		):
+			provisioner.wait_for_wireguard_ssh()
+
+		atlas_peer.return_value.write_config.assert_called_once_with()
+		self.assertEqual(wait_for_server.call_args.kwargs["host"], "fdab:1::1")
+		self.assertEqual(wait_for_server.call_args.kwargs["users"], ("root",))
+
+	def test_a_setup_retry_after_wireguard_needs_no_public_ipv4(self) -> None:
+		server = self.server()
+		server.public_ipv4_address = None
+		provider = Mock(ssh_users=("root",))
+		provisioner = ServerProvisioner(server, provider)
+
+		with patch("atlas.metal_server.core.provisioning.wait_for_server", return_value="root") as wait:
+			provisioner.wait_for_root_ssh()
+
+		self.assertEqual(wait.call_args.kwargs["host"], "fdab:1::1")
+
+	def test_an_unreachable_wireguard_link_is_a_retryable_failure(self) -> None:
+		provisioner = ServerProvisioner(self.server(), Mock())
+
+		with (
+			patch("atlas.metal_server.core.provisioning.AtlasPeer"),
+			patch("atlas.metal_server.core.provisioning.wait_for_server", side_effect=TimeoutError),
+			self.assertRaisesRegex(ProviderOperationError, "through wg0") as raised,
+		):
+			provisioner.wait_for_wireguard_ssh()
+
+		self.assertTrue(raised.exception.is_retryable)
+
 	@staticmethod
 	def server() -> SimpleNamespace:
 		server = SimpleNamespace(
@@ -111,6 +152,8 @@ class TestServerProvisioner(UnitTestCase):
 			private_network_mac_address="aa:bb:cc:dd:ee:01",
 			wireguard_ip_address="fdab:1::1",
 			wireguard_public_key="public-key",
+			ssh_host="fdab:1::1",
+			settings=SimpleNamespace(),
 			db_set=Mock(),
 			enqueue_disk_sync=Mock(),
 		)

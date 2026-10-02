@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Frappe and Contributors
 # See license.txt
 
+import ipaddress
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +10,7 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 
 import atlas.service.core.proxy.configuration as configuration_module
 import atlas.service.doctype.proxy_server.proxy_server as proxy_server_module
+from atlas.vm.core.models import FirewallConfiguration
 
 
 class IntegrationTestProxyServer(IntegrationTestCase):
@@ -198,7 +200,7 @@ class TestProxyServerCreate(UnitTestCase):
 			patch.object(
 				proxy_server_module.frappe,
 				"get_single",
-				return_value=SimpleNamespace(public_ssh_key="ssh-ed25519 AAAA atlas"),
+				return_value=SimpleNamespace(public_ssh_key="ssh-ed25519 AAAA atlas", region_id=1),
 			),
 			patch("atlas.vm.core.vm_service.VirtualMachineService", virtual_machine_service),
 		):
@@ -227,6 +229,24 @@ class TestProxyServerCreate(UnitTestCase):
 		self.assertEqual(virtual_machine_service.create.call_args.args[0]["disk_mib"], 16384)
 		proxy_server.enqueue_provisioning.assert_called_once()
 
+	def test_the_proxy_firewall_admits_ssh_only_from_regional_services(self) -> None:
+		firewall = FirewallConfiguration.from_value(proxy_server_module.get_proxy_firewall(1))
+
+		def admits(port: int, source: str) -> bool:
+			address = ipaddress.ip_address(source)
+			return any(
+				rule.protocol in {"any", "tcp"}
+				and (not rule.ports or rule.ports == str(port))
+				and any(address in ipaddress.ip_network(cidr) for cidr in rule.cidrs)
+				for rule in firewall.inbound
+			)
+
+		self.assertTrue(admits(443, "203.0.113.1"))
+		self.assertTrue(admits(22, "fdaa:1::52"))
+		self.assertFalse(admits(22, "203.0.113.1"))
+		self.assertFalse(admits(22, "fdaa:1:0:7::1"))
+		self.assertTrue(admits(443, "fdaa:1:0:7::1"))
+
 	def test_the_record_is_committed_before_the_machine_request(self) -> None:
 		proxy_server = MagicMock(name="proxy_server")
 		proxy_server.name = "proxy-001"
@@ -245,7 +265,7 @@ class TestProxyServerCreate(UnitTestCase):
 			patch.object(
 				proxy_server_module.frappe,
 				"get_single",
-				return_value=SimpleNamespace(public_ssh_key="ssh-ed25519 AAAA atlas"),
+				return_value=SimpleNamespace(public_ssh_key="ssh-ed25519 AAAA atlas", region_id=1),
 			),
 			patch.object(proxy_server_module.frappe.db, "commit", side_effect=lambda: calls.append("commit")),
 			patch("atlas.vm.core.vm_service.VirtualMachineService", virtual_machine_service),

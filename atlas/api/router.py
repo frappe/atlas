@@ -57,6 +57,12 @@ images = atlas_router.subrouter(
 	description="Read and delete tenant virtual machine images.",
 )
 
+hosts = atlas_router.subrouter(
+	"hosts",
+	name="Hosts",
+	description="List Metal hosts and grant people temporary SSH access to them through Warpgate. Tenant 0 only.",
+)
+
 
 def get_resource_location(collection: str, resource_id: str) -> str:
 	"""Return the Location header value for one created resource."""
@@ -65,6 +71,7 @@ def get_resource_location(collection: str, resource_id: str) -> str:
 
 def register_atlas_api() -> None:
 	"""Import each module that registers Atlas API routes."""
+	import atlas.api.routes.hosts
 	import atlas.api.routes.images
 	import atlas.api.routes.jwks
 	import atlas.api.routes.public_ips

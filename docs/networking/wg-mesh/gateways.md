@@ -56,6 +56,12 @@ The [IPv6 Router Server](../ipv6-router.md#prepare-the-router-vm) is Atlas's man
 
 The router maps each public IPv6 address to a VM mesh address without a per-VM forwarding list. Atlas adds the return route to each tenant VM that receives a routed allocation. Read the [router address mapping](../ipv6-router.md#how-the-address-maps) for the exact bit layout.
 
+## Use the WireGuard gateway
+
+The [WireGuard gateway](../wireguard-gateway.md) carries customer `fdac` packets to same-tenant `fdaa` VMs without address translation. Each gateway node owns one `fdac` `/48`.
+
+Host sync sends the return route of every active node to Metal. Metal adds these routes only to VMs with **Accessible via WireGuard Gateway** enabled. The guest sends IPv6 traffic to the host, which forwards replies through the gateway mesh address. WG Mesh uses the same routes to admit client packets.
+
 ## Build another gateway service
 
 For another service, create a tenant-0 VM, select **Dangerous Actions > Grant Privilege**, then **Actions > Make Network Gateway**. Configure its destination routes in Atlas and install forwarding software in the guest. A public prefix also needs provider routing and a host-owned prefix. The VM flags alone do not attach one.

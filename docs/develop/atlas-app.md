@@ -103,10 +103,10 @@ Pass validated values to the domain service. The first docstring line becomes th
 
 Atlas builds `metald` and the WG Mesh CLI after installation and migration. A build runs only when its source changes. Atlas publishes each build as a public File, stores the File link in Atlas Settings, and keeps earlier files available.
 
-A host downloads the binary during `install-metald.sh`, so the file needs an address that the host can reach. Set `atlas_base_url` in the site configuration for that address. Atlas uses the site URL when the key is absent.
+A host downloads the binary during `install-metald.sh`, so the file needs an address that the host can reach. Set `atlas_internal_url` in the site configuration to the Atlas listener on its mesh address. Atlas uses `atlas_base_url`, then the site URL, when the key is absent. See [Atlas access to hosts](../region/host-access.md#internal-url).
 
 ```json
-"atlas_base_url": "https://devfc2.example.com"
+"atlas_internal_url": "http://[fdaa:1::ffff:ffff:ffff:ffff]:8000"
 ```
 
 Install the build tools before you install or migrate Atlas. `make` runs both builds. `clang`, `libbpf-dev`, and `linux-libc-dev` build the WG Mesh eBPF object.

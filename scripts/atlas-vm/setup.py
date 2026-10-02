@@ -71,6 +71,7 @@ class Configuration:
 	atlas_branch: str = "develop"
 	atlas_base_url: str = ""
 	atlas_setup_values: dict[str, object] = field(default_factory=dict)
+	warpgate: dict[str, str] = field(default_factory=dict)
 	images: list[tuple[str, str, bool]] = field(default_factory=list)
 
 	@classmethod
@@ -101,6 +102,7 @@ class Configuration:
 			atlas_branch=atlas.get("branch", "develop"),
 			atlas_base_url=atlas.get("base_url", f"https://{site}"),
 			atlas_setup_values=read_atlas_setup_values(atlas),
+			warpgate=atlas.get("warpgate", {}),
 			images=images,
 		)
 
@@ -234,6 +236,9 @@ class Setup:
 				"squashfs-tools",
 				"zstd",
 				"e2fsprogs",
+				"wireguard-tools",
+				# The guest root file system has no modules for the Atlas VM kernel. nft and WireGuard need them.
+				f"linux-modules-{os.uname().release}",
 			],
 			env=environment,
 		)
@@ -337,16 +342,44 @@ class Setup:
 		step(f"stage 10: install atlas on {configuration.site}")
 		self.pilot(f"install-app {configuration.site} atlas")
 
-	def configure_atlas(self) -> None:
+	def install_warpgate(self) -> dict[str, str]:
+		"""Run Warpgate in this VM, and return the values that configure-atlas stores."""
 		configuration = self.configuration
-		step(f"stage 11: configure Atlas on {configuration.site}")
+		warpgate = configuration.warpgate
+		if not warpgate:
+			step("stage 11: Warpgate (not configured)")
+			return {"warpgate_url": "", "warpgate_api_token": "", "warpgate_api_token_id": ""}
+
+		step("stage 11: Warpgate")
+		result = run(
+			[
+				"python3",
+				str(configuration.bench_path / "apps/atlas/scripts/install-warpgate.py"),
+				"--site-path",
+				str(configuration.bench_path / "sites" / configuration.site),
+				"--wildcard-domain",
+				str(configuration.atlas_setup_values["wildcard_domain"]),
+				"--issuer-url",
+				warpgate["issuer_url"],
+				"--client-id",
+				warpgate["client_id"],
+			],
+			env={**os.environ, "WARPGATE_OIDC_CLIENT_SECRET": warpgate["client_secret"]},
+			stdout=subprocess.PIPE,
+			text=True,
+		)
+		return json.loads(result.stdout)
+
+	def configure_atlas(self, warpgate_values: dict[str, str]) -> None:
+		configuration = self.configuration
+		step(f"stage 12: configure Atlas on {configuration.site}")
 		private_key = configuration.fleet_private_key_path
 		if not private_key.exists():
 			if private_key.with_suffix(".pub").exists():
 				raise SetupError(f"public key exists without its private key: {private_key}.pub")
 			self.as_bench("install -d -m 700 ~/.ssh && ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519")
 		public_key = self.bench_output("ssh-keygen -y -f ~/.ssh/id_ed25519")
-		values = {**configuration.atlas_setup_values, "public_ssh_key": public_key}
+		values = {**configuration.atlas_setup_values, **warpgate_values, "public_ssh_key": public_key}
 		self.pilot(
 			f"frappe --site {configuration.site} set-config atlas_base_url {shlex.quote(configuration.atlas_base_url)}"
 		)
@@ -355,9 +388,21 @@ class Setup:
 			input_text=json.dumps(values),
 		)
 
+	def configure_wireguard(self) -> None:
+		configuration = self.configuration
+		step("stage 13: Atlas WireGuard peer")
+		site = configuration.site
+		self.pilot(f"frappe --site {site} configure-atlas-wireguard")
+		run(
+			[
+				str(configuration.bench_path / "apps/atlas/scripts/install-atlas-wireguard.sh"),
+				str(configuration.bench_path / "sites" / site / "private/wireguard/atlas0.conf"),
+			]
+		)
+
 	def grant_image_builder_sudo(self) -> None:
 		# The image builder runs its root file system build through sudo on every build.
-		step("stage 12: sudo grant for the image builder")
+		step("stage 14: sudo grant for the image builder")
 		self.install_grant(
 			self.image_builder_grant,
 			f"{self.configuration.bench_user} ALL=(ALL) NOPASSWD: {self.configuration.image_builder_path} *",
@@ -366,7 +411,7 @@ class Setup:
 	def build_images(self) -> None:
 		# Bootstrap has no object storage credentials yet, so every image is a site file.
 		configuration = self.configuration
-		step(f"stage 13: guest images ({len(configuration.images)})")
+		step(f"stage 15: guest images ({len(configuration.images)})")
 		for version, architecture, minimal in configuration.images:
 			step(f"image {version} {architecture} {'minimal' if minimal else 'server'}")
 			arguments = (
@@ -388,7 +433,8 @@ class Setup:
 			self.get_atlas()
 			self.setup_production()
 			self.install_atlas()
-			self.configure_atlas()
+			self.configure_atlas(self.install_warpgate())
+			self.configure_wireguard()
 		finally:
 			Path(self.setup_grant).unlink(missing_ok=True)
 		self.grant_image_builder_sudo()

@@ -41,9 +41,10 @@ type migrationOptions struct {
 
 // meshOptions configures Atlas WG Mesh.
 type meshOptions struct {
-	enabled    bool
-	binaryPath string
-	uplinkName string
+	enabled           bool
+	binaryPath        string
+	uplinkName        string
+	controllerAddress string
 }
 
 // trafficMonitorOptions configures VM traffic monitoring.
@@ -139,6 +140,7 @@ type wgMeshFile struct {
 	Enabled    *bool  `toml:"enabled"`
 	BinaryPath string `toml:"binary_path"`
 	Uplink     string `toml:"uplink"`
+	Controller string `toml:"controller_address"`
 }
 
 type trafficFile struct {
@@ -184,6 +186,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlayBool(&resolvedOptions.mesh.enabled, fc.WGMesh.Enabled)
 	overlay(&resolvedOptions.mesh.binaryPath, fc.WGMesh.BinaryPath)
 	overlay(&resolvedOptions.mesh.uplinkName, fc.WGMesh.Uplink)
+	overlay(&resolvedOptions.mesh.controllerAddress, fc.WGMesh.Controller)
 	overlayBool(&resolvedOptions.trafficMonitor.enabled, fc.Traffic.Enabled)
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)

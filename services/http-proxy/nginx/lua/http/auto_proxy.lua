@@ -13,7 +13,7 @@ local function digit_value(byte)
 end
 
 local function append_digit(address_parts, digit)
-	-- Keep the 96-bit value in six 16-bit address parts.
+	-- Keep the 48-bit value in three 16-bit address parts.
 	local carry = digit
 	for position = #address_parts, 1, -1 do
 		local value = address_parts[position] * BASE + carry
@@ -24,7 +24,7 @@ local function append_digit(address_parts, digit)
 end
 
 local function decode_token(token)
-	local address_parts = { 0, 0, 0, 0, 0, 0 }
+	local address_parts = { 0, 0, 0 }
 	for position = 1, #token do
 		local digit = digit_value(token:byte(position))
 		if not digit or not append_digit(address_parts, digit) then
@@ -56,17 +56,8 @@ local function is_allowed_prefix(host_prefix, host_prefixes)
 end
 
 local function format_address(address_prefix, address_parts)
-	-- IPv6 stores tenant parts before VM parts.
-	return string.format(
-		"%s:%x:%x:%x:%x:%x:%x",
-		address_prefix,
-		address_parts[5],
-		address_parts[6],
-		address_parts[1],
-		address_parts[2],
-		address_parts[3],
-		address_parts[4]
-	)
+	-- The label puts the VM number before the tenant, and the address puts it after.
+	return string.format("%s:%x:%x::%x", address_prefix, address_parts[2], address_parts[3], address_parts[1])
 end
 
 function auto_proxy.get_virtual_machine_address(subdomain, address_prefix, host_prefixes)

@@ -191,12 +191,14 @@ class TestSSHTask(UnitTestCase):
 		with (
 			patch(
 				"atlas.atlas.doctype.ssh_task.ssh_task.frappe.get_doc",
-				return_value=SimpleNamespace(ssh_host="203.0.113.7"),
+				return_value=SimpleNamespace(
+					ssh_host="vm-00001", get_ssh_proxy_command=lambda: "ssh host nc"
+				),
 			) as get_doc,
 			patch("atlas.atlas.doctype.ssh_task.ssh_task.SSHRunner", return_value=runner) as ssh_runner,
 		):
 			SSHTask.execute(task)
 
 		get_doc.assert_called_once_with("Virtual Machine", "vm-00001")
-		ssh_runner.assert_called_once_with("203.0.113.7", 22, "root")
+		ssh_runner.assert_called_once_with("vm-00001", 22, "root", "ssh host nc")
 		runner.run_command.assert_called_once()

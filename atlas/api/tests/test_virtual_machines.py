@@ -90,6 +90,7 @@ def build_metal_information() -> SimpleNamespace:
 				wireguard_mesh_ipv6="fdaa:1::5",
 				private_network_throughput_mibps=0,
 				public_network_throughput_mibps=0,
+				is_accessible_via_wireguard_gateway=True,
 				firewall=MetalFirewall(
 					enabled=True,
 					inbound=(MetalFirewallRule("tcp", "22", ("203.0.113.0/24",)),),
@@ -157,6 +158,7 @@ class TestVirtualMachineViews(UnitTestCase):
 		self.assertEqual(detail.network.mac, "52:54:00:12:34:56")
 		self.assertTrue(detail.network.ipv4_internet_access)
 		self.assertEqual(detail.network.public_ipv6, "2001:db8:5::7/128")
+		self.assertTrue(detail.network.wireguard_gateway_access)
 		self.assertTrue(detail.network.firewall.enabled)
 		self.assertEqual(detail.network.firewall.inbound[0].ports, "22")
 		self.assertEqual(detail.disk.iops, 500)
@@ -494,6 +496,21 @@ class TestVirtualMachineConfiguration(UnitTestCase):
 
 		self.assertEqual(status, 202)
 		virtual_machine.update_network.assert_called_once_with({"ipv4_internet_access": False})
+
+	def test_network_change_passes_wireguard_gateway_access(self) -> None:
+		with (
+			api_request(
+				"PATCH",
+				"/api/atlas/virtual-machines/vm-00001/network",
+				tenant_id=TENANT_ID,
+				json={"wireguard_gateway_access": True},
+			),
+			owned_document(virtual_machine := build_virtual_machine()),
+		):
+			status, _ = call_route(update_virtual_machine_network, virtual_machine_id="vm-00001")
+
+		self.assertEqual(status, 202)
+		virtual_machine.update_network.assert_called_once_with({"wireguard_gateway_access": True})
 
 	def test_network_change_rejects_null_ipv4_internet_access(self) -> None:
 		with (

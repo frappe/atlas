@@ -8,7 +8,7 @@ This guide builds a small test region: one Atlas site, one host, and one VM. Use
 
 Keep the Frappe worker active. Provider setup, catalog sync, and Metal Server provisioning run in background jobs.
 
-Use [`atlas-vm`](../../scripts/atlas-vm/) for an automatic installation in a Firecracker VM. It installs Atlas and completes the settings, provider, DNS, catalog, and system image steps. It does not create a Metal Server.
+Use [`atlas-vm`](../../scripts/atlas-vm/) for an automatic installation in a Firecracker VM. It installs Atlas and completes the settings, provider, DNS, catalog, and system image steps. It imports its host as a Metal Server only when `atlas.import_server_id` is set.
 
 ## Before you start
 
@@ -38,7 +38,7 @@ pilot --site atlas.localhost install-app atlas
 
 ## 3. Set a public Atlas address
 
-For now, a Metal Server must reach the Atlas site to download `metald` and WG Mesh during installation. Use a public Cloudflare Tunnel or ngrok URL for local development.
+Central and external clients need a public Atlas address. Use a public Cloudflare Tunnel or ngrok URL for local development. Cargo and hosts use the internal URL after step 5.
 
 Set the URL as `atlas_base_url`:
 
@@ -72,6 +72,15 @@ In **Atlas Settings**, select **Actions** and click these buttons:
 
 Wait until both actions finish. Atlas marks the settings as complete after both actions succeed.
 
+Connect this machine to the host network. Run:
+
+```sh
+pilot --site <site> configure-atlas-wireguard
+sudo ATLAS_WIREGUARD_TCP_PORTS="22, 80, 443, 2222, 8000" scripts/install-atlas-wireguard.sh <bench>/sites/<site>/private/wireguard/atlas0.conf
+```
+
+Start a listener on the Atlas mesh address that sends `Host: <site>` to `127.0.0.1:8000`, for example nginx. Set it as `atlas_internal_url`, for example `http://[fdaa:1::ffff:ffff:ffff:ffff]:8000`. Your machine is outside the provider network, so it needs the [development gateway](../region/host-access.md#development-gateway) before it can reach hosts through WireGuard.
+
 ## 6. Sync the Metal Server catalog
 
 Open **Metal Server Size** and click **Sync**. Then open **Metal Server Image** and click **Sync**.
@@ -82,7 +91,11 @@ Wait for the background jobs to finish. The catalog supplies the provider size a
 
 Open **Metal Server** and create a record. Select `EM-A116X-SSD` and an Ubuntu 24.04 Metal Server Image.
 
-Save the record. Wait for its status to become `Running`. Open its linked **SSH Task** records to see each host command and its result.
+Save the record. The first host can stop with status `Failed` at `wireguard-link` after 120 seconds.
+
+If it does, [deploy the development gateway](../region/host-access.md#development-gateway) with `--ssh-host` and the host's public IPv4 address. Then use **Setup Metal Server** to retry.
+
+Wait until the host is `Running`. Open its linked **SSH Task** records to see each host command and its result.
 
 ## 8. Build a VM image
 

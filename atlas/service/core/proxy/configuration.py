@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, timedelta
-from functools import cached_property
+import shlex
 from string import Template
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
-import bcrypt
 import frappe
 from frappe import _
-from frappe.utils import get_datetime, get_system_timezone
 
-from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
+from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
+from atlas.service.core.control_cluster import ControlClusterCredentials
+from atlas.vm.doctype.virtual_machine.virtual_machine import PRIVILEGED_TENANT_ID
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -34,20 +32,9 @@ node_domain = "$node_domain"
 address_prefix = "$auto_proxy_prefix"
 host_prefixes = $auto_proxy_host_prefixes
 
-[auth]
-password_hash = "$password_hash"
-previous_password_hash = "$previous_password_hash"
-previous_password_valid_until = $previous_password_valid_until
-jwks_url = "$jwks_url"
-jwks_audience_id = "$jwks_audience_id"
-jwks_issuers = $jwks_issuers
+$auth
 
-[cluster]
-node_id = "$node_id"
-password = "$cluster_password"
-previous_password = "$previous_cluster_password"
-previous_password_valid_until = $previous_password_valid_until
-peers = $peers
+$cluster
 
 [tls]
 wildcard_domain = "$wildcard_domain"
@@ -70,8 +57,12 @@ ATLAS_PROXY_CONFIG_END
 mv -f $temporary_path $config_path"""
 )
 
+PEER_HOSTS_MARKER = "# atlas-proxy-peer"
+
 APPLY_COMMAND_TEMPLATE = Template(
 	"""set -eu
+sed -i '/ $peer_hosts_marker$$/d' /etc/hosts
+printf '%s' $peer_hosts >> /etc/hosts
 $apply_command
 systemctl enable --now $socket_unit
 systemctl enable $daemon_unit
@@ -90,6 +81,7 @@ class ProxyConfiguration:
 		self.proxy_server = proxy_server
 		self.settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		self.cluster_proxy_servers = cluster_proxy_servers
+		self.credentials = ControlClusterCredentials(self.settings, "proxy")
 
 	@property
 	def wildcard_domain(self) -> str:
@@ -114,56 +106,12 @@ class ProxyConfiguration:
 			node_domain=self.proxy_server.get_domain(),
 			auto_proxy_prefix=self.auto_proxy_prefix,
 			auto_proxy_host_prefixes=json.dumps(AUTO_PROXY_HOST_PREFIXES),
-			password_hash=self.password_hash,
-			previous_password_hash=self.previous_password_hash,
-			previous_password_valid_until=self.previous_password_valid_until,
-			jwks_url=self.settings.jwks_url,
-			jwks_audience_id=self.settings.proxy_audience_id,
-			jwks_issuers=json.dumps(["central", self.settings.issuer]),
-			node_id=self.proxy_server.name,
-			cluster_password=self.cluster_password,
-			previous_cluster_password=self.previous_cluster_password,
-			peers=self.peers_toml,
+			auth=self.credentials.get_auth_section(self.settings.proxy_audience_id),
+			cluster=self.credentials.get_cluster_section(self.proxy_server.name, self.peers),
 			wildcard_domain=self.wildcard_domain,
 			certificate=certificate.strip(),
 			private_key=private_key.strip(),
 		)
-
-	@property
-	def cluster_password(self) -> str:
-		"""Return the current regional cluster password."""
-		password = self.settings.get_password("proxy_cluster_password", raise_exception=False)
-		if not password:
-			frappe.throw(_("Atlas Settings holds no proxy cluster password."))
-		return password
-
-	@property
-	def previous_cluster_password(self) -> str:
-		"""Return the previous regional cluster password."""
-		return self.settings.get_password("previous_proxy_cluster_password", raise_exception=False) or ""
-
-	@cached_property
-	def password_hash(self) -> str:
-		"""Return the bcrypt hash of the regional proxy password."""
-		return bcrypt.hashpw(self.cluster_password.encode(), bcrypt.gensalt()).decode()
-
-	@cached_property
-	def previous_password_hash(self) -> str:
-		"""Return the bcrypt hash of the previous regional proxy password."""
-		if not self.previous_cluster_password:
-			return ""
-
-		return bcrypt.hashpw(self.previous_cluster_password.encode(), bcrypt.gensalt()).decode()
-
-	@property
-	def previous_password_valid_until(self) -> int:
-		"""Return the Unix time when the previous password expires."""
-		rotated_on = self.settings.proxy_cluster_password_rotated_on
-		if not self.previous_cluster_password or not rotated_on:
-			return 0
-
-		rotation = get_datetime(rotated_on).replace(tzinfo=ZoneInfo(get_system_timezone()))
-		return int((rotation.astimezone(UTC) + timedelta(minutes=10)).timestamp())
 
 	@property
 	def cluster_domain(self) -> str:
@@ -187,18 +135,15 @@ class ProxyConfiguration:
 			{
 				"node_id": proxy_server.name,
 				"address": f"https://{proxy_server.get_domain()}",
+				"mesh_address": get_virtual_machine_mesh_address(
+					frappe._dict(name=proxy_server.virtual_machine, tenant_id=PRIVILEGED_TENANT_ID),
+					self.settings.region_id,
+				)
+				if proxy_server.virtual_machine
+				else "",
 			}
 			for proxy_server in sorted(proxy_servers, key=lambda item: item.name)
 		]
-
-	@property
-	def peers_toml(self) -> str:
-		"""Return the cluster peers as a TOML array."""
-		items = (
-			f"{{ node_id = {json.dumps(peer['node_id'])}, address = {json.dumps(peer['address'])} }}"
-			for peer in self.peers
-		)
-		return f"[{', '.join(items)}]"
 
 	@property
 	def digest(self) -> str:
@@ -210,12 +155,9 @@ class ProxyConfiguration:
 			self.wildcard_domain,
 			self.auto_proxy_prefix,
 			json.dumps(AUTO_PROXY_HOST_PREFIXES),
-			self.cluster_password,
-			self.previous_cluster_password,
+			*self.credentials.digest_values,
 			json.dumps(self.peers, sort_keys=True),
-			self.settings.jwks_url,
 			self.settings.proxy_audience_id,
-			self.settings.issuer,
 			self.settings.get_password("wildcard_tls_certificate", raise_exception=False) or "",
 			self.settings.get_password("wildcard_tls_private_key", raise_exception=False) or "",
 		)
@@ -231,8 +173,17 @@ class ProxyConfiguration:
 
 	def get_apply_command(self) -> str:
 		"""Return the command that applies the configuration."""
+		peer_hosts = "".join(
+			f"{peer['mesh_address']} {peer['address'].removeprefix('https://')} {PEER_HOSTS_MARKER}\n"
+			for peer in self.peers
+			if peer["mesh_address"]
+		)
 		return APPLY_COMMAND_TEMPLATE.substitute(
-			apply_command=APPLY_COMMAND, socket_unit=DAEMON_SOCKET_UNIT, daemon_unit=DAEMON_UNIT
+			peer_hosts_marker=PEER_HOSTS_MARKER,
+			peer_hosts=shlex.quote(peer_hosts),
+			apply_command=APPLY_COMMAND,
+			socket_unit=DAEMON_SOCKET_UNIT,
+			daemon_unit=DAEMON_UNIT,
 		)
 
 

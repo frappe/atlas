@@ -359,16 +359,16 @@ class TestVirtualMachineRequest(UnitTestCase):
 
 
 class TestVirtualMachineDocument(UnitTestCase):
-	def test_autoname_assigns_permanent_virtual_machine_id(self) -> None:
-		virtual_machine = frappe.new_doc("Virtual Machine")
-
-		with patch.object(
-			virtual_machine_module, "make_autoname", return_value="vm-0000042"
-		) as make_autoname:
+	def test_each_tenant_numbers_its_virtual_machines_from_one(self) -> None:
+		self.addCleanup(frappe.db.delete, "Series", {"name": ["in", ["vm-4000000001-", "vm-4000000002-"]]})
+		names = []
+		for tenant_id in (4_000_000_001, 4_000_000_001, 4_000_000_002):
+			virtual_machine = frappe.new_doc("Virtual Machine")
+			virtual_machine.tenant_id = tenant_id
 			virtual_machine.autoname()
+			names.append(virtual_machine.name)
 
-		self.assertEqual(virtual_machine.name, "vm-0000042")
-		make_autoname.assert_called_once_with("vm-.#######", doc=virtual_machine)
+		self.assertEqual(names, ["vm-4000000001-0001", "vm-4000000001-0002", "vm-4000000002-0001"])
 
 	# New records have no Server, so virtual-field reads must skip Metal lookup.
 	def test_new_document_reads_virtual_fields_without_a_server(self) -> None:
@@ -377,6 +377,21 @@ class TestVirtualMachineDocument(UnitTestCase):
 		self.assertIsNone(virtual_machine.get_metal_vm_info())
 		self.assertEqual(virtual_machine.current_state, "unknown")
 		self.assertIsNone(virtual_machine.desired_state)
+
+	def test_guest_ssh_goes_through_the_current_host_namespace(self) -> None:
+		"""A migrated VM has a new host, so Atlas reads it for each connection."""
+		virtual_machine = frappe.new_doc("Virtual Machine")
+		virtual_machine.name = "vm-0000042"
+		virtual_machine.server = "metal-2"
+
+		with patch.object(
+			virtual_machine_module.frappe, "get_doc", return_value=SimpleNamespace(ssh_host="fdab:1::2")
+		) as get_doc:
+			proxy_command = virtual_machine.get_ssh_proxy_command()
+
+		get_doc.assert_called_once_with("Metal Server", "metal-2")
+		self.assertIn("root@fdab:1::2", proxy_command)
+		self.assertIn("ip netns exec metal-vm-0000042 nc 172.16.0.2 22", proxy_command)
 
 
 class TestVirtualMachineResize(UnitTestCase):
@@ -593,6 +608,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 				"wireguard_mesh_ipv6": "fdaa:1::1",
 				"routes": [{"destination": "0.0.0.0/0", "via": "host"}],
 				"is_network_gateway": False,
+				"is_accessible_via_wireguard_gateway": False,
 				"public_ipv6": "",
 				"private_network_throughput_mibps": 100,
 				"public_network_throughput_mibps": 25,
@@ -740,6 +756,49 @@ class TestVirtualMachineNetwork(UnitTestCase):
 
 		with self.assertRaisesRegex(AtlasUserError, "privileged flag"):
 			virtual_machine.validate_network_gateway()
+
+	def set_wireguard_gateway_access(self, network: dict, is_enabled: object) -> Mock:
+		virtual_machine, client = self.build_virtual_machine(network)
+		virtual_machine.is_network_gateway = 0
+		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.validate_network_change = Mock()
+		metal_client, get_doc, check_permission, database = self.patches(client, None)
+		with metal_client, get_doc, check_permission, database:
+			virtual_machine.set_wireguard_gateway_access(is_enabled)
+		return client
+
+	def test_wireguard_gateway_access_changes_only_its_flag(self) -> None:
+		routes = [{"destination": "2000::/3", "via": "host"}]
+		client = self.set_wireguard_gateway_access({"routes": routes}, "true")
+
+		request = client.set_virtual_machine_network.call_args.args[1]
+		self.assertTrue(request["is_accessible_via_wireguard_gateway"])
+		self.assertEqual(request["routes"], routes)
+
+	def test_another_network_change_keeps_wireguard_gateway_access(self) -> None:
+		virtual_machine, client = self.build_virtual_machine({"is_accessible_via_wireguard_gateway": True})
+
+		with (
+			patch.object(virtual_machine_service_module, "MetalClient", return_value=client),
+			patch.object(virtual_machine_module.frappe, "get_doc", return_value=Mock()),
+		):
+			VirtualMachineService(virtual_machine).update_network({"private_network_throughput_mibps": 10})
+
+		self.assertTrue(
+			client.set_virtual_machine_network.call_args.args[1]["is_accessible_via_wireguard_gateway"]
+		)
+
+	def test_a_network_gateway_cannot_use_wireguard_gateway_access(self) -> None:
+		virtual_machine, client = self.build_virtual_machine({})
+		virtual_machine.is_network_gateway = 1
+		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.validate_network_change = Mock()
+		virtual_machine.check_permission = Mock()
+
+		with self.assertRaisesRegex(AtlasUserError, "network gateway"):
+			virtual_machine.set_wireguard_gateway_access(True)
+
+		client.set_virtual_machine_network.assert_not_called()
 
 	def test_attach_public_ip_stores_an_intent(self) -> None:
 		virtual_machine, _ = self.build_virtual_machine({})

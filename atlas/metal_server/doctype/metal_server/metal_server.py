@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.model.naming import make_autoname
 from frappe.utils import add_days, cint, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
@@ -30,6 +32,9 @@ from atlas.metal_server.usage import enqueue_server_sync
 if TYPE_CHECKING:
 	from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
+
+# Warpgate uses the title as a target name and in `email:title` logins.
+HOST_TITLE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 class MetalServer(Document):
@@ -72,11 +77,18 @@ class MetalServer(Document):
 
 	@property
 	def ssh_host(self) -> str:
-		"""Return the address an SSH Task connects to."""
+		"""Return the wg0 address once the host holds the Atlas peer. Setup before that uses the public address."""
+		if self.wireguard_public_key and self.wireguard_ip_address:
+			return self.wireguard_ip_address
+
 		if not self.public_ipv4_address:
 			frappe.throw(_("Metal Server {0} has no public IPv4 address.").format(self.name))
 
 		return self.public_ipv4_address
+
+	def get_ssh_proxy_command(self) -> None:
+		"""Return no proxy. Atlas connects to the host directly."""
+		return None
 
 	@property
 	def settings(self) -> AtlasSettings:
@@ -96,6 +108,9 @@ class MetalServer(Document):
 
 		size = frappe.get_doc("Metal Server Size", self.server_size)
 		self.architecture = size.architecture
+
+	def before_insert(self) -> None:
+		self.title = make_autoname(f"metal-{self.settings.region_name}-.#", doc=self)
 
 	def ensure_provider_server(self) -> None:
 		"""Create the provider host once, including after a worker retry."""
@@ -119,9 +134,17 @@ class MetalServer(Document):
 		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
 
 	def validate(self) -> None:
-		"""Fill the mesh address and check the tags."""
+		"""Fill the mesh address and check the title and tags."""
+		self._validate_title()
 		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
+
+	def _validate_title(self) -> None:
+		if not self.is_new() and not self.has_value_changed("title"):
+			return
+
+		if not HOST_TITLE.fullmatch(self.title or ""):
+			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
 
 	def after_insert(self) -> None:
 		"""Start provisioning in the background."""
@@ -402,6 +425,35 @@ class MetalServer(Document):
 		server.insert(ignore_permissions=True)
 		return server
 
+	@staticmethod
+	def import_from_provider(provider_server_id: str, storage_pool_device: str | None = None) -> MetalServer:
+		"""Insert a Metal Server for a provider server that Atlas did not create, or resume its setup."""
+		if not provider_server_id:
+			frappe.throw(_("Enter the provider server ID."))
+		with frappe.db.advisory_lock(f"{frappe.db.cur_db_name}:host-import:{provider_server_id}"):
+			frappe.db.rollback()  # nosemgrep
+			name = frappe.db.get_value(
+				"Metal Server", {"provider_server_id": provider_server_id, "status": ["!=", "Deleted"]}
+			)
+			if name:
+				server: MetalServer = frappe.get_doc("Metal Server", name)
+				if not server.is_provisioning_completed and not is_job_enqueued(server.setup_job_id):
+					server._set_storage_pool_device(storage_pool_device)
+					server.db_set({"provider_metadata": server.provider_metadata, "status": "Pending"})
+					server._enqueue_setup_server()
+			else:
+				server = frappe.new_doc("Metal Server")
+				server.provider_server_id = provider_server_id
+				server._set_storage_pool_device(storage_pool_device)
+				server.settings.server_provider_controller.import_server(server)
+				server.architecture = frappe.db.get_value(
+					"Metal Server Size", server.server_size, "architecture"
+				)
+				server.status = "Pending"
+				server.insert(ignore_permissions=True)
+			frappe.db.commit()  # nosemgrep
+		return server
+
 	# Internal methods
 
 	@run_as_admin
@@ -451,6 +503,12 @@ class MetalServer(Document):
 			frappe.throw(_("Metal Server {0} has no provider server ID.").format(self.name))
 		return self.provider_server_id
 
+	def _set_storage_pool_device(self, storage_pool_device: str | None) -> None:
+		"""Store the storage pool device that an import named in place of the provider device."""
+		if storage_pool_device:
+			metadata = self._provider_metadata(self.provider_metadata)
+			self.provider_metadata = frappe.as_json({**metadata, "storage_pool_device": storage_pool_device})
+
 	@staticmethod
 	def _provider_metadata(value: str | None) -> dict:
 		"""Return provider metadata as an object."""
@@ -479,6 +537,13 @@ def renew_expiring_tls_certificates() -> None:
 		if is_job_enqueued(server.metald_job_id):
 			continue
 		server.enqueue_tls_certificate_renewal()
+
+
+@frappe.whitelist(methods=["POST"])
+def import_server(provider_server_id: str, storage_pool_device: str | None = None) -> str:
+	"""Add a provider server that was created outside Atlas, and set it up."""
+	frappe.only_for("System Manager")
+	return MetalServer.import_from_provider(provider_server_id.strip(), storage_pool_device or None).name
 
 
 @frappe.whitelist(methods=["POST"])

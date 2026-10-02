@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ipaddress
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -8,9 +7,11 @@ import frappe
 from frappe import _
 
 from atlas.atlas.core.artifacts import get_download_url
+from atlas.atlas.core.mesh_address import get_wireguard_ip_address
 from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tls.metal import atlas_client_identity, ensure_server_certificate
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
+from atlas.metal_server.core.atlas_peer import WIREGUARD_KEY
 
 if TYPE_CHECKING:
 	from atlas.atlas.core.ssh import SSHResult
@@ -21,12 +22,8 @@ FAILURE_REASON_LENGTH = 500
 WIREGUARD_CONFIGURE_TIMEOUT_SECONDS = 300
 METALD_INSTALL_TIMEOUT_SECONDS = 1_200
 STORAGE_INSTALL_TIMEOUT_SECONDS = 600
+FIREWALL_INSTALL_TIMEOUT_SECONDS = 120
 METALD_SETUP_TIMEOUT_SECONDS = 3_600
-
-MESH_PREFIX = 0xFDAB
-# The prefix and the region take the first 32 bits of the address, so the low 96
-# bits of the server UUID are the host part.
-MESH_HOST_MASK = (1 << 96) - 1
 
 
 class HostInstallation:
@@ -41,6 +38,11 @@ class HostInstallation:
 			frappe.throw(_("Metal Server {0} needs a private network interface.").format(self.server.name))
 
 		self.set_wireguard_ip_address()
+		settings = self.server.settings
+		if not settings.wireguard_public_key:
+			frappe.throw(
+				_("Atlas has no WireGuard identity. Run pilot --site SITE configure-atlas-wireguard first.")
+			)
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,
@@ -49,6 +51,8 @@ class HostInstallation:
 				"WIREGUARD_ADDRESS": self.server.wireguard_ip_address,
 				"WIREGUARD_LISTEN_PORT": self.server.port,
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
+				"ATLAS_WIREGUARD_ADDRESS": settings.wireguard_ip_address,
+				"ATLAS_WIREGUARD_PUBLIC_KEY": settings.wireguard_public_key,
 			},
 			timeout_seconds=WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
 			run_in_background=False,
@@ -58,8 +62,9 @@ class HostInstallation:
 				_("Could not configure WireGuard on server {0}.").format(self.server.name), result
 			)
 
-		public_key = result.output.partition("===PUBLIC_KEY_START===")[2]
-		public_key = public_key.partition("===PUBLIC_KEY_END===")[0].strip()
+		# SSH stderr can land between the markers.
+		section = result.output.partition("===PUBLIC_KEY_START===")[2].partition("===PUBLIC_KEY_END===")[0]
+		public_key = next((line for line in section.split() if WIREGUARD_KEY.fullmatch(line)), "")
 		if not public_key:
 			frappe.throw(_("Metal Server {0} reported no WireGuard public key.").format(self.server.name))
 		self.server.db_set("wireguard_public_key", public_key)
@@ -78,15 +83,6 @@ class HostInstallation:
 		self.install_storage()
 		self.install_tls_credentials()
 
-		listen_address = settings.server_provider_controller.metald_listen_address(self.server)
-		try:
-			listen_address = str(ipaddress.IPv4Address(listen_address))
-		except ipaddress.AddressValueError:
-			frappe.throw(
-				_("Metal Server {0} has an invalid address for the selected metald endpoint.").format(
-					self.server.name
-				),
-			)
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,
@@ -96,10 +92,12 @@ class HostInstallation:
 				"METALD_SHA256": settings.metald_binary_hash,
 				"WG_MESH_DOWNLOAD_URL": get_download_url(settings.wg_mesh_binary_x86_64_file),
 				"WG_MESH_SHA256": settings.wg_mesh_binary_hash,
-				"LISTEN_ADDRESS": f"{listen_address}:9000",
+				"LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9000",
 				"ATLAS_COMMON_NAME": atlas_client_identity(settings),
 				"COORDINATION_LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9001",
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
+				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
+				"ATLAS_MESH_ADDRESS": settings.wireguard_ip_address,
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
@@ -109,6 +107,8 @@ class HostInstallation:
 				_("Could not install metald on server {0}.").format(self.server.name), result
 			)
 
+		self.install_host_firewall()
+
 	def install_storage(self) -> None:
 		"""Create the storage pool and mount host state on it before any file is written there."""
 		result = SSHTask.create_for_script_file(
@@ -116,9 +116,9 @@ class HostInstallation:
 			target=self.server.name,
 			script_path="install-metal-storage.sh",
 			environment={
-				"STORAGE_POOL_DEVICE": self.server.settings.server_provider_controller.storage_pool_device(
+				"STORAGE_POOL_DEVICE": self.server.settings.server_provider_controller.get_storage_pool_device(
 					self.server
-				),
+				)
 			},
 			timeout_seconds=STORAGE_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
@@ -126,6 +126,27 @@ class HostInstallation:
 		if not result or not result.is_success:
 			throw_script_failure(
 				_("Could not prepare storage on server {0}.").format(self.server.name), result
+			)
+
+	def install_host_firewall(self) -> None:
+		"""Admit host SSH and Metal calls only through wg0, and keep guests off the private network."""
+		settings = self.server.settings
+		result = SSHTask.create_for_script_file(
+			target_type=self.server.doctype,
+			target=self.server.name,
+			script_path="install-host-firewall.sh",
+			environment={
+				"ATLAS_WIREGUARD_ADDRESS": settings.wireguard_ip_address,
+				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
+				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
+				"WIREGUARD_LISTEN_PORT": self.server.port,
+			},
+			timeout_seconds=FIREWALL_INSTALL_TIMEOUT_SECONDS,
+			run_in_background=False,
+		).result
+		if not result or not result.is_success:
+			throw_script_failure(
+				_("Could not install the host firewall on server {0}.").format(self.server.name), result
 			)
 
 	def install_tls_credentials(self) -> None:
@@ -176,12 +197,7 @@ class HostInstallation:
 	@property
 	def wireguard_ip_address(self) -> str:
 		"""Return the host mesh address for this server."""
-		region_id = self.server.settings.region_id
-		if not 0 <= region_id <= 0xFFFF:
-			frappe.throw(_("Atlas Settings region ID must fit in one IPv6 field."))
-
-		host = UUID(self.server.name).int & MESH_HOST_MASK
-		return str(ipaddress.IPv6Address((MESH_PREFIX << 112) | (region_id << 96) | host))
+		return get_wireguard_ip_address(UUID(self.server.name), self.server.settings.region_id)
 
 
 def throw_script_failure(message: str, result: "SSHResult | None") -> None:

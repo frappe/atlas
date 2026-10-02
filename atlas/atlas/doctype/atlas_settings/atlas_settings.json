@@ -26,7 +26,6 @@
   "metald_binary_x86_64_file",
   "metald_source_hash",
   "metald_binary_hash",
-  "use_public_ip_for_metald",
   "metal_tls_ca_private_key",
   "metal_tls_ca_certificate",
   "column_break_bgjv",
@@ -44,14 +43,31 @@
   "networking_tab",
   "private_network_config_section",
   "private_network_cidr",
-  "is_unicast_network_enabled",
   "column_break_jzip",
   "private_network_mtu",
+  "is_unicast_network_enabled",
+  "atlas_wireguard_peer_connectivity_section",
+  "wireguard_ip_address",
+  "column_break_uuos",
+  "wireguard_public_key",
+  "wireguard_private_key",
+  "warpgate_section",
+  "warpgate_url",
+  "column_break_warpgate",
+  "warpgate_api_token",
+  "warpgate_api_token_id",
   "ipv6_router_section",
   "use_ipv6_router_for_auto_assignment",
   "ipv6_router_package_file",
   "column_break_ipv6_router",
   "ipv6_router_package_hash",
+  "wireguard_gateway_section",
+  "wireguard_gateway_cluster_password",
+  "previous_wireguard_gateway_cluster_password",
+  "wireguard_gateway_cluster_password_rotated_on",
+  "column_break_wireguard_gateway",
+  "wireguard_gateway_package_file",
+  "wireguard_gateway_package_hash",
   "scaleway_tab",
   "scaleway_settings_section",
   "scaleway_organization_id",
@@ -387,14 +403,6 @@
    "read_only": 1
   },
   {
-   "default": "0",
-   "description": "Enable when Atlas must reach Metald through the server's public IPv4 address.",
-   "fieldname": "use_public_ip_for_metald",
-   "fieldtype": "Check",
-   "label": "Reach Metald Over Public IP",
-   "show_description_on_click": 1
-  },
-  {
    "fieldname": "metal_tls_ca_certificate",
    "fieldtype": "Password",
    "hidden": 1,
@@ -612,6 +620,46 @@
    "read_only": 1
   },
   {
+   "fieldname": "wireguard_gateway_section",
+   "fieldtype": "Section Break",
+   "label": "Wireguard Gateway"
+  },
+  {
+   "fieldname": "wireguard_gateway_package_file",
+   "fieldtype": "Link",
+   "label": "Package",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_wireguard_gateway",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wireguard_gateway_package_hash",
+   "fieldtype": "Data",
+   "label": "Package SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_gateway_cluster_password",
+   "fieldtype": "Password",
+   "label": "Cluster Password",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_wireguard_gateway_cluster_password",
+   "fieldtype": "Password",
+   "label": "Previous Cluster Password",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_gateway_cluster_password_rotated_on",
+   "fieldtype": "Datetime",
+   "label": "Cluster Password Rotated On",
+   "read_only": 1
+  },
+  {
    "fieldname": "central_jwks_url",
    "fieldtype": "Data",
    "label": "Central JWKS URL"
@@ -823,13 +871,73 @@
    "fieldname": "networking_tab",
    "fieldtype": "Tab Break",
    "label": "Networking"
+  },
+  {
+   "fieldname": "wireguard_ip_address",
+   "fieldtype": "Data",
+   "label": "WireGuard IP Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_public_key",
+   "fieldtype": "Data",
+   "label": "WireGuard Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_private_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "WireGuard Private Key",
+   "read_only": 1
+  },
+  {
+   "description": "Atlas's own wireguard config. Use to connect to all other hosts.",
+   "fieldname": "atlas_wireguard_peer_connectivity_section",
+   "fieldtype": "Section Break",
+   "label": "Wireguard Config",
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "column_break_uuos",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warpgate_section",
+   "fieldtype": "Section Break",
+   "label": "Warpgate"
+  },
+  {
+   "description": "The Warpgate admin address on the Atlas machine, such as https://127.0.0.1:8888. Empty turns off the Warpgate target sync and host access API.",
+   "fieldname": "warpgate_url",
+   "fieldtype": "Data",
+   "label": "URL",
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "column_break_warpgate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "API token of the atlas user in Warpgate.",
+   "fieldname": "warpgate_api_token",
+   "fieldtype": "Password",
+   "label": "API Token",
+   "show_description_on_click": 1
+  },
+  {
+   "description": "Warpgate ID of the API token. Renewal and cleanup keep this token.",
+   "fieldname": "warpgate_api_token_id",
+   "fieldtype": "Data",
+   "label": "API Token ID",
+   "show_description_on_click": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-01 00:00:00.000000",
+ "modified": "2026-10-02 17:34:13.792767",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

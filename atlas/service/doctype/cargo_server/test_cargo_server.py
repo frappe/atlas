@@ -16,7 +16,6 @@ VALID_REQUEST = {
 	"cpu_millicores": 2000,
 	"memory_mib": 4096,
 	"disk_mib": 16384,
-	"public_ipv4": "32eb57bc-9548-4a89-8358-543e26883569",
 }
 
 
@@ -48,16 +47,7 @@ class TestCargoServerProvisionRequest(UnitTestCase):
 		):
 			CargoServer._validate_provision_request(server, VALID_REQUEST)
 
-	def test_provisioning_requires_a_public_address(self) -> None:
-		server = SimpleNamespace(virtual_machine=None, status="Not Provisioned")
-		with (
-			patch.object(cargo_server_module.frappe.db, "exists", return_value=True),
-			patch.object(cargo_server_module.frappe.db, "get_value", return_value="system"),
-			self.assertRaisesRegex(frappe.ValidationError, "reserved public IPv4"),
-		):
-			CargoServer._validate_provision_request(server, {**VALID_REQUEST, "public_ipv4": " "})
-
-	def test_virtual_machine_request_uses_the_reserved_public_address(self) -> None:
+	def test_virtual_machine_request_has_no_public_address(self) -> None:
 		server = SimpleNamespace(virtual_machine=None, status="Pending", failure_message=None)
 		virtual_machine_service = MagicMock()
 		virtual_machine_service.create.return_value = {"name": "vm-00001", "is_draft": False}
@@ -79,7 +69,7 @@ class TestCargoServerProvisionRequest(UnitTestCase):
 		self.assertTrue(request["is_termination_protected"])
 		self.assertNotIn("routes", request)
 		self.assertEqual(request["hostname"], "cargo")
-		self.assertEqual(request["public_ipv4"], "32eb57bc-9548-4a89-8358-543e26883569")
+		self.assertNotIn("public_ipv4", request)
 		self.assertEqual(request["cpu_millicores"], 2000)
 		self.assertEqual(request["memory_mib"], 4096)
 		self.assertEqual(request["disk_mib"], 16384)

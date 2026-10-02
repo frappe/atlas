@@ -212,6 +212,7 @@ scheduler_events = {
 			"atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation.enqueue_pending_allocation_reconciliation",
 			"atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation.enqueue_allocation_moves",
 			"atlas.metal_server.usage.enqueue_server_syncs",
+			"atlas.metal_server.core.atlas_peer.write_atlas_peer_config",
 		],
 		"* * * * * */30": [
 			"atlas.vm.core.vm_image_transfer.enqueue_pending_virtual_machine_image_transfers",
@@ -223,7 +224,7 @@ scheduler_events = {
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
 		],
 		"0 */12 * * *": [
-			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_proxy_cluster_password",
+			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",
 		],
 		"* * * * *": [
 			"atlas.metal_server.core.public_ip_service.replenish_direct_allocations",
@@ -235,13 +236,17 @@ scheduler_events = {
 			"atlas.service.doctype.cargo_server.cargo_server.enqueue_pending_pilot_release_tracker_enable",
 			"atlas.service.doctype.proxy_server.proxy_server.enqueue_pending_proxies_provisioning",
 			"atlas.service.doctype.ipv6_router_server.ipv6_router_server.enqueue_pending_ipv6_router_provisioning",
+			"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.enqueue_pending_gateway_provisioning",
 			"atlas.service.core.proxy.configuration.reconcile_proxy_configurations",
+			"atlas.service.core.wg_gateway.configuration.reconcile_gateway_configurations",
+			"atlas.service.core.warpgate.sync.sync_warpgate_targets",
 		],
 	},
 	"hourly": ["atlas.metal_server.usage.delete_old_usage_samples"],
 	"daily": [
 		"atlas.atlas.doctype.atlas_settings.atlas_settings.renew_expiring_wildcard_certificate",
 		"atlas.metal_server.doctype.metal_server.metal_server.renew_expiring_tls_certificates",
+		"atlas.service.core.warpgate.installation.renew_warpgate_token",
 	],
 }
 

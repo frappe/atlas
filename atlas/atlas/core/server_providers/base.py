@@ -171,21 +171,16 @@ class ServerProvider(ABC):
 		"""Configure the provider network after Secure Shell access is ready."""
 		...
 
-	def metald_listen_address(self, server: "MetalServer") -> str:
-		"""Return the configured metald address."""
-		address = (
-			server.public_ipv4_address
-			if self.settings.use_public_ip_for_metald
-			else server.private_ipv4_address
-		)
-		if not address:
-			raise self.error_class(f"Atlas server {server.name} has no address for metald")
-		return address
-
 	@abstractmethod
 	def storage_pool_device(self, server: "MetalServer") -> str:
 		"""Return the raw block device for the virtual machine storage pool."""
 		...
+
+	def get_storage_pool_device(self, server: "MetalServer") -> str:
+		"""Return the device that registration or import stored, else the provider device."""
+		metadata = frappe.parse_json(server.provider_metadata or "{}")
+		device = metadata.get("storage_pool_device") if isinstance(metadata, Mapping) else None
+		return device or self.storage_pool_device(server)
 
 	@abstractmethod
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
@@ -196,6 +191,18 @@ class ServerProvider(ABC):
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, Any]) -> None:
 		"""Delete a provider server and its owned resources if they exist."""
 		...
+
+	def import_server(self, server: "MetalServer") -> None:
+		"""Fill a Metal Server from a provider server that Atlas did not create."""
+		raise UnsupportedProviderOperation("server import")
+
+	def find_catalog_record(self, doctype: str, matches: Callable[[Mapping], bool], label: str) -> str:
+		"""Return the catalog record whose provider metadata matches an imported server."""
+		for name, metadata in frappe.get_all(doctype, fields=["name", "provider_metadata"], as_list=True):
+			values = frappe.parse_json(metadata or "{}")
+			if isinstance(values, Mapping) and matches(values):
+				return name
+		raise self.error_class(f"No {doctype} matches {label}. Sync the {doctype} catalog first.")
 
 	def reserve_public_ip_address(self, version: int) -> ReservedIPAddress:
 		"""Reserve one public IPv4 address or IPv6 block."""
@@ -233,7 +240,7 @@ class ServerProvider(ABC):
 		def get_private_network_mac_address() -> str | None:
 			"""Return the interface MAC once the server has its private network address."""
 			try:
-				result = SSHRunner(server.public_ipv4_address).run_command(
+				result = SSHRunner(server.ssh_host).run_command(
 					f"ip -4 -o addr show dev {device} scope global && cat /sys/class/net/{device}/address",
 					timeout_seconds=15,
 				)

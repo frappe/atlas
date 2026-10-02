@@ -192,10 +192,10 @@ def test_a_map_entry_never_overrides_an_auto_proxy_host():
 	[
 		# A padded token is not the label of the VM it decodes to.
 		"site-02avaxbsw",
-		# 20 digits cannot hold a 96-bit value.
-		"site-zzzzzzzzzzzzzzzzzzzz",
+		# 11 digits cannot hold a 48-bit value.
+		"site-zzzzzzzzzzz",
 		# One above the widest tenant and VM number pair.
-		"site-7oiylpimjg5u2ca1yps",
+		"site-2rrvthnxts",
 		# The prefix is not configured.
 		"shop-2avaxbsw",
 		# A bare label carries no prefix.

@@ -21,7 +21,7 @@ This file identifies code owners and rules that a code change must preserve. The
 
 ## Rules to preserve
 
-- The VM record name is the Metal VM ID from the `vm-.#######` series. A deleted name is never reused.
+- The VM record name is the Metal VM ID from the `vm-<tenant ID>-.####` series, one counter for each tenant. The number after the last dash is the VM number in the mesh address, from 1 to 65,535 within the tenant. See [address formats](../../docs/networking/address-formats.md). A deleted name is never reused.
 - `VirtualMachineService.create` commits a draft and any public address request before it calls Metal. An uncertain response keeps the draft. Only confirmed Metal absence removes it.
 - Metal is the authority for current host state. `Virtual Machine State` is a cache for lists and image checks. A failed Metal read must not appear as a guest state.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
@@ -32,6 +32,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - A `within` rule reads the VMs of every host in the group of the candidate host. Placement locks each of those hosts without waiting, and keeps the locks until the draft commits.
 - Atlas changes one network value, then sends the complete network object to Metal. Public address requests own their corresponding default routes.
 - Guest-specific keys, metadata, and mesh addresses go through Metal and guest metadata. Do not bake them into a shared image.
+- Atlas SSH to a guest runs `ip netns exec metal-<id> nc 172.16.0.2 22` on the current host. It depends on the Metal namespace name and guest address in `linux_allocator.go`.
 - A protected VM cannot be terminated. An unprotected Atlas record is deleted only after Metal confirms that the VM is absent.
 - `ConsoleSession.close` owns console cleanup. Do not log Metal credentials.
 

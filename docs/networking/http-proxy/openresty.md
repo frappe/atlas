@@ -31,7 +31,7 @@ The wildcard certificate covers site HTTPS traffic. An address of `-` returns `5
 
 An auto-proxy name sends HTTP to a VM without a saved site-map entry. The hostname uses a configured prefix, such as `site-` or `*-vm-`, followed by a base-36 label. OpenResty sends the request to the decoded VM mesh address on port `80`.
 
-Atlas puts the 64-bit VM number above the 32-bit tenant ID: `value = (vm << 32) | tenant`. The VM number is the numeric suffix of its Atlas ID, so `VM-00011` uses `11`. Atlas writes the 96-bit value in lowercase base 36. The regional mesh prefix supplies `fdaa:<region>` when OpenResty decodes the label.
+Atlas puts the 16-bit VM number above the 32-bit tenant ID: `value = (vm << 32) | tenant`. The VM number is the numeric suffix of its Atlas ID, so `vm-2-0011` uses `11`. Atlas writes the 48-bit value in lowercase base 36, in at most 10 characters. The regional mesh prefix supplies `fdaa:<region>` when OpenResty decodes the label.
 
 ::: details Try the base-36 mapping in Python
 
@@ -62,7 +62,7 @@ print(name, mesh)  # site-lpc8lqa.example.com fdaa:1:0:2::b
 
 :::
 
-The proxy accepts only configured host prefixes and a canonical lowercase label. The label has at most 19 digits and no leading zero. Values larger than 96 bits and unsupported prefixes do not route. The control daemon reserves matching site keys so a stored route cannot override an auto-proxy name.
+The proxy accepts only configured host prefixes and a canonical lowercase label. The label has at most 10 digits and no leading zero. Values larger than 48 bits and unsupported prefixes do not route. The control daemon reserves matching site keys so a stored route cannot override an auto-proxy name.
 
 ::: info Static route, live destination
 The name encodes tenant and VM identity, not a host location. WG Mesh finds the VM's current Metal host after a move. An auto-proxy name alone does not grant access through tenant or guest firewall rules.

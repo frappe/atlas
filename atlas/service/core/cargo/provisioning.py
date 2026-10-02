@@ -13,6 +13,7 @@ import frappe
 import requests
 from frappe import _
 
+from atlas.atlas.core.artifacts import get_internal_base_url
 from atlas.atlas.core.ssh import wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.auth.issuer import issue_token
@@ -112,12 +113,13 @@ class CargoServerProvisioner:
 		return f"https://proxy.{self.settings.wildcard_domain}"
 
 	def wait_for_ssh(self) -> None:
-		"""Wait for root SSH on the public IPv4 address."""
+		"""Wait for root SSH through the guest host."""
 		wait_for_server(
 			host=self.virtual_machine.ssh_host,
 			users=("root",),
 			timeout_seconds=SSH_TIMEOUT_SECONDS,
 			poll_interval_seconds=SSH_POLL_INTERVAL_SECONDS,
+			proxy_command=self.virtual_machine.get_ssh_proxy_command(),
 		)
 
 	def install_cargo(self) -> None:
@@ -157,9 +159,7 @@ class CargoServerProvisioner:
 			constraints={"site": {"suffix": "-svc"}},
 			lifetime=TOKEN_LIFETIME,
 		)
-		atlas_url = (frappe.conf.atlas_base_url or frappe.utils.get_url(allow_header_override=False)).rstrip(
-			"/"
-		)
+		atlas_url = get_internal_base_url().rstrip("/")
 
 		return {
 			"PILOT_ADMIN_PASSWORD": generate_installer_password(),

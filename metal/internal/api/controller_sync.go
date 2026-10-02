@@ -21,6 +21,8 @@ type syncRequest struct {
 	WireGuardPeers        []wireGuardPeerRequest `json:"wireguard_peers"`
 	Images                []imageRequest         `json:"images"`
 	PrivilegedVMAddresses []string               `json:"privileged_vm_addresses"`
+	// WireGuardGatewayRoutes are the return routes of every active WireGuard gateway.
+	WireGuardGatewayRoutes []routeRequest `json:"wireguard_gateway_routes"`
 	// Unicast selects the unicast NDP transport. The transport builds its peer set from the WireGuard peers.
 	Unicast bool `json:"unicast"`
 }
@@ -92,6 +94,9 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	if request.PrivilegedVMAddresses == nil {
 		return badRequest("privileged_vm_addresses is required")
 	}
+	if err := request.validateWireGuardGatewayRoutes(); err != nil {
+		return badRequest(err.Error())
+	}
 	for _, image := range request.Images {
 		if err := image.validate(); err != nil {
 			return badRequest(err.Error())
@@ -104,6 +109,7 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	result, err := s.hostService.Synchronize(c.Request().Context(), host.DesiredState{
 		WireGuardPeers: request.wireGuardPeers(), Images: request.imagePolicies(),
 		PrivilegedVirtualMachineAddresses: request.PrivilegedVMAddresses,
+		WireGuardGatewayRoutes:            toRouteSpecifications(request.WireGuardGatewayRoutes),
 		UnicastEnabled:                    request.Unicast,
 	})
 	if err != nil {
@@ -203,4 +209,26 @@ func virtualMachineStateResponses(states map[string]vm.State) map[string]virtual
 		responses[identifier] = virtualMachineStateResponse{Status: string(state)}
 	}
 	return responses
+}
+
+// validateWireGuardGatewayRoutes requires the complete set of IPv6 routes via gateway mesh addresses.
+func (request syncRequest) validateWireGuardGatewayRoutes() error {
+	// A missing field would read as an empty set and remove every return route.
+	if request.WireGuardGatewayRoutes == nil {
+		return fmt.Errorf("wireguard_gateway_routes is required")
+	}
+	destinations := make(map[string]bool, len(request.WireGuardGatewayRoutes))
+	for _, route := range request.WireGuardGatewayRoutes {
+		if err := route.validate(); err != nil {
+			return fmt.Errorf("wireguard_gateway_routes: %w", err)
+		}
+		if route.Via == vm.RouteViaHost {
+			return fmt.Errorf("wireguard_gateway_routes destination %s must use a gateway mesh address", route.Destination)
+		}
+		if destinations[route.Destination] {
+			return fmt.Errorf("wireguard_gateway_routes destination %s is listed twice", route.Destination)
+		}
+		destinations[route.Destination] = true
+	}
+	return nil
 }

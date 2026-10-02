@@ -33,12 +33,15 @@ class NetworkUpdatePayload:
                 removes the limit.
             public_network_throughput_mibps (int | None | Unset): New public network throughput limit in MiB/s. Zero removes
                 the limit.
+            wireguard_gateway_access (bool | Unset): Let customer devices on the tenant's WireGuard gateways reach the VM. A
+                network gateway cannot use it. Default: False.
      """
 
     firewall: FirewallUpdatePayload | None | Unset = UNSET
     ipv4_internet_access: bool | Unset = UNSET
     private_network_throughput_mibps: int | None | Unset = UNSET
     public_network_throughput_mibps: int | None | Unset = UNSET
+    wireguard_gateway_access: bool | Unset = False
 
 
 
@@ -68,6 +71,8 @@ class NetworkUpdatePayload:
         else:
             public_network_throughput_mibps = self.public_network_throughput_mibps
 
+        wireguard_gateway_access = self.wireguard_gateway_access
+
 
         field_dict: dict[str, Any] = {}
 
@@ -81,6 +86,8 @@ class NetworkUpdatePayload:
             field_dict["private_network_throughput_mibps"] = private_network_throughput_mibps
         if public_network_throughput_mibps is not UNSET:
             field_dict["public_network_throughput_mibps"] = public_network_throughput_mibps
+        if wireguard_gateway_access is not UNSET:
+            field_dict["wireguard_gateway_access"] = wireguard_gateway_access
 
         return field_dict
 
@@ -132,11 +139,14 @@ class NetworkUpdatePayload:
         public_network_throughput_mibps = _parse_public_network_throughput_mibps(d.pop("public_network_throughput_mibps", UNSET))
 
 
+        wireguard_gateway_access = d.pop("wireguard_gateway_access", UNSET)
+
         network_update_payload = cls(
             firewall=firewall,
             ipv4_internet_access=ipv4_internet_access,
             private_network_throughput_mibps=private_network_throughput_mibps,
             public_network_throughput_mibps=public_network_throughput_mibps,
+            wireguard_gateway_access=wireguard_gateway_access,
         )
 
         return network_update_payload

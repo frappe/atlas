@@ -36,20 +36,6 @@ function showCreateIPv6RouterServerDialog() {
 				default: 8192,
 			},
 			{
-				fieldname: "public_ipv4",
-				fieldtype: "Link",
-				label: __("Public IPv4 Allocation"),
-				options: "Public IP Allocation",
-				reqd: 1,
-				description: __("Atlas uses this address for SSH."),
-				filters: {
-					status: "Reserved",
-					version: "4",
-					tenant_id: 0,
-					virtual_machine: ["is", "not set"],
-				},
-			},
-			{
 				fieldname: "public_ip_pool",
 				fieldtype: "Link",
 				label: __("Public IPv6 Pool"),

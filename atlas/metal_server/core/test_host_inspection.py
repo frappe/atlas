@@ -295,7 +295,6 @@ class TestHostInspection(UnitTestCase):
 		values = server.update.call_args.args[0]
 		metadata = json.loads(values["provider_metadata"])
 		self.assertRegex(values["provider_server_id"], r"^generic-\d{2}-\d{2}-\d{4}-[a-z0-9]{6}$")
-		self.assertEqual(values["title"], "rack-1-host-1")
 		self.assertEqual(values["public_network_interface"], "eno1")
 		self.assertEqual(values["private_network_interface"], "vxlan0")
 		self.assertEqual(values["architecture"], "amd64")

@@ -18,6 +18,7 @@ type testHostDependencies struct {
 	peerSyncs           int
 	images              []vm.Image
 	virtualMachines     []vm.Information
+	gatewayRoutes       []vm.Route
 	wakeCount           int
 }
 
@@ -50,6 +51,11 @@ func (dependencies *testHostDependencies) List(context.Context) ([]vm.Informatio
 	return append([]vm.Information(nil), dependencies.virtualMachines...), nil
 }
 
+func (dependencies *testHostDependencies) SetWireGuardGatewayRoutes(_ context.Context, routes []vm.Route) error {
+	dependencies.gatewayRoutes = append([]vm.Route(nil), routes...)
+	return nil
+}
+
 func (dependencies *testHostDependencies) Capacity(context.Context) (storage.Capacity, error) {
 	return storage.Capacity{TotalMiB: 4096, AvailableMiB: 3072}, nil
 }
@@ -59,7 +65,7 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning, CPUMillicores: 1500}},
 	}
 	service, err := NewService(Dependencies{
-		Mesh: dependencies, WireGuard: dependencies, Images: dependencies,
+		Mesh: dependencies, WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
 		VirtualMachines: dependencies, Storage: dependencies,
 		Wake: func() { dependencies.wakeCount++ },
 	})
@@ -71,13 +77,15 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 		PrivilegedVirtualMachineAddresses: []string{"fdaa::2"},
 		WireGuardPeers:                    []network.WireGuardPeer{{Node: "node-2"}},
 		Images:                            []vm.Image{{Name: "ubuntu"}},
+		WireGuardGatewayRoutes:            []vm.Route{{Destination: "fdac:1:1::/48", Via: "fdaa:1::1"}},
 	}
 	result, err := service.Synchronize(t.Context(), desired)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(dependencies.privilegedAddresses) != 1 || len(dependencies.wireGuardPeers) != 1 || len(dependencies.images) != 1 {
+	if len(dependencies.privilegedAddresses) != 1 || len(dependencies.wireGuardPeers) != 1 ||
+		len(dependencies.images) != 1 || len(dependencies.gatewayRoutes) != 1 {
 		t.Fatalf("controller state was not applied: %+v", dependencies)
 	}
 	if dependencies.wakeCount != 1 {
@@ -100,7 +108,7 @@ func TestCapacitySubtractsMigrationReservations(t *testing.T) {
 		return []migration.DestinationReservation{{VirtualMachineID: "vm-00002", CPUMillicores: 2500, MemoryMiB: 1024, DiskMiB: 2048}}, nil
 	}
 	service, err := NewService(Dependencies{
-		Mesh: dependencies, WireGuard: dependencies, Images: dependencies,
+		Mesh: dependencies, WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
 		VirtualMachines: dependencies, Storage: dependencies,
 		MigrationReservations: reservations, Wake: func() {},
 	})
@@ -127,7 +135,8 @@ func TestCapacitySubtractsMigrationReservations(t *testing.T) {
 func TestSynchronizeAllowsMeshToBeDisabled(t *testing.T) {
 	dependencies := &testHostDependencies{}
 	service, err := NewService(Dependencies{
-		WireGuard: dependencies, Images: dependencies, VirtualMachines: dependencies, Storage: dependencies,
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		VirtualMachines: dependencies, Storage: dependencies,
 		Wake: func() {},
 	})
 	if err != nil {
@@ -142,7 +151,8 @@ func TestSynchronizeSelectsTheNDPMode(t *testing.T) {
 	for _, unicast := range []bool{true, false} {
 		dependencies := &testHostDependencies{}
 		service, err := NewService(Dependencies{
-			WireGuard: dependencies, Images: dependencies, VirtualMachines: dependencies, Storage: dependencies,
+			WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+			VirtualMachines: dependencies, Storage: dependencies,
 			Mesh: dependencies, Wake: func() {},
 		})
 		if err != nil {
@@ -162,7 +172,8 @@ func TestSynchronizeSelectsTheNDPMode(t *testing.T) {
 func TestSynchronizeRefusesUnicastWithoutTheMesh(t *testing.T) {
 	dependencies := &testHostDependencies{}
 	service, err := NewService(Dependencies{
-		WireGuard: dependencies, Images: dependencies, VirtualMachines: dependencies, Storage: dependencies,
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		VirtualMachines: dependencies, Storage: dependencies,
 		Wake: func() {},
 	})
 	if err != nil {
