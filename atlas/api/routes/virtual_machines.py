@@ -89,7 +89,8 @@ def request_virtual_machine_power_state(
 				"The virtual machine was not placed. `error.code` is `out_of_capacity` when no host "
 				"can hold it, which needs more capacity in the region, or `placement_busy` when "
 				"every candidate host was held by another placement, which only needs a retry. A "
-				"busy response carries `Retry-After` in seconds."
+				"busy response carries `Retry-After` in seconds. `affinity_unsatisfied` means that no "
+				"host with room meets the affinity rules of the VM."
 			),
 			"model": CapacityUnavailableResponse,
 			"headers": {
@@ -109,6 +110,8 @@ def create_virtual_machine(
 	Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.
 
 	Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.
+
+	Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 	"""
 	image = get_owned_image(payload.image_id)
 	request = payload.to_domain_request(get_current_tenant_id(), image.name)
@@ -430,7 +433,7 @@ def update_virtual_machine_network(
 ) -> ApiResult[VirtualMachineResponse]:
 	"""Update network.
 
-	Changes IPv4 internet access, network throughput limits, or firewall fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6 address brings its own internet path.
+	Changes IPv4 internet access, WireGuard gateway access, network throughput limits, or firewall fields. `ipv4_internet_access` reaches the IPv4 internet through host NAT, and a public IPv4 address needs it. A public IPv6 address brings its own internet path.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	virtual_machine.update_network(payload.model_dump(exclude_unset=True, exclude_none=True))

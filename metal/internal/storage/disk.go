@@ -48,10 +48,8 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	}, nil
 }
 
-// PrepareRescueBoot prepares a throwaway rescue clone as the root drive, with
-// the VM's own disk attached read-write as a secondary drive, so a stuck guest
-// can be repaired from a known-good environment. The VM's own disk must
-// already exist; this never provisions or modifies it.
+// PrepareRescueBoot boots a rescue clone with the existing VM disk attached read-write.
+// It does not provision or modify the original disk.
 func (store *VirtualMachineStore) PrepareRescueBoot(ctx context.Context, request VirtualMachineRescueBootRequest) (BootConfiguration, error) {
 	hasDisk, err := store.HasDisk(ctx, request.VirtualMachineID)
 	if err != nil {

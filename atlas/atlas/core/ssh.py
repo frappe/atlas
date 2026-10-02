@@ -26,7 +26,24 @@ class SSHResult:
 class SSHRunner:
 	"""Run shell scripts on one SSH host."""
 
-	def __init__(self, host: str, port: int = 22, user: str = "root") -> None:
+	options = (
+		"-o",
+		"StrictHostKeyChecking=no",
+		"-o",
+		"UserKnownHostsFile=/dev/null",
+		"-o",
+		"GlobalKnownHostsFile=/dev/null",
+		"-o",
+		"LogLevel=ERROR",
+		"-o",
+		"BatchMode=yes",
+		"-o",
+		"ConnectTimeout=30",
+	)
+
+	def __init__(
+		self, host: str, port: int = 22, user: str = "root", proxy_command: str | None = None
+	) -> None:
 		if not host:
 			raise ValueError("SSH host is required")
 		if not 1 <= port <= 65_535:
@@ -37,6 +54,7 @@ class SSHRunner:
 		self.host = host
 		self.port = port
 		self.user = user
+		self.proxy_command = proxy_command
 
 	def run_command(
 		self,
@@ -75,18 +93,8 @@ class SSHRunner:
 				"ssh",
 				"-p",
 				str(self.port),
-				"-o",
-				"StrictHostKeyChecking=no",
-				"-o",
-				"UserKnownHostsFile=/dev/null",
-				"-o",
-				"GlobalKnownHostsFile=/dev/null",
-				"-o",
-				"LogLevel=ERROR",
-				"-o",
-				"BatchMode=yes",
-				"-o",
-				"ConnectTimeout=30",
+				*self.options,
+				*(("-o", f"ProxyCommand={self.proxy_command}") if self.proxy_command else ()),
 				f"{self.user}@{self.host}",
 				"bash -s",
 			],
@@ -100,6 +108,10 @@ class SSHRunner:
 
 		output = self._read_output(process, timeout_seconds, on_output)
 		return SSHResult(output=output, exit_code=process.wait())
+
+	def get_proxy_command(self, command: str) -> str:
+		"""Return an SSH command line that runs one command on this host, for use as a ProxyCommand."""
+		return shlex.join(["ssh", "-p", str(self.port), *self.options, f"{self.user}@{self.host}", command])
 
 	@staticmethod
 	def _read_output(
@@ -149,7 +161,12 @@ class SSHRunner:
 
 
 def wait_for_server(
-	*, host: str, users: tuple[str, ...], timeout_seconds: int, poll_interval_seconds: int
+	*,
+	host: str,
+	users: tuple[str, ...],
+	timeout_seconds: int,
+	poll_interval_seconds: int,
+	proxy_command: str | None = None,
 ) -> str:
 	"""Return the first SSH user that becomes available on a server."""
 	if not users:
@@ -162,15 +179,19 @@ def wait_for_server(
 	deadline = monotonic() + timeout_seconds
 	while monotonic() < deadline:
 		for user in users:
-			if _ssh_is_available(host, user):
+			if _ssh_is_available(host, user, proxy_command):
 				return user
 		sleep(poll_interval_seconds)
 
 	raise TimeoutError(f"SSH did not become ready within {timeout_seconds} seconds")
 
 
-def _ssh_is_available(host: str, user: str) -> bool:
+def _ssh_is_available(host: str, user: str, proxy_command: str | None) -> bool:
 	try:
-		return SSHRunner(host, user=user).run_command("true", timeout_seconds=10).is_success
+		return (
+			SSHRunner(host, user=user, proxy_command=proxy_command)
+			.run_command("true", timeout_seconds=10)
+			.is_success
+		)
 	except OSError, subprocess.TimeoutExpired:
 		return False

@@ -85,14 +85,15 @@ type imageArtifactResponse struct {
 
 // networkResponse is the desired VM network.
 type networkResponse struct {
-	PublicIPv4                    string           `json:"public_ipv4,omitempty"`
-	Routes                        []routeResponse  `json:"routes"`
-	IsNetworkGateway              bool             `json:"is_network_gateway,omitempty"`
-	PublicIPv6                    string           `json:"public_ipv6,omitempty"`
-	WireGuardMeshIPv6             string           `json:"wireguard_mesh_ipv6"`
-	PrivateNetworkThroughputMiBps int              `json:"private_network_throughput_mibps"`
-	PublicNetworkThroughputMiBps  int              `json:"public_network_throughput_mibps"`
-	Firewall                      firewallResponse `json:"firewall"`
+	PublicIPv4                      string           `json:"public_ipv4,omitempty"`
+	Routes                          []routeResponse  `json:"routes"`
+	IsNetworkGateway                bool             `json:"is_network_gateway,omitempty"`
+	IsAccessibleViaWireGuardGateway bool             `json:"is_accessible_via_wireguard_gateway,omitempty"`
+	PublicIPv6                      string           `json:"public_ipv6,omitempty"`
+	WireGuardMeshIPv6               string           `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMiBps   int              `json:"private_network_throughput_mibps"`
+	PublicNetworkThroughputMiBps    int              `json:"public_network_throughput_mibps"`
+	Firewall                        firewallResponse `json:"firewall"`
 }
 
 type routeResponse struct {
@@ -169,14 +170,15 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			},
 			Image: toVirtualMachineImage(information.Image),
 			Network: networkResponse{
-				PublicIPv4:                    information.PublicIPv4,
-				Routes:                        toRoutes(information.Routes),
-				IsNetworkGateway:              information.IsNetworkGateway,
-				PublicIPv6:                    information.PublicIPv6,
-				WireGuardMeshIPv6:             information.WireGuardMeshIPv6,
-				PrivateNetworkThroughputMiBps: information.PrivateNetworkThroughputMiBps,
-				PublicNetworkThroughputMiBps:  information.PublicNetworkThroughputMiBps,
-				Firewall:                      toFirewall(information.Firewall),
+				PublicIPv4:                      information.PublicIPv4,
+				Routes:                          toRoutes(information.Routes),
+				IsNetworkGateway:                information.IsNetworkGateway,
+				IsAccessibleViaWireGuardGateway: information.IsAccessibleViaWireGuardGateway,
+				PublicIPv6:                      information.PublicIPv6,
+				WireGuardMeshIPv6:               information.WireGuardMeshIPv6,
+				PrivateNetworkThroughputMiBps:   information.PrivateNetworkThroughputMiBps,
+				PublicNetworkThroughputMiBps:    information.PublicNetworkThroughputMiBps,
+				Firewall:                        toFirewall(information.Firewall),
 			},
 			Guest: guestResponse{
 				Hostname: information.Hostname,

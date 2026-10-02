@@ -29,18 +29,20 @@
   "disk_iops",
   "section_break_network",
   "mac",
-  "wireguard_mesh_ipv6",
+  "public_ipv4",
   "public_ipv6",
   "routed_ipv6",
   "column_break_network",
-  "public_ipv4",
+  "wireguard_mesh_ipv6",
   "private_network_throughput_mibps",
   "public_network_throughput_mibps",
+  "is_accessible_via_wireguard_gateway",
   "other_data_section",
   "routes",
   "ssh_keys",
   "firewall_summary",
   "metadata",
+  "placement_rules",
   "tags"
  ],
  "fields": [
@@ -234,6 +236,16 @@
    "show_description_on_click": 1
   },
   {
+   "default": "0",
+   "description": "Customer devices on a WireGuard gateway of this tenant can reach this VM.",
+   "fieldname": "is_accessible_via_wireguard_gateway",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Accessible via WireGuard Gateway",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
    "fieldname": "public_ipv6",
    "fieldtype": "Data",
    "is_virtual": 1,
@@ -305,6 +317,15 @@
    "read_only": 1
   },
   {
+   "description": "Rules that limit the Metal Servers for this virtual machine. Placement applies them at creation, at a migration to a host that placement chooses, and at a resize that moves the virtual machine.",
+   "fieldname": "placement_rules",
+   "fieldtype": "Code",
+   "label": "Placement Rules",
+   "options": "JSON",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
    "fieldname": "column_break_status",
    "fieldtype": "Column Break"
   },
@@ -355,7 +376,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-09-26 03:05:51.552687",
+ "modified": "2026-10-02 16:12:39.232054",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

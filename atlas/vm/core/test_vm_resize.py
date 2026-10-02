@@ -35,6 +35,7 @@ class TestVirtualMachineResize(UnitTestCase):
 			memory_mib=2048,
 			disk_mib=20480,
 			sleep_after_idle_seconds=0,
+			placement_rules=None,
 			db_set=Mock(),
 		)
 

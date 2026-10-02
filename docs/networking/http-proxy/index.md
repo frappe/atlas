@@ -58,9 +58,9 @@ Nodes can serve existing routes without a leader or enough acknowledgements for 
 
 - [Proxy specification](../../../services/http-proxy/SPEC.md) defines service ownership.
 - [Atlas proxy provisioner](../../../atlas/service/core/proxy/provisioning.py) owns VM package, configuration, readiness, and DNS publication.
-- [Proxy cluster](../../../services/http-proxy/control/proxy_control/cluster.py) owns leader and replication behavior.
+- [Shared cluster](../../../services/control-cluster/atlas_control/cluster.py) owns leader and replication behavior. [Route state](../../../services/http-proxy/control/proxy_control/routes.py) applies the replicated routes.
 - [Proxy control routes](../../../services/http-proxy/control/proxy_control/main.py) accept map changes.
 - [OpenResty guide](openresty.md) maps request types to guest paths.
-- [Cluster tests](../../../services/http-proxy/control/tests/test_cluster.py) check write acknowledgements and recovery.
+- [Cluster tests](../../../services/control-cluster/tests/test_cluster.py) check write acknowledgements and recovery.
 
 :::

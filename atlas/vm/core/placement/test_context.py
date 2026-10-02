@@ -1,4 +1,5 @@
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -7,6 +8,7 @@ from uuid import uuid7
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
+from atlas.vm.core.placement.affinity import AffinityRules, AffinityUnsatisfied
 from atlas.vm.core.placement.context import (
 	CAPACITY_MAXIMUM_AGE,
 	LOCK_WAIT_MAXIMUM_SECONDS,
@@ -70,6 +72,132 @@ class TestPlacementContext(UnitTestCase):
 	def context(self, rows: object, **kwargs: object) -> PlacementContext:
 		with patch("atlas.vm.core.placement.context.frappe.db.sql", side_effect=rows):
 			return PlacementContext(self.requirements(), 1.0, **kwargs)  # type: ignore[arg-type]
+
+	def affinity_placement(self, current_host_name: str | None = None) -> PlacementContext:
+		"""Return a placement whose rules only host "a" meets."""
+		placement = object.__new__(PlacementContext)
+		rules = AffinityRules.from_value(
+			[{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}}]
+		)
+		placement.requirements = self.requirements(placement_rules=rules)
+		placement.current_host_name = current_host_name
+		placement.apply_affinity = False
+		placement._excluded_servers = frozenset()
+		return placement
+
+	@staticmethod
+	def affinity_rows(free_memory_of_a: int = 4096) -> list[frappe._dict]:
+		return [
+			frappe._dict(name="a", free_memory_mib=free_memory_of_a, free_storage_mib=20480),
+			frappe._dict(name="b", free_memory_mib=4096, free_storage_mib=20480),
+			frappe._dict(name="c", free_memory_mib=0, free_storage_mib=0),
+		]
+
+	def filter_by_affinity(
+		self, placement: PlacementContext, rows: list, affinity_matching: str
+	) -> list[str]:
+		with (
+			patch.object(PlacementContext, "_find_affinity_hosts", return_value=["a"]),
+			patch("atlas.vm.core.placement.context.load_affinity_matching", return_value=affinity_matching),
+		):
+			return [row.name for row in placement._filter_by_affinity(rows)]
+
+	def test_the_affinity_filter_keeps_only_matching_hosts_when_one_has_room(self) -> None:
+		placement = self.affinity_placement()
+
+		self.assertEqual(self.filter_by_affinity(placement, self.affinity_rows(), "Enforced"), ["a"])
+		self.assertTrue(placement.apply_affinity)
+
+	def test_the_affinity_filter_keeps_the_current_host_of_a_resize(self) -> None:
+		placement = self.affinity_placement(current_host_name="c")
+
+		self.assertEqual(self.filter_by_affinity(placement, self.affinity_rows(0), "Enforced"), ["a", "c"])
+
+	def test_enforced_matching_fails_when_no_matching_host_has_room(self) -> None:
+		with self.assertRaises(AffinityUnsatisfied):
+			self.filter_by_affinity(self.affinity_placement(), self.affinity_rows(0), "Enforced")
+
+	def test_preferred_matching_keeps_every_host_when_no_matching_host_has_room(self) -> None:
+		placement = self.affinity_placement()
+
+		self.assertEqual(
+			self.filter_by_affinity(placement, self.affinity_rows(0), "Preferred"), ["a", "b", "c"]
+		)
+		self.assertFalse(placement.apply_affinity)
+
+	def test_a_rule_that_fails_under_the_lock_counts_as_contention(self) -> None:
+		for has_capacity, is_contended in ((True, True), (False, False)):
+			placement = object.__new__(PlacementContext)
+			placement._selected_host = None
+			placement._excluded_servers = frozenset()
+			placement.probe_count = 0
+			placement.has_contended_hosts = False
+			placement.last_probe_was_contended = False
+			with (
+				self.subTest(has_capacity=has_capacity),
+				patch.object(PlacementContext, "_find_snapshot_host", return_value=True),
+				patch.object(PlacementContext, "_host_lock_name", return_value="lock"),
+				patch.object(PlacementContext, "_acquire_host_lock", return_value=True),
+				patch.object(PlacementContext, "_release_host_lock"),
+				patch.object(PlacementContext, "_host_has_capacity", return_value=has_capacity),
+				patch.object(PlacementContext, "_find_affinity_group", return_value=[]),
+				patch.object(PlacementContext, "_host_meets_affinity", return_value=False),
+			):
+				self.assertFalse(placement.try_select("a"))
+
+				self.assertEqual(placement.has_contended_hosts, is_contended)
+				self.assertFalse(placement.last_probe_was_contended)
+
+	@contextmanager
+	def locked_group(self, acquired: list[bool], meets_affinity: bool = True):
+		"""Patch the locks of host "a" and of its within group, hosts "b" and "c"."""
+		with (
+			patch.object(PlacementContext, "_find_snapshot_host", return_value=True),
+			patch.object(PlacementContext, "_host_lock_name", side_effect=lambda name: f"lock-{name}"),
+			patch.object(PlacementContext, "_acquire_host_lock", side_effect=acquired) as acquire,
+			patch.object(PlacementContext, "_release_host_lock") as release,
+			patch.object(PlacementContext, "_keep_host_lock_for_transaction") as keep,
+			patch.object(PlacementContext, "_host_has_capacity", return_value=True),
+			patch.object(PlacementContext, "_find_affinity_group", return_value=["b", "c"]),
+			patch.object(PlacementContext, "_host_meets_affinity", return_value=meets_affinity),
+		):
+			yield acquire, release, keep
+
+	@staticmethod
+	def unselected_placement() -> PlacementContext:
+		placement = object.__new__(PlacementContext)
+		placement._selected_host = None
+		placement._excluded_servers = frozenset()
+		placement.probe_count = 0
+		placement.has_contended_hosts = False
+		placement.last_probe_was_contended = False
+		return placement
+
+	def test_the_within_group_locks_are_kept_until_the_transaction_ends(self) -> None:
+		placement = self.unselected_placement()
+		with self.locked_group([True, True, True]) as (acquire, release, keep):
+			self.assertTrue(placement.try_select("a"))
+
+		self.assertEqual([c.kwargs["wait"] for c in acquire.call_args_list], [False, False, False])
+		self.assertEqual([c.args[0] for c in keep.call_args_list], ["lock-a", "lock-b", "lock-c"])
+		release.assert_not_called()
+
+	def test_a_busy_host_in_the_within_group_counts_as_contention(self) -> None:
+		placement = self.unselected_placement()
+		with self.locked_group([True, True, False]) as (_acquire, release, keep):
+			self.assertFalse(placement.try_select("a"))
+
+		self.assertTrue(placement.has_contended_hosts)
+		self.assertEqual([c.args[0] for c in release.call_args_list], ["lock-a", "lock-b"])
+		keep.assert_not_called()
+
+	def test_a_rule_that_fails_under_the_group_locks_releases_them_all(self) -> None:
+		placement = self.unselected_placement()
+		with self.locked_group([True, True, True], meets_affinity=False) as (_acquire, release, _keep):
+			self.assertFalse(placement.try_select("a"))
+
+		self.assertTrue(placement.has_contended_hosts)
+		self.assertEqual([c.args[0] for c in release.call_args_list], ["lock-a", "lock-b", "lock-c"])
 
 	def test_a_cached_snapshot_is_shared_between_placements(self) -> None:
 		rows = [host_row("a")]
@@ -475,9 +603,11 @@ class TestPlacementLockQuery(IntegrationTestCase):
 		placement = object.__new__(PlacementContext)
 		placement.requirements = TestPlacementContext.requirements(**overrides)
 		placement.current_placement = current_placement
+		placement.current_host_name = current_placement.host_name if current_placement else None
 		placement._created_at = NOW
 		placement._deadline = None
 		placement._excluded_servers = frozenset()
+		placement.apply_affinity = False
 		placement._selected_host = None
 		placement.has_contended_hosts = False
 		placement.last_probe_was_contended = False
@@ -489,6 +619,31 @@ class TestPlacementLockQuery(IntegrationTestCase):
 	def test_capacity_query_accepts_a_fitting_host(self) -> None:
 		with self.primary_connection():
 			self.assertTrue(self.placement()._host_has_capacity(self.host_name))
+
+	def test_the_locked_affinity_check_reads_a_vm_that_breaks_a_rule(self) -> None:
+		rules = AffinityRules.from_value(
+			[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}]
+		)
+		with self.primary_connection():
+			placement = self.placement(placement_rules=rules)
+			placement.apply_affinity = True
+			self.assertTrue(placement._host_meets_affinity(self.host_name))
+
+			# Another placement committed this VM after the snapshot was taken.
+			virtual_machine = frappe.get_doc(
+				{
+					"doctype": "Virtual Machine",
+					"name": f"test-vm-{frappe.generate_hash(length=8)}",
+					"tenant_id": 7,
+					"server": self.host_name,
+					"tags": [{"key": "role", "value": "cargo-server"}],
+				}
+			)
+			virtual_machine.db_insert()
+			for row in virtual_machine.get_all_children():
+				row.db_insert()
+
+			self.assertFalse(placement._host_meets_affinity(self.host_name))
 
 	def test_capacity_query_rejects_a_host_without_capacity(self) -> None:
 		with self.primary_connection():

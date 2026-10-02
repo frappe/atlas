@@ -58,6 +58,9 @@ type Manager struct {
 	temporaryUserIDs     map[uint32]bool
 	temporaryIdentifiers map[string]bool
 	migrationGuard       MigrationGuard
+
+	wireGuardGatewayRoutesMutex sync.RWMutex
+	wireGuardGatewayRoutes      []Route
 }
 
 // NewManager validates all records and returns one host VM manager.
@@ -91,6 +94,9 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 	}
 	if err := manager.store.validateAll(); err != nil {
 		return nil, fmt.Errorf("validate VM records: %w", err)
+	}
+	if err := manager.loadWireGuardGatewayRoutes(); err != nil {
+		return nil, fmt.Errorf("load WireGuard gateway routes: %w", err)
 	}
 	return manager, nil
 }
@@ -343,42 +349,43 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		usage.SizeMiB = desired.Specification.DiskMiB
 	}
 	return Information{
-		Rescue:                        cloneSpecification(desired.Specification).Rescue,
-		ObservedRescueEnabled:         observed.RescueEnabled,
-		DesiredRescueGeneration:       desired.RescueGeneration,
-		ObservedRescueGeneration:      observed.RescueGeneration,
-		ID:                            desired.ID,
-		State:                         observed.State,
-		DesiredState:                  desired.State,
-		Error:                         errorDetail,
-		CPUMillicores:                 desired.Specification.CPUMillicores,
-		MemoryMiB:                     desired.Specification.MemoryMiB,
-		DiskMiB:                       usage.SizeMiB,
-		DiskUsedMiB:                   usage.UsedMiB,
-		DiskThroughputMiBps:           desired.Specification.Disk.ThroughputMiBps,
-		DiskIOPS:                      desired.Specification.Disk.IOPS,
-		Image:                         desired.Specification.Image,
-		SSHKeys:                       slices.Clone(desired.Specification.SSHKeys),
-		Hostname:                      desired.Specification.Hostname,
-		Metadata:                      maps.Clone(desired.Specification.Metadata),
-		SleepAfterIdleSeconds:         desired.Specification.SleepAfterIdleSeconds,
-		MAC:                           observed.NetworkInterface.MACAddress,
-		PublicIPv4:                    desired.Specification.Network.PublicIPv4,
-		Routes:                        slices.Clone(desired.Specification.Network.Routes),
-		IsNetworkGateway:              desired.Specification.Network.IsNetworkGateway,
-		PublicIPv6:                    desired.Specification.Network.PublicIPv6,
-		WireGuardMeshIPv6:             desired.Specification.Network.WireGuardMeshIPv6,
-		PrivateNetworkThroughputMiBps: desired.Specification.Network.PrivateNetworkThroughputMiBps,
-		PublicNetworkThroughputMiBps:  desired.Specification.Network.PublicNetworkThroughputMiBps,
-		Firewall:                      desired.Specification.Network.Firewall.clone(),
-		DesiredGeneration:             desired.Generation,
-		DesiredRestartGeneration:      desired.RestartGeneration,
-		ObservedGeneration:            observed.Generation,
-		ObservedRestartGeneration:     observed.RestartGeneration,
-		Phase:                         observed.Phase,
-		OperationID:                   observed.OperationID,
-		OperationStartedAt:            observed.OperationStartedAt,
-		UpdatedAt:                     observed.UpdatedAt,
+		Rescue:                          cloneSpecification(desired.Specification).Rescue,
+		ObservedRescueEnabled:           observed.RescueEnabled,
+		DesiredRescueGeneration:         desired.RescueGeneration,
+		ObservedRescueGeneration:        observed.RescueGeneration,
+		ID:                              desired.ID,
+		State:                           observed.State,
+		DesiredState:                    desired.State,
+		Error:                           errorDetail,
+		CPUMillicores:                   desired.Specification.CPUMillicores,
+		MemoryMiB:                       desired.Specification.MemoryMiB,
+		DiskMiB:                         usage.SizeMiB,
+		DiskUsedMiB:                     usage.UsedMiB,
+		DiskThroughputMiBps:             desired.Specification.Disk.ThroughputMiBps,
+		DiskIOPS:                        desired.Specification.Disk.IOPS,
+		Image:                           desired.Specification.Image,
+		SSHKeys:                         slices.Clone(desired.Specification.SSHKeys),
+		Hostname:                        desired.Specification.Hostname,
+		Metadata:                        maps.Clone(desired.Specification.Metadata),
+		SleepAfterIdleSeconds:           desired.Specification.SleepAfterIdleSeconds,
+		MAC:                             observed.NetworkInterface.MACAddress,
+		PublicIPv4:                      desired.Specification.Network.PublicIPv4,
+		Routes:                          slices.Clone(desired.Specification.Network.Routes),
+		IsNetworkGateway:                desired.Specification.Network.IsNetworkGateway,
+		IsAccessibleViaWireGuardGateway: desired.Specification.Network.IsAccessibleViaWireGuardGateway,
+		PublicIPv6:                      desired.Specification.Network.PublicIPv6,
+		WireGuardMeshIPv6:               desired.Specification.Network.WireGuardMeshIPv6,
+		PrivateNetworkThroughputMiBps:   desired.Specification.Network.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:    desired.Specification.Network.PublicNetworkThroughputMiBps,
+		Firewall:                        desired.Specification.Network.Firewall.clone(),
+		DesiredGeneration:               desired.Generation,
+		DesiredRestartGeneration:        desired.RestartGeneration,
+		ObservedGeneration:              observed.Generation,
+		ObservedRestartGeneration:       observed.RestartGeneration,
+		Phase:                           observed.Phase,
+		OperationID:                     observed.OperationID,
+		OperationStartedAt:              observed.OperationStartedAt,
+		UpdatedAt:                       observed.UpdatedAt,
 	}
 }
 

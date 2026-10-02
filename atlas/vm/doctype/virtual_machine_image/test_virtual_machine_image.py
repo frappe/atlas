@@ -16,6 +16,7 @@ from atlas.vm.core.multipart_upload import (
 	get_multipart_part_size_mib,
 )
 from atlas.vm.core.vm_image_transfer import VirtualMachineImageTransferService
+from atlas.vm.doctype.virtual_machine_image import virtual_machine_image as virtual_machine_image_module
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import (
 	MAXIMUM_SNAPSHOT_VIRTUAL_CPU_COUNT,
 	VirtualMachineImage,
@@ -324,6 +325,34 @@ class TestVirtualMachineImage(UnitTestCase):
 			request["memory_snapshot_configuration"],
 			{"virtual_cpu_count": 2, "memory_mib": 2048, "disk_mib": 10240},
 		)
+
+	def latest_base_image(self, images: dict[str, VirtualMachineImage]) -> VirtualMachineImage:
+		"""Return the choice among images listed newest first."""
+		with (
+			patch.object(virtual_machine_image_module.frappe, "get_all", return_value=list(images)),
+			patch.object(
+				virtual_machine_image_module.frappe, "get_doc", side_effect=lambda _, name: images[name]
+			),
+		):
+			return VirtualMachineImage.get_latest_base_image()
+
+	def base_image(self, version: str, purpose: str = "base") -> VirtualMachineImage:
+		tags = {"purpose": purpose, "os": "Ubuntu", "os_version": version}
+		return self.make_image(tags=[SimpleNamespace(key=key, value=value) for key, value in tags.items()])
+
+	def test_the_highest_ubuntu_version_wins_over_a_newer_build(self) -> None:
+		images = {"new-24": self.base_image("24.04"), "old-26": self.base_image("26.04")}
+
+		self.assertIs(self.latest_base_image(images), images["old-26"])
+
+	def test_the_newest_build_wins_within_one_version(self) -> None:
+		images = {"newer": self.base_image("24.04"), "older": self.base_image("24.04")}
+
+		self.assertIs(self.latest_base_image(images), images["newer"])
+
+	def test_an_image_that_is_not_a_base_image_is_never_chosen(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "build-ubuntu-base-image"):
+			self.latest_base_image({"custom": self.base_image("26.04", purpose="custom")})
 
 
 class TestVirtualMachineImageTransfer(UnitTestCase):

@@ -90,7 +90,6 @@ func (pool *ZFSPool) rescueDataset(virtualMachineID string) string {
 	return pool.name + "/rescue/" + virtualMachineID
 }
 
-// rescueDevicePath is the block device of one rescue clone.
 func (pool *ZFSPool) rescueDevicePath(virtualMachineID string) string {
 	return "/dev/zvol/" + pool.rescueDataset(virtualMachineID)
 }

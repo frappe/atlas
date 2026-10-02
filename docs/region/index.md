@@ -8,9 +8,10 @@ A new Metal Server queues a background job:
 
 1. Create or reuse the provider host.
 2. Ask the provider to prepare it and wait for root SSH access.
-3. Configure the provider network and WireGuard.
-4. Install Metal, WG Mesh, TLS credentials, storage, and systemd units.
-5. Mark the host `Running` and queue disk inventory sync.
+3. Configure the provider network and WireGuard, with the Atlas peer on `wg0`.
+4. Wait for root SSH on the host `wg0` address.
+5. Install storage, TLS credentials, Metal, WG Mesh, systemd units, and the host firewall.
+6. Mark the host `Running` and queue disk inventory sync.
 
 The provider adapter supplies host-specific operations. An adapter for a manually prepared host can expect some resources to exist already.
 
@@ -29,7 +30,7 @@ The installation needs:
 - Atlas-built binaries.
 - A regional certificate.
 
-Atlas writes the control address and a coordination listener on the WireGuard address. The install script creates the ZFS pool. `metald` does not select its device.
+Atlas writes the control and coordination listeners on the WireGuard address. [Atlas access to hosts](host-access.md) explains the path. The install script creates the ZFS pool. `metald` does not select its device.
 
 ## Failure and recovery
 

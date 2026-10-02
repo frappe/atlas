@@ -134,6 +134,9 @@ int handle_vm_packet(struct __sk_buff *packet)
 	if (!source_is_allowed(packet->ifindex, &source, &destination))
 		return TC_ACT_SHOT;
 
+	if (is_controller(&destination))
+		return is_vm_address(&source) ? TC_ACT_OK : TC_ACT_SHOT;
+
 	/* Linux delivers same-host traffic through the VM host route. */
 	if (is_local_vm(&destination))
 		return is_vm_address(&source) || has_gateway_return_route(&destination, &source) ? TC_ACT_OK : TC_ACT_SHOT;

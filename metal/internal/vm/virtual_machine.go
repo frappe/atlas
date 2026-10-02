@@ -33,17 +33,6 @@ func (virtualMachine virtualMachine) records() (DesiredRecord, ObservedRecord, e
 	return desired, observed, nil
 }
 
-// networkRequest builds the complete desired host network state for a record.
-func networkRequest(record DesiredRecord) NetworkRequest {
-	return NetworkRequest{
-		VirtualMachineID: record.ID,
-		UserID:           record.UserID,
-		GroupID:          record.GroupID,
-		Configuration:    record.Specification.Network,
-		TrackTraffic:     record.State == StateRunning && !record.Specification.Rescue.Enabled && record.Specification.SleepAfterIdleSeconds > 0,
-	}
-}
-
 // runtimeMachine builds runtime input with a copied specification.
 func runtimeMachine(record DesiredRecord, networkInterface NetworkInterface) RuntimeMachine {
 	return RuntimeMachine{

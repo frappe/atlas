@@ -34,15 +34,17 @@ Each host has a WireGuard interface, `wg0`, with an address in `fdab::/16`. Ever
 
 The Atlas app keeps the list of hosts and their keys. It sends the complete peer list to each host during [host sync](../region/host-sync.md), and Metal applies it. A new host joins the mesh at the next sync.
 
+Atlas itself is one more `wg0` peer on each host, outside the mesh peer list. Hosts can reach Atlas. Among VMs, only tenant-0 VMs can reach its mesh address. [Atlas access to hosts](../region/host-access.md) explains the path.
+
 ## Layer 3: WG Mesh
 
 Each VM gets a stable address. The Atlas app derives it when it creates the VM:
 
 ```text
-fdaa : region : tenant : VM number
+fdaa : region : tenant : padding : VM number
 ```
 
-For example, `fdaa:1:0:2::3` is VM `3` of tenant `2` in region `1`.
+For example, `fdaa:1:0:2::3` is VM `3` of tenant `2` in region `1`. See [address formats](address-formats.md) for every layout.
 
 The address stays with the VM when it moves. WG Mesh checks a learned host location for each packet and starts a lookup when it has no valid entry.
 
@@ -97,6 +99,7 @@ A **privileged VM** is a tenant-0 VM that can talk to every tenant. Atlas sends 
 | HTTP proxy | Sends each site's traffic to that site's VM. |
 | Cargo | Monitors usage across tenants. |
 | IPv6 router | Carries public IPv6 traffic for every tenant's VMs. |
+| WireGuard gateway | Carries each customer's tunnel into that customer's own tenant VMs. |
 
 ## Gateway routes
 
@@ -121,7 +124,7 @@ When a gateway forwards a packet with an outside client address, WG Mesh checks 
 
 ## Network gateway VMs
 
-A **network gateway** is a privileged VM that carries traffic the mesh does not own. Its own software forwards, translates, or filters packets. The [IPv6 router](ipv6-router.md) is Atlas's managed gateway today. The gateway role lets it keep the real client address. The [packet example](wg-mesh/gateways.md#how-the-packet-changes) shows what the guest sees and how the reply returns.
+A **network gateway** is a privileged VM that carries traffic the mesh does not own. Its own software forwards, translates, or filters packets. The [IPv6 router](ipv6-router.md) and [WireGuard gateway](wireguard-gateway.md) use this role to keep the real client address. The [packet example](wg-mesh/gateways.md#how-the-packet-changes) shows what the guest sees and how the reply returns.
 
 When Atlas attaches a routed public IPv6 address, it adds the VM's `2000::/3` route to the router. It removes that route on detach. The route also tells WG Mesh whether to admit inbound client packets. [Gateway VMs](wg-mesh/gateways.md) explains the full packet path.
 

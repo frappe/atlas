@@ -272,7 +272,7 @@ func (manager *Manager) ConnectSSH(ctx context.Context, identifier string) (SSHC
 	if err != nil {
 		return nil, err
 	}
-	networkInterface, err := manager.network.Ensure(ctx, networkRequest(desired))
+	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
 	if err != nil {
 		return nil, err
 	}

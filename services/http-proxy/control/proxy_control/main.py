@@ -2,25 +2,21 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import httpx
-from fastapi import Body, Depends, FastAPI, Header, Path, Response, status
-from fastapi.routing import APIRoute
+from atlas_control import docs
+from atlas_control.auth import Authentication, Authorization
+from atlas_control.cluster import ClusterManager, Mutation
+from atlas_control.routes import create_cluster_router
+from fastapi import Body, Depends, FastAPI, Path, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import docs
-from .auth import Authentication, Authorization
 from .client import ProxyClient
-from .cluster import (
-	ClusterManager,
-	ClusterSnapshot,
-	HeartbeatRequest,
-	Mutation,
-	ReplicationRequest,
-	VoteRequest,
-)
-from .config import ConfigError, load
+from .config import ConfigError, load, load_auth
 from .mappings import MappingStore
+from .routes import RouteState
 from .server import run
 
+SCOPES = frozenset({"*", "site:*", "domain:*"})
+CONSTRAINED_RESOURCES = frozenset({"site", "domain"})
 SITE_MAP_EXAMPLE = {"erp": "2001:db8::10", "shop": "2001:db8::11"}
 DOMAIN_MAP_EXAMPLE = {"www.example.com": "2001:db8::20"}
 
@@ -64,7 +60,7 @@ except ConfigError as error:
 	raise SystemExit(f"atlas-proxy-control: {error}") from error
 
 
-auth = Authentication()
+auth = Authentication(load_auth, SCOPES, "atlas-proxy-control", CONSTRAINED_RESOURCES)
 proxy = ProxyClient(_config.admin_socket)
 maps = MappingStore(
 	proxy,
@@ -72,7 +68,8 @@ maps = MappingStore(
 	_config.tls.wildcard_domain,
 	_config.auto_proxy_host_prefixes,
 )
-cluster = ClusterManager(_config.cluster, maps)
+route_state = RouteState(maps)
+cluster = ClusterManager(_config.cluster, route_state)
 
 
 @asynccontextmanager
@@ -85,16 +82,11 @@ async def lifespan(_: FastAPI):
 		await proxy.close()
 
 
-def operation_id(route: APIRoute) -> str:
-	"""Return the route function name as the OpenAPI operation ID."""
-	return route.name
-
-
 app = FastAPI(
 	title="Atlas proxy control",
 	description="Route sites and custom domains to backend IPv6 addresses. Sync all routes after a controller restart, or change one route when an address changes.",
 	lifespan=lifespan,
-	generate_unique_id_function=operation_id,
+	generate_unique_id_function=docs.operation_id,
 	docs_url=None,
 	redoc_url=None,
 	openapi_url=None,
@@ -105,16 +97,7 @@ app = FastAPI(
 	],
 )
 ControlAuthorization = Annotated[Authorization, Depends(auth.require_request)]
-
-
-def require_cluster_password(
-	password: Annotated[str | None, Header(alias="X-Atlas-Cluster-Password")] = None,
-) -> None:
-	"""Authenticate one internal cluster request."""
-	cluster.authenticate(password)
-
-
-protected_internal = [Depends(require_cluster_password)]
+app.include_router(create_cluster_router(cluster))
 
 
 @app.get(
@@ -132,7 +115,7 @@ async def healthz() -> Response:
 		return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 	if response_status >= 300 or not isinstance(counts, dict):
 		return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
-	if not cluster.has_snapshot_routes(counts):
+	if not route_state.has_routes(cluster.snapshot.state, counts):
 		return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 	return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -180,7 +163,7 @@ async def replace_sites(
 	authorization: ControlAuthorization,
 ) -> MapReplaced:
 	authorization.require_unconstrained("site", "update")
-	result = await cluster.mutate(Mutation(kind="sites", action="replace", values=values))
+	result = await cluster.mutate(Mutation(kind="sites", action="replace", value=values))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return MapReplaced(**result.body)
 
@@ -210,7 +193,7 @@ async def replace_domains(
 	authorization: ControlAuthorization,
 ) -> MapReplaced:
 	authorization.require_unconstrained("domain", "update")
-	result = await cluster.mutate(Mutation(kind="domains", action="replace", values=values))
+	result = await cluster.mutate(Mutation(kind="domains", action="replace", value=values))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return MapReplaced(**result.body)
 
@@ -228,7 +211,7 @@ async def patch_site(
 	authorization: ControlAuthorization,
 ) -> SiteMapping:
 	authorization.require("site", "update", name)
-	result = await cluster.mutate(Mutation(kind="sites", action="update", key=name, address=value.address))
+	result = await cluster.mutate(Mutation(kind="sites", action="update", key=name, value=value.address))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return SiteMapping(**result.body)
 
@@ -265,9 +248,7 @@ async def patch_domain(
 	authorization: ControlAuthorization,
 ) -> DomainMapping:
 	authorization.require("domain", "update", domain)
-	result = await cluster.mutate(
-		Mutation(kind="domains", action="update", key=domain, address=value.address)
-	)
+	result = await cluster.mutate(Mutation(kind="domains", action="update", key=domain, value=value.address))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return DomainMapping(**result.body)
 
@@ -296,44 +277,6 @@ async def cluster_status(authorization: ControlAuthorization) -> dict[str, objec
 	"""Return the local cluster status."""
 	authorization.require("cluster", "read")
 	return cluster.status()
-
-
-@app.get("/internal/cluster/status", dependencies=protected_internal, include_in_schema=False)
-async def internal_cluster_status() -> dict[str, object]:
-	return cluster.status()
-
-
-@app.get("/internal/cluster/snapshot", dependencies=protected_internal, include_in_schema=False)
-async def internal_cluster_snapshot() -> ClusterSnapshot:
-	return cluster.snapshot
-
-
-@app.post("/internal/cluster/snapshot", dependencies=protected_internal, include_in_schema=False)
-async def install_cluster_snapshot(snapshot: ClusterSnapshot) -> dict[str, int]:
-	await cluster.install_snapshot(snapshot)
-	return {"generation": cluster.snapshot.generation}
-
-
-@app.post("/internal/cluster/vote", dependencies=protected_internal, include_in_schema=False)
-async def request_cluster_vote(request: VoteRequest) -> dict[str, object]:
-	return await cluster.request_vote(request)
-
-
-@app.post("/internal/cluster/heartbeat", dependencies=protected_internal, include_in_schema=False)
-async def receive_cluster_heartbeat(request: HeartbeatRequest) -> dict[str, object]:
-	return await cluster.heartbeat(request)
-
-
-@app.post("/internal/cluster/replicate", dependencies=protected_internal, include_in_schema=False)
-async def replicate_cluster_mutation(request: ReplicationRequest) -> dict[str, int]:
-	result = await cluster.apply_replication(request)
-	return {"generation": result.generation}
-
-
-@app.post("/internal/cluster/mutate", dependencies=protected_internal, include_in_schema=False)
-async def forward_cluster_mutation(mutation: Mutation) -> dict[str, object]:
-	result = await cluster.mutate(mutation)
-	return {"body": result.body, "generation": result.generation}
 
 
 docs.add_routes(app)

@@ -19,6 +19,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 			{ text: 'Regional settings', link: '/docs/region/configuration' },
 			{ text: 'Provision a host', link: '/docs/region/' },
 			{ text: 'Metal daemon', link: '/docs/region/metald' },
+			{ text: 'Atlas access to hosts', link: '/docs/region/host-access' },
 			{ text: 'Host sync', link: '/docs/region/host-sync' },
 			{ text: 'Add a provider', link: '/docs/region/provider-guide' },
 		],
@@ -56,6 +57,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 					{ text: 'Benchmarks', link: '/docs/networking/wg-mesh/benchmarks' },
 				],
 			},
+			{ text: 'Address formats', link: '/docs/networking/address-formats' },
 			{ text: 'Host networking', link: '/docs/networking/host-networking' },
 			{ text: 'Public IPs', link: '/docs/networking/public-ips' },
 			{
@@ -71,6 +73,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 				],
 			},
 			{ text: 'IPv6 router', link: '/docs/networking/ipv6-router' },
+			{ text: 'WireGuard gateway', link: '/docs/networking/wireguard-gateway' },
 		],
 	},
 	{
@@ -144,6 +147,8 @@ const handbook: DefaultTheme.SidebarItem[] = [
 					{ text: 'HTTP proxy', link: '/services/http-proxy/SPEC' },
 					{ text: 'WG Mesh', link: '/services/wg-mesh/SPEC' },
 					{ text: 'IPv6 router', link: '/services/ipv6-router/SPEC' },
+					{ text: 'WireGuard gateway', link: '/services/wg-gateway/SPEC' },
+					{ text: 'Control cluster', link: '/services/control-cluster/SPEC' },
 				],
 			},
 			{

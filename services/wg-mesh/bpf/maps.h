@@ -73,6 +73,8 @@ MAP(gateways, BPF_MAP_TYPE_HASH, __u32, __u8, 4096);
 
 /* Local VM address to the ifindex of its interface. A VM may only send from its own address. */
 MAP(local_vms, BPF_MAP_TYPE_HASH, struct in6_addr, __u32, 4096);
+/* The Atlas controller address. It is a peer of this host's wg0, so Linux routes it. A zero address means none. */
+MAP(controller_address, BPF_MAP_TYPE_ARRAY, __u32, struct in6_addr, 1);
 /* Tenant-0 addresses that may talk to every tenant. */
 MAP(privileged_vms, BPF_MAP_TYPE_HASH, struct in6_addr, __u8, 4096);
 /* Remote VM address to the WireGuard address of its host, learned from NDP. */
@@ -109,6 +111,7 @@ struct
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } gateway_routes SEC(".maps");
 
+/* The host configuration that the CLI writes, or NULL before configure runs. */
 static __always_inline struct config *get_config(void)
 {
 	__u32 key = 0;
@@ -116,11 +119,22 @@ static __always_inline struct config *get_config(void)
 	return bpf_map_lookup_elem(&config, &key);
 }
 
+/* Whether a VM on this host owns the address. */
 static __always_inline int is_local_vm(const struct in6_addr *address)
 {
 	return bpf_map_lookup_elem(&local_vms, address) != NULL;
 }
 
+/* Whether the address is the Atlas controller. Its wg0 peer carries the traffic. */
+static __always_inline int is_controller(const struct in6_addr *address)
+{
+	__u32 key = 0;
+	struct in6_addr *controller = bpf_map_lookup_elem(&controller_address, &key);
+
+	return controller && is_same_address(controller, address);
+}
+
+/* Whether the address belongs to the VM on this interface. */
 static __always_inline int is_owned_by(const struct in6_addr *address, __u32 ifindex)
 {
 	__u32 *owner = bpf_map_lookup_elem(&local_vms, address);
@@ -128,6 +142,7 @@ static __always_inline int is_owned_by(const struct in6_addr *address, __u32 ifi
 	return owner && *owner == ifindex;
 }
 
+/* Whether the address is a privileged tenant-0 VM, which can talk to every tenant. */
 static __always_inline int is_privileged(const struct in6_addr *address)
 {
 	return tenant_id(address) == 0 && bpf_map_lookup_elem(&privileged_vms, address) != NULL;
@@ -139,6 +154,7 @@ static __always_inline int can_communicate(const struct in6_addr *source, const 
 	return tenant_id(source) == tenant_id(destination) || is_privileged(source) || is_privileged(destination);
 }
 
+/* The interface of the local VM whose block holds this address, or NULL. */
 static __always_inline __u32 *get_prefix_owner(const struct in6_addr *address)
 {
 	struct prefix_key key = {.prefix_length = 128, .address = *address};
@@ -155,6 +171,7 @@ static __always_inline struct in6_addr *get_moved_prefix_owner(const struct in6_
 	return moved && moved->expires_ns > bpf_ktime_get_ns() ? &moved->virtual_machine : NULL;
 }
 
+/* The gateway for this VM's traffic to the destination, or NULL. The longest destination prefix wins. */
 static __always_inline struct in6_addr *get_gateway_route(const struct in6_addr *source, const struct in6_addr *destination)
 {
 	struct route_key key = {
@@ -172,6 +189,7 @@ static __always_inline int has_gateway_return_route(const struct in6_addr *virtu
 	return get_gateway_route(virtual_machine, foreign_source) != NULL;
 }
 
+/* Whether the interface belongs to a local gateway VM. */
 static __always_inline int is_gateway_interface(__u32 ifindex)
 {
 	return bpf_map_lookup_elem(&gateways, &ifindex) != NULL;
@@ -185,6 +203,7 @@ static __always_inline __u32 get_gateway_interface(const struct in6_addr *addres
 	return ifindex && is_gateway_interface(*ifindex) ? *ifindex : 0;
 }
 
+/* The host peer with this uplink IPv4 address. The list ends at the first empty entry. */
 static __always_inline struct peer *find_peer_by_ipv4(__be32 ipv4)
 {
 	for (__u32 index = 0; index < PEER_LIMIT; index++)
@@ -201,6 +220,7 @@ static __always_inline struct peer *find_peer_by_ipv4(__be32 ipv4)
 	return NULL;
 }
 
+/* The host peer with this uplink MAC address. The list ends at the first empty entry. */
 static __always_inline struct peer *find_peer_by_mac(const __u8 *mac)
 {
 	__u64 packed = pack_mac(mac);
@@ -235,6 +255,7 @@ static __always_inline int take_discovery_token(__u32 ifindex)
 	return 1;
 }
 
+/* Allow one unsolicited advertisement for each moved address in each interval. */
 static __always_inline int take_announcement_token(const struct in6_addr *address)
 {
 	__u64 now = bpf_ktime_get_ns();

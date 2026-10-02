@@ -65,7 +65,7 @@ func (manager *Manager) wakeSleepingVirtualMachine(ctx context.Context, identifi
 
 // restoreSleeping restores the saved state of a stopped Sleepy VM.
 func (manager *Manager) restoreSleeping(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
-	networkInterface, err := manager.network.Ensure(ctx, networkRequest(desired))
+	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
 	if err != nil {
 		return err
 	}

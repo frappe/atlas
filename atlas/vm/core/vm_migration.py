@@ -13,7 +13,7 @@ from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import timestamp_field
 from atlas.vm.core.models import VirtualMachineShape
-from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
+from atlas.vm.core.placement import AffinityRules, PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
 from atlas.vm.core.vm_state import LIVE_STATES
 
@@ -170,6 +170,13 @@ class MigrationService:
 			"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
 		)
 		shape = self.destination_shape(virtual_machine)
+		requested_destination = self.migration.destination_metal_server
+		# A destination that the operator names is not limited by the affinity rules.
+		placement_rules = (
+			AffinityRules()
+			if requested_destination
+			else AffinityRules.from_json(virtual_machine.placement_rules)
+		)
 		requirements = PlacementRequirements(
 			shape.cpu_millicores,
 			shape.memory_mib,
@@ -177,8 +184,9 @@ class MigrationService:
 			cast(str, virtual_machine.architecture),
 			virtual_machine.tenant_id,
 			shape.sleep_after_idle_seconds > 0,
+			placement_rules=placement_rules,
+			virtual_machine=virtual_machine.name,
 		)
-		requested_destination = self.migration.destination_metal_server
 		exclude_servers = {self.migration.source_metal_server}
 
 		try:

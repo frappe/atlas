@@ -4,6 +4,8 @@ set -eu
 
 : "${WIREGUARD_ADDRESS:?WIREGUARD_ADDRESS is required}"
 : "${MESH_UPLINK_INTERFACE:?MESH_UPLINK_INTERFACE is required}"
+: "${ATLAS_WIREGUARD_ADDRESS:?ATLAS_WIREGUARD_ADDRESS is required}"
+: "${ATLAS_WIREGUARD_PUBLIC_KEY:?ATLAS_WIREGUARD_PUBLIC_KEY is required}"
 
 interface=${WIREGUARD_INTERFACE:-wg0}
 listen_port=${WIREGUARD_LISTEN_PORT:-51820}
@@ -21,6 +23,14 @@ case "$WIREGUARD_ADDRESS" in
 fdab:*) ;;
 *)
 	echo "WIREGUARD_ADDRESS must be inside fdab::/16, got $WIREGUARD_ADDRESS" >&2
+	exit 1
+	;;
+esac
+
+case "$ATLAS_WIREGUARD_ADDRESS" in
+fdaa:*) ;;
+*)
+	echo "ATLAS_WIREGUARD_ADDRESS must be inside fdaa::/16, got $ATLAS_WIREGUARD_ADDRESS" >&2
 	exit 1
 	;;
 esac
@@ -55,27 +65,45 @@ if [ ! -f "$private_key_file" ]; then
 fi
 
 step "config ($config_file)"
-# The region prefix makes every peer on-link. The daemon adds peers, and
+# The region prefix makes every peer on-link. The daemon adds host peers, and
 # `wg set` installs no route of its own.
-config="[Interface]
+interface_config="[Interface]
 Address = $WIREGUARD_ADDRESS/32
 ListenPort = $listen_port
 MTU = $wireguard_mtu
 PostUp = wg set %i private-key $private_key_file"
 
+config="$interface_config
+
+[Peer]
+PublicKey = $ATLAS_WIREGUARD_PUBLIC_KEY
+AllowedIPs = $ATLAS_WIREGUARD_ADDRESS/128"
+
 # A reused host keeps the config of its earlier registration, so rewrite a stale one.
-is_config_changed=false
-if [ ! -f "$config_file" ] || [ "$(cat "$config_file")" != "$config" ]; then
+# A wg0 restart drops the host peers until the next sync.
+previous_config=$(cat "$config_file" 2>/dev/null || true)
+previous_atlas_public_key=$(printf '%s\n' "$previous_config" | sed -n 's/^PublicKey = //p')
+is_interface_changed=false
+if [ "$(printf '%s\n' "$previous_config" | sed '/^$/,$d')" != "$interface_config" ]; then
+	is_interface_changed=true
+fi
+if [ "$previous_config" != "$config" ]; then
 	(umask 077 && printf '%s\n' "$config" > "$config_file")
-	is_config_changed=true
 fi
 
 step "interface ($interface)"
 systemctl enable --now "wg-quick@$interface"
-if [ "$is_config_changed" = true ]; then
+if [ "$is_interface_changed" = true ]; then
 	systemctl restart "wg-quick@$interface"
 fi
 systemctl is-active "wg-quick@$interface" >/dev/null
+
+step "Atlas peer ($ATLAS_WIREGUARD_ADDRESS)"
+if [ -n "$previous_atlas_public_key" ] && [ "$previous_atlas_public_key" != "$ATLAS_WIREGUARD_PUBLIC_KEY" ]; then
+	wg set "$interface" peer "$previous_atlas_public_key" remove
+fi
+wg set "$interface" peer "$ATLAS_WIREGUARD_PUBLIC_KEY" allowed-ips "$ATLAS_WIREGUARD_ADDRESS/128"
+ip -6 route replace "$ATLAS_WIREGUARD_ADDRESS/128" dev "$interface"
 
 
 # !!! DON'T CHANGE THE FORMAT OF BELOW OUTPUT !!!

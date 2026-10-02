@@ -85,6 +85,7 @@ class VirtualMachineService:
 			image.architecture,
 			request.tenant_id,
 			request.sleep_after_idle_seconds > 0,
+			placement_rules=request.placement_rules,
 		)
 		server_name = PlacementStrategy.find_server(requirements)
 		virtual_machine = cls.insert_draft(request, image, server_name)
@@ -144,6 +145,10 @@ class VirtualMachineService:
 				"is_privileged": request.is_privileged,
 				"is_termination_protected": request.is_termination_protected,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
+				"tags": [{"key": key, "value": value} for key, value in request.tags.items()],
+				"placement_rules": frappe.as_json(request.placement_rules.as_list())
+				if request.placement_rules.nodes
+				else None,
 			}
 		)
 		virtual_machine.flags.created_by_virtual_machine_api = True
@@ -364,6 +369,7 @@ class VirtualMachineService:
 			"wireguard_mesh_ipv6": current_network.wireguard_mesh_ipv6,
 			"routes": [route.as_dict() for route in current_network.routes],
 			"is_network_gateway": current_network.is_network_gateway,
+			"is_accessible_via_wireguard_gateway": current_network.is_accessible_via_wireguard_gateway,
 			"public_ipv6": current_network.public_ipv6,
 			"private_network_throughput_mibps": current_network.private_network_throughput_mibps,
 			"public_network_throughput_mibps": current_network.public_network_throughput_mibps,
@@ -386,6 +392,12 @@ class VirtualMachineService:
 			changes["routes"] = self._routes_for_ipv4_internet_access(
 				bool(changes.pop("ipv4_internet_access"))
 			)
+		if "wireguard_gateway_access" in changes:
+			changes = {**changes}
+			is_enabled = bool(changes.pop("wireguard_gateway_access"))
+			if is_enabled and self.virtual_machine.is_network_gateway:
+				frappe.throw(_("A network gateway cannot use WireGuard gateway access."), exc=AtlasUserError)
+			changes["is_accessible_via_wireguard_gateway"] = is_enabled
 		if "routes" in changes:
 			changes = {
 				**changes,

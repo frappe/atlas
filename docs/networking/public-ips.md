@@ -47,7 +47,7 @@ The router receives the full prefix. Each tenant VM gets a derived `/128`, so At
 
 Requirements:
 
-- Prefix length `/84` or shorter. AWS `/80` and Scaleway `/64` qualify.
+- Prefix length `/80` or shorter. AWS `/80` and Scaleway `/64` qualify.
 - No allocations in the pool before router creation.
 - An Active router before routed automatic assignment.
 

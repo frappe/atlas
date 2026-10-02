@@ -9,7 +9,7 @@ The HTTP proxy is a regional cluster of 1 to 5 VMs. Each node routes site traffi
 ## Layout
 
 ```text
-control/       Python control daemon and cluster coordinator
+control/       Python control daemon and route state on the shared control-cluster package
 nginx/         OpenResty and Lua data plane
 tests/         Data-plane and package tests
 ```
@@ -36,4 +36,4 @@ See [control daemon authentication](../../docs/networking/http-proxy/control-dae
 
 ## Validation
 
-From this directory, run `python -m pip install --editable 'control[test]'` and `python -m pytest -q control/tests`. See [development](../../docs/develop/http-proxy.md).
+From this directory, run `python -m pip install --editable ../control-cluster --editable 'control[test]'` and `python -m pytest -q control/tests`. See [development](../../docs/develop/http-proxy.md).

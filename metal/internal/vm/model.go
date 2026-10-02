@@ -92,6 +92,8 @@ type NetworkConfiguration struct {
 	Routes []Route `json:"routes,omitempty"`
 	// IsNetworkGateway lets this VM send a source address it does not own, so it can carry traffic for other VMs.
 	IsNetworkGateway bool `json:"is_network_gateway,omitempty"`
+	// IsAccessibleViaWireGuardGateway adds the host's WireGuard gateway return routes to the VM network.
+	IsAccessibleViaWireGuardGateway bool `json:"is_accessible_via_wireguard_gateway,omitempty"`
 	// PublicIPv6 is a public address or block. The host maps a /128 to the mesh address and routes a larger block into the VM.
 	PublicIPv6                    string                `json:"public_ipv6,omitempty"`
 	PrivateNetworkThroughputMiBps int                   `json:"private_network_throughput_mibps"`
@@ -104,6 +106,7 @@ func (configuration NetworkConfiguration) Equal(other NetworkConfiguration) bool
 	return configuration.PublicIPv4 == other.PublicIPv4 &&
 		slices.Equal(configuration.Routes, other.Routes) &&
 		configuration.IsNetworkGateway == other.IsNetworkGateway &&
+		configuration.IsAccessibleViaWireGuardGateway == other.IsAccessibleViaWireGuardGateway &&
 		configuration.PublicIPv6 == other.PublicIPv6 &&
 		configuration.WireGuardMeshIPv6 == other.WireGuardMeshIPv6 &&
 		configuration.PrivateNetworkThroughputMiBps == other.PrivateNetworkThroughputMiBps &&
@@ -223,42 +226,43 @@ func isObservedState(state State) bool {
 
 // Information describes a virtual machine.
 type Information struct {
-	Rescue                        Rescue
-	ObservedRescueEnabled         bool
-	DesiredRescueGeneration       uint64
-	ObservedRescueGeneration      uint64
-	ID                            string
-	State                         State
-	DesiredState                  State
-	Error                         *PublicOperationError
-	CPUMillicores                 int
-	MemoryMiB                     int
-	DiskMiB                       int
-	DiskUsedMiB                   int
-	DiskThroughputMiBps           int
-	DiskIOPS                      int
-	Image                         Image
-	SSHKeys                       []string
-	Hostname                      string
-	Metadata                      map[string]string
-	SleepAfterIdleSeconds         int
-	MAC                           string
-	PublicIPv4                    string
-	WireGuardMeshIPv6             string
-	Routes                        []Route
-	IsNetworkGateway              bool
-	PublicIPv6                    string
-	PrivateNetworkThroughputMiBps int
-	PublicNetworkThroughputMiBps  int
-	Firewall                      FirewallConfiguration
-	DesiredGeneration             uint64
-	DesiredRestartGeneration      uint64
-	ObservedGeneration            uint64
-	ObservedRestartGeneration     uint64
-	Phase                         string
-	OperationID                   string
-	OperationStartedAt            time.Time
-	UpdatedAt                     time.Time
+	Rescue                          Rescue
+	ObservedRescueEnabled           bool
+	DesiredRescueGeneration         uint64
+	ObservedRescueGeneration        uint64
+	ID                              string
+	State                           State
+	DesiredState                    State
+	Error                           *PublicOperationError
+	CPUMillicores                   int
+	MemoryMiB                       int
+	DiskMiB                         int
+	DiskUsedMiB                     int
+	DiskThroughputMiBps             int
+	DiskIOPS                        int
+	Image                           Image
+	SSHKeys                         []string
+	Hostname                        string
+	Metadata                        map[string]string
+	SleepAfterIdleSeconds           int
+	MAC                             string
+	PublicIPv4                      string
+	WireGuardMeshIPv6               string
+	Routes                          []Route
+	IsNetworkGateway                bool
+	IsAccessibleViaWireGuardGateway bool
+	PublicIPv6                      string
+	PrivateNetworkThroughputMiBps   int
+	PublicNetworkThroughputMiBps    int
+	Firewall                        FirewallConfiguration
+	DesiredGeneration               uint64
+	DesiredRestartGeneration        uint64
+	ObservedGeneration              uint64
+	ObservedRestartGeneration       uint64
+	Phase                           string
+	OperationID                     string
+	OperationStartedAt              time.Time
+	UpdatedAt                       time.Time
 }
 
 // PublicOperationError contains safe reconciliation error data.

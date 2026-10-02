@@ -6,7 +6,16 @@ from zoneinfo import ZoneInfo
 
 import frappe
 from frappe.utils import get_datetime, get_system_timezone
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+	AnyHttpUrl,
+	BaseModel,
+	ConfigDict,
+	Discriminator,
+	Field,
+	StringConstraints,
+	Tag,
+	model_validator,
+)
 
 from atlas.api.core.base import ListQuery, PatchPayload, StrictModel
 from atlas.api.core.errors import ApiErrorField
@@ -27,6 +36,7 @@ from atlas.vm.core.models import (
 	FirewallRule,
 	VirtualMachineCreateRequest,
 )
+from atlas.vm.core.placement.affinity import AffinityOperator, AffinityResource, AffinityRules
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
@@ -80,8 +90,16 @@ class PlacementBusyError(BaseModel):
 	fields: list[ApiErrorField] = Field(description="Invalid request fields, or an empty list.")
 
 
+class AffinityUnsatisfiedError(BaseModel):
+	"""No host with room meets the affinity rules of the VM."""
+
+	code: Literal["affinity_unsatisfied"] = Field(description="Stable machine-readable error code.")
+	message: str = Field(description="Safe description of the failure.")
+	fields: list[ApiErrorField] = Field(description="Invalid request fields, or an empty list.")
+
+
 CapacityError = Annotated[
-	OutOfCapacityError | PlacementBusyError,
+	OutOfCapacityError | PlacementBusyError | AffinityUnsatisfiedError,
 	Field(discriminator="code"),
 ]
 
@@ -410,6 +428,58 @@ class FirewallUpdatePayload(PatchPayload):
 		return self
 
 
+class AffinityRulePayload(StrictModel):
+	"""One rule on the tags of the candidate Metal Server, or of a VM that runs on it."""
+
+	resource: AffinityResource = Field(
+		description="`metal_server` checks the candidate host. `virtual_machine` checks the VMs on the candidate host."
+	)
+	operator: AffinityOperator = Field(
+		description="`has` needs a resource with every tag pair. `has_not` rejects such a resource."
+	)
+	tags: TagMap = Field(min_length=1, description="Tag pairs that must all be on one resource.")
+	within: Annotated[str, StringConstraints(min_length=1, max_length=MAXIMUM_TAG_KEY_LENGTH)] | None = Field(
+		default=None,
+		description="A host tag key, such as `rack`. A `virtual_machine` rule then reads the VMs on every host that has the same value for this key as the candidate host. A host without the key fails the rule.",
+	)
+
+
+class AffinityAnyOfPayload(StrictModel):
+	"""A group that holds when at least one of its rules or groups holds."""
+
+	any_of: list[AffinityNodePayload] = Field(min_length=1, description="Rules or groups. One must hold.")
+
+
+class AffinityAllOfPayload(StrictModel):
+	"""A group that holds when every one of its rules or groups holds."""
+
+	all_of: list[AffinityNodePayload] = Field(
+		min_length=1, description="Rules or groups. Every one must hold."
+	)
+
+
+def _affinity_node_kind(value: object) -> str | None:
+	"""Pick the node model by its keys, so an invalid node reports the errors of one model."""
+	if isinstance(value, BaseModel):
+		keys = type(value).model_fields
+	elif isinstance(value, dict):
+		keys = value
+	else:
+		return None
+
+	return next((kind for kind in ("any_of", "all_of") if kind in keys), "rule")
+
+
+AffinityNodePayload = Annotated[
+	Annotated[AffinityRulePayload, Tag("rule")]
+	| Annotated[AffinityAnyOfPayload, Tag("any_of")]
+	| Annotated[AffinityAllOfPayload, Tag("all_of")],
+	Discriminator(_affinity_node_kind),
+]
+AffinityAnyOfPayload.model_rebuild()
+AffinityAllOfPayload.model_rebuild()
+
+
 class CreateVirtualMachinePayload(StrictModel):
 	"""Values that create one virtual machine."""
 
@@ -451,11 +521,22 @@ class CreateVirtualMachinePayload(StrictModel):
 	firewall: FirewallPayload = Field(
 		default_factory=FirewallPayload, description="Desired firewall configuration."
 	)
+	tags: TagMap = Field(default_factory=dict)
+	placement_rules: list[AffinityNodePayload] = Field(
+		default_factory=list,
+		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Placement uses only the hosts that meet them.",
+	)
 
 	@model_validator(mode="after")
 	def validate_ipv4_internet_access(self) -> CreateVirtualMachinePayload:
 		if self.public_ipv4 and not self.ipv4_internet_access:
 			raise ValueError("A public IPv4 address needs ipv4_internet_access.")
+		return self
+
+	@model_validator(mode="after")
+	def validate_placement_rules(self) -> CreateVirtualMachinePayload:
+		"""Apply the shared affinity rule limits."""
+		AffinityRules.from_value([node.model_dump() for node in self.placement_rules])
 		return self
 
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
@@ -481,6 +562,8 @@ class CreateVirtualMachinePayload(StrictModel):
 			firewall=FirewallConfiguration.from_value(self.firewall.model_dump()),
 			public_ipv4=self.public_ipv4,
 			public_ipv6=self.public_ipv6,
+			tags=self.tags,
+			placement_rules=AffinityRules.from_value([node.model_dump() for node in self.placement_rules]),
 		)
 
 
@@ -538,6 +621,10 @@ class NetworkUpdatePayload(PatchPayload):
 		default=None,
 		ge=0,
 		description="New public network throughput limit in MiB/s. Zero removes the limit.",
+	)
+	wireguard_gateway_access: bool = Field(
+		default=False,
+		description="Let customer devices on the tenant's WireGuard gateways reach the VM. A network gateway cannot use it.",
 	)
 	firewall: FirewallUpdatePayload | None = Field(default=None, description="Firewall fields to replace.")
 
@@ -759,6 +846,9 @@ class VirtualMachineNetwork(BaseModel):
 	mac: str | None = Field(description="Observed network interface MAC address, or null.")
 	private_network_throughput_mibps: int = Field(description="Private network throughput limit in MiB/s.")
 	public_network_throughput_mibps: int = Field(description="Public network throughput limit in MiB/s.")
+	wireguard_gateway_access: bool = Field(
+		description="Whether customer devices on the tenant's WireGuard gateways reach the VM."
+	)
 	firewall: FirewallResponse = Field(description="Desired firewall configuration.")
 
 
@@ -814,6 +904,7 @@ class VirtualMachineDetailResponse(BaseModel):
 						"mac": "52:54:00:12:34:56",
 						"private_network_throughput_mibps": 0,
 						"public_network_throughput_mibps": 0,
+						"wireguard_gateway_access": False,
 						"firewall": {"enabled": False, "inbound": [], "outbound": []},
 					},
 					"guest": {
@@ -905,6 +996,8 @@ class VirtualMachineDetailResponse(BaseModel):
 				public_network_throughput_mibps=(
 					desired.network.public_network_throughput_mibps if desired else 0
 				),
+				wireguard_gateway_access=bool(desired)
+				and desired.network.is_accessible_via_wireguard_gateway,
 				firewall=FirewallResponse.model_validate(
 					desired.network.firewall.as_dict()
 					if desired
@@ -954,3 +1047,48 @@ class ConsoleTokenResponse(BaseModel):
 	token: str = Field(description="Single-use console token.")
 	mode: Literal["tty", "ssh"] = Field(description="Console protocol opened by the token.")
 	expires_in: int = Field(ge=0, description="Seconds until the token expires.")
+
+
+class HostResponse(BaseModel):
+	"""One Metal host that people can be granted SSH access to."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+					"title": "metal-osa-2-1",
+					"status": "running",
+					"tags": {"rack": "r1"},
+				}
+			]
+		}
+	)
+
+	id: str = Field(description="Metal Server ID. Use it in the access routes.")
+	title: str = Field(description="Host name. People type it in `ssh <email>:<title>@warpgate.<domain>`.")
+	status: str = Field(description="Host lifecycle state.")
+	tags: dict[str, str] = Field(description="Host tags as key-value pairs.")
+
+
+class HostAccessGrantPayload(StrictModel):
+	"""Open one host, or every host, to one person until a time."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+	expires_at: datetime = Field(
+		description="End of the access, with a time zone. At most 24 hours away by default."
+	)
+
+
+class HostAccessRevokePayload(StrictModel):
+	"""Close one host, or every host, to one person now."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+
+
+class HostAccessResponse(BaseModel):
+	"""One active access grant."""
+
+	host_id: str = Field(description="Metal Server ID, or `all`.")
+	email: str = Field(description="Email of the person, in lowercase.")
+	expires_at: datetime = Field(description="End of the access.")

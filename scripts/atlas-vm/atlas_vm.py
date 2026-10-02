@@ -34,8 +34,12 @@ ROOTFS_URL = (
 	"ubuntu-24.04-server-cloudimg-amd64.squashfs"
 )
 ROOTFS_SHA256 = "bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
-# The Ubuntu kernel does not boot on the Firecracker device model. Use the CI kernel.
-KERNEL_URL = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/x86_64/vmlinux-5.10.223"
+# Firecracker boots only the uncompressed ELF kernel inside the Ubuntu vmlinuz.
+KERNEL_URL = (
+	"https://cloud-images.ubuntu.com/releases/noble/release-20260518/"
+	"unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
+)
+KERNEL_SHA256 = "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
 BOOT_ARGUMENTS = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw"
 VM_NAME = "atlas"
 BENCH_NAME = "atlas"
@@ -43,6 +47,9 @@ FIRECRACKER_VERSION = "v1.16.1"
 HOST_ADDRESS = "172.16.100.1"
 VM_ADDRESS = "172.16.100.2"
 FORWARD_PORTS = (80, 443)
+WARPGATE_SSH_PORT = 2223
+GATEWAY_PORT = 51821
+GATEWAY_DEVELOPER_ADDRESS = "172.16.100.3"
 SCALEWAY_ZONES = {
 	"fr-par-1",
 	"fr-par-2",
@@ -71,6 +78,7 @@ REQUIRED_COMMANDS = (
 	"ssh",
 	"scp",
 	"ssh-keygen",
+	"zstd",
 )
 SSH_OPTIONS = (
 	"-o",
@@ -130,6 +138,11 @@ class Settings:
 	disk_gib: int = 24
 	ssh_port: int = 2222
 	setup_script_url: str = ""
+	import_server_id: str = ""
+	import_storage_pool_device: str = ""
+	private_network_cidr: str = ""
+	developer_public_key: str = ""
+	has_warpgate: bool = False
 
 	@classmethod
 	def read(cls, path: Path) -> Settings:
@@ -147,13 +160,18 @@ class Settings:
 		branch = atlas.get("branch", "develop")
 		return cls(
 			path=path,
-			site=pilot["site"],
+			site=pilot.get("site", ""),
 			bench_user=pilot.get("user", "frappe"),
 			vcpu_count=int(vm.get("vcpu_count", 4)),
 			memory_mib=int(vm.get("memory_mib", 8192)),
 			disk_gib=int(vm.get("disk_gib", 24)),
 			ssh_port=int(vm.get("ssh_port", 2222)),
 			setup_script_url=f"{raw}/{branch}/scripts/atlas-vm/setup.py",
+			import_server_id=atlas.get("import_server_id", ""),
+			import_storage_pool_device=atlas.get("import_storage_pool_device", ""),
+			has_warpgate="warpgate" in atlas,
+			private_network_cidr=atlas.get("private_network_cidr", ""),
+			developer_public_key=document.get("gateway", {}).get("developer_public_key", ""),
 		)
 
 	def update_sizes(self, changes: dict[str, int]) -> None:
@@ -172,6 +190,12 @@ class Settings:
 
 def validate_configuration(document: dict, path: Path) -> None:
 	"""Reject an incomplete deployment configuration before the VM changes."""
+	if "gateway" in document:
+		_validate_keys(document, {"vm", "gateway", "atlas"}, path, "")
+		_validate_vm_configuration(document.get("vm", {}), path)
+		_required_string(document["gateway"], "developer_public_key", path, "gateway")
+		_required_string(_required_table(document, "atlas", path), "private_network_cidr", path, "atlas")
+		return
 	_validate_keys(document, {"vm", "pilot", "atlas", "image"}, path, "")
 	_validate_vm_configuration(document.get("vm", {}), path)
 	_validate_pilot_configuration(_required_table(document, "pilot", path), path)
@@ -214,11 +238,14 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 			"private_network_cidr",
 			"private_network_mtu",
 			"central_jwks_url",
+			"import_server_id",
+			"import_storage_pool_device",
 			"vm_scheduling",
 			"scaleway",
 			"aws",
 			"route53",
 			"letsencrypt",
+			"warpgate",
 		},
 		path,
 		"atlas",
@@ -228,7 +255,14 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 	for key in ("private_network_cidr", "private_network_mtu", "central_jwks_url"):
 		if key not in atlas:
 			raise AtlasVmError(f"{path}: atlas.{key} is required")
-	for key in ("repository", "branch", "base_url", "central_jwks_url"):
+	for key in (
+		"repository",
+		"branch",
+		"base_url",
+		"central_jwks_url",
+		"import_server_id",
+		"import_storage_pool_device",
+	):
 		if key in atlas and not isinstance(atlas[key], str):
 			raise AtlasVmError(f"{path}: atlas.{key} must be a string")
 	provider = atlas["server_provider"]
@@ -243,6 +277,11 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 	_validate_provider_configuration(atlas, path, provider)
 	_validate_route53_configuration(_required_table(atlas, "route53", path, "atlas"), path)
 	_validate_letsencrypt_configuration(_required_table(atlas, "letsencrypt", path, "atlas"), path)
+	if "warpgate" in atlas:
+		warpgate = _required_table(atlas, "warpgate", path, "atlas")
+		_validate_keys(warpgate, {"issuer_url", "client_id", "client_secret"}, path, "atlas.warpgate")
+		for key in ("issuer_url", "client_id", "client_secret"):
+			_required_string(warpgate, key, path, "atlas.warpgate")
 
 
 def _validate_vm_scheduling_configuration(scheduling: dict, path: Path) -> None:
@@ -426,7 +465,7 @@ def generate_password(length: int = 24) -> str:
 
 
 def find_host_key() -> Path:
-	"""The VM trusts the key this host already uses for Secure Shell."""
+	"""The VM trusts the key this host already uses for Secure Shell. A new host gets a root key."""
 	homes = [Path("/root")]
 	if os.environ.get("SUDO_USER"):
 		homes.append(Path("/home") / os.environ["SUDO_USER"])
@@ -435,7 +474,10 @@ def find_host_key() -> Path:
 			candidate = home / ".ssh" / name
 			if candidate.is_file() and candidate.with_suffix(".pub").is_file():
 				return candidate
-	raise AtlasVmError("no Secure Shell key pair for this host; create one with: ssh-keygen -t ed25519")
+	key = Path("/root/.ssh/id_ed25519")
+	key.parent.mkdir(mode=0o700, exist_ok=True)
+	run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)])
+	return key
 
 
 class GuestImage:
@@ -518,7 +560,7 @@ class Paths:
 
 	@property
 	def kernel_image(self) -> Path:
-		return self.downloads / "vmlinux"
+		return self.downloads / "vmlinux-6.8.0-117"
 
 	@property
 	def vm_directory(self) -> Path:
@@ -571,6 +613,25 @@ def download(url: str, path: Path, checksum: str = "") -> None:
 	detail(f"{size / 1024**2:.0f} MiB" if size >= 1024**2 else f"{size / 1024:.0f} KiB")
 
 
+def extract_kernel(vmlinuz: Path, path: Path) -> None:
+	if path.exists():
+		return
+	data = vmlinuz.read_bytes()
+	staged = path.with_suffix(".part")
+	with staged.open("wb") as output:
+		# zstd rejects the trailing bzImage data after it writes the kernel.
+		subprocess.run(
+			["zstd", "-cdq"],
+			input=data[data.find(b"\x28\xb5\x2f\xfd") :],
+			stdout=output,
+			stderr=subprocess.DEVNULL,
+		)
+	if staged.read_bytes()[:4] != b"\x7fELF":
+		staged.unlink()
+		raise AtlasVmError(f"{vmlinuz.name} holds no ELF kernel")
+	staged.rename(path)
+
+
 class ConsoleReader:
 	"""Follow the guest console. The kept lines explain a boot that never reaches Secure Shell."""
 
@@ -602,6 +663,36 @@ class ConsoleReader:
 			guest(line)
 
 
+GATEWAY_SCRIPT = r"""set -eu
+interface=atlas-gateway
+# The guest root file system has no modules for its kernel. WireGuard needs them.
+packages="wireguard-tools linux-modules-$(uname -r)"
+if ! dpkg -s $packages >/dev/null 2>&1; then
+	apt-get update -qq
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $packages >/dev/null
+fi
+install -d -m 700 /etc/wireguard
+[ -f /etc/wireguard/$interface.key ] || (umask 077 && wg genkey > /etc/wireguard/$interface.key)
+config="[Interface]
+ListenPort = $LISTEN_PORT
+PostUp = wg set %i private-key /etc/wireguard/$interface.key
+
+[Peer]
+PublicKey = $DEVELOPER_PUBLIC_KEY
+AllowedIPs = $DEVELOPER_ADDRESS/32"
+if [ "$(cat /etc/wireguard/$interface.conf 2>/dev/null || true)" != "$config" ]; then
+	(umask 077 && printf '%s\n' "$config" > /etc/wireguard/$interface.conf)
+	systemctl restart wg-quick@$interface
+fi
+systemctl enable --quiet wg-quick@$interface
+systemctl is-active --quiet wg-quick@$interface || systemctl restart wg-quick@$interface
+# The developer address is in the guest subnet, so the host masquerade carries it.
+printf 'net.ipv4.ip_forward = 1\nnet.ipv4.conf.eth0.proxy_arp = 1\n' > /etc/sysctl.d/99-atlas-gateway.conf
+sysctl -q -p /etc/sysctl.d/99-atlas-gateway.conf
+wg show $interface public-key
+"""
+
+
 NETWORK_SCRIPT_BODY = r"""
 # Each forward matches the host address, because a match on the port alone also
 # captures traffic that another guest sends through this host to a remote server.
@@ -613,9 +704,16 @@ rules() {
 	[[ -n $uplink_address ]] || { echo "$uplink has no IPv4 address" >&2; exit 1; }
 
 	echo "-t nat -A POSTROUTING -s $vm_address/32 -o $uplink -j MASQUERADE"
+	# The guest subnet reaches the provider private network behind this host.
+	if [[ -n $private_network_cidr ]]; then
+		echo "-t nat -I POSTROUTING -s ${host_address%.*}.0/24 -d $private_network_cidr -j MASQUERADE"
+	fi
+	for pair in $udp_forwards; do
+		echo "-t nat -A PREROUTING -d $uplink_address -p udp --dport ${pair%%:*} -j DNAT --to-destination $vm_address:${pair##*:}"
+	done
 	echo "-t nat -A POSTROUTING -s 127.0.0.0/8 -d $vm_address -j SNAT --to-source $host_address"
-	echo "-I FORWARD -i $tap_device -j ACCEPT"
-	echo "-I FORWARD -o $tap_device -j ACCEPT"
+	echo "-t filter -I FORWARD -i $tap_device -j ACCEPT"
+	echo "-t filter -I FORWARD -o $tap_device -j ACCEPT"
 	for pair in $forwards; do
 		host_port=${pair%%:*}
 		guest_port=${pair##*:}
@@ -689,7 +787,10 @@ class VirtualMachine:
 
 	@property
 	def port_forwards(self) -> list[tuple[int, int]]:
-		return [(self.settings.ssh_port, 22)] + [(port, port) for port in FORWARD_PORTS]
+		ports = () if self.settings.developer_public_key else FORWARD_PORTS
+		if self.settings.has_warpgate:
+			ports = (*ports, WARPGATE_SSH_PORT)
+		return [(self.settings.ssh_port, 22)] + [(port, port) for port in ports]
 
 	def ssh_arguments(self, command: list[str] | None = None) -> list[str]:
 		arguments = [
@@ -730,6 +831,7 @@ class VirtualMachine:
 
 	def write_network_script(self) -> None:
 		forwards = " ".join(f"{host}:{guest}" for host, guest in self.port_forwards)
+		cidr = self.settings.private_network_cidr
 		header = f"""#!/usr/bin/env bash
 # Host network for the {VM_NAME} VM. Generated by atlas-vm.
 set -euo pipefail
@@ -738,6 +840,8 @@ tap_device={self.tap_device}
 host_address={HOST_ADDRESS}
 vm_address={VM_ADDRESS}
 forwards="{forwards}"
+udp_forwards="{f"{GATEWAY_PORT}:{GATEWAY_PORT}" if self.settings.developer_public_key else ""}"
+private_network_cidr="{cidr}"
 """
 		write_file(self.paths.network_script, header + NETWORK_SCRIPT_BODY, mode=0o755)
 
@@ -779,6 +883,7 @@ Wants=network-online.target
 
 [Service]
 Type=exec
+ExecStartPre=/bin/rm -f {self.paths.api_socket}
 ExecStartPre={self.paths.network_script} start
 ExecStart={self.paths.firecracker_binary} --api-sock {self.paths.api_socket} --config-file {self.paths.configuration}
 ExecStopPost={self.paths.network_script} stop
@@ -792,6 +897,7 @@ WantedBy=multi-user.target
 """,
 		)
 		run(["systemctl", "daemon-reload"])
+		run(["systemctl", "enable", "--quiet", SERVICE_NAME])
 
 	def install_firecracker(self) -> None:
 		if self.paths.firecracker_binary.exists():
@@ -888,6 +994,42 @@ WantedBy=multi-user.target
 		if process.returncode != 0:
 			raise AtlasVmError(f"setup.py failed; read {self.paths.setup_log}")
 
+	def setup_gateway(self) -> None:
+		"""Relay the developer WireGuard link to the provider private network."""
+		step("set up the development gateway")
+		environment = f"DEVELOPER_PUBLIC_KEY={shlex.quote(self.settings.developer_public_key)} LISTEN_PORT={GATEWAY_PORT} DEVELOPER_ADDRESS={GATEWAY_DEVELOPER_ADDRESS}"
+		result = subprocess.run(
+			self.ssh_arguments([f"{environment} bash -s"]),
+			input=GATEWAY_SCRIPT,
+			capture_output=True,
+			text=True,
+		)
+		if result.returncode != 0:
+			raise AtlasVmError(f"gateway setup failed: {result.stdout[-500:]}{result.stderr[-500:]}")
+		print(f"gateway public key: {result.stdout.strip().splitlines()[-1]}")
+
+	def import_host(self) -> None:
+		"""Add this host to Atlas as a Metal Server. Atlas connects to it with the key of its bench user."""
+		settings = self.settings
+		if not settings.import_server_id:
+			return
+
+		step(f"import this host as Metal Server {settings.import_server_id}")
+		result = subprocess.run(
+			self.ssh_arguments([f"ssh-keygen -y -f /home/{settings.bench_user}/.ssh/id_ed25519"]),
+			capture_output=True,
+			text=True,
+		)
+		if result.returncode != 0:
+			raise AtlasVmError(f"could not read the Atlas SSH key in the VM: {result.stderr.strip()}")
+		authorize_root_key(result.stdout.strip())
+
+		command = f"pilot frappe --site {settings.site} import-metal-server {shlex.quote(settings.import_server_id)}"
+		if settings.import_storage_pool_device:
+			command += f" --storage-pool-device {shlex.quote(settings.import_storage_pool_device)}"
+		if self.run_as_bench(f"{command} --bench {BENCH_NAME}") != 0:
+			raise AtlasVmError("Atlas could not import this host")
+
 
 DESTROY_WARNING = """DANGER: this deletes the VM in {directory}. The bench, every site, every
 database, and every file in the guest disk are gone for ever. There is no
@@ -916,6 +1058,17 @@ def require_host_support() -> None:
 		raise AtlasVmError("no /dev/kvm on this host")
 	if os.uname().machine != "x86_64":
 		raise AtlasVmError("this CLI supports x86_64 only")
+
+
+def authorize_root_key(public_key: str) -> None:
+	"""Let one key log in as root. The host firewall later limits SSH to wg0 and the private network."""
+	ssh_directory = Path("/root/.ssh")
+	ssh_directory.mkdir(mode=0o700, exist_ok=True)
+	authorized_keys = ssh_directory / "authorized_keys"
+	lines = authorized_keys.read_text().splitlines() if authorized_keys.exists() else []
+	if public_key not in lines:
+		authorized_keys.write_text("\n".join([*lines, public_key]) + "\n")
+	authorized_keys.chmod(0o600)
 
 
 def install_self() -> None:
@@ -949,7 +1102,8 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 		warn(f"{paths.base} has {free_gib}G free for a {machine.settings.disk_gib}G guest disk")
 
 	machine.install_firecracker()
-	download(KERNEL_URL, paths.kernel_image)
+	download(KERNEL_URL, paths.downloads / "vmlinuz", KERNEL_SHA256)
+	extract_kernel(paths.downloads / "vmlinuz", paths.kernel_image)
 
 	if arguments.rebuild and paths.rootfs_image.exists():
 		print(DESTROY_WARNING.format(directory=paths.vm_directory), file=sys.stderr)
@@ -969,8 +1123,11 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 	install_self()
 
 	machine.start(arguments.verbose)
-	if not arguments.skip_setup:
+	if machine.settings.developer_public_key:
+		machine.setup_gateway()
+	elif not arguments.skip_setup:
 		machine.run_setup(arguments.script)
+		machine.import_host()
 	command_status(machine, arguments)
 
 
@@ -1041,7 +1198,11 @@ def command_logs(machine: VirtualMachine, arguments: argparse.Namespace) -> None
 def command_setup(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
 		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
+	if machine.settings.developer_public_key:
+		machine.setup_gateway()
+		return
 	machine.run_setup(arguments.script)
+	machine.import_host()
 
 
 def command_reset_password(machine: VirtualMachine, arguments: argparse.Namespace) -> None:

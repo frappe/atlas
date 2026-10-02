@@ -1,6 +1,6 @@
 # Atlas Repository Specification
 
-Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe app and four components in one Git repository.
+Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe app and six other components in one Git repository.
 
 ## Components
 
@@ -11,6 +11,8 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | [HTTP proxy](services/http-proxy/SPEC.md) | `services/http-proxy/` | Regional proxy |
 | [IPv6 router](services/ipv6-router/SPEC.md) | `services/ipv6-router/` | Public IPv6 translation |
 | [WG Mesh](services/wg-mesh/SPEC.md) | `services/wg-mesh/` | Private VM network |
+| [WG gateway](services/wg-gateway/SPEC.md) | `services/wg-gateway/` | Customer access to tenant VMs |
+| [Control cluster](services/control-cluster/SPEC.md) | `services/control-cluster/` | Authentication and replication for service control daemons |
 
 `clients/` holds the generated [API clients](docs/interfaces/api-clients.md). `llm/` and `.greptile/` hold review rules. `.vitepress/` builds the docs site.
 
@@ -30,4 +32,6 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | Atlas | Every pull request |
 | Metal | `metal/` |
 | WG Mesh | `services/wg-mesh/` |
+| Control cluster | `services/control-cluster/` |
+| WireGuard gateway | `services/wg-gateway/` and `services/control-cluster/` |
 | HTTP proxy | `services/http-proxy/` and the proxy API client |
