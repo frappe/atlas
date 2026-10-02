@@ -18,6 +18,7 @@ class ServicePackage:
 	"""A service component that Atlas archives, publishes, and installs on a virtual machine."""
 
 	name: str
+	settings_prefix: str
 	label: str
 	setup_script: str
 	# Sibling components that the archive carries below `<name>/<component>/`.
@@ -26,12 +27,12 @@ class ServicePackage:
 	@property
 	def settings_file_field(self) -> str:
 		"""Return the Atlas Settings field that links the published File."""
-		return f"{self.name.replace('-', '_')}_package_file"
+		return f"{self.settings_prefix}_package_file"
 
 	@property
 	def settings_hash_field(self) -> str:
 		"""Return the Atlas Settings field that holds the archive digest."""
-		return f"{self.name.replace('-', '_')}_package_hash"
+		return f"{self.settings_prefix}_package_hash"
 
 	@property
 	def component_path(self) -> Path:
@@ -129,11 +130,11 @@ class ServicePackage:
 
 
 HTTP_PROXY_PACKAGE = ServicePackage(
-	"http-proxy", "HTTP proxy package", "nginx/setup.sh", ("control-cluster",)
+	"http-proxy", "http_proxy", "HTTP proxy package", "nginx/setup.sh", ("control-cluster",)
 )
-IPV6_ROUTER_PACKAGE = ServicePackage("ipv6-router", "IPv6 router package", "setup.sh")
+IPV6_ROUTER_PACKAGE = ServicePackage("ipv6-router", "ipv6_router", "IPv6 router package", "setup.sh")
 WG_GATEWAY_PACKAGE = ServicePackage(
-	"wg-gateway", "WireGuard gateway package", "setup.sh", ("control-cluster",)
+	"wg-gateway", "wireguard_gateway", "WireGuard gateway package", "setup.sh", ("control-cluster",)
 )
 SERVICE_PACKAGES = (HTTP_PROXY_PACKAGE, IPV6_ROUTER_PACKAGE, WG_GATEWAY_PACKAGE)
 
