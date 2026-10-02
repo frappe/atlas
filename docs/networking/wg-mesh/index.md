@@ -6,7 +6,7 @@ This page lists the exact rules and state of WG Mesh. Read [how VMs reach each o
 
 | Range | Use |
 | --- | --- |
-| `fdaa::/16` | VM addresses: `fdaa \| region 16 bits \| tenant 32 bits \| VM ID 64 bits`. |
+| `fdaa::/16` | VM addresses: `fdaa \| region 16 bits \| tenant 32 bits \| padding 48 bits \| VM 16 bits`. See [address formats](../address-formats.md). |
 | `fdab::/16` | Host WireGuard addresses. |
 
 For example, `fdaa:1:0:2::3` is region `1`, tenant `2`, VM `3`. The data path reads the tenant field for isolation.

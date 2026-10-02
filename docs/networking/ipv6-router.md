@@ -24,7 +24,7 @@ private = fdaa | region 16 bits | tenant 32 bits | padding 48 bits | VM 16 bits
 
 For block `2001:db8:1:2:3::/80`, mesh address `fdaa:1:0:2a::7` maps to `2001:db8:1:2:3:0:2a:7`. The tenant and the VM number keep their own hextets.
 
-The block must be inside `2000::/3`, with a prefix from `/3` to `/80`. In a shorter block, the bits between the block and the host part are zero. A mesh address with padding, such as the Atlas address, has no public address.
+The block must be inside `2000::/3`, with a prefix from `/3` to `/80`. In a shorter block, the bits between the block and the host part are zero. A mesh address with padding, such as the Atlas address, has no public address. See [address formats](address-formats.md).
 
 ::: details Try the IPv6 address mapping in Python
 

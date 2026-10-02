@@ -55,7 +55,7 @@ The gateway eBPF filters drop a packet unless the device and the VM belong to th
 fdac | region 16 | node 16 | tenant 32 | padding 32 | client 16
 ```
 
-Each node owns one `fdac:<region>:<node>::/48`. Atlas reserves `fdaa::/16`, `fdab::/16`, and `fdac::/16`. A customer network that uses one of these ranges conflicts with the routes of its devices, so it must use another range.
+Each node owns one `fdac:<region>:<node>::/48`. See [address formats](address-formats.md#wireguard-gateway-peer). Atlas reserves `fdaa::/16`, `fdab::/16`, and `fdac::/16`. A customer network that uses one of these ranges conflicts with the routes of its devices, so it must use another range.
 
 ## Add a node
 

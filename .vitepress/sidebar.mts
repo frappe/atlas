@@ -56,6 +56,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 					{ text: 'Benchmarks', link: '/docs/networking/wg-mesh/benchmarks' },
 				],
 			},
+			{ text: 'Address formats', link: '/docs/networking/address-formats' },
 			{ text: 'Host networking', link: '/docs/networking/host-networking' },
 			{ text: 'Public IPs', link: '/docs/networking/public-ips' },
 			{

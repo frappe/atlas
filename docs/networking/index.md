@@ -41,10 +41,10 @@ Atlas itself is one more `wg0` peer on each host, outside the mesh peer list. Ho
 Each VM gets a stable address. The Atlas app derives it when it creates the VM:
 
 ```text
-fdaa : region : tenant : VM number
+fdaa : region : tenant : padding : VM number
 ```
 
-For example, `fdaa:1:0:2::3` is VM `3` of tenant `2` in region `1`.
+For example, `fdaa:1:0:2::3` is VM `3` of tenant `2` in region `1`. See [address formats](address-formats.md) for every layout.
 
 The address stays with the VM when it moves. WG Mesh checks a learned host location for each packet and starts a lookup when it has no valid entry.
 
