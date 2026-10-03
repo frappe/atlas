@@ -158,8 +158,9 @@ class WarpgateInstaller:
 		self.first_setup()
 		is_changed = self.write_config() or is_changed
 		self.start_service(is_changed)
+		role = self.ensure_atlas_role()
 		if not PASSWORD_FILE.exists():
-			self.create_atlas_user()
+			self.create_atlas_user(role)
 		self.configure_nginx()
 		return {"warpgate_url": URL, **self.issue_token()}
 
@@ -281,16 +282,20 @@ class WarpgateInstaller:
 				time.sleep(1)
 		raise SystemExit("Warpgate did not start; read: journalctl -u warpgate")
 
-	def create_atlas_user(self) -> None:
-		"""Create the atlas user with the atlas-sync admin role, reusing what a failed run created."""
-		step("Warpgate atlas user")
+	def ensure_atlas_role(self) -> dict:
+		"""Create or update the atlas-sync admin role, so a running region gets new permissions."""
 		admin = Session("admin", ADMIN_PASSWORD_FILE.read_text().strip())
 		role_data = {"name": "atlas-sync", **ATLAS_PERMISSIONS}
 		role = admin.find("/admin-roles", "name", "atlas-sync")
 		if role:
 			admin.call("PUT", f"{ADMIN_API}/admin-roles/{role['id']}", role_data)
-		else:
-			role = admin.call("POST", f"{ADMIN_API}/admin-roles", role_data)
+			return role
+		return admin.call("POST", f"{ADMIN_API}/admin-roles", role_data)
+
+	def create_atlas_user(self, role: dict) -> None:
+		"""Create the atlas user with the atlas-sync admin role, reusing what a failed run created."""
+		step("Warpgate atlas user")
+		admin = Session("admin", ADMIN_PASSWORD_FILE.read_text().strip())
 		user = admin.find("/users", "username", "atlas") or admin.call(
 			"POST", f"{ADMIN_API}/users", {"username": "atlas"}
 		)
