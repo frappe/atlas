@@ -33,6 +33,8 @@ type fakeRuntime struct {
 	saveError      error
 	deleteError    error
 	coldStartError error
+	usage          Usage
+	usageError     error
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
@@ -134,13 +136,19 @@ func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHConn
 	return nil, nil
 }
 
-type fakeNetwork struct {
-	ensures  int
-	releases int
+func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (Usage, error) {
+	return runtime.usage, runtime.usageError
 }
 
-func (network *fakeNetwork) Ensure(context.Context, NetworkRequest) (NetworkInterface, error) {
+type fakeNetwork struct {
+	ensures     int
+	releases    int
+	lastRequest NetworkRequest
+}
+
+func (network *fakeNetwork) Ensure(_ context.Context, request NetworkRequest) (NetworkInterface, error) {
 	network.ensures++
+	network.lastRequest = request
 	return NetworkInterface{MACAddress: "06:00:ac:10:00:02"}, nil
 }
 

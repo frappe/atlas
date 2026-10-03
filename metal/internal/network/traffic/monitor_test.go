@@ -15,6 +15,8 @@ type fakeTrafficHooks struct {
 	packetTimes   map[uint32]uint64
 	cleared       []uint32
 	watching      map[uint32]bool
+	rxCounters    map[uint32]TrafficCounters
+	txCounters    map[uint32]TrafficCounters
 	events        chan uint32
 	readerClosed  chan struct{}
 	closeOnce     sync.Once
@@ -26,6 +28,8 @@ func newFakeTrafficHooks() *fakeTrafficHooks {
 	return &fakeTrafficHooks{
 		packetTimes:  make(map[uint32]uint64),
 		watching:     make(map[uint32]bool),
+		rxCounters:   make(map[uint32]TrafficCounters),
+		txCounters:   make(map[uint32]TrafficCounters),
 		events:       make(chan uint32, 1),
 		readerClosed: make(chan struct{}),
 	}
@@ -62,8 +66,14 @@ func (hooks *fakeTrafficHooks) setWatching(userID uint32, watching bool) error {
 func (hooks *fakeTrafficHooks) clear(userID uint32) error {
 	delete(hooks.packetTimes, userID)
 	delete(hooks.watching, userID)
+	delete(hooks.rxCounters, userID)
+	delete(hooks.txCounters, userID)
 	hooks.cleared = append(hooks.cleared, userID)
 	return nil
+}
+
+func (hooks *fakeTrafficHooks) readTrafficCounters(userID uint32) (TrafficCounters, TrafficCounters, error) {
+	return hooks.rxCounters[userID], hooks.txCounters[userID], nil
 }
 
 func (hooks *fakeTrafficHooks) readEvent() (uint32, error) {
@@ -128,6 +138,35 @@ func TestMonitorSamplesTrafficAndPublishesAnEvent(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("traffic event was not published")
+	}
+}
+
+func TestMonitorCountersReadsBothDirections(t *testing.T) {
+	monitor, hooks := newTestMonitor(t)
+	target := Target{VirtualMachineID: "vm-1", UserID: 1001}
+	if err := monitor.Attach(AttachmentRequest{Target: target, InterfaceName: "tap0"}); err != nil {
+		t.Fatal(err)
+	}
+	hooks.rxCounters[target.UserID] = TrafficCounters{Bytes: 4096, Packets: 4}
+	hooks.txCounters[target.UserID] = TrafficCounters{Bytes: 512, Packets: 2}
+
+	received, sent, err := monitor.GetTrafficCounters(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received != (TrafficCounters{Bytes: 4096, Packets: 4}) {
+		t.Fatalf("received = %+v", received)
+	}
+	if sent != (TrafficCounters{Bytes: 512, Packets: 2}) {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestMonitorCountersRejectsAnUnknownTarget(t *testing.T) {
+	monitor, _ := newTestMonitor(t)
+	_, _, err := monitor.GetTrafficCounters(Target{VirtualMachineID: "vm-1", UserID: 1001})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want %v", err, ErrNotFound)
 	}
 }
 

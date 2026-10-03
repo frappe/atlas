@@ -26,6 +26,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker"
 	"github.com/frappe/atlas/metal/internal/host"
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network"
 	traffic "github.com/frappe/atlas/metal/internal/network/traffic"
 	platform "github.com/frappe/atlas/metal/internal/platform"
@@ -275,7 +276,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		}
 		daemon.OwnTrafficMonitor(trafficMonitor)
 	}
-	networkManager := network.NewLinuxAllocator(mesh, trafficMonitor)
+	networkManager := network.NewLinuxAllocator(mesh, trafficMonitor, logger)
 	virtualMachineRuntime := firecracker.NewRuntime(
 		options.cfg,
 		units,
@@ -350,6 +351,12 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
 	}
+	metricsStore, err := metrics.NewStore(filepath.Join(options.baseDir, "metrics"))
+	if err != nil {
+		return fmt.Errorf("configure metrics store: %w", err)
+	}
+	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, hostService, logger)
+
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)
 		if err != nil {
@@ -397,6 +404,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		WakeReconciler:        notifyReconcilers,
 		HostService:           hostService,
 		SerialBroker:          serialBroker,
+		MetricsStore:          metricsStore,
 	})
 	if err != nil {
 		return fmt.Errorf("configure API: %w", err)
@@ -419,6 +427,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
+	daemon.StartWorker(metricsSampler.Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
 	}

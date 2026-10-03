@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -329,6 +330,26 @@ def virtual_machine_response() -> dict:
 	}
 
 
+def virtual_machine_metrics_response() -> dict:
+	"""Return the metrics body the metrics route answers with."""
+	return {
+		"samples": [
+			{
+				"timestamp": "2026-09-30T10:00:00Z",
+				"up": True,
+				"compute": {"cpu_microseconds": 42_000_000, "memory_bytes": 536870912},
+				"disk": {"size_mib": 10240, "used_mib": 5},
+				"network": {
+					"received_bytes": 0,
+					"received_packets": 0,
+					"sent_bytes": 2232,
+					"sent_packets": 30,
+				},
+			}
+		]
+	}
+
+
 COMPUTE_REQUEST = {
 	"cpu_millicores": 2000,
 	"memory_mib": 2048,
@@ -425,6 +446,29 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 		self.assertEqual(bodies[4], network)
 		self.assertEqual(bodies[5], {"ssh_keys": ["ssh-ed25519 AAAA"]})
 		self.assertEqual(bodies[6], {"metadata": {"env": "prod"}})
+
+	def test_get_metrics_reads_the_metrics_route(self) -> None:
+		client = build_client()
+
+		with patch(
+			"atlas.vm.core.metal_client.requests.Session.request",
+			return_value=build_response(200, virtual_machine_metrics_response()),
+		) as request:
+			metrics = client.get_virtual_machine_metrics(
+				"VM-00001",
+				start=datetime.fromisoformat("2026-09-29T18:00:00+05:30"),
+				end=datetime.fromisoformat("2026-09-30T10:00:00Z"),
+			)
+
+		self.assertEqual(request.call_args.args[:2], ("GET", "https://10.0.0.2:9000/v1/vms/VM-00001/metrics"))
+		self.assertEqual(
+			request.call_args.kwargs["params"],
+			{"start": "2026-09-29T18:00:00+05:30", "end": "2026-09-30T10:00:00+00:00"},
+		)
+		self.assertEqual(metrics.samples[0].compute.cpu_microseconds, 42_000_000)
+		self.assertEqual(metrics.samples[0].compute.memory_bytes, 536870912)
+		self.assertEqual(metrics.samples[0].disk.size_mib, 10240)
+		self.assertEqual(metrics.samples[0].network.sent_packets, 30)
 
 	def test_snapshot_calls_use_unified_image_paths(self) -> None:
 		client = build_client()

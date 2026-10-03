@@ -69,16 +69,21 @@ from .snapshot_payload_tags import SnapshotPayloadTags
 from .ssh_keys_replacement_payload import SSHKeysReplacementPayload
 from .termination_protection_payload import TerminationProtectionPayload
 from .virtual_machine_compute import VirtualMachineCompute
+from .virtual_machine_compute_usage import VirtualMachineComputeUsage
 from .virtual_machine_detail_response import VirtualMachineDetailResponse
 from .virtual_machine_detail_response_architecture import VirtualMachineDetailResponseArchitecture
 from .virtual_machine_detail_response_tags import VirtualMachineDetailResponseTags
 from .virtual_machine_disk import VirtualMachineDisk
+from .virtual_machine_disk_usage import VirtualMachineDiskUsage
 from .virtual_machine_guest import VirtualMachineGuest
 from .virtual_machine_guest_metadata import VirtualMachineGuestMetadata
 from .virtual_machine_list_response import VirtualMachineListResponse
 from .virtual_machine_list_response_architecture import VirtualMachineListResponseArchitecture
 from .virtual_machine_list_response_tags import VirtualMachineListResponseTags
+from .virtual_machine_metrics_response import VirtualMachineMetricsResponse
+from .virtual_machine_metrics_sample import VirtualMachineMetricsSample
 from .virtual_machine_network import VirtualMachineNetwork
+from .virtual_machine_network_usage import VirtualMachineNetworkUsage
 from .virtual_machine_response import VirtualMachineResponse
 from .virtual_machine_response_architecture import VirtualMachineResponseArchitecture
 from .virtual_machine_response_tags import VirtualMachineResponseTags
@@ -154,16 +159,21 @@ __all__ = (
     "SSHKeysReplacementPayload",
     "TerminationProtectionPayload",
     "VirtualMachineCompute",
+    "VirtualMachineComputeUsage",
     "VirtualMachineDetailResponse",
     "VirtualMachineDetailResponseArchitecture",
     "VirtualMachineDetailResponseTags",
     "VirtualMachineDisk",
+    "VirtualMachineDiskUsage",
     "VirtualMachineGuest",
     "VirtualMachineGuestMetadata",
     "VirtualMachineListResponse",
     "VirtualMachineListResponseArchitecture",
     "VirtualMachineListResponseTags",
+    "VirtualMachineMetricsResponse",
+    "VirtualMachineMetricsSample",
     "VirtualMachineNetwork",
+    "VirtualMachineNetworkUsage",
     "VirtualMachineResponse",
     "VirtualMachineResponseArchitecture",
     "VirtualMachineResponseTags",

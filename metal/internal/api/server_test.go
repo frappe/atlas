@@ -11,9 +11,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/host"
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -24,6 +26,7 @@ type fakeVM struct {
 }
 
 type fakeVirtualMachineManager struct {
+	metricsStore    *metrics.Store
 	virtualMachines map[string]*fakeVM
 	listError       error
 	services        *fakeRuntimeServices
@@ -347,7 +350,9 @@ func newServerWithServices(
 ) http.Handler {
 	t.Helper()
 
+	store := newTestMetricsStore(t)
 	if manager, ok := virtualMachineManager.(*fakeVirtualMachineManager); ok {
+		manager.metricsStore = store
 		manager.services = services
 	}
 	hostService, err := host.NewService(host.Dependencies{
@@ -358,6 +363,7 @@ func newServerWithServices(
 		t.Fatal(err)
 	}
 	server, err := New(Config{}, Dependencies{
+		MetricsStore:          store,
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      &stubMigrationManager{},
 		SnapshotStore:         services,
@@ -399,6 +405,50 @@ const (
 	validCreateRequest = `{"compute":{"cpu_millicores":1000,"memory_mib":512},"disk":{"size_mib":1024,"throughput_mibps":0,"iops":0},"image":{"ref":"ubuntu","architecture":"amd64","rootfs":{"url":"https://atlas.example/ubuntu.ext4?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"kernel":{"url":"https://atlas.example/vmlinux?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"network":{"wireguard_mesh_ipv6":"fdaa:1:0:7::1","routes":[{"destination":"0.0.0.0/0","via":"host"}],"firewall":{"enabled":false,"inbound":[],"outbound":[]}},"guest":{"hostname":"vm1","ssh_keys":[],"metadata":{},"user_data":""}}`
 	validSSHKey        = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA user@example"
 )
+
+func TestGetVirtualMachineMetricsReturnsUsage(t *testing.T) {
+	manager := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
+	server := newServer(t, manager)
+	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+	usage := vm.Metrics{
+		DiskMiB:              1024,
+		DiskUsedMiB:          128,
+		CPUUsageMicroseconds: 42_000_000,
+		MemoryBytes:          536870912,
+		ReceivedBytes:        2048,
+		ReceivedPackets:      4,
+		SentBytes:            1024,
+		SentPackets:          2,
+	}
+
+	if err := manager.metricsStore.Append("vm:vm1", metrics.Record{Timestamp: time.Now().Add(-time.Minute), VM: &usage}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := do(t, server, http.MethodGet, "/v1/vms/vm1/metrics", "", http.StatusOK)
+	var response virtualMachineMetricsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Samples) != 1 {
+		t.Fatalf("samples = %+v", response.Samples)
+	}
+	sample := response.Samples[0]
+	if sample.Compute.CPUMicroseconds != 42_000_000 || sample.Compute.MemoryBytes != 536870912 {
+		t.Fatalf("compute = %+v", sample.Compute)
+	}
+	if sample.Disk.SizeMiB != 1024 || sample.Disk.UsedMiB != 128 {
+		t.Fatalf("disk = %+v", sample.Disk)
+	}
+	if sample.Network.ReceivedBytes != 2048 || sample.Network.ReceivedPackets != 4 ||
+		sample.Network.SentBytes != 1024 || sample.Network.SentPackets != 2 {
+		t.Fatalf("network = %+v", sample.Network)
+	}
+}
+
+func TestGetVirtualMachineMetricsRejectsAMissingVirtualMachine(t *testing.T) {
+	server := newTestServer(t)
+	do(t, server, http.MethodGet, "/v1/vms/missing/metrics", "", http.StatusNotFound)
+}
 
 func TestReplaceSSHKeysReturnsUpdatedVirtualMachine(t *testing.T) {
 	server := newTestServer(t)
@@ -1191,5 +1241,57 @@ func TestRemovedSnapshotAndImageRoutesReturnNotFound(t *testing.T) {
 		{http.MethodPost, "/v1/vms/vm1/snapshots/snapshot-1/restore"},
 	} {
 		do(t, server, request.method, request.path, "", http.StatusNotFound)
+	}
+}
+
+func newTestMetricsStore(t *testing.T) *metrics.Store {
+	t.Helper()
+	store, err := metrics.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestMetricsHistoryQuery(t *testing.T) {
+	manager := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
+	server := newServer(t, manager)
+	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, age := range []time.Duration{25 * time.Hour, 2 * time.Hour, time.Hour} {
+		usage := vm.Metrics{MemoryBytes: uint64(age / time.Hour)}
+		if err := manager.metricsStore.Append("vm:vm1", metrics.Record{Timestamp: now.Add(-age), VM: &usage}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usage := vm.Metrics{MemoryBytes: 999}
+	if err := manager.metricsStore.Append("vm:another", metrics.Record{Timestamp: now.Add(-time.Hour), VM: &usage}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/vms/vm1/metrics?start=" + now.Add(-2*time.Hour).Format(time.RFC3339) + "&end=" + now.Add(-time.Hour).Format(time.RFC3339)
+	response := do(t, server, http.MethodGet, path, "", http.StatusOK)
+	var history virtualMachineMetricsResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Samples) != 1 || history.Samples[0].Compute.MemoryBytes != 2 {
+		t.Fatalf("history = %+v", history)
+	}
+	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics", "", http.StatusOK)
+	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Samples) != 2 {
+		t.Fatalf("retention = %+v", history)
+	}
+	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z"} {
+		do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?"+query, "", http.StatusBadRequest)
+	}
+	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?start=2000-01-01T00:00:00Z&end=2000-01-02T00:00:00Z", "", http.StatusOK)
+	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if history.Samples == nil || len(history.Samples) != 0 {
+		t.Fatalf("empty = %+v", history)
 	}
 }

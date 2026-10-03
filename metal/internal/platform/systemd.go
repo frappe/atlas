@@ -30,6 +30,8 @@ type UnitManager interface {
 
 	// SetLimits applies resource limits to the running unit.
 	SetLimits(ctx context.Context, id string, limits Limits) error
+
+	GetUsage(ctx context.Context, id string) (Usage, error)
 }
 
 // Status describes one systemd unit.

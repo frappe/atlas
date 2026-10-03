@@ -24,6 +24,9 @@ type NetworkRequest struct {
 	GroupID          uint32
 	Configuration    NetworkConfiguration
 	TrackTraffic     bool
+	// RequireTrafficMonitor fails the request when traffic monitoring cannot
+	// attach. Idle-shutdown needs this; metrics collection alone does not.
+	RequireTrafficMonitor bool
 }
 
 // NetworkReleaseRequest identifies host network resources to remove.
