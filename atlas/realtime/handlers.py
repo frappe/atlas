@@ -26,7 +26,8 @@ MAXIMUM_CONSOLE_INPUT_BYTES = 64 * 1024
 
 def _tls_context(site: str) -> ssl.SSLContext:
 	"""Return the client context that authenticates Atlas to Metal."""
-	directory = Path(frappe.local.sites_path, site, *TLS_DIRECTORY)
+	# The realtime server runs in sites/ without a Frappe context.
+	directory = Path(getattr(frappe.local, "sites_path", "."), site, *TLS_DIRECTORY)
 	context = ssl.create_default_context(cafile=str(directory / "ca.crt"))
 	context.load_cert_chain(str(directory / "atlas.crt"), str(directory / "atlas.key"))
 	return context
@@ -36,7 +37,7 @@ def _cache() -> redis.Redis:
 	"""Return the shared Redis cache client."""
 	global _redis_client
 	if _redis_client is None:
-		url = frappe.get_common_site_config(sites_path=frappe.local.sites_path)["redis_cache"]
+		url = frappe.get_common_site_config()["redis_cache"]
 		_redis_client = redis.from_url(url)
 	return _redis_client
 
