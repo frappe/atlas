@@ -16,6 +16,7 @@ CLIENT_PREFIX = 0xFDAC
 MESH_PREFIX = 0xFDAA
 TENANT_LIMIT = (1 << 32) - 1
 CLIENT_LIMIT = (1 << 16) - 1
+NODE_LIMIT = (1 << 16) - 1
 PUBLIC_KEY_PATTERN = re.compile(r"[A-Za-z0-9+/]{43}=")
 NODE_ID_PATTERN = re.compile(r"wireguard-[0-9]{3,5}")
 INTERFACE = "wg0"
@@ -134,6 +135,8 @@ class PeerState:
 		A restored table can hold devices of an archived node until an operator removes them."""
 		if not isinstance(value, dict) or not NODE_ID_PATTERN.fullmatch(str(value.get("node_id", ""))):
 			raise HTTPException(status_code=400, detail="a peer needs a public_key and a node_id")
+		if int(str(value["node_id"]).rsplit("-", 1)[-1]) > NODE_LIMIT:
+			raise HTTPException(status_code=400, detail="a node number fits in sixteen bits")
 		if is_current_node_required and value["node_id"] not in self.nodes:
 			raise HTTPException(status_code=400, detail=f"node {value['node_id']} is not a cluster member")
 		peer = {"public_key": str(value.get("public_key", "")), "node_id": str(value["node_id"])}
