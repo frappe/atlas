@@ -24,22 +24,22 @@ class ListedPeer:
     """ One registered peer and the node that serves it.
 
         Attributes:
+            tenant_id (int): Tenant of the peer.
+            client_id (int): Peer number within the tenant.
             address (str): Interface address of the peer.
             allowed_ips (list[str]): The VM addresses of the tenant. The peer puts them in its own AllowedIPs.
-            client_id (int): Peer number within the tenant.
             endpoint (str): Node that serves the peer. Empty when that node was archived.
-            node_id (str): Node that serves the peer.
             public_key (str): Public key of that node. Empty when that node was archived.
-            tenant_id (int): Tenant of the peer.
+            node_id (str): Node that serves the peer.
      """
 
+    tenant_id: int
+    client_id: int
     address: str
     allowed_ips: list[str]
-    client_id: int
     endpoint: str
-    node_id: str
     public_key: str
-    tenant_id: int
+    node_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -47,33 +47,33 @@ class ListedPeer:
 
 
     def to_dict(self) -> dict[str, Any]:
+        tenant_id = self.tenant_id
+
+        client_id = self.client_id
+
         address = self.address
 
         allowed_ips = self.allowed_ips
 
 
 
-        client_id = self.client_id
-
         endpoint = self.endpoint
-
-        node_id = self.node_id
 
         public_key = self.public_key
 
-        tenant_id = self.tenant_id
+        node_id = self.node_id
 
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({
+            "tenant_id": tenant_id,
+            "client_id": client_id,
             "address": address,
             "allowed_ips": allowed_ips,
-            "client_id": client_id,
             "endpoint": endpoint,
-            "node_id": node_id,
             "public_key": public_key,
-            "tenant_id": tenant_id,
+            "node_id": node_id,
         })
 
         return field_dict
@@ -83,29 +83,29 @@ class ListedPeer:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        tenant_id = d.pop("tenant_id")
+
+        client_id = d.pop("client_id")
+
         address = d.pop("address")
 
         allowed_ips = cast(list[str], d.pop("allowed_ips"))
 
 
-        client_id = d.pop("client_id")
-
         endpoint = d.pop("endpoint")
-
-        node_id = d.pop("node_id")
 
         public_key = d.pop("public_key")
 
-        tenant_id = d.pop("tenant_id")
+        node_id = d.pop("node_id")
 
         listed_peer = cls(
+            tenant_id=tenant_id,
+            client_id=client_id,
             address=address,
             allowed_ips=allowed_ips,
-            client_id=client_id,
             endpoint=endpoint,
-            node_id=node_id,
             public_key=public_key,
-            tenant_id=tenant_id,
+            node_id=node_id,
         )
 
 
