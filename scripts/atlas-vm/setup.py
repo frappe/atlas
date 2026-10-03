@@ -36,7 +36,7 @@ from pilot.config import BenchConfig, WorkerGroup
 
 with BenchConfig.open(Path("{bench_path}")) as config:
 	config.get_app_by_name("frappe").branch = "develop"
-	config.socketio_backend = "python"
+	config.socketio_backend = "node"
 	config.lite_mode.enabled = False
 	config.workers.groups = [
 		WorkerGroup(queues=["default", "short"], count=3),
@@ -318,11 +318,21 @@ class Setup:
 		# A new site pauses the scheduler, and Atlas needs its scheduled jobs.
 		self.pilot(f"frappe --site {configuration.site} enable-scheduler")
 
-	def get_atlas(self) -> None:
-		# Pilot skips an app that is already there, so this stage is safe to repeat.
+	def get_atlas(self) -> bool:
+		"""Return True when an existing app was fast-forwarded."""
 		configuration = self.configuration
 		step(f"stage 8: the atlas app from {configuration.atlas_branch}")
-		self.pilot(f"get-app {configuration.atlas_repository} --branch {configuration.atlas_branch}")
+		app_path = configuration.bench_path / "apps/atlas"
+		if not app_path.is_dir():
+			self.pilot(f"get-app {configuration.atlas_repository} --branch {configuration.atlas_branch}")
+			return False
+
+		branch = shlex.quote(configuration.atlas_branch)
+		git = f"git -C {shlex.quote(str(app_path))}"
+		self.as_bench(
+			f"{git} fetch --quiet origin {branch} && {git} checkout --quiet {branch} && {git} merge --ff-only --quiet origin/{branch}"
+		)
+		return True
 
 	def setup_production(self) -> None:
 		configuration = self.configuration
@@ -336,11 +346,15 @@ class Setup:
 		run(["systemctl", "enable", "nginx"])
 		run(["systemctl", "reload", "nginx"])
 
-	def install_atlas(self) -> None:
+	def install_atlas(self, is_update: bool) -> None:
 		# Production runs Redis and the workers, which an install hook can reach.
 		configuration = self.configuration
 		step(f"stage 10: install atlas on {configuration.site}")
 		self.pilot(f"install-app {configuration.site} atlas")
+		if is_update:
+			self.pilot(f"frappe --site {configuration.site} migrate")
+			self.pilot("build")
+			self.pilot("restart")
 
 	def install_warpgate(self) -> dict[str, str]:
 		"""Run Warpgate in this VM, and return the values that configure-atlas stores."""
@@ -430,9 +444,9 @@ class Setup:
 			self.install_pilot()
 			self.create_bench()
 			self.create_site()
-			self.get_atlas()
+			is_update = self.get_atlas()
 			self.setup_production()
-			self.install_atlas()
+			self.install_atlas(is_update)
 			self.configure_atlas(self.install_warpgate())
 			self.configure_wireguard()
 		finally:

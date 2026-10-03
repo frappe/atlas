@@ -891,8 +891,10 @@ Type=exec
 ExecStartPre=/bin/rm -f {self.paths.api_socket}
 ExecStartPre={self.paths.network_script} start
 ExecStart={self.paths.firecracker_binary} --api-sock {self.paths.api_socket} --config-file {self.paths.configuration}
+# The guest reboots on Ctrl+Alt+Del, and Firecracker exits on a guest reboot.
+ExecStop=/bin/sh -c "curl -fsS --max-time 5 --unix-socket {self.paths.api_socket} -X PUT -H 'Content-Type: application/json' -d '{{\\"action_type\\": \\"SendCtrlAltDel\\"}}' http://localhost/actions && while kill -0 ${{MAINPID}} 2>/dev/null; do sleep 1; done"
 ExecStopPost={self.paths.network_script} stop
-TimeoutStopSec=30
+TimeoutStopSec=120
 StandardOutput=append:{self.paths.console_log}
 StandardError=append:{self.paths.console_log}
 Restart=no
