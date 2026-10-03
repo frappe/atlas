@@ -2,6 +2,18 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on("Atlas Settings", {
+	setup(frm) {
+		frm.set_query("rescue_virtual_machine_image", () => ({
+			filters: [
+				["Virtual Machine Image", "enabled", "=", 1],
+				["Virtual Machine Image", "image_type", "=", "system"],
+				["Virtual Machine Image", "status", "=", "Available"],
+				["Virtual Machine Image", "memory_snapshot", "=", 0],
+				["Atlas Tag", "key", "=", "purpose"],
+				["Atlas Tag", "value", "=", "rescue"],
+			],
+		}));
+	},
 	refresh(frm) {
 		frm.call("get_form_autocomplete_options").then(({ message }) => {
 			frm.fields_dict.placement_strategy.set_data(message.placement_strategies);

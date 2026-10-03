@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
@@ -21,6 +22,7 @@ const maxConcurrentSSHSessions = 32
 
 // virtualMachineStorage prepares and releases the disk of one VM.
 type virtualMachineStorage interface {
+	PrepareRescueBoot(context.Context, storage.VirtualMachineRescueBootRequest) (storage.BootConfiguration, error)
 	PrepareBoot(ctx context.Context, request storage.VirtualMachineStorageRequest) (storage.BootConfiguration, error)
 	PrepareRootFileSystem(ctx context.Context, request storage.VirtualMachineStorageRequest) error
 	HasDisk(ctx context.Context, virtualMachineID string) (bool, error)
@@ -48,6 +50,9 @@ type serialBroker interface {
 
 // Runtime manages Firecracker virtual machines on one host.
 type Runtime struct {
+	rescueMutex           sync.Mutex
+	rescueListeners       map[string]*rescueListener
+	rescueClosed          bool
 	configuration         Config
 	units                 platform.UnitManager
 	virtualMachineStorage virtualMachineStorage
@@ -95,7 +100,11 @@ func (runtime *Runtime) Inspect(ctx context.Context, input vm.RuntimeMachine) (v
 	if savedStateError != nil && !errors.Is(savedStateError, errSavedStateNotFound) {
 		return vm.RuntimeStatus{}, fmt.Errorf("validate saved VM state: %w", savedStateError)
 	}
-	return vm.RuntimeStatus{State: state, HasSavedState: hasSavedState}, nil
+	reboot, err := runtime.inspectRescueBoot(input, state)
+	if err != nil {
+		return vm.RuntimeStatus{}, err
+	}
+	return vm.RuntimeStatus{State: state, HasSavedState: hasSavedState, RescueRebootRequested: reboot}, nil
 }
 
 // Start launches a VM from a warm image or a cold boot.
@@ -115,6 +124,10 @@ func (runtime *Runtime) Stop(ctx context.Context, input vm.RuntimeMachine) error
 
 // SaveAndStop saves guest memory and stops Firecracker.
 func (runtime *Runtime) SaveAndStop(ctx context.Context, input vm.RuntimeMachine) error {
+	if input.Specification.Rescue.Enabled {
+		return vm.ErrConflict
+	}
+
 	return runtime.newMachine(input).saveAndStop(ctx)
 }
 
@@ -145,6 +158,10 @@ func (runtime *Runtime) Resume(ctx context.Context, input vm.RuntimeMachine) err
 
 // Remove stops the process and removes runtime-owned files.
 func (runtime *Runtime) Remove(ctx context.Context, input vm.RuntimeMachine) error {
+	if err := runtime.clearRescueBoot(input.ID); err != nil {
+		return err
+	}
+
 	if err := runtime.newMachine(input).cleanupSystemd(ctx); err != nil {
 		return err
 	}
@@ -177,9 +194,19 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 		return nil
 	}
 
-	return api.New(runtime.configuration.socketPath(input.ID)).PatchDrive(ctx, api.PartialDrive{
-		DriveID:     rootDriveIdentifier,
-		PathOnHost:  rootDrivePath,
-		RateLimiter: driveRateLimiter(input.Specification.Disk),
-	})
+	paths := []string{rootDrivePath}
+	if input.Specification.Rescue.Enabled {
+		paths = append(paths, "/disk.img")
+	}
+	client := api.New(runtime.configuration.socketPath(input.ID))
+	for index, path := range paths {
+		if err := client.PatchDrive(ctx, api.PartialDrive{
+			DriveID:     fmt.Sprintf("drive%d", index),
+			PathOnHost:  path,
+			RateLimiter: driveRateLimiter(input.Specification.Disk, len(paths)),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

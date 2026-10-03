@@ -16,6 +16,8 @@ type virtualMachineResponse struct {
 
 // desiredVirtualMachineResponse is the stored controller intent.
 type desiredVirtualMachineResponse struct {
+	Rescue            rescueResponse              `json:"rescue"`
+	RescueGeneration  uint64                      `json:"rescue_generation"`
 	Generation        uint64                      `json:"generation"`
 	RestartGeneration uint64                      `json:"restart_generation"`
 	State             string                      `json:"state"`
@@ -29,6 +31,8 @@ type desiredVirtualMachineResponse struct {
 // observedVirtualMachineResponse is the state reached by the host and any
 // operation currently in progress.
 type observedVirtualMachineResponse struct {
+	Rescue            rescueResponse          `json:"rescue"`
+	RescueGeneration  uint64                  `json:"rescue_generation"`
 	Generation        uint64                  `json:"generation"`
 	RestartGeneration uint64                  `json:"restart_generation"`
 	State             string                  `json:"state"`
@@ -149,6 +153,8 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 	return virtualMachineResponse{
 		ID: information.ID,
 		Desired: desiredVirtualMachineResponse{
+			Rescue:            toRescue(information.Rescue),
+			RescueGeneration:  information.DesiredRescueGeneration,
 			Generation:        information.DesiredGeneration,
 			RestartGeneration: information.DesiredRestartGeneration,
 			State:             string(information.DesiredState),
@@ -181,6 +187,8 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			},
 		},
 		Observed: observedVirtualMachineResponse{
+			Rescue:            rescueResponse{Enabled: information.ObservedRescueEnabled},
+			RescueGeneration:  information.ObservedRescueGeneration,
 			Generation:        information.ObservedGeneration,
 			RestartGeneration: information.ObservedRestartGeneration,
 			State:             string(information.State),
@@ -259,4 +267,19 @@ func toMemorySnapshotConfiguration(configuration *vm.MemorySnapshotConfiguration
 		MemoryMiB:       configuration.MemoryMiB,
 		DiskMiB:         configuration.DiskMiB,
 	}
+}
+
+// rescueResponse reports selected boot mode without disclosing artifact URLs.
+type rescueResponse struct {
+	Enabled bool                         `json:"enabled"`
+	Image   *virtualMachineImageResponse `json:"image,omitempty"`
+}
+
+func toRescue(rescue vm.Rescue) rescueResponse {
+	response := rescueResponse{Enabled: rescue.Enabled}
+	if rescue.Enabled {
+		image := toVirtualMachineImage(rescue.Image)
+		response.Image = &image
+	}
+	return response
 }

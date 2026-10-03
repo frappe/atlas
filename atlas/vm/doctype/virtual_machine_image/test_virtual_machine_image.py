@@ -56,6 +56,21 @@ class TestVirtualMachineImage(UnitTestCase):
 			setattr(image, key, value)
 		return image
 
+	def test_rescue_requires_its_own_purpose(self) -> None:
+		image = self.make_image(
+			enabled=1, image_type="system", tags=[SimpleNamespace(key="purpose", value="rescue")]
+		)
+		image.validate_rescue_image()
+		for purpose in ("base", "custom", ""):
+			with self.subTest(purpose=purpose):
+				image.tags = [SimpleNamespace(key="purpose", value=purpose)]
+				with self.assertRaises(frappe.ValidationError):
+					image.validate_rescue_image()
+
+	def test_gateway_base_selection_excludes_a_newer_rescue_image(self) -> None:
+		images = {"rescue": self.base_image("26.04", purpose="rescue"), "base": self.base_image("24.04")}
+		self.assertIs(self.latest_base_image(images), images["base"])
+
 	def test_a_system_image_is_protected_when_it_is_created(self) -> None:
 		image = self.make_image(image_type="system")
 

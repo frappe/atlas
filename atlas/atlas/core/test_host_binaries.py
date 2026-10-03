@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import skipIf
 from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
@@ -72,9 +73,12 @@ class TestHostBinaries(UnitTestCase):
 			host_binaries.ensure_build_environment()
 
 		reported = throw.call_args.args[0]
-		self.assertIn("make", reported)
-		self.assertIn("clang", reported)
-		self.assertIn("bpf/bpf_helpers.h", reported)
+		if host_binaries.IS_MACOS:
+			self.assertIn("docker", reported)
+		else:
+			self.assertIn("make", reported)
+			self.assertIn("clang", reported)
+			self.assertIn("bpf/bpf_helpers.h", reported)
 
 	def test_ensure_build_environment_passes_when_everything_is_present(self) -> None:
 		with (
@@ -108,6 +112,7 @@ class TestHostBinaries(UnitTestCase):
 			with patch.object(host_binaries.subprocess, "run", return_value=SimpleNamespace(stdout=output)):
 				self.assertEqual(host_binaries.has_required_go_version("go"), expected, output)
 
+	@skipIf(host_binaries.IS_MACOS, "macOS builds with Docker")
 	def test_wg_mesh_needs_clang_and_its_headers(self) -> None:
 		"""clang compiles the BPF object, so name what is missing before make runs."""
 		mesh = next(binary for binary in HOST_BINARIES if "clang" in binary.required_commands)
@@ -122,6 +127,7 @@ class TestHostBinaries(UnitTestCase):
 		self.assertIn("clang", str(caught.exception))
 		run.assert_not_called()
 
+	@skipIf(host_binaries.IS_MACOS, "macOS builds with Docker")
 	def test_missing_build_requirements_reports_absent_headers(self) -> None:
 		mesh = next(binary for binary in HOST_BINARIES if binary.required_headers)
 

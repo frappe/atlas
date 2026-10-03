@@ -104,3 +104,9 @@ type LoadSnapshotRequest struct {
 	Memory       MemoryBackend `json:"mem_backend"`
 	Resume       bool          `json:"resume_vm"`
 }
+
+// Vsock configures a direct guest-to-host transport.
+type Vsock struct {
+	GuestCID uint32 `json:"guest_cid"`
+	UDSPath  string `json:"uds_path"`
+}

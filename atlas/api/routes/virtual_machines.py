@@ -24,6 +24,7 @@ from atlas.api.models import (
 	MetadataReplacementPayload,
 	NetworkUpdatePayload,
 	PublicIPAssignmentPayload,
+	RescuePayload,
 	ResizePayload,
 	SnapshotPayload,
 	SSHKeysReplacementPayload,
@@ -259,6 +260,29 @@ def restart_virtual_machine(virtual_machine_id: str) -> ApiResult[VirtualMachine
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	virtual_machine.reboot()
+	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
+
+
+@virtual_machine_configuration.put("<virtual_machine_id>/rescue")
+@api_docs(
+	request_example={"enabled": True},
+	responses={
+		**ACCEPTED_RESPONSE,
+		409: {"description": "The VM state does not allow this rescue transition."},
+	},
+)
+def set_virtual_machine_rescue(
+	virtual_machine_id: str, payload: RescuePayload
+) -> ApiResult[VirtualMachineResponse]:
+	"""Set rescue mode.
+
+	Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first.
+	The original disk is writable and unmounted. Stop/Start preserves the rescue disk.
+	Reboot or explicit exit ends the session and discards the rescue disk.
+	Poll the VM detail route for rescue progress.
+	"""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	virtual_machine.set_rescue(payload.enabled)
 	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
 
 

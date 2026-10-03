@@ -284,6 +284,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		serialBroker,
 		logger,
 	)
+	daemon.virtualMachineRuntime = virtualMachineRuntime
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,

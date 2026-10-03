@@ -20,6 +20,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	virtualMachineRoutes.GET("/:id", s.getVirtualMachine)
 	virtualMachineRoutes.PUT("/:id/power", s.setVirtualMachinePowerState)
 	virtualMachineRoutes.POST("/:id/restart", s.restartVirtualMachine)
+	virtualMachineRoutes.PUT("/:id/rescue", s.setVirtualMachineRescue)
 	virtualMachineRoutes.PUT("/:id/compute", s.setVirtualMachineCompute)
 	virtualMachineRoutes.PUT("/:id/disk", s.setVirtualMachineDisk)
 	virtualMachineRoutes.PUT("/:id/resize", s.resizeVirtualMachine)

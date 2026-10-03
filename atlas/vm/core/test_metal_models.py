@@ -18,6 +18,8 @@ def complete_response() -> dict:
 		"desired": {
 			"generation": 3,
 			"restart_generation": 1,
+			"rescue_generation": 0,
+			"rescue": {"enabled": False},
 			"state": "running",
 			"compute": {
 				"cpu_millicores": 2500,
@@ -55,6 +57,8 @@ def complete_response() -> dict:
 		"observed": {
 			"generation": 3,
 			"restart_generation": 1,
+			"rescue_generation": 0,
+			"rescue": {"enabled": False},
 			"state": "running",
 			"updated_at": "2026-09-06T10:00:00Z",
 			"disk": {"used_mib": 1024},
@@ -75,6 +79,8 @@ def new_virtual_machine_response() -> dict:
 		"desired": {
 			"generation": 1,
 			"restart_generation": 0,
+			"rescue_generation": 0,
+			"rescue": {"enabled": False},
 			"state": "running",
 			"compute": {
 				"cpu_millicores": 0,
@@ -102,6 +108,8 @@ def new_virtual_machine_response() -> dict:
 		"observed": {
 			"generation": 0,
 			"restart_generation": 0,
+			"rescue_generation": 0,
+			"rescue": {"enabled": False},
 			"state": "unknown",
 			"updated_at": "2026-09-06T10:00:00Z",
 			"disk": {"used_mib": 0},

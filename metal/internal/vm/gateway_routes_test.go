@@ -66,3 +66,19 @@ func TestAVMRouteKeepsItsDestinationOverAGatewayRoute(t *testing.T) {
 		t.Fatalf("routes = %v", routes)
 	}
 }
+
+func TestRescueDisablesIdleTrafficMonitoringAndKeepsGatewayRoutes(t *testing.T) {
+	manager := &Manager{wireGuardGatewayRoutes: []Route{{Destination: "fdac:1:1::/48", Via: "fdaa:1::1"}}}
+	record := DesiredRecord{State: StateRunning, Specification: Specification{
+		SleepAfterIdleSeconds: 60,
+		Network:               NetworkConfiguration{IsAccessibleViaWireGuardGateway: true},
+	}}
+	if !manager.networkRequest(record).TrackTraffic {
+		t.Fatal("normal idle-enabled VM must track traffic")
+	}
+	record.Specification.Rescue.Enabled = true
+	request := manager.networkRequest(record)
+	if request.TrackTraffic || !slices.Equal(request.Configuration.Routes, manager.wireGuardGatewayRoutes) {
+		t.Fatalf("rescue network request = %+v", request)
+	}
+}

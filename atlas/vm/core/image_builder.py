@@ -20,18 +20,42 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 ArtifactStorage = Literal["Object Storage", "Site File"]
+ImagePurpose = Literal["base", "rescue"]
 
 
 def build_ubuntu_image(
 	version: str, architecture: str, minimal: bool, output_directory: Path
 ) -> tuple[Path, Path]:
-	"""Build one Ubuntu root file system and kernel."""
+	"""Build one Ubuntu base root file system and kernel."""
+	image_type = "minimal-" if minimal else ""
+	return _build_image(
+		"build_ubuntu_server_image.sh",
+		output_directory,
+		f"ubuntu-{version}-{image_type}{architecture}.ext4",
+		f"vmlinux-ubuntu-{version}-{image_type}server",
+		["--architecture", architecture, "--version", version, *(["--minimal"] if minimal else [])],
+	)
+
+
+def build_ubuntu_rescue_image(output_directory: Path) -> tuple[Path, Path]:
+	"""Build the Ubuntu 24.04 amd64 rescue root file system and matching kernel."""
+	return _build_image(
+		"build_ubuntu_rescue_image.sh",
+		output_directory,
+		"ubuntu-24.04-rescue-amd64.ext4",
+		"vmlinux-ubuntu-24.04-rescue-server",
+		[],
+	)
+
+
+def _build_image(
+	script: str, output_directory: Path, image_name: str, kernel_name: str, arguments: list[str]
+) -> tuple[Path, Path]:
 	output_directory = output_directory.resolve()
 	output_directory.mkdir(parents=True, exist_ok=True)
-	image_type = "minimal-" if minimal else ""
-	image_path = output_directory / f"ubuntu-{version}-{image_type}{architecture}.ext4"
-	kernel_path = output_directory / f"vmlinux-ubuntu-{version}-{image_type}server"
-	builder_path = Path(__file__).parents[1] / "scripts" / "build_ubuntu_server_image.sh"
+	image_path = output_directory / image_name
+	kernel_path = output_directory / kernel_name
+	builder_path = Path(__file__).parents[1] / "scripts" / script
 	command = [builder_path]
 	if IS_MACOS:
 		command = [
@@ -45,20 +69,8 @@ def build_ubuntu_image(
 		]
 	elif os.geteuid() != 0:
 		command.insert(0, "sudo")
-	command.extend(
-		[
-			"--output",
-			image_path,
-			"--kernel-output",
-			kernel_path,
-			"--architecture",
-			architecture,
-			"--version",
-			version,
-			"--minimal" if minimal else "",
-		]
-	)
-	subprocess.run([argument for argument in command if argument], check=True)
+	command.extend(["--output", image_path, "--kernel-output", kernel_path, *arguments])
+	subprocess.run(command, check=True)
 	return image_path, kernel_path
 
 
@@ -69,14 +81,16 @@ def publish_ubuntu_image(
 	image_path: Path,
 	kernel_path: Path,
 	storage: ArtifactStorage = "Object Storage",
+	*,
+	purpose: ImagePurpose = "base",
 ) -> None:
-	"""Publish Ubuntu artifacts as a new image record and retire the records it replaces.
+	"""Publish Ubuntu artifacts, retiring previous builds only for base images.
 
 	A record never changes its artifacts, because a VM keeps using the image it started from.
 	"""
 	image_sha256 = get_sha256(image_path)
 	kernel_sha256 = get_sha256(kernel_path)
-	previous_images = get_available_ubuntu_images(title, architecture)
+	previous_images = get_available_ubuntu_images(title, architecture, purpose)
 	for image in previous_images:
 		if image.image_sha256 == image_sha256 and image.kernel_sha256 == kernel_sha256:
 			return
@@ -106,13 +120,16 @@ def publish_ubuntu_image(
 			"kernel_sha256": kernel_sha256,
 			"kernel_size_mib": bytes_to_mib(kernel_path.stat().st_size),
 			"tags": [
-				{"key": "purpose", "value": "base"},
+				{"key": "purpose", "value": purpose},
 				{"key": "os", "value": "Ubuntu"},
 				{"key": "os_version", "value": version},
 			],
 			**location,
 		}
 	).insert(set_name=image_name)
+
+	if purpose == "rescue":
+		return
 
 	# Every System image is protected at insert. The builder owns the build it replaces.
 	deletion = VirtualMachineImageDeletionService()
@@ -121,14 +138,17 @@ def publish_ubuntu_image(
 		deletion.request(image)
 
 
-def get_available_ubuntu_images(title: str, architecture: str) -> list[VirtualMachineImage]:
-	"""Return the Available System images that a new build with this title replaces."""
+def get_available_ubuntu_images(
+	title: str, architecture: str, purpose: ImagePurpose = "base"
+) -> list[VirtualMachineImage]:
+	"""Return Available System images with the same title, architecture, and purpose."""
 	names = frappe.get_all(
 		"Virtual Machine Image",
 		filters={"title": title, "architecture": architecture, "image_type": "system", "status": "Available"},
 		pluck="name",
 	)
-	return [cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names]
+	images = [cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names]
+	return [image for image in images if {tag.key: tag.value for tag in image.tags}.get("purpose") == purpose]
 
 
 def upload_to_object_storage(image_name: str, image_path: Path, kernel_path: Path) -> dict[str, str]:

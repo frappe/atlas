@@ -419,6 +419,9 @@ class VirtualMachine(Document):
 		if memory_snapshot_configuration and not memory_snapshot:
 			frappe.throw(_("Memory snapshot configuration needs a memory snapshot."), exc=AtlasUserError)
 
+		service = VirtualMachineService(self)
+		service.ensure_rescue_inactive(service.require_information())
+
 		from atlas.vm.core.vm_image_transfer import VirtualMachineImageTransferService
 
 		return VirtualMachineImageTransferService().create_from_virtual_machine(
@@ -581,6 +584,23 @@ class VirtualMachine(Document):
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		VirtualMachineService(self).set_power_state(state)
+
+	@frappe.whitelist(methods=["GET"])
+	def read_rescue(self) -> dict[str, Any]:
+		"""Return live rescue state for the operator action."""
+		self.check_permission("read")
+		return VirtualMachineService(self).require_information().as_dict()
+
+	@frappe.whitelist(methods=["POST"])
+	def set_rescue(self, enabled: bool) -> dict[str, Any]:
+		"""Enter or exit rescue without starting a stopped VM."""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		if self.is_draft or self.is_terminating:
+			frappe.throw(
+				_("Wait until the Virtual Machine is ready before changing rescue mode."), exc=AtlasUserError
+			)
+		return VirtualMachineService(self).set_rescue(strict_bool(enabled, "enabled"))
 
 	@frappe.whitelist(methods=["POST"])
 	def reboot(self) -> None:

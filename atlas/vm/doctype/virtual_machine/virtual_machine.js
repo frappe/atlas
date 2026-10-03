@@ -31,6 +31,12 @@ frappe.ui.form.on("Virtual Machine", {
 			[__("Start VM"), "start", is_stopped, ACTIONS, __("Starting...")],
 			[__("Stop VM"), "stop", is_running || is_paused, ACTIONS, __("Stopping...")],
 			[__("Reboot VM"), "reboot", is_running, ACTIONS, __("Rebooting...")],
+			[
+				__("Rescue Mode"),
+				() => showRescueDialog(frm),
+				(is_live || current_state === "failed") && !is_migrating,
+				ACTIONS,
+			],
 			[__("Pause VM"), "pause", is_running, ACTIONS, __("Pausing...")],
 			[__("Resume VM"), "resume", is_paused, ACTIONS, __("Resuming...")],
 			[__("Snapshot VM"), () => showCreateMachineImageDialog(frm), true, ACTIONS],
@@ -780,6 +786,51 @@ function showNetworkGatewayDialog(frm) {
 				freeze: true,
 			})
 			.then(() => frm.reload_doc())
+	);
+}
+
+function showRescueDialog(frm) {
+	frm.call({ method: "read_rescue", doc: frm.doc, type: "GET", freeze: true }).then(
+		({ message }) => {
+			if (!message) return;
+			const enabled = message.desired.rescue.enabled;
+			const pending =
+				message.desired.rescue_generation !== message.observed.rescue_generation ||
+				enabled !== message.observed.rescue.enabled;
+			const dialog = new frappe.ui.Dialog({
+				title: __("Rescue Mode"),
+				fields: [
+					{
+						fieldtype: "HTML",
+						options: `<p>${
+							enabled ? __("Rescue is selected.") : __("Normal boot is selected.")
+						} ${pending ? __("The host is applying the change.") : ""}</p>
+				<p>${__(
+					"Rescue boots a repair system with your original disk attached and unmounted. Use your VM's SSH keys to connect."
+				)}</p>
+				<p>${__(
+					"Stop/Start keeps the rescue session. Reboot or Exit Rescue discards its temporary disk and returns to the original disk. Repairs to the original disk persist."
+				)}</p>
+				<p>${__(
+					"A running VM restarts when you change this setting. A stopped VM stays stopped. Stop a paused VM first."
+				)}</p>`,
+					},
+				],
+				primary_action_label: enabled ? __("Exit Rescue") : __("Enter Rescue"),
+				primary_action() {
+					frm.call({
+						method: "set_rescue",
+						doc: frm.doc,
+						args: { enabled: !enabled },
+						freeze: true,
+					}).then(() => {
+						dialog.hide();
+						frm.reload_doc();
+					});
+				},
+			});
+			dialog.show();
+		}
 	);
 }
 

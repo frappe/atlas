@@ -326,6 +326,10 @@ func cloneSpecification(specification Specification) Specification {
 		configuration := *specification.Image.MemorySnapshotConfiguration
 		specification.Image.MemorySnapshotConfiguration = &configuration
 	}
+	if specification.Rescue.Image.MemorySnapshotConfiguration != nil {
+		configuration := *specification.Rescue.Image.MemorySnapshotConfiguration
+		specification.Rescue.Image.MemorySnapshotConfiguration = &configuration
+	}
 	return specification
 }
 
@@ -345,6 +349,10 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		usage.SizeMiB = desired.Specification.DiskMiB
 	}
 	return Information{
+		Rescue:                          cloneSpecification(desired.Specification).Rescue,
+		ObservedRescueEnabled:           observed.RescueEnabled,
+		DesiredRescueGeneration:         desired.RescueGeneration,
+		ObservedRescueGeneration:        observed.RescueGeneration,
 		ID:                              desired.ID,
 		State:                           observed.State,
 		DesiredState:                    desired.State,

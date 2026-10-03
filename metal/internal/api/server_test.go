@@ -1193,3 +1193,46 @@ func TestRemovedSnapshotAndImageRoutesReturnNotFound(t *testing.T) {
 		do(t, server, request.method, request.path, "", http.StatusNotFound)
 	}
 }
+
+func (manager *fakeVirtualMachineManager) RequestRescue(_ context.Context, id string, image vm.Image) error {
+	machine, found := manager.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	machine.info.Rescue = vm.Rescue{Enabled: true, Image: image}
+	return nil
+}
+
+func (manager *fakeVirtualMachineManager) RequestRescueExit(_ context.Context, id string) error {
+	machine, found := manager.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	machine.info.Rescue = vm.Rescue{}
+	return nil
+}
+
+func TestRescueAPIRequiresExplicitModeAndColdImage(t *testing.T) {
+	server := newTestServer(t)
+	do(t, server, http.MethodPut, "/v1/vms/vm-1", validCreateRequest, http.StatusAccepted)
+	for _, body := range []string{`{}`, `{"enabled":true}`, `{"enabled":false,"image":{}}`, `{"enabled":"true"}`, `{"enabled":false,"unknown":1}`} {
+		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", body, http.StatusBadRequest)
+	}
+	var create map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(validCreateRequest), &create); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"enabled":true,"image":` + string(create["image"]) + `}`
+	result := do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", body, http.StatusAccepted)
+	var response virtualMachineResponse
+	if err := json.Unmarshal(result.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Desired.Rescue.Enabled || response.Desired.Rescue.Image == nil {
+		t.Fatal("missing rescue selection")
+	}
+	if strings.Contains(result.Body.String(), "https://") {
+		t.Fatal("response leaked artifact URL")
+	}
+	do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":false}`, http.StatusAccepted)
+}

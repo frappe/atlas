@@ -81,8 +81,9 @@ func (manager *Manager) reconcileActive(
 		return manager.reconcileHardStop(ctx, desired, machine, &observed, operationID)
 	}
 
-	if desired.SpecificationGeneration > observed.SpecificationGeneration ||
-		desired.RestartGeneration > observed.RestartGeneration {
+	if desired.Specification.Rescue.Enabled || desired.SpecificationGeneration > observed.SpecificationGeneration ||
+		desired.RestartGeneration > observed.RestartGeneration ||
+		desired.RescueGeneration > observed.RescueGeneration {
 		if err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseStop, func() error {
 			return manager.runtime.DeleteSavedState(ctx, machine)
 		}); err != nil {
@@ -94,17 +95,38 @@ func (manager *Manager) reconcileActive(
 	if err != nil {
 		return err
 	}
+	if desired.Specification.Rescue.Enabled && status.RescueRebootRequested &&
+		(status.State == StateStopped || status.State == StateFailed) {
+		desired.Specification.Rescue = Rescue{}
+		desired.RescueGeneration++
+		desired.Generation++
+		if err := manager.store.writeDesired(desired); err != nil {
+			return err
+		}
+		machine = runtimeMachine(desired, networkInterface)
+	}
 	status, reconcileComplete, err := manager.reconcileSavedState(ctx, desired, machine, &observed, operationID, status)
 	if err != nil || reconcileComplete {
 		return err
 	}
 
-	if observed.RestartGeneration < desired.RestartGeneration {
+	if observed.RestartGeneration < desired.RestartGeneration || observed.RescueGeneration < desired.RescueGeneration {
 		status, err = manager.applyRestart(ctx, desired.ID, machine, status, &observed, operationID)
 		if err != nil {
 			return err
 		}
+	}
+	if desired.RescueGeneration > observed.RescueGeneration && !desired.Specification.Rescue.Enabled {
+		if err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseStorage, func() error {
+			return manager.storage.ReleaseRescueDisk(ctx, desired.ID)
+		}); err != nil {
+			return err
+		}
+	}
+
+	if observed.RestartGeneration < desired.RestartGeneration || observed.RescueGeneration < desired.RescueGeneration {
 		observed.RestartGeneration = desired.RestartGeneration
+		observed.RescueGeneration = desired.RescueGeneration
 	}
 
 	status, err = manager.applyDesiredState(ctx, desired.ID, machine, status, desired.State, &observed, operationID)
@@ -131,10 +153,7 @@ func (manager *Manager) reconcileActive(
 		return err
 	}
 
-	observed.State = status.State
-	observed.completeOperation()
-
-	return manager.store.writeObserved(desired.ID, observed)
+	return manager.writeAppliedState(desired, &observed, status.State)
 }
 
 // reconcileSavedState applies the desired state when saved state is present.
@@ -174,7 +193,7 @@ func (manager *Manager) reconcileSavedState(
 
 	switch desired.State {
 	case StateRunning:
-		if desired.Specification.SleepAfterIdleSeconds > 0 && manager.traffic != nil {
+		if !desired.Specification.Rescue.Enabled && desired.Specification.SleepAfterIdleSeconds > 0 && manager.traffic != nil {
 			target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
 			if err := manager.traffic.StartWatching(target); err != nil {
 				return status, false, fmt.Errorf("watch traffic for VM %s: %w", desired.ID, err)
@@ -231,6 +250,14 @@ func (manager *Manager) reconcileHardStop(
 	}); err != nil {
 		return err
 	}
+	if desired.RescueGeneration > observed.RescueGeneration && !desired.Specification.Rescue.Enabled {
+		if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseStorage, func() error {
+			return manager.storage.ReleaseRescueDisk(ctx, desired.ID)
+		}); err != nil {
+			return err
+		}
+	}
+
 	if err := manager.applyDesiredSpecification(ctx, desired, machine, RuntimeStatus{State: StateStopped}, observed, operationID); err != nil {
 		return err
 	}
@@ -239,12 +266,21 @@ func (manager *Manager) reconcileHardStop(
 
 // writeAppliedState records a complete state transition at the desired generations.
 func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *ObservedRecord, state State) error {
+	rescueChanged := observed.RescueEnabled != desired.Specification.Rescue.Enabled || observed.RescueGeneration != desired.RescueGeneration
 	observed.State = state
 	observed.Generation = desired.Generation
 	observed.SpecificationGeneration = desired.SpecificationGeneration
 	observed.RestartGeneration = desired.RestartGeneration
+	observed.RescueGeneration = desired.RescueGeneration
+	observed.RescueEnabled = desired.Specification.Rescue.Enabled
 	observed.completeOperation()
-	return manager.store.writeObserved(desired.ID, *observed)
+	if err := manager.store.writeObserved(desired.ID, *observed); err != nil {
+		return err
+	}
+	if rescueChanged {
+		manager.logger.Info("rescue mode applied", "vm_id", desired.ID, "rescue_enabled", observed.RescueEnabled, "rescue_generation", desired.RescueGeneration, "state", state)
+	}
+	return nil
 }
 
 // inspect reads runtime state and stores StateUnknown on failure.
@@ -268,7 +304,7 @@ func (manager *Manager) inspect(
 	return status, err
 }
 
-// applyRestart restarts a VM with newer restart intent.
+// applyRestart stops the old guest before storage cleanup and the next boot.
 func (manager *Manager) applyRestart(
 	ctx context.Context,
 	identifier string,
@@ -277,19 +313,16 @@ func (manager *Manager) applyRestart(
 	observed *ObservedRecord,
 	operationID string,
 ) (RuntimeStatus, error) {
-	if status.State != StateRunning && status.State != StatePaused {
+	if status.State == StateStopped {
 		return status, nil
 	}
 	err := manager.runOperation(ctx, identifier, observed, operationID, phaseRestart, func() error {
-		if err := manager.runtime.Stop(ctx, machine); err != nil {
-			return err
-		}
-		return manager.runtime.Start(ctx, machine)
+		return manager.runtime.Stop(ctx, machine)
 	})
 	if err != nil {
 		return status, err
 	}
-	return RuntimeStatus{State: StateRunning}, nil
+	return RuntimeStatus{State: StateStopped}, nil
 }
 
 // applyDesiredState moves the runtime to the requested power state.
@@ -337,10 +370,23 @@ func (manager *Manager) runRuntimeTransition(
 	resultState State,
 	operation func(context.Context, RuntimeMachine) error,
 ) (RuntimeStatus, error) {
+	status := RuntimeStatus{State: resultState}
 	err := manager.runOperation(ctx, identifier, observed, operationID, phase, func() error {
-		return operation(ctx, machine)
+		operationError := operation(ctx, machine)
+		if operationError == nil {
+			return nil
+		}
+
+		var inspectError error
+		status, inspectError = manager.runtime.Inspect(ctx, machine)
+		if inspectError != nil {
+			status = RuntimeStatus{State: StateUnknown}
+			operationError = errors.Join(operationError, fmt.Errorf("inspect failed transition: %w", inspectError))
+		}
+		observed.State = status.State
+		return operationError
 	})
-	return RuntimeStatus{State: resultState}, err
+	return status, err
 }
 
 // applyDesiredSpecification applies specification changes.
@@ -469,5 +515,6 @@ func (manager *Manager) logOperationFailure(
 		"component", "vm", "operation", "reconcile", "phase", phase, "vm_id", identifier,
 		"operation_id", observed.OperationID, "applied_generation", observed.Generation,
 		"observed_state", observed.State, "duration", time.Since(startedAt), "error", err,
+		"rescue_generation", observed.RescueGeneration, "rescue_enabled", observed.RescueEnabled,
 	)
 }

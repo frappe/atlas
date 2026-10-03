@@ -21,6 +21,7 @@ func savedStateFixture(t *testing.T, configuration Config, requirement savedStat
 		VirtualMachineID: requirement.VirtualMachineID, UserID: requirement.UserID,
 		SpecificationGeneration:  requirement.SpecificationGeneration,
 		RestartGeneration:        requirement.RestartGeneration,
+		RescueGeneration:         requirement.RescueGeneration,
 		FirecrackerCompatibility: requirement.FirecrackerCompatibility,
 		CreatedAt:                time.Now().UTC(), StateFileName: memorySnapshotStateFileName,
 		MemoryFileName: memorySnapshotMemoryFileName, StateFileSizeBytes: stateSize,
@@ -147,5 +148,18 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSavedStateCannotCrossRescueSessions(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", RescueGeneration: 2}
+	savedStateFixture(t, configuration, requirement)
+	if _, err := configuration.loadSavedState(requirement); err != nil {
+		t.Fatal(err)
+	}
+	requirement.RescueGeneration = 4
+	if _, err := configuration.loadSavedState(requirement); err == nil {
+		t.Fatal("restored memory from an earlier rescue session")
 	}
 }

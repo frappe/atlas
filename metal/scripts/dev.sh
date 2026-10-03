@@ -89,6 +89,7 @@ zpool list "$POOL" >/dev/null 2>&1 || zpool create -f -m none "$POOL" "$img"
 zfs list "$POOL/images" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/images"
 zfs list "$POOL/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/vms"
 zfs list "$POOL/staging" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/staging"
+zfs list "$POOL/rescue" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/rescue"
 zfs list "$POOL/warm" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/warm"
 
 step "base image ($POOL/images/ubuntu)"

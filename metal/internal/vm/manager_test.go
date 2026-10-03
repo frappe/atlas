@@ -13,30 +13,31 @@ import (
 )
 
 type fakeRuntime struct {
-	state          State
-	hasSavedState  bool
-	starts         int
-	stops          int
-	saves          int
-	restores       int
-	restoresPaused int
-	deletes        int
-	pauses         int
-	resumes        int
-	removes        int
-	coldStarts     int
-	metadata       int
-	diskRefresh    int
-	diskLimitMiBps int
-	inspectError   error
-	restoreError   error
-	saveError      error
-	deleteError    error
-	coldStartError error
+	rescueRebootRequested bool
+	state                 State
+	hasSavedState         bool
+	starts                int
+	stops                 int
+	saves                 int
+	restores              int
+	restoresPaused        int
+	deletes               int
+	pauses                int
+	resumes               int
+	removes               int
+	coldStarts            int
+	metadata              int
+	diskRefresh           int
+	diskLimitMiBps        int
+	inspectError          error
+	restoreError          error
+	saveError             error
+	deleteError           error
+	coldStartError        error
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
-	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState}, runtime.inspectError
+	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState, RescueRebootRequested: runtime.rescueRebootRequested}, runtime.inspectError
 }
 
 func (runtime *fakeRuntime) Start(context.Context, RuntimeMachine) error {
@@ -150,9 +151,17 @@ func (network *fakeNetwork) Release(context.Context, NetworkReleaseRequest) erro
 }
 
 type fakeStorage struct {
-	resizes      int
-	releases     int
-	releaseError error
+	missingDisk        bool
+	runtime            *fakeRuntime
+	resizes            int
+	releases           int
+	releaseError       error
+	rescueDiskReleases int
+	releaseRescueError error
+}
+
+func (storage *fakeStorage) HasDisk(context.Context, string) (bool, error) {
+	return !storage.missingDisk, nil
 }
 
 func (storage *fakeStorage) DiskUsage(context.Context, string) (DiskUsage, error) {
@@ -169,6 +178,14 @@ func (storage *fakeStorage) Release(context.Context, string) error {
 	return storage.releaseError
 }
 
+func (storage *fakeStorage) ReleaseRescueDisk(context.Context, string) error {
+	if storage.runtime != nil && storage.runtime.state != StateStopped {
+		return errors.New("rescue disk is still attached")
+	}
+	storage.rescueDiskReleases++
+	return storage.releaseRescueError
+}
+
 type fakeSnapshots struct{}
 
 func (fakeSnapshots) Stage(context.Context, SnapshotRequest) (StagedSnapshot, error) {
@@ -179,7 +196,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 	t.Helper()
 	runtime := &fakeRuntime{state: StateStopped}
 	network := &fakeNetwork{}
-	storage := &fakeStorage{}
+	storage := &fakeStorage{runtime: runtime}
 	manager, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir(), UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
 		ManagerDependencies{
@@ -571,6 +588,144 @@ func TestRestartIntentSurvivesManagerRecreation(t *testing.T) {
 	}
 	if observed.RestartGeneration != 1 {
 		t.Fatalf("restart generation = %d, want 1", observed.RestartGeneration)
+	}
+}
+
+func testRescueImage() Image {
+	return Image{
+		Name:         "rescue-1",
+		Architecture: "amd64",
+		RootfsURL:    "https://example.com/rescue-rootfs",
+		RootfsSHA256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		KernelURL:    "https://example.com/rescue-kernel",
+		KernelSHA256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	}
+}
+
+func TestRequestRescueEntersAndCyclesThePower(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 1 || runtime.starts != 2 {
+		t.Fatalf("rescue entry calls = stops %d, starts %d", runtime.stops, runtime.starts)
+	}
+
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !desired.Specification.Rescue.Enabled || desired.Specification.Rescue.Image != testRescueImage() {
+		t.Fatalf("desired rescue = %+v", desired.Specification.Rescue)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.RescueGeneration != 1 {
+		t.Fatalf("rescue generation = %d, want 1", observed.RescueGeneration)
+	}
+}
+
+func TestRequestRescueRepeatingTheSameImageIsANoOp(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 1 || runtime.starts != 2 {
+		t.Fatalf("repeating the same rescue image cycled power again: stops %d, starts %d", runtime.stops, runtime.starts)
+	}
+}
+
+func TestRequestRescueRejectsAPausedVM(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetPowerState(context.Background(), "machine-1", StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+}
+
+func TestRequestRescueExitReleasesTheRescueDiskAndCyclesThePower(t *testing.T) {
+	manager, runtime, _, storage := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescueExit(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 2 || runtime.starts != 3 {
+		t.Fatalf("rescue exit calls = stops %d, starts %d", runtime.stops, runtime.starts)
+	}
+	if storage.rescueDiskReleases != 1 {
+		t.Fatalf("rescue disk releases = %d, want 1", storage.rescueDiskReleases)
+	}
+
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.Specification.Rescue.Enabled {
+		t.Fatal("rescue is still enabled after exit")
+	}
+}
+
+func TestRequestRescueExitIsANoOpWhenNeverRescued(t *testing.T) {
+	manager, _, _, storage := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescueExit(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if storage.rescueDiskReleases != 0 {
+		t.Fatalf("rescue disk releases = %d, want 0", storage.rescueDiskReleases)
 	}
 }
 

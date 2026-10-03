@@ -2,7 +2,7 @@
 
 For Go code, follow the [Go review guide](../../../llm/go-code-review-guide.md). The handbook owns [VM runtime behavior](../../../docs/compute/runtime.md) and [console access](../../../docs/compute/console.md).
 
-This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, guest metadata, and Firecracker API calls inside one `metal-vm@` systemd unit. It holds no VM records. systemd owns the process lifecycle.
+This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, guest metadata, and Firecracker API calls inside one `metal-vm@` systemd unit. It does not own desired or observed VM records. systemd owns the process lifecycle.
 
 ## Types and boundaries
 
@@ -26,6 +26,12 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.
 - `RefreshDisk` changes live drive limits. `LimitDiskThroughput` sets a temporary migration limit. A nonpositive value cannot clear a limit.
 - `Remove` deletes runtime files. The VM manager releases storage and network.
+
+## Rescue runtime
+
+[Rescue mode](../../../docs/compute/rescue.md) always cold boots two drives. Initial configuration and `RefreshDisk` split rate limits evenly. Saved state is rejected.
+
+`rescue.go` owns the per-VM Unix listener and `rescue-boot.json` outside the jail. The listener goroutine has bounded reads and is closed by Stop, Remove, or `Runtime.Close`. Daemon shutdown preserves intent records; host-directed stops remove them. `rescue_test.go` verifies daemon adoption and stale host/session rejection.
 
 ## Firecracker API client
 

@@ -22,6 +22,7 @@
   "region_id",
   "ssh_section",
   "public_ssh_key",
+  "rescue_virtual_machine_image",
   "metald_section",
   "metald_binary_x86_64_file",
   "metald_source_hash",
@@ -871,6 +872,13 @@
    "fieldname": "networking_tab",
    "fieldtype": "Tab Break",
    "label": "Networking"
+  },
+  {
+   "fieldname": "rescue_virtual_machine_image",
+   "fieldtype": "Link",
+   "label": "Rescue Virtual Machine Image",
+   "options": "Virtual Machine Image",
+   "description": "Enabled System image tagged purpose=rescue with repair tools and the Atlas reboot hook. New sessions use this image."
   },
   {
    "fieldname": "wireguard_ip_address",

@@ -39,7 +39,9 @@ flowchart LR
     R & S --> D[Destroyed]
 ```
 
-This diagram shows common observed states, not every internal phase. A failed host operation can leave an earlier observed state with an error. Read both generations and the phase before you infer what ran.
+This diagram shows common observed states, not every internal phase. After a failed start, resume, or pause, Metal inspects the runtime and records its current state alongside the operation error. If that inspection fails, the state is `unknown`.
+
+Other failed host operations can leave an earlier observed state with an error. Read both generations and the phase before you infer what ran.
 
 ## Retry and clean up
 

@@ -80,6 +80,7 @@ class TestRegionID(UnitTestCase):
 		self.settings.placement_strategy = "balanced"
 		self.settings.wildcard_domain = "example.com"
 		self.settings.region_name = "test"
+		self.settings.rescue_virtual_machine_image = None
 
 	def test_a_virtual_machine_prevents_a_region_id_change(self) -> None:
 		with (

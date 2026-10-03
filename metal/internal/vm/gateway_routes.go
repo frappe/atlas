@@ -60,7 +60,7 @@ func (manager *Manager) networkRequest(record DesiredRecord) NetworkRequest {
 		UserID:           record.UserID,
 		GroupID:          record.GroupID,
 		Configuration:    configuration,
-		TrackTraffic:     record.State == StateRunning && record.Specification.SleepAfterIdleSeconds > 0,
+		TrackTraffic:     record.State == StateRunning && !record.Specification.Rescue.Enabled && record.Specification.SleepAfterIdleSeconds > 0,
 	}
 }
 
