@@ -786,6 +786,11 @@ class VirtualMachine:
 		return self.paths.configuration.exists()
 
 	@property
+	def has_current_kernel(self) -> bool:
+		configuration = json.loads(self.paths.configuration.read_text())
+		return configuration["boot-source"]["kernel_image_path"] == str(self.paths.kernel_image)
+
+	@property
 	def port_forwards(self) -> list[tuple[int, int]]:
 		ports = () if self.settings.developer_public_key else FORWARD_PORTS
 		if self.settings.has_warpgate:
@@ -1198,6 +1203,8 @@ def command_logs(machine: VirtualMachine, arguments: argparse.Namespace) -> None
 def command_setup(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
 		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
+	if not machine.has_current_kernel:
+		raise AtlasVmError("the VM boots an older kernel; run: atlas-vm stop && atlas-vm create")
 	if machine.settings.developer_public_key:
 		machine.setup_gateway()
 		return

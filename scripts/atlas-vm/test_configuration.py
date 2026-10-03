@@ -254,6 +254,24 @@ class ConfigurationTest(unittest.TestCase):
 		with self.assertRaisesRegex(atlas_vm.AtlasVmError, "client_secret"):
 			atlas_vm.Settings.read(self.path)
 
+	def test_setup_refuses_a_vm_that_boots_an_older_kernel(self) -> None:
+		with patch.object(atlas_vm, "find_host_key", return_value=self.path):
+			machine = atlas_vm.VirtualMachine(atlas_vm.Settings.read(self.path))
+		machine.paths = atlas_vm.Paths(Path(self.temporary_directory.name))
+		machine.paths.vm_directory.mkdir()
+		machine.paths.configuration.write_text(
+			json.dumps({"boot-source": {"kernel_image_path": "/var/lib/atlas-vm/downloads/vmlinux-5.10"}})
+		)
+
+		with (
+			patch.object(atlas_vm.VirtualMachine, "is_running", new_callable=PropertyMock, return_value=True),
+			patch.object(machine, "run_setup") as run_setup,
+			self.assertRaisesRegex(atlas_vm.AtlasVmError, "atlas-vm create"),
+		):
+			atlas_vm.command_setup(machine, None)
+
+		run_setup.assert_not_called()
+
 
 class TestNetworkRules(unittest.TestCase):
 	"""Run the generated host network script against a stubbed ip command."""
