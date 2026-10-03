@@ -131,6 +131,29 @@ func TestMonitorSamplesTrafficAndPublishesAnEvent(t *testing.T) {
 	}
 }
 
+func TestMonitorResetIdleStartsTheIdleTimeAgain(t *testing.T) {
+	monitor, hooks := newTestMonitor(t)
+	target := Target{VirtualMachineID: "vm-1", UserID: 1001}
+	if err := monitor.Attach(AttachmentRequest{Target: target, NamespacePath: "/run/netns/vm-1", InterfaceName: "tap0"}); err != nil {
+		t.Fatal(err)
+	}
+	hooks.packetTimes[target.UserID] = uint64(12 * time.Second)
+	monitor.clock = func() (uint64, error) { return uint64(100 * time.Second), nil }
+
+	if err := monitor.ResetIdle(target); err != nil {
+		t.Fatal(err)
+	}
+	monitor.clock = func() (uint64, error) { return uint64(105 * time.Second), nil }
+
+	sample, err := monitor.Sample(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sample.IdleFor != 5*time.Second || sample.PacketSequence != 0 {
+		t.Fatalf("sample = %+v, want 5s idle since the reset", sample)
+	}
+}
+
 func TestMonitorDetachRemovesTheAttachment(t *testing.T) {
 	monitor, hooks := newTestMonitor(t)
 	target := Target{VirtualMachineID: "vm-1", UserID: 1001}
