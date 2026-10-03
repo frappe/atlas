@@ -23,28 +23,28 @@ class PeerIdentity:
     """ One peer, by tenant and client.
 
         Attributes:
-            client_id (int): Peer number, unique within the tenant.
             tenant_id (int): Tenant that owns the VMs the peer reaches.
+            client_id (int): Peer number, unique within the tenant.
      """
 
-    client_id: int
     tenant_id: int
+    client_id: int
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        client_id = self.client_id
-
         tenant_id = self.tenant_id
+
+        client_id = self.client_id
 
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update({
-            "client_id": client_id,
             "tenant_id": tenant_id,
+            "client_id": client_id,
         })
 
         return field_dict
@@ -54,13 +54,13 @@ class PeerIdentity:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        client_id = d.pop("client_id")
-
         tenant_id = d.pop("tenant_id")
 
+        client_id = d.pop("client_id")
+
         peer_identity = cls(
-            client_id=client_id,
             tenant_id=tenant_id,
+            client_id=client_id,
         )
 
         return peer_identity
