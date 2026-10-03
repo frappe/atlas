@@ -37,7 +37,7 @@ A repeated request with the same key returns the same settings. A new device goe
 
 `PUT /v1/peers` replaces the complete table, for example to restore it from Central's records. Send each device's `node_id` from the list, because the device address carries the node number. A device without `node_id` goes to the node with the fewest devices.
 
-Each node serves its API reference at `https://wireguard-NNN.<wildcard>/docs`, and the gateway form links to it.
+The [WireGuard gateway API reference](/api/wg-gateway/) lists each route, field, and error. Each node also serves it at `https://wireguard-NNN.<wildcard>/docs`, and the gateway form links to it.
 
 A JWT needs the scope `peers:update` to change devices or `peers:read` to list them. A token with a `tenant` claim is refused. The [control cluster](../../services/control-cluster/SPEC.md) validates tokens the same way as the HTTP proxy.
 

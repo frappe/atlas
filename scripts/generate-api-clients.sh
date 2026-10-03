@@ -17,9 +17,10 @@ if ! command -v openapi-python-client >/dev/null; then
 fi
 
 if ! command -v uv >/dev/null; then
-	echo "Install uv. It supplies the environment of the HTTP proxy control daemon." >&2
+	echo "Install uv. It supplies the environments of the HTTP proxy control and WireGuard gateway daemons." >&2
 	exit 1
 fi
 
 "$ATLAS_PYTHON" "$GENERATE" atlas-client
-uv run --no-project --with "$ROOT/services/http-proxy/control" python "$GENERATE" atlas-proxy-client
+uv run --no-project --with "$ROOT/services/control-cluster" --with "$ROOT/services/http-proxy/control" python "$GENERATE" atlas-proxy-client
+uv run --no-project --with "$ROOT/services/control-cluster" --with "$ROOT/services/wg-gateway/daemon" python "$GENERATE" atlas-wg-gateway-client
