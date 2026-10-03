@@ -260,8 +260,8 @@ class MigrationService:
 			self.request_destination_abort()
 			return False
 		if state == "ready":
-			self.commit_destination()
-			self.finish()
+			if self.commit_destination():
+				self.finish()
 		return False
 
 	def handle_missing_destination(self) -> bool:
@@ -317,8 +317,12 @@ class MigrationService:
 		values: dict[str, Any] = {
 			"duration_seconds": self.duration_seconds,
 		}
+		locked: VirtualMachineMigration = frappe.get_doc(
+			"Virtual Machine Migration", self.migration.name, for_update=True
+		)
 		if status:
-			values["status"] = status
+			if not (locked.status == "canceling" and status != "canceling"):
+				values["status"] = status
 			values["progress_percent"] = self.progress_percent(status, transfers)
 		self.update(values, transfers=transfers, commit=True)
 
@@ -354,7 +358,7 @@ class MigrationService:
 			status, int(self.migration.progress_percent or 0)
 		)
 
-	def commit_destination(self) -> None:
+	def commit_destination(self) -> bool:
 		"""Commit the VM server, a resized shape, and finalizing status in one transaction."""
 		virtual_machine = cast(
 			"VirtualMachine",
@@ -364,6 +368,10 @@ class MigrationService:
 			"VirtualMachineMigration",
 			frappe.get_doc("Virtual Machine Migration", self.migration.name, for_update=True),
 		)
+		if getattr(migration, "status", None) == "canceling":
+			self.migration = migration
+			frappe.db.rollback()
+			return False
 		if virtual_machine.server != migration.destination_metal_server:
 			virtual_machine.db_set("server", migration.destination_metal_server)
 		if migration.target_memory_mib:
@@ -393,6 +401,7 @@ class MigrationService:
 				frappe.log_error(
 					title=f"Move public allocation {allocation} to {migration.destination_metal_server}"
 				)
+		return True
 
 	def finish(self) -> None:
 		"""Tell the destination that Atlas committed the VM."""
