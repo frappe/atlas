@@ -7,6 +7,7 @@ import http.cookiejar
 import json
 import os
 import secrets
+import shutil
 import ssl
 import subprocess
 import sys
@@ -225,6 +226,7 @@ class WarpgateInstaller:
 			},
 			"http": {
 				"listen": f"127.0.0.1:{HTTP_PORT}",
+				"external_port": 443,
 				"certificate": certificate,
 				"key": key,
 				"trust_x_forwarded_headers": True,
@@ -258,8 +260,8 @@ class WarpgateInstaller:
 		if CONFIG.exists() and CONFIG.read_text() == content:
 			return False
 		CONFIG.write_text(content)
-		os.chown(CONFIG, 0, int(subprocess.check_output(["id", "-g", USER]).strip()))
-		os.chmod(CONFIG, 0o640)
+		shutil.chown(CONFIG, USER, USER)
+		os.chmod(CONFIG, 0o600)
 		run([str(BINARY), "--config", str(CONFIG), "check"], stdout=subprocess.DEVNULL)
 		return True
 
