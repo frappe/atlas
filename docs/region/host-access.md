@@ -24,7 +24,7 @@ Atlas Settings also holds the private key in an encrypted, hidden field, so a si
 
 Atlas writes `sites/<site>/private/wireguard/atlas0.conf`. Each host peer allows the host `fdab` address and the tenant-0 VMs on that host. A scheduler job writes the file again within 10 seconds when a host or a tenant-0 VM changes, for example after a migration.
 
-A root systemd timer applies the file every 10 seconds. When the file changed, it copies it to `/etc/wireguard/atlas0.conf` and runs `wg syncconf`, or `wg-quick up` for the first start. A timer is used because SELinux can hide a home directory from a path unit.
+A root systemd timer applies the file every 10 seconds. When only the peers changed, it copies the file to `/etc/wireguard/atlas0.conf` and runs `wg syncconf`. When the `[Interface]` section changed, for example the address, MTU, or routes, it restarts the interface with `wg-quick`, because `wg syncconf` changes only peers. A timer is used because SELinux can hide a home directory from a path unit.
 
 Atlas uses each host private IPv4 address as the endpoint. The Atlas VM reaches it through the masquerade on its parent host. A development Atlas reaches it through the [development gateway](#development-gateway).
 
@@ -60,9 +60,8 @@ laptop atlas0 ======================= inner WireGuard, end to end ==============
 1. Create the first Metal Server record. Its setup can stop at `wireguard-link` after 120 seconds. The host firewall is not installed yet.
 2. Run `pilot --site SITE deploy-dev-gateway <metal-server-id> --ssh-host <public-IPv4>`. The command installs atlas-vm on that host and writes `atlas-gateway.conf`. When Atlas can reach that host later, omit `--ssh-host` to update the gateway.
 3. Run `sudo scripts/install-atlas-wireguard.sh <bench>/sites/SITE/private/wireguard/atlas-gateway.conf` on the Atlas machine.
-4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE configure-atlas-wireguard` to rewrite `atlas0.conf`.
-5. Restart `atlas0` with `sudo wg-quick down atlas0 && sudo systemctl start atlas-wireguard-atlas0.service`. `wg syncconf` does not change the MTU of a running interface.
-6. If the Metal Server status is `Failed`, use **Setup Metal Server** to retry. Normal setup installs Metal and the host firewall after the WireGuard link works.
+4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE configure-atlas-wireguard` to rewrite `atlas0.conf`. The timer restarts `atlas0` with the new MTU.
+5. If the Metal Server status is `Failed`, use **Setup Metal Server** to retry. Normal setup installs Metal and the host firewall after the WireGuard link works.
 
 The gateway cannot decrypt the `atlas0` sessions. The outer link carries only the provider private network.
 
