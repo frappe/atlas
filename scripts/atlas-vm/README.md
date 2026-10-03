@@ -51,7 +51,7 @@ sudo atlas-vm reset-password pilot          # Use site for the site password.
 sudo atlas-vm resize --vcpu 8 --disk 60     # This restarts the VM. A disk can only grow.
 ```
 
-`atlas-vm setup` updates credentials and other mutable values. It stops if the configuration changes a region or provider value after provider setup.
+`atlas-vm setup` updates credentials and other mutable values. It also fast-forwards the Atlas app to the configured branch, migrates the site, and restarts the bench. It stops if the configuration changes a region or provider value after provider setup.
 
 After you upgrade `atlas-vm`, run `sudo atlas-vm stop && sudo atlas-vm create` to boot the new kernel. `create` keeps the guest disk and runs setup. `atlas-vm setup` refuses a VM that boots an older kernel.
 
