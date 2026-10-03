@@ -20,6 +20,7 @@ class FakeWarpgate:
 		self.users: dict[str, dict] = {}
 		self.credentials: list[tuple[str, str, str]] = []
 		self.grants: dict[tuple[str, str], datetime] = {}
+		self.sessions: dict[str, str] = {}
 		self.calls: list[str] = []
 
 	def list_roles(self) -> list[dict]:
@@ -58,6 +59,12 @@ class FakeWarpgate:
 	def revoke_user_role(self, user_id: str, role_id: str) -> None:
 		self.calls.append("DELETE")
 		del self.grants[(user_id, role_id)]
+
+	def list_active_sessions(self, username: str) -> list[dict]:
+		return [{"id": session_id} for session_id, owner in self.sessions.items() if owner == username]
+
+	def close_session(self, session_id: str) -> None:
+		del self.sessions[session_id]
 
 
 def in_hours(hours: float) -> datetime:
@@ -109,6 +116,16 @@ class TestHostAccess(UnitTestCase):
 
 		self.assertEqual(warpgate.grants, {})
 		self.assertEqual(warpgate.calls, ["POST", "DELETE"])
+
+	def test_a_revoke_closes_every_live_session_of_the_person(self) -> None:
+		warpgate = FakeWarpgate()
+		access = self.access(warpgate)
+		access.grant("alice@frappe.io", in_hours(1))
+		warpgate.sessions = {"s1": "alice@frappe.io", "s2": "alice@frappe.io", "s3": "bob@frappe.io"}
+
+		access.revoke("alice@frappe.io")
+
+		self.assertEqual(warpgate.sessions, {"s3": "bob@frappe.io"})
 
 	def test_an_expiry_must_have_a_time_zone_be_future_and_within_the_cap(self) -> None:
 		access = self.access(FakeWarpgate())
