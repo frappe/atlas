@@ -59,18 +59,11 @@ class AwsCatalog:
 		"""Report whether a type supports Atlas without local storage."""
 		processor = instance_type.get("ProcessorInfo")
 		features = processor.get("SupportedFeatures", []) if isinstance(processor, Mapping) else []
-		network = instance_type.get("NetworkInfo")
-		maximum_interfaces = network.get("MaximumNetworkInterfaces", 0) if isinstance(network, Mapping) else 0
 
 		has_virtualization = bool(instance_type.get("BareMetal")) or (
 			NESTED_VIRTUALIZATION_FEATURE in features
 		)
-		return (
-			has_virtualization
-			and AwsCatalog._disk_gib(instance_type) == 0
-			and isinstance(maximum_interfaces, int)
-			and maximum_interfaces >= 2
-		)
+		return has_virtualization and AwsCatalog._disk_gib(instance_type) == 0
 
 	@staticmethod
 	def image_id(metadata: object, image_name: str) -> str:

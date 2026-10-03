@@ -6,7 +6,7 @@ Choose the provider configured for your region.
 | --- | --- |
 | [Generic](#generic-provider) | Register hosts you prepare. |
 | [Scaleway](#scaleway) | Provider-managed Elastic Metal hosts. |
-| [AWS](#aws) | EC2 hosts with a dedicated mesh interface. |
+| [AWS](#aws) | EC2 hosts with one network interface and an Elastic IP. |
 
 To add an adapter, start with [Add a provider](#add-a-provider).
 
@@ -152,8 +152,8 @@ Scaleway Flexible IPv4 addresses and IPv6 `/64` blocks attach to one server. A t
 | [client.py](../../atlas/atlas/core/server_providers/aws/client.py) | boto3 sessions, pagination, and AWS errors. |
 | [infrastructure.py](../../atlas/atlas/core/server_providers/aws/infrastructure.py) | VPC, subnet, security group, and key pair operations. |
 | [catalog.py](../../atlas/atlas/core/server_providers/aws/catalog.py) | Instance type and machine image translation. |
-| [servers.py](../../atlas/atlas/core/server_providers/aws/servers.py) | Instance and mesh interface operations. |
-| [ip_addresses.py](../../atlas/atlas/core/server_providers/aws/ip_addresses.py) | Elastic IP address operations. |
+| [servers.py](../../atlas/atlas/core/server_providers/aws/servers.py) | Instance operations. |
+| [ip_addresses.py](../../atlas/atlas/core/server_providers/aws/ip_addresses.py) | Host and VM Elastic IP address operations. |
 | [provider.py](../../atlas/atlas/core/server_providers/aws/provider.py) | Contract composition and host network setup. |
 
 :::
@@ -168,23 +168,29 @@ The whole block can move to another host, but its VM `/128` addresses cannot spr
 
 ### Host network shape
 
-An Atlas host gets a second network interface in the Atlas subnet. That interface carries mesh traffic.
+An Atlas host has one network interface in the Atlas subnet. The interface carries host traffic, mesh traffic, VM public addresses, and the delegated IPv6 blocks.
 
-AWS gives no stable guest device name, so `aws/configure-private-network.sh` finds the interface by its MAC address and renames it to `atlas-mesh`. metald uses that name as its mesh uplink.
+The Metal Server stores the interface name as both the public and the private network interface. Its primary private address is the private IPv4 address, and WG Mesh reaches each peer at that address.
 
-The cloud-init network hotplug handler renames an attached interface back to its default name. Atlas launches each instance with user data that limits cloud-init network updates to the first boot, so the handler does not run.
+The interface keeps the MTU of the VPC. **Private Network MTU** applies only to Scaleway.
 
-The script writes persistent configuration for Netplan or `systemd-networkd`.
+### Host public address
 
-Atlas stores the mesh network interface ID before it starts the attachment. AWS deletion uses only this stored ID. It verifies the interface attachment before it deletes the interface or the instance.
+Each host gets an Elastic IP on the primary private address of its interface. The address stays the same when the instance stops and starts.
+
+Atlas finds the address by the `atlas-server` tag, so a retry reuses it. Atlas stores the allocation ID on the Metal Server, and deletion releases only that stored address.
 
 ### Network exposure
 
-The Atlas security group allows all inbound traffic during development. Scaleway hosts have the same exposure because Atlas does not configure a Scaleway firewall.
+The Atlas security group allows all inbound traffic. The host firewall and Metal filter traffic on the host.
+
+### Resource names
+
+Each AWS resource has the name `Atlas - <region> - <detail>`, for example `Atlas - mumbai - security group`. Setup finds the internet gateway by its VPC and keeps a stored key pair name.
 
 ### Instance types
 
-Atlas needs hardware virtualization and two network interfaces. The catalog rejects instance types that have local instance storage.
+Atlas needs hardware virtualization. The catalog rejects instance types that have local instance storage.
 
 A bare metal type provides the processor extensions. A virtual type must report `nested-virtualization` in `ProcessorInfo.SupportedFeatures`.
 
