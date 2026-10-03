@@ -219,6 +219,27 @@ func (monitor *Monitor) Sample(target Target) (Sample, error) {
 	return Sample{IdleFor: time.Duration(now - lastActivity), PacketSequence: packetTime}, nil
 }
 
+// ResetIdle starts the idle time of one target again from now.
+func (monitor *Monitor) ResetIdle(target Target) error {
+	monitor.mutex.Lock()
+	defer monitor.mutex.Unlock()
+
+	existing := monitor.attachments[target.VirtualMachineID]
+	if existing == nil || existing.target != target || !monitor.loaded {
+		return fmt.Errorf("reset traffic idle time for VM %s: %w", target.VirtualMachineID, ErrNotFound)
+	}
+	baseline, err := monitor.clock()
+	if err != nil {
+		return fmt.Errorf("read traffic clock for VM %s: %w", target.VirtualMachineID, err)
+	}
+	if err := monitor.hooks.clear(target.UserID); err != nil {
+		return fmt.Errorf("reset traffic idle time for VM %s: %w", target.VirtualMachineID, err)
+	}
+
+	existing.baseline = baseline
+	return nil
+}
+
 // StartWatching enables traffic events for one target.
 func (monitor *Monitor) StartWatching(target Target) error {
 	return monitor.setWatching(target, true)
