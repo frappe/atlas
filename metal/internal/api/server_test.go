@@ -30,8 +30,31 @@ type fakeVirtualMachineManager struct {
 	deferMetadata   bool
 }
 
-func (manager *fakeVirtualMachineManager) LockCapacity() func() {
-	return func() {}
+func (manager *fakeVirtualMachineManager) ResizeWithCapacity(ctx context.Context, id string, compute vm.Compute, diskMiB int, capacity vm.ResizeCapacitySource) error {
+	virtualMachine, found := manager.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	available, err := capacity(ctx)
+	if err != nil {
+		return err
+	}
+	if needsMoreThanAvailable(compute.MemoryMiB, virtualMachine.info.MemoryMiB, available.AvailableMemoryMiB) ||
+		needsMoreThanAvailable(diskMiB, virtualMachine.info.DiskMiB, available.AvailableStorageMiB) {
+		return vm.ErrInsufficientCapacity
+	}
+	shapeChanged := virtualMachine.info.CPUMillicores != compute.CPUMillicores ||
+		virtualMachine.info.MemoryMiB != compute.MemoryMiB ||
+		virtualMachine.info.DiskMiB != diskMiB
+	if (shapeChanged && virtualMachine.info.State != vm.StateStopped) || diskMiB < virtualMachine.info.DiskMiB {
+		return vm.ErrConflict
+	}
+	virtualMachine.info.CPUMillicores = compute.CPUMillicores
+	virtualMachine.info.MemoryMiB = compute.MemoryMiB
+	virtualMachine.info.DiskMiB = diskMiB
+	virtualMachine.info.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+	virtualMachine.info.DesiredGeneration++
+	return nil
 }
 
 func (manager *fakeVirtualMachineManager) Create(_ context.Context, id string, specification vm.Specification) (vm.Information, error) {
@@ -171,25 +194,6 @@ func (manager *fakeVirtualMachineManager) SetCompute(_ context.Context, id strin
 		virtualMachine.info.DesiredState = vm.StateRunning
 	}
 
-	virtualMachine.info.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
-	virtualMachine.info.DesiredGeneration++
-	return nil
-}
-
-func (manager *fakeVirtualMachineManager) Resize(_ context.Context, id string, compute vm.Compute, diskMiB int) error {
-	virtualMachine, found := manager.virtualMachines[id]
-	if !found {
-		return vm.ErrNotFound
-	}
-	shapeChanged := virtualMachine.info.CPUMillicores != compute.CPUMillicores ||
-		virtualMachine.info.MemoryMiB != compute.MemoryMiB ||
-		virtualMachine.info.DiskMiB != diskMiB
-	if (shapeChanged && virtualMachine.info.State != vm.StateStopped) || diskMiB < virtualMachine.info.DiskMiB {
-		return vm.ErrConflict
-	}
-	virtualMachine.info.CPUMillicores = compute.CPUMillicores
-	virtualMachine.info.MemoryMiB = compute.MemoryMiB
-	virtualMachine.info.DiskMiB = diskMiB
 	virtualMachine.info.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
 	virtualMachine.info.DesiredGeneration++
 	return nil
