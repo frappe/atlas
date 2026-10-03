@@ -129,11 +129,11 @@ Signing in gives no host access. Each access is a grant of one Warpgate role wit
 | `all-hosts` | Every host | The same route with `all` as the ID |
 | `warpgate:admin` | The Warpgate admin UI, not hosts | Central role `Atlas Warpgate Admin`, at sign-in |
 
-The grant and revoke routes, and `GET /api/atlas/hosts`, need scope `*` and tenant 0. A grant registers the person in Warpgate when needed, so Central can grant before the first sign-in.
+The grant and revoke routes, `POST /api/atlas/warpgate/sessions/close`, and `GET /api/atlas/hosts` need scope `*` and tenant 0. A grant registers the person in Warpgate when needed, so Central can grant before the first sign-in.
 
 `expires_at` must be at most 24 hours away. Set site config `warpgate_grant_max_hours` to change the limit. At `expires_at`, Warpgate stops new sessions, but a live session stays open.
 
-A revoke removes the role and closes every live Warpgate session of the person, on all hosts. A Warpgate admin can also grant a role in the Warpgate admin UI.
+A revoke removes the role and closes the person's live sessions to the hosts that they can no longer open. Sessions to hosts that another grant still opens stay open. `POST /api/atlas/warpgate/sessions/close` closes the sessions and keeps the roles. Central uses it when Warpgate admin access ends. A Warpgate admin can also grant a role in the Warpgate admin UI.
 
 ### What Atlas keeps in step
 

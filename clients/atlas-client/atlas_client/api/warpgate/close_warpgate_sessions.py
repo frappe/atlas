@@ -9,15 +9,14 @@ from ...types import Response, UNSET
 from ... import errors
 
 from ...models.api_error_response import ApiErrorResponse
-from ...models.host_access_revoke_payload import HostAccessRevokePayload
+from ...models.warpgate_sessions_close_payload import WarpgateSessionsClosePayload
 from typing import cast
 
 
 
 def _get_kwargs(
-    host_id: str,
     *,
-    body: HostAccessRevokePayload,
+    body: WarpgateSessionsClosePayload,
     x_tenant_id: int,
 
 ) -> dict[str, Any]:
@@ -33,7 +32,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/api/atlas/hosts/{host_id}/access/revoke".format(host_id=quote(str(host_id), safe=""),),
+        "url": "/api/atlas/warpgate/sessions/close",
     }
 
     _kwargs["json"] = body.to_dict()
@@ -71,13 +70,6 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_403
 
-    if response.status_code == 404:
-        response_404 = ApiErrorResponse.from_dict(response.json())
-
-
-
-        return response_404
-
     if response.status_code == 500:
         response_500 = ApiErrorResponse.from_dict(response.json())
 
@@ -108,22 +100,19 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
 def sync_detailed(
-    host_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: HostAccessRevokePayload,
+    body: WarpgateSessionsClosePayload,
     x_tenant_id: int,
 
 ) -> Response[Any | ApiErrorResponse]:
-    """ Revoke host access
+    """ Close Warpgate sessions
 
-     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
-    sessions to the hosts they can no longer open.
+     Ends every live Warpgate session of one person now. Roles stay as they are.
 
     Args:
-        host_id (str):
         x_tenant_id (int):
-        body (HostAccessRevokePayload): Close one host, or every host, to one person now.
+        body (WarpgateSessionsClosePayload): End every live Warpgate session of one person now.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,8 +124,7 @@ def sync_detailed(
 
 
     kwargs = _get_kwargs(
-        host_id=host_id,
-body=body,
+        body=body,
 x_tenant_id=x_tenant_id,
 
     )
@@ -148,22 +136,19 @@ x_tenant_id=x_tenant_id,
     return _build_response(client=client, response=response)
 
 def sync(
-    host_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: HostAccessRevokePayload,
+    body: WarpgateSessionsClosePayload,
     x_tenant_id: int,
 
 ) -> Any | ApiErrorResponse | None:
-    """ Revoke host access
+    """ Close Warpgate sessions
 
-     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
-    sessions to the hosts they can no longer open.
+     Ends every live Warpgate session of one person now. Roles stay as they are.
 
     Args:
-        host_id (str):
         x_tenant_id (int):
-        body (HostAccessRevokePayload): Close one host, or every host, to one person now.
+        body (WarpgateSessionsClosePayload): End every live Warpgate session of one person now.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,30 +160,26 @@ def sync(
 
 
     return sync_detailed(
-        host_id=host_id,
-client=client,
+        client=client,
 body=body,
 x_tenant_id=x_tenant_id,
 
     ).parsed
 
 async def asyncio_detailed(
-    host_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: HostAccessRevokePayload,
+    body: WarpgateSessionsClosePayload,
     x_tenant_id: int,
 
 ) -> Response[Any | ApiErrorResponse]:
-    """ Revoke host access
+    """ Close Warpgate sessions
 
-     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
-    sessions to the hosts they can no longer open.
+     Ends every live Warpgate session of one person now. Roles stay as they are.
 
     Args:
-        host_id (str):
         x_tenant_id (int):
-        body (HostAccessRevokePayload): Close one host, or every host, to one person now.
+        body (WarpgateSessionsClosePayload): End every live Warpgate session of one person now.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,8 +191,7 @@ async def asyncio_detailed(
 
 
     kwargs = _get_kwargs(
-        host_id=host_id,
-body=body,
+        body=body,
 x_tenant_id=x_tenant_id,
 
     )
@@ -223,22 +203,19 @@ x_tenant_id=x_tenant_id,
     return _build_response(client=client, response=response)
 
 async def asyncio(
-    host_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: HostAccessRevokePayload,
+    body: WarpgateSessionsClosePayload,
     x_tenant_id: int,
 
 ) -> Any | ApiErrorResponse | None:
-    """ Revoke host access
+    """ Close Warpgate sessions
 
-     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
-    sessions to the hosts they can no longer open.
+     Ends every live Warpgate session of one person now. Roles stay as they are.
 
     Args:
-        host_id (str):
         x_tenant_id (int):
-        body (HostAccessRevokePayload): Close one host, or every host, to one person now.
+        body (WarpgateSessionsClosePayload): End every live Warpgate session of one person now.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -250,8 +227,7 @@ async def asyncio(
 
 
     return (await asyncio_detailed(
-        host_id=host_id,
-client=client,
+        client=client,
 body=body,
 x_tenant_id=x_tenant_id,
 

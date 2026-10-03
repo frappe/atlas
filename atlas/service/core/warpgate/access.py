@@ -62,17 +62,23 @@ class HostAccess:
 		return email
 
 	def revoke(self, email: str) -> None:
-		"""Close the host and every live session of the person. A missing user or grant is not an error."""
+		"""Close the host, and each live session of the person to a host they can no longer open.
+
+		A missing user or grant is not an error.
+		"""
 		email = self.normalize_email(email)
 		try:
 			user = self.client.find_user(email)
 			if user is None:
 				return
 			role_id = self.get_role_id()
-			if any(role["id"] == role_id for role in self.client.list_user_roles(user["id"])):
+			roles = self.client.list_user_roles(user["id"])
+			if any(role["id"] == role_id for role in roles):
 				self.client.revoke_user_role(user["id"], role_id)
+			remaining_roles = {role["name"] for role in roles if role["id"] != role_id and role["is_active"]}
 			for session in self.client.list_active_sessions(email):
-				self.client.close_session(session["id"])
+				if any(not can_open(target, remaining_roles) for target in get_open_targets(session)):
+					self.client.close_session(session["id"])
 		except WarpgateError as error:
 			raise WarpgateUnavailable(str(error)) from error
 
@@ -112,3 +118,28 @@ class HostAccess:
 		now = datetime.now(UTC)
 		if not now < expires_at <= now + timedelta(hours=maximum_hours):
 			raise AtlasUserError(f"expires_at must be in the future and at most {maximum_hours} hours away.")
+
+
+def get_open_targets(session: dict) -> list[str]:
+	return [
+		target_session["target"]["name"]
+		for target_session in session["target_sessions"]
+		if not target_session["ended"] and target_session["target"]
+	]
+
+
+def can_open(target: str, roles: set[str]) -> bool:
+	return ALL_HOSTS_ROLE in roles or get_host_role(target) in roles
+
+
+def close_sessions(email: str, client: WarpgateClient | None = None) -> None:
+	"""End every live Warpgate session of one person. A region without Warpgate has none."""
+	email = HostAccess.normalize_email(email)
+	client = client or WarpgateClient.from_settings()
+	if client is None:
+		return
+	try:
+		for session in client.list_active_sessions(email):
+			client.close_session(session["id"])
+	except WarpgateError as error:
+		raise WarpgateUnavailable(str(error)) from error
