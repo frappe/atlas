@@ -19,6 +19,7 @@ from atlas.service.core.warpgate.installation import WarpgateTokenManager, publi
 PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 	{
 		"Generic": (),
+		"Redfish": (),
 		"Scaleway": (
 			"scaleway_organization_id",
 			"scaleway_project_id",
@@ -40,6 +41,7 @@ PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 PROVIDER_IMMUTABLE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 	{
 		"Generic": (),
+		"Redfish": (),
 		"Scaleway": ("scaleway_organization_id", "scaleway_project_id", "scaleway_zone"),
 		"AWS": ("aws_region", "aws_availability_zone"),
 	}
