@@ -182,7 +182,11 @@ Atlas finds the address by the `atlas-server` tag, so a retry reuses it. Atlas s
 
 ### Network exposure
 
-The Atlas security group allows all inbound traffic during development. Scaleway hosts have the same exposure because Atlas does not configure a Scaleway firewall.
+The Atlas security group allows all inbound traffic. The host firewall and Metal filter traffic on the host.
+
+### Resource names
+
+Each AWS resource has the name `Atlas - <region> - <detail>`, for example `Atlas - mumbai - security group`. Setup finds the internet gateway by its VPC and keeps a stored key pair name.
 
 ### Instance types
 

@@ -24,7 +24,7 @@ class AwsIPAddresses:
 			TagSpecifications=[
 				{
 					"ResourceType": "elastic-ip",
-					"Tags": [{"Key": "Name", "Value": f"{self.configuration.resource_name_prefix}address"}],
+					"Tags": [{"Key": "Name", "Value": self.configuration.resource_name("VM address")}],
 				}
 			],
 		)
@@ -59,7 +59,7 @@ class AwsIPAddresses:
 				{
 					"ResourceType": "elastic-ip",
 					"Tags": [
-						{"Key": "Name", "Value": server_name},
+						{"Key": "Name", "Value": self.configuration.resource_name(server_name)},
 						{"Key": AwsServers.identity_tag_key, "Value": server_name},
 					],
 				}

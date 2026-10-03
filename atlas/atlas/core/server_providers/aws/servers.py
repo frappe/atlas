@@ -76,7 +76,7 @@ class AwsServers:
 				{
 					"ResourceType": "instance",
 					"Tags": [
-						{"Key": "Name", "Value": request.name},
+						{"Key": "Name", "Value": self.configuration.resource_name(request.name)},
 						{"Key": self.identity_tag_key, "Value": request.name},
 					],
 				}

@@ -13,6 +13,7 @@ from atlas.atlas.core.server_providers.aws.configuration import (
 	ROOT_VOLUME_SIZE_GIB,
 	STORAGE_VOLUME_DEVICE_NAME,
 	STORAGE_VOLUME_SIZE_GIB,
+	AwsConfiguration,
 )
 from atlas.atlas.core.server_providers.aws.infrastructure import AwsInfrastructure
 from atlas.atlas.core.server_providers.aws.ip_addresses import AwsIPAddresses, AwsIPv6Prefixes
@@ -21,6 +22,20 @@ from atlas.atlas.core.server_providers.aws.servers import AwsServers
 from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 from atlas.atlas.core.server_providers.base import ProviderServer, ServerCreateRequest, ServerPowerAction
 from atlas.atlas.core.server_providers.registry import get_server_provider
+
+
+def aws_configuration(**changes: object) -> AwsConfiguration:
+	values = {
+		"region": "eu-west-1",
+		"availability_zone": "eu-west-1a",
+		"region_name": "eu",
+		"vpc_id": None,
+		"subnet_id": None,
+		"security_group_id": None,
+		"key_pair_name": None,
+	}
+	values.update(changes)
+	return AwsConfiguration(**values)
 
 
 class TestAwsInfrastructure(UnitTestCase):
@@ -79,17 +94,32 @@ class TestAwsInfrastructure(UnitTestCase):
 			infrastructure.provider.client.call.call_args_list[1].kwargs["IpPermissions"], [old_rule]
 		)
 
+	def test_the_internet_gateway_is_found_by_its_vpc(self) -> None:
+		infrastructure = self.infrastructure()
+		infrastructure.main_route_table = Mock(return_value=("rtb-1", "igw-1"))
+		infrastructure.has_ipv6_default_route = Mock(return_value=True)
+		infrastructure.provider.client.call.return_value = {
+			"InternetGateways": [{"InternetGatewayId": "igw-1"}]
+		}
+
+		infrastructure.create_internet_access("vpc-1")
+
+		self.assertEqual(
+			infrastructure.provider.client.call.call_args.kwargs["Filters"],
+			[{"Name": "attachment.vpc-id", "Values": ["vpc-1"]}],
+		)
+		operations = [call.args[1] for call in infrastructure.provider.client.call.call_args_list]
+		self.assertNotIn("create_internet_gateway", operations)
+
+	def test_the_stored_key_pair_name_is_kept(self) -> None:
+		infrastructure = self.infrastructure(key_pair_name="atlas-eu-ssh-key")
+		infrastructure.provider.client.call.return_value = {"KeyPairs": [{"KeyName": "atlas-eu-ssh-key"}]}
+
+		self.assertEqual(infrastructure.create_key_pair("ssh-ed25519 key"), "atlas-eu-ssh-key")
+
 	@staticmethod
 	def infrastructure(**changes: object) -> AwsInfrastructure:
-		configuration = {
-			"region": "eu-west-1",
-			"availability_zone": "eu-west-1a",
-			"resource_name_prefix": "atlas-eu-",
-			"vpc_id": None,
-			"subnet_id": None,
-			"security_group_id": None,
-			"key_pair_name": None,
-		}
+		configuration = {}
 		settings = {"private_network_cidr": "10.1.0.0/20", "is_unicast_network_enabled": 1}
 		for key, value in changes.items():
 			if key in settings:
@@ -97,7 +127,7 @@ class TestAwsInfrastructure(UnitTestCase):
 			else:
 				configuration[key] = value
 		provider = SimpleNamespace(
-			configuration=SimpleNamespace(**configuration),
+			configuration=aws_configuration(**configuration),
 			settings=SimpleNamespace(**settings),
 			private_network_min_prefix=16,
 			private_network_max_prefix=28,
@@ -269,17 +299,20 @@ class TestAwsProvider(UnitTestCase):
 			provider.storage_pool_device(self.server())
 
 	def test_the_security_group_allows_all_inbound_traffic(self) -> None:
-		provider = self.provider()
-		infrastructure = AwsInfrastructure(provider)
-
-		rules = infrastructure.ingress_rules
+		rules = AwsInfrastructure(self.provider()).ingress_rules
 
 		self.assertEqual(
-			[(rule["IpProtocol"], rule.get("IpRanges"), rule.get("Ipv6Ranges")) for rule in rules],
 			[
-				("-1", [{"CidrIp": "0.0.0.0/0", "Description": "Atlas development access"}], None),
-				("-1", None, [{"CidrIpv6": "::/0", "Description": "Atlas development access"}]),
+				(
+					rule["IpProtocol"],
+					[
+						r.get("CidrIp") or r.get("CidrIpv6")
+						for r in rule.get("IpRanges", []) + rule.get("Ipv6Ranges", [])
+					],
+				)
+				for rule in rules
 			],
+			[("-1", ["0.0.0.0/0"]), ("-1", ["::/0"])],
 		)
 
 	def test_ubuntu_and_debian_users_can_be_promoted(self) -> None:
@@ -360,7 +393,7 @@ class TestAwsProvider(UnitTestCase):
 			public_ssh_key="ssh-ed25519 key",
 			is_server_provider_setup_completed=0,
 		)
-		provider.configuration = SimpleNamespace()
+		provider.configuration = aws_configuration()
 		provider.client = Mock()
 		provider.catalog = AwsCatalog()
 		provider.infrastructure = Mock()
@@ -508,11 +541,8 @@ class TestAwsServers(UnitTestCase):
 	def servers() -> AwsServers:
 		return AwsServers(
 			client=Mock(),
-			configuration=SimpleNamespace(
-				subnet_id="subnet-1",
-				security_group_id="sg-1",
-				key_pair_name="atlas-eu-ssh-key",
-				resource_name_prefix="atlas-eu-",
+			configuration=aws_configuration(
+				subnet_id="subnet-1", security_group_id="sg-1", key_pair_name="atlas-eu-ssh-key"
 			),
 			catalog=AwsCatalog(),
 		)
@@ -801,7 +831,7 @@ class TestAwsIPAddresses(UnitTestCase):
 
 	@staticmethod
 	def addresses() -> AwsIPAddresses:
-		return AwsIPAddresses(client=Mock(), configuration=SimpleNamespace(resource_name_prefix="atlas-eu-"))
+		return AwsIPAddresses(client=Mock(), configuration=aws_configuration())
 
 	def test_an_ipv6_block_is_the_first_free_80_of_the_subnet(self) -> None:
 		client = Mock()
