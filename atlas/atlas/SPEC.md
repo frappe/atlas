@@ -30,7 +30,7 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 
 ## Provider boundary
 
-Domain code reaches a provider only through `ServerProvider`. Implementations are Generic, Scaleway, and AWS.
+Domain code reaches a provider only through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. Redfish is registered scaffolding with no remote operations. See the [Redfish provider guide](../../docs/region/provider-guide.md#redfish).
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
 - Metal Server Size stores disk in GiB and price in integer USD cents.

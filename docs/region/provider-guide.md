@@ -7,6 +7,7 @@ Choose the provider configured for your region.
 | [Generic](#generic-provider) | Register hosts you prepare. |
 | [Scaleway](#scaleway) | Provider-managed Elastic Metal hosts. |
 | [AWS](#aws) | EC2 hosts with one network interface and an Elastic IP. |
+| [Redfish](#redfish) | Provider scaffolding. Remote operations are not implemented. |
 
 To add an adapter, start with [Add a provider](#add-a-provider).
 
@@ -111,6 +112,14 @@ Attach and detach change only Metal's VM network. Atlas does not change provider
 | Provider public IP reservation | Refused. Add a Static Public IP Pool. |
 | Public IPv4 attach | Returns the public address. Metal adds the address to the VM port. |
 | Public IPv4 detach and delete | Do nothing. |
+
+## Redfish
+
+Redfish is registered as a server provider and appears in Atlas Settings. The automated setup input accepts `Redfish` with no provider-specific fields.
+
+The provider is scaffolding only. It has no connection settings or API client. Infrastructure setup, credential validation, catalog discovery, host preparation, and power operations raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup.
+
+The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 
 ## Scaleway
 
