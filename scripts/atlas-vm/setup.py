@@ -36,7 +36,7 @@ from pilot.config import BenchConfig, WorkerGroup
 
 with BenchConfig.open(Path("{bench_path}")) as config:
 	config.get_app_by_name("frappe").branch = "develop"
-	config.socketio_backend = "python"
+	config.socketio_backend = "node"
 	config.lite_mode.enabled = False
 	config.workers.groups = [
 		WorkerGroup(queues=["default", "short"], count=3),
