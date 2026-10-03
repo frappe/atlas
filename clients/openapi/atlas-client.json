@@ -2514,6 +2514,22 @@
         "title": "VirtualMachineResponse",
         "type": "object"
       },
+      "WarpgateSessionsClosePayload": {
+        "additionalProperties": false,
+        "description": "End every live Warpgate session of one person now.",
+        "properties": {
+          "email": {
+            "description": "Email that the person signs in to Central with.",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "WarpgateSessionsClosePayload",
+        "type": "object"
+      },
       "WebhookConfigurationResponse": {
         "description": "The configured event deliveries of one Central.",
         "examples": [
@@ -2824,7 +2840,7 @@
     },
     "/api/atlas/hosts/{host_id}/access/revoke": {
       "post": {
-        "description": "Closes one host, or every host when the ID is `all`, to one person now.",
+        "description": "Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live sessions to the hosts they can no longer open.",
         "operationId": "revoke_host_access",
         "parameters": [
           {
@@ -2863,7 +2879,7 @@
         },
         "responses": {
           "204": {
-            "description": "The person can no longer open the host. Revoking twice is safe."
+            "description": "The person can no longer open the host, and has no live session to it. Revoking twice is safe."
           },
           "400": {
             "content": {
@@ -6125,6 +6141,97 @@
         ]
       }
     },
+    "/api/atlas/warpgate/sessions/close": {
+      "post": {
+        "description": "Ends every live Warpgate session of one person now. Roles stay as they are.",
+        "operationId": "close_warpgate_sessions",
+        "parameters": [
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "alice@frappe.io"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/WarpgateSessionsClosePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The person has no live session. Closing twice, or in a region without Warpgate, is safe."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Warpgate did not answer. Retry later."
+          }
+        },
+        "summary": "Close Warpgate sessions",
+        "tags": [
+          "Warpgate"
+        ]
+      }
+    },
     "/api/atlas/webhooks": {
       "put": {
         "description": "Point all Atlas event deliveries for one Central at its receiver. Atlas chooses the events and their content. A repeated call refreshes the configuration. Only a Central token, which carries tenant `*`, can use this route.",
@@ -6251,6 +6358,10 @@
     {
       "description": "List Metal hosts and grant people temporary SSH access to them through Warpgate. Tenant 0 only.",
       "name": "Hosts"
+    },
+    {
+      "description": "Close Warpgate sessions of a person. Tenant 0 only.",
+      "name": "Warpgate"
     }
   ]
 }
