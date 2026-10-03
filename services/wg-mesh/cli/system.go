@@ -152,7 +152,8 @@ func ignoreMissing(err error) error {
 	}
 
 	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "no such file or directory") || strings.Contains(message, "cannot find") || strings.Contains(message, "not found") {
+	// iproute2 reports a missing route as "No such process".
+	if strings.Contains(message, "no such file or directory") || strings.Contains(message, "cannot find") || strings.Contains(message, "not found") || strings.Contains(message, "no such process") {
 		return nil
 	}
 
