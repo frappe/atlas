@@ -133,7 +133,7 @@ The grant and revoke routes, `POST /api/atlas/warpgate/sessions/close`, and `GET
 
 `expires_at` must be at most 24 hours away. Set site config `warpgate_grant_max_hours` to change the limit. At `expires_at`, Warpgate stops new sessions, but a live session stays open.
 
-A revoke removes the role and closes every live Warpgate session of the person, on all hosts. `POST /api/atlas/warpgate/sessions/close` closes the sessions and keeps the roles. Central uses it when Warpgate admin access ends. A Warpgate admin can also grant a role in the Warpgate admin UI.
+A revoke removes the role and closes the person's live sessions to the hosts that they can no longer open. Sessions to hosts that another grant still opens stay open. `POST /api/atlas/warpgate/sessions/close` closes the sessions and keeps the roles. Central uses it when Warpgate admin access ends. A Warpgate admin can also grant a role in the Warpgate admin UI.
 
 ### What Atlas keeps in step
 

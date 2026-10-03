@@ -16,11 +16,11 @@ class FakeWarpgate:
 	"""Keep users, SSO credentials, and role grants in memory, like the Warpgate admin API."""
 
 	def __init__(self) -> None:
-		self.roles = {"all-hosts": "role-all", "host:osa-2": "role-osa-2"}
+		self.roles = {"all-hosts": "role-all", "host:osa-2": "role-osa-2", "host:osa-3": "role-osa-3"}
 		self.users: dict[str, dict] = {}
 		self.credentials: list[tuple[str, str, str]] = []
 		self.grants: dict[tuple[str, str], datetime] = {}
-		self.sessions: dict[str, str] = {}
+		self.sessions: dict[str, tuple[str, list[str]]] = {}
 		self.calls: list[str] = []
 
 	def list_roles(self) -> list[dict]:
@@ -50,7 +50,12 @@ class FakeWarpgate:
 		self.credentials.append((user_id, provider, email))
 
 	def list_user_roles(self, user_id: str) -> list[dict]:
-		return [{"id": role_id} for (owner, role_id) in self.grants if owner == user_id]
+		names = {role_id: name for name, role_id in self.roles.items()}
+		return [
+			{"id": role_id, "name": names[role_id], "is_active": True}
+			for (owner, role_id) in self.grants
+			if owner == user_id
+		]
 
 	def grant_user_role(self, user_id: str, role_id: str, expires_at: datetime, *, is_granted: bool) -> None:
 		self.calls.append("PUT" if is_granted else "POST")
@@ -61,7 +66,14 @@ class FakeWarpgate:
 		del self.grants[(user_id, role_id)]
 
 	def list_active_sessions(self, username: str) -> list[dict]:
-		return [{"id": session_id} for session_id, owner in self.sessions.items() if owner == username]
+		return [
+			{
+				"id": session_id,
+				"target_sessions": [{"target": {"name": target}, "ended": None} for target in targets],
+			}
+			for session_id, (owner, targets) in self.sessions.items()
+			if owner == username
+		]
 
 	def close_session(self, session_id: str) -> None:
 		del self.sessions[session_id]
@@ -117,15 +129,31 @@ class TestHostAccess(UnitTestCase):
 		self.assertEqual(warpgate.grants, {})
 		self.assertEqual(warpgate.calls, ["POST", "DELETE"])
 
-	def test_a_revoke_closes_every_live_session_of_the_person(self) -> None:
+	def test_a_revoke_closes_only_sessions_to_hosts_the_person_lost(self) -> None:
 		warpgate = FakeWarpgate()
 		access = self.access(warpgate)
 		access.grant("alice@frappe.io", in_hours(1))
-		warpgate.sessions = {"s1": "alice@frappe.io", "s2": "alice@frappe.io", "s3": "bob@frappe.io"}
+		warpgate.grants[("user-alice@frappe.io", "role-osa-3")] = in_hours(1)
+		warpgate.sessions = {
+			"osa-2": ("alice@frappe.io", ["osa-2"]),
+			"osa-3": ("alice@frappe.io", ["osa-3"]),
+			"web": ("alice@frappe.io", []),
+			"bob": ("bob@frappe.io", ["osa-2"]),
+		}
 
 		access.revoke("alice@frappe.io")
 
-		self.assertEqual(warpgate.sessions, {"s3": "bob@frappe.io"})
+		self.assertEqual(set(warpgate.sessions), {"osa-3", "web", "bob"})
+
+	def test_an_all_hosts_revoke_keeps_sessions_to_hosts_still_granted(self) -> None:
+		warpgate = FakeWarpgate()
+		self.access(warpgate, "all").grant("alice@frappe.io", in_hours(1))
+		self.access(warpgate).grant("alice@frappe.io", in_hours(1))
+		warpgate.sessions = {"osa-2": ("alice@frappe.io", ["osa-2"]), "osa-3": ("alice@frappe.io", ["osa-3"])}
+
+		self.access(warpgate, "all").revoke("alice@frappe.io")
+
+		self.assertEqual(set(warpgate.sessions), {"osa-2"})
 
 	def test_an_expiry_must_have_a_time_zone_be_future_and_within_the_cap(self) -> None:
 		access = self.access(FakeWarpgate())
@@ -167,11 +195,11 @@ class TestHostAccess(UnitTestCase):
 	def test_closing_sessions_keeps_the_roles_and_other_people(self) -> None:
 		warpgate = FakeWarpgate()
 		self.access(warpgate).grant("alice@frappe.io", in_hours(1))
-		warpgate.sessions = {"s1": "alice@frappe.io", "s2": "bob@frappe.io"}
+		warpgate.sessions = {"s1": ("alice@frappe.io", ["osa-2"]), "s2": ("bob@frappe.io", ["osa-2"])}
 
 		close_sessions("Alice@frappe.io", warpgate)
 
-		self.assertEqual(warpgate.sessions, {"s2": "bob@frappe.io"})
+		self.assertEqual(set(warpgate.sessions), {"s2"})
 		self.assertEqual(len(warpgate.grants), 1)
 
 	def test_closing_sessions_without_warpgate_does_nothing(self) -> None:
