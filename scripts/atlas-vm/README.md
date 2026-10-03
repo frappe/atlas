@@ -53,6 +53,8 @@ sudo atlas-vm resize --vcpu 8 --disk 60     # This restarts the VM. A disk can o
 
 `atlas-vm setup` updates credentials and other mutable values. It stops if the configuration changes a region or provider value after provider setup.
 
+After you upgrade `atlas-vm`, run `sudo atlas-vm stop && sudo atlas-vm create` to boot the new kernel. `create` keeps the guest disk and runs setup. `atlas-vm setup` refuses a VM that boots an older kernel.
+
 AWS uses one subnet in one availability zone, so a public IPv6 block can move to any host. An AWS region always uses unicast networking, because a VPC does not carry link-local multicast.
 
 The VM answers on host port 2222. In Atlas mode, host ports 80 and 443 also reach it. Gateway mode forwards UDP port 51821 to its WireGuard interface.
