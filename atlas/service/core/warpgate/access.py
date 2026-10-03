@@ -62,7 +62,7 @@ class HostAccess:
 		return email
 
 	def revoke(self, email: str) -> None:
-		"""Close the host now. A missing user or grant is not an error."""
+		"""Close the host and every live session of the person. A missing user or grant is not an error."""
 		email = self.normalize_email(email)
 		try:
 			user = self.client.find_user(email)
@@ -71,6 +71,8 @@ class HostAccess:
 			role_id = self.get_role_id()
 			if any(role["id"] == role_id for role in self.client.list_user_roles(user["id"])):
 				self.client.revoke_user_role(user["id"], role_id)
+			for session in self.client.list_active_sessions(email):
+				self.client.close_session(session["id"])
 		except WarpgateError as error:
 			raise WarpgateUnavailable(str(error)) from error
 

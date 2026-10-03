@@ -37,7 +37,6 @@ URL = f"https://127.0.0.1:{HTTP_PORT}"
 ADMIN_API = "/@warpgate/admin/api"
 SSO_PROVIDER = "central"
 TOKEN_LIFETIME = timedelta(days=365)
-# Atlas manages targets, access roles, users, and known host keys. It cannot read sessions or recordings.
 # Warpgate puts known host keys under config_edit.
 ATLAS_PERMISSIONS = {
 	"targets_create": True,
@@ -50,8 +49,8 @@ ATLAS_PERMISSIONS = {
 	"access_roles_edit": True,
 	"access_roles_delete": True,
 	"access_roles_assign": True,
-	"sessions_view": False,
-	"sessions_terminate": False,
+	"sessions_view": True,
+	"sessions_terminate": True,
 	"approve_sessions": False,
 	"recordings_view": False,
 	"tickets_create": False,
@@ -286,9 +285,12 @@ class WarpgateInstaller:
 		"""Create the atlas user with the atlas-sync admin role, reusing what a failed run created."""
 		step("Warpgate atlas user")
 		admin = Session("admin", ADMIN_PASSWORD_FILE.read_text().strip())
-		role = admin.find("/admin-roles", "name", "atlas-sync") or admin.call(
-			"POST", f"{ADMIN_API}/admin-roles", {"name": "atlas-sync", **ATLAS_PERMISSIONS}
-		)
+		role_data = {"name": "atlas-sync", **ATLAS_PERMISSIONS}
+		role = admin.find("/admin-roles", "name", "atlas-sync")
+		if role:
+			admin.call("PUT", f"{ADMIN_API}/admin-roles/{role['id']}", role_data)
+		else:
+			role = admin.call("POST", f"{ADMIN_API}/admin-roles", role_data)
 		user = admin.find("/users", "username", "atlas") or admin.call(
 			"POST", f"{ADMIN_API}/users", {"username": "atlas"}
 		)
