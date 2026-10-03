@@ -71,10 +71,9 @@ class HostAccess:
 			role_id = self.get_role_id()
 			if any(role["id"] == role_id for role in self.client.list_user_roles(user["id"])):
 				self.client.revoke_user_role(user["id"], role_id)
-			for session in self.client.list_active_sessions(email):
-				self.client.close_session(session["id"])
 		except WarpgateError as error:
 			raise WarpgateUnavailable(str(error)) from error
+		close_sessions(email, self.client)
 
 	def get_role_id(self) -> str:
 		for role in self.client.list_roles():
@@ -112,3 +111,16 @@ class HostAccess:
 		now = datetime.now(UTC)
 		if not now < expires_at <= now + timedelta(hours=maximum_hours):
 			raise AtlasUserError(f"expires_at must be in the future and at most {maximum_hours} hours away.")
+
+
+def close_sessions(email: str, client: WarpgateClient | None = None) -> None:
+	"""End every live Warpgate session of one person. A region without Warpgate has none."""
+	email = HostAccess.normalize_email(email)
+	client = client or WarpgateClient.from_settings()
+	if client is None:
+		return
+	try:
+		for session in client.list_active_sessions(email):
+			client.close_session(session["id"])
+	except WarpgateError as error:
+		raise WarpgateUnavailable(str(error)) from error

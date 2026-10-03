@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
-from atlas.service.core.warpgate.access import HostAccess, HostNotFound, WarpgateUnavailable
+from atlas.service.core.warpgate.access import HostAccess, HostNotFound, WarpgateUnavailable, close_sessions
 from atlas.service.core.warpgate.client import WarpgateError
 
 ACCESS_MODULE = "atlas.service.core.warpgate.access"
@@ -163,6 +163,20 @@ class TestHostAccess(UnitTestCase):
 
 		with self.assertRaises(WarpgateUnavailable):
 			self.access(warpgate).grant("alice@frappe.io", in_hours(1))
+
+	def test_closing_sessions_keeps_the_roles_and_other_people(self) -> None:
+		warpgate = FakeWarpgate()
+		self.access(warpgate).grant("alice@frappe.io", in_hours(1))
+		warpgate.sessions = {"s1": "alice@frappe.io", "s2": "bob@frappe.io"}
+
+		close_sessions("Alice@frappe.io", warpgate)
+
+		self.assertEqual(warpgate.sessions, {"s2": "bob@frappe.io"})
+		self.assertEqual(len(warpgate.grants), 1)
+
+	def test_closing_sessions_without_warpgate_does_nothing(self) -> None:
+		with patch(f"{ACCESS_MODULE}.WarpgateClient.from_settings", return_value=None):
+			close_sessions("alice@frappe.io")
 
 	def test_a_region_without_warpgate_is_unavailable(self) -> None:
 		with (
