@@ -28,6 +28,10 @@ type Runtime interface {
 type Usage struct {
 	MemoryBytes          uint64
 	CPUUsageMicroseconds uint64
+	DiskReadBytes        uint64
+	DiskWriteBytes       uint64
+	DiskReadOperations   uint64
+	DiskWriteOperations  uint64
 }
 
 // RuntimeMachine contains the complete input for one runtime operation.

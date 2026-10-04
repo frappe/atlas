@@ -20,6 +20,10 @@ type Usage struct {
 	MemoryBytes uint64
 	// CPUUsageMicroseconds is cumulative since the cgroup was created.
 	CPUUsageMicroseconds uint64
+	DiskReadBytes        uint64
+	DiskWriteBytes       uint64
+	DiskReadOperations   uint64
+	DiskWriteOperations  uint64
 }
 
 // controlGroup is the path reported by systemd's ControlGroup property.
@@ -33,6 +37,47 @@ func readUsage(controlGroup string) (Usage, error) {
 		return Usage{}, err
 	}
 	return Usage{MemoryBytes: memoryBytes, CPUUsageMicroseconds: cpuMicroseconds}, nil
+}
+
+func readDiskUsage(controlGroup, device string) (Usage, error) {
+	path := cgroupFile(controlGroup, "io.stat")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Usage{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	return parseDiskUsage(data, device)
+}
+
+func parseDiskUsage(data []byte, device string) (Usage, error) {
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		fields := bytes.Fields(line)
+		if len(fields) == 0 || string(fields[0]) != device {
+			continue
+		}
+		var usage Usage
+		for _, field := range fields[1:] {
+			key, value, found := bytes.Cut(field, []byte{'='})
+			if !found {
+				return Usage{}, fmt.Errorf("malformed io.stat field %q", field)
+			}
+			count, err := strconv.ParseUint(string(value), 10, 64)
+			if err != nil {
+				return Usage{}, fmt.Errorf("parse io.stat %s: %w", key, err)
+			}
+			switch string(key) {
+			case "rbytes":
+				usage.DiskReadBytes = count
+			case "wbytes":
+				usage.DiskWriteBytes = count
+			case "rios":
+				usage.DiskReadOperations = count
+			case "wios":
+				usage.DiskWriteOperations = count
+			}
+		}
+		return usage, nil
+	}
+	return Usage{}, nil
 }
 
 func cgroupFile(controlGroup, name string) string {

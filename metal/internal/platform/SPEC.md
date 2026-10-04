@@ -34,6 +34,7 @@ Each error keeps the command diagnostics. A context can stop a running command.
 - Reset failed ignores an absent unit.
 - The context cancels systemd waits and polling.
 - The `firecracker` package maps unit state to VM state.
+- `GetUsage` reads CPU, memory, and root disk I/O counters from the VM cgroup. The VM unit must have `IOAccounting=yes`; the reader selects the root disk device in `io.stat`.
 
 ## File descriptor store
 

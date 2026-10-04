@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	platform "github.com/frappe/atlas/metal/internal/platform"
@@ -184,12 +187,26 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	})
 }
 
-// GetUsage reads the machine's current cgroup memory and CPU use from its
-// systemd unit. A machine with no running unit reads as a zero Usage.
+// GetUsage reads the machine's current cgroup CPU, memory, and disk use from its
+// systemd unit.
 func (runtime *Runtime) GetUsage(ctx context.Context, input vm.RuntimeMachine) (vm.Usage, error) {
-	usage, err := runtime.units.GetUsage(ctx, input.ID)
+	diskPath := filepath.Join(runtime.configuration.chrootRoot(input.ID), rootDrivePath)
+	diskInfo, err := os.Stat(diskPath)
+	if err != nil {
+		return vm.Usage{}, fmt.Errorf("stat VM root disk %s: %w", diskPath, err)
+	}
+	if diskInfo.Mode()&os.ModeDevice == 0 || diskInfo.Mode()&os.ModeCharDevice != 0 {
+		return vm.Usage{}, fmt.Errorf("VM root disk %s is not a block device", diskPath)
+	}
+	deviceNumber := diskInfo.Sys().(*syscall.Stat_t).Rdev
+	diskDevice := fmt.Sprintf("%d:%d", unix.Major(deviceNumber), unix.Minor(deviceNumber))
+	usage, err := runtime.units.GetUsage(ctx, input.ID, diskDevice)
 	if err != nil {
 		return vm.Usage{}, err
 	}
-	return vm.Usage{MemoryBytes: usage.MemoryBytes, CPUUsageMicroseconds: usage.CPUUsageMicroseconds}, nil
+	return vm.Usage{
+		MemoryBytes: usage.MemoryBytes, CPUUsageMicroseconds: usage.CPUUsageMicroseconds,
+		DiskReadBytes: usage.DiskReadBytes, DiskWriteBytes: usage.DiskWriteBytes,
+		DiskReadOperations: usage.DiskReadOperations, DiskWriteOperations: usage.DiskWriteOperations,
+	}, nil
 }
