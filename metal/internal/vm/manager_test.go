@@ -758,31 +758,3 @@ func TestStartLeavesAStoppedVirtualMachineWithoutSavedStateToReconcile(t *testin
 		t.Fatalf("restores = %d, want 0", runtime.restores)
 	}
 }
-
-func TestResizeAdmitsUnderTheAllocationLock(t *testing.T) {
-	manager, _, _, _ := newTestManager(t)
-	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
-		t.Fatal(err)
-	}
-
-	errFull := errors.New("host is full")
-	err := manager.Resize(context.Background(), "machine-1", Compute{CPUMillicores: 2000, MemoryMiB: 4096}, 8192,
-		func(context.Context, Information) error {
-			if manager.allocationMutex.TryLock() {
-				manager.allocationMutex.Unlock()
-				t.Error("admit ran without the allocation lock")
-			}
-			return errFull
-		})
-	if !errors.Is(err, errFull) {
-		t.Fatalf("error = %v, want the admit error", err)
-	}
-
-	record, err := manager.store.readDesired("machine-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.Specification.MemoryMiB != testSpecification().MemoryMiB {
-		t.Fatalf("memory = %d, want the refused resize to keep the old shape", record.Specification.MemoryMiB)
-	}
-}

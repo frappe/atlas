@@ -78,19 +78,8 @@ func (manager *Manager) SetDisk(ctx context.Context, identifier string, diskMiB 
 }
 
 // Resize stores the complete compute and disk shape in one desired-record write.
-// admit checks host capacity under the operation lock, then the allocation lock, the order SetNetwork uses.
-func (manager *Manager) Resize(ctx context.Context, identifier string, compute Compute, diskMiB int, admit func(context.Context, Information) error) error {
+func (manager *Manager) Resize(ctx context.Context, identifier string, compute Compute, diskMiB int) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
-		manager.allocationMutex.Lock()
-		defer manager.allocationMutex.Unlock()
-		current, err := manager.Information(ctx, identifier)
-		if err != nil {
-			return false, err
-		}
-		if err := admit(ctx, current); err != nil {
-			return false, err
-		}
-
 		if record.State == StateDestroyed || diskMiB < record.Specification.DiskMiB {
 			return false, ErrConflict
 		}

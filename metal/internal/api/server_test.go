@@ -177,13 +177,10 @@ func (manager *fakeVirtualMachineManager) SetCompute(_ context.Context, id strin
 	return nil
 }
 
-func (manager *fakeVirtualMachineManager) Resize(ctx context.Context, id string, compute vm.Compute, diskMiB int, admit func(context.Context, vm.Information) error) error {
+func (manager *fakeVirtualMachineManager) Resize(_ context.Context, id string, compute vm.Compute, diskMiB int) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {
 		return vm.ErrNotFound
-	}
-	if err := admit(ctx, virtualMachine.info); err != nil {
-		return err
 	}
 	shapeChanged := virtualMachine.info.CPUMillicores != compute.CPUMillicores ||
 		virtualMachine.info.MemoryMiB != compute.MemoryMiB ||

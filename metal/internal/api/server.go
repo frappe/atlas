@@ -49,7 +49,7 @@ type VirtualMachineManager interface {
 	RequestRestart(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error
 	SetDisk(context.Context, string, int, vm.Disk) error
-	Resize(context.Context, string, vm.Compute, int, func(context.Context, vm.Information) error) error
+	Resize(context.Context, string, vm.Compute, int) error
 	SetNetwork(context.Context, string, vm.NetworkConfiguration) error
 	ReplaceSSHKeys(context.Context, string, []string) (bool, error)
 	ReplaceMetadata(context.Context, string, map[string]string) (bool, error)

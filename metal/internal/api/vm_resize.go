@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -52,25 +51,22 @@ func (s *Server) resizeVirtualMachine(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	identifier, err := virtualMachineID(c)
+	virtualMachine, err := s.loadVirtualMachine(c)
 	if err != nil {
 		return err
 	}
-	admit := func(ctx context.Context, current vm.Information) error {
-		capacity, err := s.hostService.Capacity(ctx)
-		if err != nil {
-			return err
-		}
-		if needsMoreThanAvailable(request.MemoryMiB, current.MemoryMiB, capacity.AvailableMemoryMiB) ||
-			needsMoreThanAvailable(request.DiskMiB, current.DiskMiB, capacity.AvailableStorageMiB) {
-			return newAPIError(http.StatusConflict, insufficientCapacityCode, "not enough host capacity")
-		}
-		return nil
+	capacity, err := s.hostService.Capacity(c.Request().Context())
+	if err != nil {
+		return err
 	}
-	if err := s.virtualMachineManager.Resize(c.Request().Context(), identifier, vm.Compute{
+	if needsMoreThanAvailable(request.MemoryMiB, virtualMachine.MemoryMiB, capacity.AvailableMemoryMiB) ||
+		needsMoreThanAvailable(request.DiskMiB, virtualMachine.DiskMiB, capacity.AvailableStorageMiB) {
+		return newAPIError(http.StatusConflict, insufficientCapacityCode, "not enough host capacity")
+	}
+	if err := s.virtualMachineManager.Resize(c.Request().Context(), virtualMachine.ID, vm.Compute{
 		CPUMillicores: request.CPUMillicores, MemoryMiB: request.MemoryMiB,
 		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds,
-	}, request.DiskMiB, admit); err != nil {
+	}, request.DiskMiB); err != nil {
 		return err
 	}
 
