@@ -15,6 +15,7 @@ from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
+from atlas.atlas.core.server_providers.redfish.client import RedfishSystem
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
@@ -109,7 +110,7 @@ class MetalServer(Document):
 		provider.validate_settings()
 		provider.validate_server(self)
 		if isinstance(provider, RedfishProvider):
-			if self.is_new() and not getattr(self, "_redfish_registration", False):
+			if self.is_new() and not isinstance(getattr(self, "_redfish_registration", None), RedfishSystem):
 				frappe.throw(_("Use Register on the Metal Server form to register a Redfish system."))
 			return
 

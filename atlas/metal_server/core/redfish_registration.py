@@ -35,7 +35,7 @@ def register_server(url: str, username: str = "", password: str = "") -> MetalSe
 			server: MetalServer = frappe.get_doc("Metal Server", name)
 		else:
 			server = frappe.new_doc("Metal Server")
-			server._redfish_registration = True
+			server._redfish_registration = system
 			server.redfish_url = system.url
 			server.redfish_username = username
 			server.redfish_password = password
