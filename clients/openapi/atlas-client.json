@@ -2384,7 +2384,7 @@
           },
           "sample_interval_seconds": {
             "default": 0,
-            "description": "Zero for raw samples; five-minute downsampling for ranges over one day.",
+            "description": "Seconds covered by each sample.",
             "title": "Sample Interval Seconds",
             "type": "integer"
           },
@@ -5660,6 +5660,27 @@
               ],
               "default": null,
               "title": "End"
+            }
+          },
+          {
+            "description": "Maximum samples to return. Metal uses 300 by default.",
+            "in": "query",
+            "name": "max_samples",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2000,
+                  "minimum": 10,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Maximum samples to return. Metal uses 300 by default.",
+              "title": "Max Samples"
             }
           }
         ],

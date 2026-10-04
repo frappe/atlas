@@ -32,9 +32,11 @@ Metal keeps seven days of samples in daily files under `machines/<vm-id>/metrics
 
 Each JSONL line and metrics API sample stores its `timestamp` as UTC Unix seconds.
 
-Read samples with `GET /api/atlas/virtual-machines/<vm-id>/metrics`. The caller must own the VM. Optional `start` and `end` timestamps select a range within the last seven days. The default range is 24 hours. Atlas reads the host only when this endpoint is called.
+Read samples with `GET /api/atlas/virtual-machines/<vm-id>/metrics`. The caller must own the VM. Optional `start` and `end` timestamps select a range within the last seven days. The default range is the last 24 hours. Atlas reads the host only when this endpoint is called.
 
-Ranges longer than one day return the latest sample in each five-minute bucket, with disk I/O rates averaged across the bucket. `sample_interval_seconds` is 300 for these ranges and 0 for raw samples. Network and CPU values are cumulative counters; divide the difference between adjacent samples by their elapsed seconds to calculate an average rate.
+Optional `max_samples` sets the most samples to return, from 10 to 2000. The default is 300. Metal splits the range into clock-aligned buckets of 10s, 20s, 30s, 1m, 2m, 5m, 10m, 15m, 30m, 1h, 3h, 6h, 12h, or 24h. It uses the smallest bucket that keeps the result within `max_samples`. For example, the default 24-hour range returns 5-minute buckets.
+
+Each sample is the latest sample in its bucket, with disk I/O rates averaged across the bucket. `sample_interval_seconds` is the bucket length. Network and CPU values are cumulative counters; divide the difference between adjacent samples by their elapsed seconds to calculate an average rate.
 
 Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol counters read direct transport headers; IPv6 extension headers and later IPv4 fragments still increase the total packet count but not the protocol count. A Metal restart or TAP reattachment resets network counters, so discard a negative counter difference when calculating rates.
 
