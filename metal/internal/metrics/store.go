@@ -166,31 +166,35 @@ func (store *Store) history(ctx context.Context, identifier string, start, end t
 		start = end.Add(-Retention)
 	}
 	records := []Record{}
-	bucketPositions := make(map[int64]int)
-	type bucketRates struct {
-		readBytes, writeBytes, readOperations, writeOperations uint64
-		count                                                  int
+	type bucketTotals struct {
+		position            int
+		readBytesPerSecond  uint64
+		writeBytesPerSecond uint64
+		readMilliIOPS       uint64
+		writeMilliIOPS      uint64
+		count               uint64
 	}
-	rates := make(map[int64]bucketRates)
+	buckets := make(map[int64]bucketTotals)
 	accept := func(record Record) {
-		if interval > 0 {
-			bucket := record.Timestamp.Unix() / int64(interval.Seconds())
-			average := rates[bucket]
-			average.readBytes += record.Metrics.DiskReadBytesPerSecond
-			average.writeBytes += record.Metrics.DiskWriteBytesPerSecond
-			average.readOperations += record.Metrics.DiskReadMilliIOPS
-			average.writeOperations += record.Metrics.DiskWriteMilliIOPS
-			average.count++
-			rates[bucket] = average
-			if position, found := bucketPositions[bucket]; found {
-				if record.Timestamp.After(records[position].Timestamp) {
-					records[position] = record
-				}
-				return
-			}
-			bucketPositions[bucket] = len(records)
+		if interval == 0 {
+			records = append(records, record)
+			return
 		}
-		records = append(records, record)
+
+		bucket := record.Timestamp.Unix() / int64(interval/time.Second)
+		totals, found := buckets[bucket]
+		if !found {
+			totals.position = len(records)
+			records = append(records, record)
+		} else if record.Timestamp.After(records[totals.position].Timestamp) {
+			records[totals.position] = record
+		}
+		totals.readBytesPerSecond += record.Metrics.DiskReadBytesPerSecond
+		totals.writeBytesPerSecond += record.Metrics.DiskWriteBytesPerSecond
+		totals.readMilliIOPS += record.Metrics.DiskReadMilliIOPS
+		totals.writeMilliIOPS += record.Metrics.DiskWriteMilliIOPS
+		totals.count++
+		buckets[bucket] = totals
 	}
 	for day := start.UTC().Truncate(24 * time.Hour); day.Before(end); day = day.Add(24 * time.Hour) {
 		path := filepath.Join(directory, day.Format(dayLayout)+".jsonl")
@@ -203,13 +207,12 @@ func (store *Store) history(ctx context.Context, identifier string, start, end t
 		}
 	}
 	if interval > 0 {
-		for bucket, position := range bucketPositions {
-			average := rates[bucket]
-			count := uint64(average.count)
-			records[position].Metrics.DiskReadBytesPerSecond = average.readBytes / count
-			records[position].Metrics.DiskWriteBytesPerSecond = average.writeBytes / count
-			records[position].Metrics.DiskReadMilliIOPS = average.readOperations / count
-			records[position].Metrics.DiskWriteMilliIOPS = average.writeOperations / count
+		for _, totals := range buckets {
+			position := totals.position
+			records[position].Metrics.DiskReadBytesPerSecond = totals.readBytesPerSecond / totals.count
+			records[position].Metrics.DiskWriteBytesPerSecond = totals.writeBytesPerSecond / totals.count
+			records[position].Metrics.DiskReadMilliIOPS = totals.readMilliIOPS / totals.count
+			records[position].Metrics.DiskWriteMilliIOPS = totals.writeMilliIOPS / totals.count
 		}
 	}
 	slices.SortStableFunc(records, func(a, b Record) int { return a.Timestamp.Compare(b.Timestamp) })

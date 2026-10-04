@@ -1223,7 +1223,7 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, age := range []time.Duration{25 * time.Hour, 2 * time.Hour, time.Hour} {
-		usage := vm.Metrics{
+		usage := metrics.Sample{
 			ComputeUsage: metrics.ComputeUsage{MemoryBytes: uint64(age / time.Hour)},
 			NetworkUsage: metrics.NetworkUsage{SentICMPPackets: 4},
 		}
@@ -1231,7 +1231,7 @@ func TestMetricsHistoryQuery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	usage := vm.Metrics{ComputeUsage: metrics.ComputeUsage{MemoryBytes: 999}}
+	usage := metrics.Sample{ComputeUsage: metrics.ComputeUsage{MemoryBytes: 999}}
 	if err := manager.metricsStore.Append("another", metrics.Record{Timestamp: now.Add(-time.Hour), Metrics: usage}); err != nil {
 		t.Fatal(err)
 	}

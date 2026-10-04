@@ -7,7 +7,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/frappe/atlas/metal/internal/metrics"
-	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 type virtualMachineMetricsResponse struct {
@@ -105,7 +104,7 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	response := virtualMachineMetricsResponse{Samples: make([]virtualMachineMetricsSample, 0, len(records)), SampleIntervalSeconds: int(interval.Seconds())}
+	response := virtualMachineMetricsResponse{Samples: make([]virtualMachineMetricsSample, 0, len(records)), SampleIntervalSeconds: int(interval / time.Second)}
 	for _, record := range records {
 		sample := toVirtualMachineMetrics(record.Metrics)
 		sample.Timestamp = record.Timestamp.Unix()
@@ -114,32 +113,32 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
-func toVirtualMachineMetrics(metrics vm.Metrics) virtualMachineMetricsSample {
+func toVirtualMachineMetrics(sample metrics.Sample) virtualMachineMetricsSample {
 	return virtualMachineMetricsSample{
-		Up: metrics.Up,
+		Up: sample.Up,
 		Compute: computeUsageResponse{
-			CPUMicroseconds: metrics.CPUTimeMicroseconds,
-			MemoryBytes:     metrics.MemoryBytes,
+			CPUMicroseconds: sample.CPUTimeMicroseconds,
+			MemoryBytes:     sample.MemoryBytes,
 		},
 		Disk: diskUsageResponse{
-			SizeMiB:              metrics.DiskMiB,
-			UsedMiB:              metrics.DiskUsedMiB,
-			ThroughputLimitMiBps: metrics.DiskThroughputLimitMiBps,
-			IOPSLimit:            metrics.DiskIOPSLimit,
-			ReadBytesPerSecond:   metrics.DiskReadBytesPerSecond,
-			WriteBytesPerSecond:  metrics.DiskWriteBytesPerSecond,
-			ReadMilliIOPS:        metrics.DiskReadMilliIOPS,
-			WriteMilliIOPS:       metrics.DiskWriteMilliIOPS,
+			SizeMiB:              sample.DiskMiB,
+			UsedMiB:              sample.DiskUsedMiB,
+			ThroughputLimitMiBps: sample.DiskThroughputLimitMiBps,
+			IOPSLimit:            sample.DiskIOPSLimit,
+			ReadBytesPerSecond:   sample.DiskReadBytesPerSecond,
+			WriteBytesPerSecond:  sample.DiskWriteBytesPerSecond,
+			ReadMilliIOPS:        sample.DiskReadMilliIOPS,
+			WriteMilliIOPS:       sample.DiskWriteMilliIOPS,
 		},
 		Network: networkUsageResponse{
-			ReceivedBytes:     metrics.ReceivedBytes,
-			ReceivedPackets:   metrics.ReceivedPackets,
-			SentBytes:         metrics.SentBytes,
-			SentPackets:       metrics.SentPackets,
-			SentICMPPackets:   metrics.SentICMPPackets,
-			SentUDPPackets:    metrics.SentUDPPackets,
-			SentTCPSYNPackets: metrics.SentTCPSYNPackets,
-			SentTCPRSTPackets: metrics.SentTCPRSTPackets,
+			ReceivedBytes:     sample.ReceivedBytes,
+			ReceivedPackets:   sample.ReceivedPackets,
+			SentBytes:         sample.SentBytes,
+			SentPackets:       sample.SentPackets,
+			SentICMPPackets:   sample.SentICMPPackets,
+			SentUDPPackets:    sample.SentUDPPackets,
+			SentTCPSYNPackets: sample.SentTCPSYNPackets,
+			SentTCPRSTPackets: sample.SentTCPRSTPackets,
 		},
 	}
 }
