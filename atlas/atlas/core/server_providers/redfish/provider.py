@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, override
 
 from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.base import (
-	ProviderOperationError,
 	ProviderServer,
 	ServerCreateRequest,
 	ServerImageData,
@@ -14,13 +13,10 @@ from atlas.atlas.core.server_providers.base import (
 	ServerSizeData,
 	UnsupportedProviderOperation,
 )
+from atlas.atlas.core.server_providers.redfish.client import RedfishError
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
-
-
-class RedfishError(ProviderOperationError):
-	"""Report a Redfish provider failure."""
 
 
 @register
