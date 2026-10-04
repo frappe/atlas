@@ -16,6 +16,7 @@ interface ApiReference {
 const references: ApiReference[] = [
 	{ name: 'atlas', title: 'Atlas API', specification: 'clients/openapi/atlas-client.json', server: 'https://atlas.example.com' },
 	{ name: 'http-proxy', title: 'HTTP proxy control API', specification: 'clients/openapi/atlas-proxy-client.json', server: 'https://proxy.example.com' },
+	{ name: 'wg-gateway', title: 'WireGuard gateway API', specification: 'clients/openapi/atlas-wg-gateway-client.json', server: 'https://wireguard.example.com' },
 	{ name: 'metal', title: 'Metal API', specification: 'metal/internal/api/swagger.json', server: 'https://metal.example.com:9000' },
 ]
 

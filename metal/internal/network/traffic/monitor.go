@@ -88,6 +88,7 @@ type trafficHooks interface {
 	interfaceIndex(namespacePath, interfaceName string) (int, error)
 	lastPacket(userID uint32) (nanoseconds uint64, found bool, err error)
 	setWatching(userID uint32, watching bool) error
+	clearIdle(userID uint32) error
 	clear(userID uint32) error
 	readTrafficCounters(userID uint32) (rx, tx TrafficCounters, err error)
 	readEvent() (userID uint32, err error)
@@ -234,6 +235,27 @@ func (monitor *Monitor) GetTrafficCounters(target Target) (received, sent Traffi
 		return TrafficCounters{}, TrafficCounters{}, fmt.Errorf("read traffic counters for VM %s: %w", target.VirtualMachineID, err)
 	}
 	return received, sent, nil
+}
+
+// ResetIdle starts the idle time of one target again from now.
+func (monitor *Monitor) ResetIdle(target Target) error {
+	monitor.mutex.Lock()
+	defer monitor.mutex.Unlock()
+
+	existing := monitor.attachments[target.VirtualMachineID]
+	if existing == nil || existing.target != target || !monitor.loaded {
+		return fmt.Errorf("reset traffic idle time for VM %s: %w", target.VirtualMachineID, ErrNotFound)
+	}
+	baseline, err := monitor.clock()
+	if err != nil {
+		return fmt.Errorf("read traffic clock for VM %s: %w", target.VirtualMachineID, err)
+	}
+	if err := monitor.hooks.clearIdle(target.UserID); err != nil {
+		return fmt.Errorf("reset traffic idle time for VM %s: %w", target.VirtualMachineID, err)
+	}
+
+	existing.baseline = baseline
+	return nil
 }
 
 // StartWatching enables traffic events for one target.

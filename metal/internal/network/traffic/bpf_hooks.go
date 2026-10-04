@@ -180,10 +180,16 @@ func (hooks *bpfHooks) setWatching(userID uint32, watching bool) error {
 	return hooks.watch.Update(userID, state, ebpf.UpdateAny)
 }
 
-func (hooks *bpfHooks) clear(userID uint32) error {
+func (hooks *bpfHooks) clearIdle(userID uint32) error {
 	return errors.Join(
 		deleteMapValue(hooks.activity, userID),
 		deleteMapValue(hooks.watch, userID),
+	)
+}
+
+func (hooks *bpfHooks) clear(userID uint32) error {
+	return errors.Join(
+		hooks.clearIdle(userID),
 		deleteMapValue(hooks.rxCounters, userID),
 		deleteMapValue(hooks.txCounters, userID),
 	)

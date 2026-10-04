@@ -156,6 +156,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 					{ text: 'Atlas API', link: '/api/atlas/', target: '_blank' },
 					{ text: 'Metal API', link: '/api/metal/', target: '_blank' },
 					{ text: 'Proxy API', link: '/api/http-proxy/', target: '_blank' },
+					{ text: 'WG gateway API', link: '/api/wg-gateway/', target: '_blank' },
 				],
 			},
 		],

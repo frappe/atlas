@@ -63,9 +63,14 @@ func (hooks *fakeTrafficHooks) setWatching(userID uint32, watching bool) error {
 	return nil
 }
 
-func (hooks *fakeTrafficHooks) clear(userID uint32) error {
+func (hooks *fakeTrafficHooks) clearIdle(userID uint32) error {
 	delete(hooks.packetTimes, userID)
 	delete(hooks.watching, userID)
+	return nil
+}
+
+func (hooks *fakeTrafficHooks) clear(userID uint32) error {
+	_ = hooks.clearIdle(userID)
 	delete(hooks.rxCounters, userID)
 	delete(hooks.txCounters, userID)
 	hooks.cleared = append(hooks.cleared, userID)
@@ -167,6 +172,38 @@ func TestMonitorCountersRejectsAnUnknownTarget(t *testing.T) {
 	_, _, err := monitor.GetTrafficCounters(Target{VirtualMachineID: "vm-1", UserID: 1001})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestMonitorResetIdleStartsTheIdleTimeAgain(t *testing.T) {
+	monitor, hooks := newTestMonitor(t)
+	target := Target{VirtualMachineID: "vm-1", UserID: 1001}
+	if err := monitor.Attach(AttachmentRequest{Target: target, NamespacePath: "/run/netns/vm-1", InterfaceName: "tap0"}); err != nil {
+		t.Fatal(err)
+	}
+	hooks.packetTimes[target.UserID] = uint64(12 * time.Second)
+	hooks.rxCounters[target.UserID] = TrafficCounters{Bytes: 4096, Packets: 4}
+	hooks.txCounters[target.UserID] = TrafficCounters{Bytes: 512, Packets: 2}
+	monitor.clock = func() (uint64, error) { return uint64(100 * time.Second), nil }
+
+	if err := monitor.ResetIdle(target); err != nil {
+		t.Fatal(err)
+	}
+	monitor.clock = func() (uint64, error) { return uint64(105 * time.Second), nil }
+
+	sample, err := monitor.Sample(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sample.IdleFor != 5*time.Second || sample.PacketSequence != 0 {
+		t.Fatalf("sample = %+v, want 5s idle since the reset", sample)
+	}
+	received, sent, err := monitor.GetTrafficCounters(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received != (TrafficCounters{Bytes: 4096, Packets: 4}) || sent != (TrafficCounters{Bytes: 512, Packets: 2}) {
+		t.Fatalf("counters after idle reset = received %+v, sent %+v", received, sent)
 	}
 }
 

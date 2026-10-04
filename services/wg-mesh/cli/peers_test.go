@@ -6,28 +6,24 @@ import (
 	"testing"
 )
 
-func TestDecodePeerStateSelectsTheUplinkAddress(t *testing.T) {
-	contents, err := json.Marshal([]peerState{{
-		MeshAddress: "fdab:1::2", PublicAddress: "192.0.2.2",
-		PrivateAddress: "10.0.0.2", MAC: "02:00:00:00:00:02",
-	}})
+func TestDecodePeerStatePrefersThePrivateAddress(t *testing.T) {
+	contents, err := json.Marshal([]peerState{
+		{MeshAddress: "fdab:1::2", PublicAddress: "192.0.2.2", PrivateAddress: "10.0.0.2", MAC: "02:00:00:00:00:02"},
+		{MeshAddress: "fdab:1::3", PublicAddress: "192.0.2.3", MAC: "02:00:00:00:00:03"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	publicPeers, err := decodePeerState(contents, false)
+	peers, err := decodePeerState(contents)
 	if err != nil {
 		t.Fatal(err)
 	}
-	privatePeers, err := decodePeerState(contents, true)
-	if err != nil {
-		t.Fatal(err)
+	if got := netip.AddrFrom4(peers[0].IPv4).String(); got != "10.0.0.2" {
+		t.Fatalf("peer with a private address = %s", got)
 	}
-	if got := netip.AddrFrom4(publicPeers[0].IPv4).String(); got != "192.0.2.2" {
-		t.Fatalf("public address = %s", got)
-	}
-	if got := netip.AddrFrom4(privatePeers[0].IPv4).String(); got != "10.0.0.2" {
-		t.Fatalf("private address = %s", got)
+	if got := netip.AddrFrom4(peers[1].IPv4).String(); got != "192.0.2.3" {
+		t.Fatalf("peer without a private address = %s", got)
 	}
 }
 
@@ -44,7 +40,7 @@ func TestDecodePeerStateRejectsInvalidOrRepeatedPeers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := decodePeerState(contents, false); err == nil {
+		if _, err := decodePeerState(contents); err == nil {
 			t.Errorf("accepted invalid peers: %+v", entries)
 		}
 	}

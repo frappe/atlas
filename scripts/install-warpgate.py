@@ -37,7 +37,6 @@ URL = f"https://127.0.0.1:{HTTP_PORT}"
 ADMIN_API = "/@warpgate/admin/api"
 SSO_PROVIDER = "central"
 TOKEN_LIFETIME = timedelta(days=365)
-# Atlas manages targets, access roles, users, and known host keys. It cannot read sessions or recordings.
 # Warpgate puts known host keys under config_edit.
 ATLAS_PERMISSIONS = {
 	"targets_create": True,
@@ -50,8 +49,8 @@ ATLAS_PERMISSIONS = {
 	"access_roles_edit": True,
 	"access_roles_delete": True,
 	"access_roles_assign": True,
-	"sessions_view": False,
-	"sessions_terminate": False,
+	"sessions_view": True,
+	"sessions_terminate": True,
 	"approve_sessions": False,
 	"recordings_view": False,
 	"tickets_create": False,
@@ -159,8 +158,9 @@ class WarpgateInstaller:
 		self.first_setup()
 		is_changed = self.write_config() or is_changed
 		self.start_service(is_changed)
+		role = self.ensure_atlas_role()
 		if not PASSWORD_FILE.exists():
-			self.create_atlas_user()
+			self.create_atlas_user(role)
 		self.configure_nginx()
 		return {"warpgate_url": URL, **self.issue_token()}
 
@@ -282,13 +282,20 @@ class WarpgateInstaller:
 				time.sleep(1)
 		raise SystemExit("Warpgate did not start; read: journalctl -u warpgate")
 
-	def create_atlas_user(self) -> None:
+	def ensure_atlas_role(self) -> dict:
+		"""Create or update the atlas-sync admin role, so a running region gets new permissions."""
+		admin = Session("admin", ADMIN_PASSWORD_FILE.read_text().strip())
+		role_data = {"name": "atlas-sync", **ATLAS_PERMISSIONS}
+		role = admin.find("/admin-roles", "name", "atlas-sync")
+		if role:
+			admin.call("PUT", f"{ADMIN_API}/admin-roles/{role['id']}", role_data)
+			return role
+		return admin.call("POST", f"{ADMIN_API}/admin-roles", role_data)
+
+	def create_atlas_user(self, role: dict) -> None:
 		"""Create the atlas user with the atlas-sync admin role, reusing what a failed run created."""
 		step("Warpgate atlas user")
 		admin = Session("admin", ADMIN_PASSWORD_FILE.read_text().strip())
-		role = admin.find("/admin-roles", "name", "atlas-sync") or admin.call(
-			"POST", f"{ADMIN_API}/admin-roles", {"name": "atlas-sync", **ATLAS_PERMISSIONS}
-		)
 		user = admin.find("/users", "username", "atlas") or admin.call(
 			"POST", f"{ADMIN_API}/users", {"username": "atlas"}
 		)

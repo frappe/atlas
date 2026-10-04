@@ -108,6 +108,14 @@ class WarpgateClient:
 	def revoke_user_role(self, user_id: str, role_id: str) -> None:
 		self._request("DELETE", f"/users/{user_id}/roles/{role_id}")
 
+	def list_active_sessions(self, username: str) -> list[dict]:
+		return self._request("GET", "/sessions", params={"active_only": "true", "username": username})[
+			"items"
+		]
+
+	def close_session(self, session_id: str) -> None:
+		self._request("POST", f"/sessions/{session_id}/close")
+
 	def list_known_hosts(self) -> list[dict]:
 		return self._request("GET", "/ssh/known-hosts")
 

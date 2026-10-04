@@ -87,6 +87,7 @@ from .virtual_machine_network_usage import VirtualMachineNetworkUsage
 from .virtual_machine_response import VirtualMachineResponse
 from .virtual_machine_response_architecture import VirtualMachineResponseArchitecture
 from .virtual_machine_response_tags import VirtualMachineResponseTags
+from .warpgate_sessions_close_payload import WarpgateSessionsClosePayload
 from .webhook_configuration_response import WebhookConfigurationResponse
 
 __all__ = (
@@ -177,5 +178,6 @@ __all__ = (
     "VirtualMachineResponse",
     "VirtualMachineResponseArchitecture",
     "VirtualMachineResponseTags",
+    "WarpgateSessionsClosePayload",
     "WebhookConfigurationResponse",
 )

@@ -1121,6 +1121,12 @@ class HostAccessRevokePayload(StrictModel):
 	email: str = Field(description="Email that the person signs in to Central with.")
 
 
+class WarpgateSessionsClosePayload(StrictModel):
+	"""End every live Warpgate session of one person now."""
+
+	email: str = Field(description="Email that the person signs in to Central with.")
+
+
 class HostAccessResponse(BaseModel):
 	"""One active access grant."""
 

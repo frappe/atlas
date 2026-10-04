@@ -24,7 +24,7 @@ Atlas Settings also holds the private key in an encrypted, hidden field, so a si
 
 Atlas writes `sites/<site>/private/wireguard/atlas0.conf`. Each host peer allows the host `fdab` address and the tenant-0 VMs on that host. A scheduler job writes the file again within 10 seconds when a host or a tenant-0 VM changes, for example after a migration.
 
-A root systemd timer applies the file every 10 seconds. When the file changed, it copies it to `/etc/wireguard/atlas0.conf` and runs `wg syncconf`, or `wg-quick up` for the first start. A timer is used because SELinux can hide a home directory from a path unit.
+A root systemd timer applies the file every 10 seconds. When only the peers changed, it copies the file to `/etc/wireguard/atlas0.conf` and runs `wg syncconf`. When the `[Interface]` section changed, for example the address, MTU, or routes, it restarts the interface with `wg-quick`, because `wg syncconf` changes only peers. A timer is used because SELinux can hide a home directory from a path unit.
 
 Atlas uses each host private IPv4 address as the endpoint. The Atlas VM reaches it through the masquerade on its parent host. A development Atlas reaches it through the [development gateway](#development-gateway).
 
@@ -60,9 +60,8 @@ laptop atlas0 ======================= inner WireGuard, end to end ==============
 1. Create the first Metal Server record. Its setup can stop at `wireguard-link` after 120 seconds. The host firewall is not installed yet.
 2. Run `pilot --site SITE deploy-dev-gateway <metal-server-id> --ssh-host <public-IPv4>`. The command installs atlas-vm on that host and writes `atlas-gateway.conf`. When Atlas can reach that host later, omit `--ssh-host` to update the gateway.
 3. Run `sudo scripts/install-atlas-wireguard.sh <bench>/sites/SITE/private/wireguard/atlas-gateway.conf` on the Atlas machine.
-4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE configure-atlas-wireguard` to rewrite `atlas0.conf`.
-5. Restart `atlas0` with `sudo wg-quick down atlas0 && sudo systemctl start atlas-wireguard-atlas0.service`. `wg syncconf` does not change the MTU of a running interface.
-6. If the Metal Server status is `Failed`, use **Setup Metal Server** to retry. Normal setup installs Metal and the host firewall after the WireGuard link works.
+4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE configure-atlas-wireguard` to rewrite `atlas0.conf`. The timer restarts `atlas0` with the new MTU.
+5. If the Metal Server status is `Failed`, use **Setup Metal Server** to retry. Normal setup installs Metal and the host firewall after the WireGuard link works.
 
 The gateway cannot decrypt the `atlas0` sessions. The outer link carries only the provider private network.
 
@@ -118,7 +117,7 @@ person ──https://warpgate.<wildcard>──> nginx (region wildcard certifica
 Central ──/api/atlas/hosts/{id}/access/grant──> Atlas ──admin API──> Warpgate
 ```
 
-Example: `ssh -p 2223 alice@frappe.io:metal-par-1-2@warpgate.par-1.frappe.cloud`. Warpgate prints a link. The person opens it, signs in to Central, and approves the login. People need no SSH keys.
+Example: `ssh -p 2223 alice@example.com:metal-region-1-2@warpgate.region-1.example.com`. Warpgate prints a link. The person opens it, signs in to Central, and approves the login. People need no SSH keys.
 
 ### Access
 
@@ -130,7 +129,11 @@ Signing in gives no host access. Each access is a grant of one Warpgate role wit
 | `all-hosts` | Every host | The same route with `all` as the ID |
 | `warpgate:admin` | The Warpgate admin UI, not hosts | Central role `Atlas Warpgate Admin`, at sign-in |
 
-The grant and revoke routes, and `GET /api/atlas/hosts`, need scope `*` and tenant 0. A grant registers the person in Warpgate when needed, so Central can grant before the first sign-in. `expires_at` must be at most 24 hours away. Set site config `warpgate_grant_max_hours` to change the limit. Warpgate ends the access by itself at `expires_at`. A Warpgate admin can also grant a role in the Warpgate admin UI.
+The grant and revoke routes, `POST /api/atlas/warpgate/sessions/close`, and `GET /api/atlas/hosts` need scope `*` and tenant 0. A grant registers the person in Warpgate when needed, so Central can grant before the first sign-in.
+
+`expires_at` must be at most 24 hours away. Set site config `warpgate_grant_max_hours` to change the limit. At `expires_at`, Warpgate stops new sessions, but a live session stays open.
+
+A revoke removes the role and closes the person's live sessions to the hosts that they can no longer open. Sessions to hosts that another grant still opens stay open. `POST /api/atlas/warpgate/sessions/close` closes the sessions and keeps the roles. Central uses it when Warpgate admin access ends. A Warpgate admin can also grant a role in the Warpgate admin UI.
 
 ### What Atlas keeps in step
 
@@ -141,7 +144,7 @@ A job runs every minute. It makes the Warpgate targets match the hosts that have
 - The first time a running host is seen, Atlas adds the Warpgate client keys to root `authorized_keys` and gives Warpgate the host key. Warpgate refuses any other host key.
 - Targets and roles of deleted hosts are removed. Targets that Atlas did not create are left alone.
 
-Atlas names a new host `metal-<region name>-<counter>`, such as `metal-waw-3-4`. The title is read-only. It must be one lowercase DNS label and unique across all hosts, including deleted ones.
+Atlas names a new host `metal-<region name>-<counter>`, such as `metal-region-1-4`. The title is read-only. It must be one lowercase DNS label and unique across all hosts, including deleted ones.
 
 ### Install
 
