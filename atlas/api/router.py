@@ -63,6 +63,12 @@ hosts = atlas_router.subrouter(
 	description="List Metal hosts and grant people temporary SSH access to them through Warpgate. Tenant 0 only.",
 )
 
+warpgate = atlas_router.subrouter(
+	"warpgate",
+	name="Warpgate",
+	description="Close Warpgate sessions of a person. Tenant 0 only.",
+)
+
 
 def get_resource_location(collection: str, resource_id: str) -> str:
 	"""Return the Location header value for one created resource."""
@@ -76,4 +82,5 @@ def register_atlas_api() -> None:
 	import atlas.api.routes.jwks
 	import atlas.api.routes.public_ips
 	import atlas.api.routes.virtual_machines
+	import atlas.api.routes.warpgate
 	import atlas.api.routes.webhooks

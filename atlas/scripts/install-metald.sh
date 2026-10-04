@@ -279,6 +279,7 @@ TTYPath=/run/metal/consoles/%i
 TTYReset=yes
 TTYVHangup=yes
 Restart=no
+IOAccounting=yes
 EOF
 
 step "enable IP forwarding"

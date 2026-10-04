@@ -1,6 +1,9 @@
 import asyncio
 import base64
+import contextlib
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
@@ -48,6 +51,24 @@ class TestConsoleHandlers(IsolatedAsyncioTestCase):
 			"/bench/sites/test.local/private/atlas-metal-tls/atlas.crt",
 			"/bench/sites/test.local/private/atlas-metal-tls/atlas.key",
 		)
+
+	def test_the_realtime_server_reads_its_files_without_a_frappe_context(self) -> None:
+		context = Mock()
+		with tempfile.TemporaryDirectory() as sites_path:
+			Path(sites_path, "common_site_config.json").write_text(
+				json.dumps({"redis_cache": "redis://cache.test:13000"})
+			)
+			with (
+				contextlib.chdir(sites_path),
+				patch.object(handlers.frappe, "local", SimpleNamespace()),
+				patch.object(handlers, "_redis_client", None),
+				patch.object(handlers.ssl, "create_default_context", return_value=context) as create_context,
+			):
+				cache = handlers._cache()
+				handlers._tls_context("test.local")
+
+		self.assertEqual(cache.connection_pool.connection_kwargs["host"], "cache.test")
+		create_context.assert_called_once_with(cafile="test.local/private/atlas-metal-tls/ca.crt")
 
 	async def test_open_rejects_an_invalid_stored_payload(self) -> None:
 		socket = SimpleNamespace(sid="socket-1", site="test.local", emit=AsyncMock())

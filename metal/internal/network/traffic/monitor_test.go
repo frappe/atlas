@@ -12,22 +12,26 @@ type fakeHook struct {
 }
 
 type fakeTrafficHooks struct {
-	packetTimes   map[uint32]uint64
-	cleared       []uint32
-	watching      map[uint32]bool
-	events        chan uint32
-	readerClosed  chan struct{}
-	closeOnce     sync.Once
-	hooks         []*fakeHook
-	resolvedIndex int
+	packetTimes      map[uint32]uint64
+	cleared          []uint32
+	watching         map[uint32]bool
+	receivedCounters map[uint32]TrafficCounters
+	sentCounters     map[uint32]SentCounters
+	events           chan uint32
+	readerClosed     chan struct{}
+	closeOnce        sync.Once
+	hooks            []*fakeHook
+	resolvedIndex    int
 }
 
 func newFakeTrafficHooks() *fakeTrafficHooks {
 	return &fakeTrafficHooks{
-		packetTimes:  make(map[uint32]uint64),
-		watching:     make(map[uint32]bool),
-		events:       make(chan uint32, 1),
-		readerClosed: make(chan struct{}),
+		packetTimes:      make(map[uint32]uint64),
+		watching:         make(map[uint32]bool),
+		receivedCounters: make(map[uint32]TrafficCounters),
+		sentCounters:     make(map[uint32]SentCounters),
+		events:           make(chan uint32, 1),
+		readerClosed:     make(chan struct{}),
 	}
 }
 
@@ -59,11 +63,22 @@ func (hooks *fakeTrafficHooks) setWatching(userID uint32, watching bool) error {
 	return nil
 }
 
-func (hooks *fakeTrafficHooks) clear(userID uint32) error {
+func (hooks *fakeTrafficHooks) clearIdle(userID uint32) error {
 	delete(hooks.packetTimes, userID)
 	delete(hooks.watching, userID)
+	return nil
+}
+
+func (hooks *fakeTrafficHooks) clear(userID uint32) error {
+	_ = hooks.clearIdle(userID)
+	delete(hooks.receivedCounters, userID)
+	delete(hooks.sentCounters, userID)
 	hooks.cleared = append(hooks.cleared, userID)
 	return nil
+}
+
+func (hooks *fakeTrafficHooks) readTrafficCounters(userID uint32) (TrafficCounters, SentCounters, error) {
+	return hooks.receivedCounters[userID], hooks.sentCounters[userID], nil
 }
 
 func (hooks *fakeTrafficHooks) readEvent() (uint32, error) {
@@ -128,6 +143,38 @@ func TestMonitorSamplesTrafficAndPublishesAnEvent(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("traffic event was not published")
+	}
+}
+
+func TestMonitorResetIdleStartsTheIdleTimeAgain(t *testing.T) {
+	monitor, hooks := newTestMonitor(t)
+	target := Target{VirtualMachineID: "vm-1", UserID: 1001}
+	if err := monitor.Attach(AttachmentRequest{Target: target, NamespacePath: "/run/netns/vm-1", InterfaceName: "tap0"}); err != nil {
+		t.Fatal(err)
+	}
+	hooks.packetTimes[target.UserID] = uint64(12 * time.Second)
+	hooks.receivedCounters[target.UserID] = TrafficCounters{Bytes: 4096, Packets: 4}
+	hooks.sentCounters[target.UserID] = SentCounters{TrafficCounters: TrafficCounters{Bytes: 512, Packets: 2}}
+	monitor.clock = func() (uint64, error) { return uint64(100 * time.Second), nil }
+
+	if err := monitor.ResetIdle(target); err != nil {
+		t.Fatal(err)
+	}
+	monitor.clock = func() (uint64, error) { return uint64(105 * time.Second), nil }
+
+	sample, err := monitor.Sample(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sample.IdleFor != 5*time.Second || sample.PacketSequence != 0 {
+		t.Fatalf("sample = %+v, want 5s idle since the reset", sample)
+	}
+	received, sent, err := monitor.ReadTrafficCounters(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received != (TrafficCounters{Bytes: 4096, Packets: 4}) || sent != (SentCounters{TrafficCounters: TrafficCounters{Bytes: 512, Packets: 2}}) {
+		t.Fatalf("counters after idle reset = received %+v, sent %+v", received, sent)
 	}
 }
 

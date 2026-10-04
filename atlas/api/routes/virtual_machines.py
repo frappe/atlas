@@ -30,6 +30,8 @@ from atlas.api.models import (
 	TerminationProtectionPayload,
 	VirtualMachineDetailResponse,
 	VirtualMachineListResponse,
+	VirtualMachineMetricsQuery,
+	VirtualMachineMetricsResponse,
 	VirtualMachineResponse,
 )
 from atlas.api.router import (
@@ -182,6 +184,17 @@ def get_virtual_machine(virtual_machine_id: str) -> VirtualMachineDetailResponse
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	information = virtual_machine.get_metal_vm_info()
 	return VirtualMachineDetailResponse.from_document_and_metal(virtual_machine, information)
+
+
+@virtual_machines.get("<virtual_machine_id>/metrics")
+@api_docs()
+def get_virtual_machine_metrics(
+	virtual_machine_id: str, query: VirtualMachineMetricsQuery
+) -> VirtualMachineMetricsResponse:
+	"""Get VM metrics history."""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	metrics = virtual_machine.get_metal_vm_metrics(start=query.start, end=query.end)
+	return VirtualMachineMetricsResponse.from_metrics(virtual_machine_id, metrics)
 
 
 @virtual_machines.delete("<virtual_machine_id>")

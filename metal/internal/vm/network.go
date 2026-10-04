@@ -19,11 +19,12 @@ type Network interface {
 
 // NetworkRequest contains the complete desired host network state.
 type NetworkRequest struct {
-	VirtualMachineID string
-	UserID           uint32
-	GroupID          uint32
-	Configuration    NetworkConfiguration
-	TrackTraffic     bool
+	VirtualMachineID                string
+	UserID                          uint32
+	GroupID                         uint32
+	Configuration                   NetworkConfiguration
+	TrackTraffic                    bool
+	FailOnTrafficMonitorAttachError bool
 }
 
 // NetworkReleaseRequest identifies host network resources to remove.

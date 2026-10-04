@@ -47,8 +47,6 @@ func (manager *Manager) wireGuardGatewayRoutesPath() string {
 	return filepath.Join(manager.configuration.MachinesDirectory, wireGuardGatewayRoutesFileName)
 }
 
-// networkRequest builds the complete desired host network state for a record.
-// An opted-in VM also receives the current WireGuard gateway return routes.
 func (manager *Manager) networkRequest(record DesiredRecord) NetworkRequest {
 	configuration := record.Specification.Network
 	if configuration.IsAccessibleViaWireGuardGateway {
@@ -56,11 +54,12 @@ func (manager *Manager) networkRequest(record DesiredRecord) NetworkRequest {
 	}
 
 	return NetworkRequest{
-		VirtualMachineID: record.ID,
-		UserID:           record.UserID,
-		GroupID:          record.GroupID,
-		Configuration:    configuration,
-		TrackTraffic:     record.State == StateRunning && record.Specification.SleepAfterIdleSeconds > 0,
+		VirtualMachineID:                record.ID,
+		UserID:                          record.UserID,
+		GroupID:                         record.GroupID,
+		Configuration:                   configuration,
+		TrackTraffic:                    record.State == StateRunning || record.State == StatePaused || record.State == StateStopped,
+		FailOnTrafficMonitorAttachError: record.State == StateRunning && record.Specification.SleepAfterIdleSeconds > 0,
 	}
 }
 

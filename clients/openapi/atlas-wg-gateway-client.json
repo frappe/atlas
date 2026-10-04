@@ -1,0 +1,622 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Atlas WireGuard gateway",
+    "description": "Register customer WireGuard peers with the regional gateway cluster. Any ready node accepts a write.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Check node health",
+        "description": "Report whether this node serves its peers: state loaded and wg0 configured.",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Check write readiness",
+        "description": "Report whether this node can accept writes. The regional DNS health check uses it.",
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/peers": {
+      "get": {
+        "tags": [
+          "Peers"
+        ],
+        "summary": "List peers",
+        "description": "Return the settings of every registered peer.",
+        "operationId": "list_peers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ListedPeer"
+                  },
+                  "type": "array",
+                  "title": "Response List Peers"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer credential is missing or not valid."
+          },
+          "403": {
+            "description": "The token lacks the required scope."
+          },
+          "503": {
+            "description": "No leader or no serving node accepts the write. Retry the request."
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Peers"
+        ],
+        "summary": "Restore peer table",
+        "description": "Replace the complete peer table, such as after a restore.",
+        "operationId": "replace_peers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerTable"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableReplaced"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer credential is missing or not valid."
+          },
+          "403": {
+            "description": "The token lacks the required scope."
+          },
+          "503": {
+            "description": "No leader or no serving node accepts the write. Retry the request."
+          },
+          "400": {
+            "description": "A peer appears twice or names a node that is not a member."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Peers"
+        ],
+        "summary": "Register peer",
+        "description": "Register one peer on the live node with the fewest peers, and return its WireGuard settings.",
+        "operationId": "register_peer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerRegistration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer credential is missing or not valid."
+          },
+          "403": {
+            "description": "The token lacks the required scope."
+          },
+          "503": {
+            "description": "No leader or no serving node accepts the write. Retry the request."
+          },
+          "400": {
+            "description": "A field is out of range or the key is not a WireGuard key."
+          },
+          "409": {
+            "description": "The peer has another key, or the key belongs to another peer."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Peers"
+        ],
+        "summary": "Remove peer",
+        "description": "Remove one peer. A missing peer is not an error.",
+        "operationId": "remove_peer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerIdentity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "The bearer credential is missing or not valid."
+          },
+          "403": {
+            "description": "The token lacks the required scope."
+          },
+          "503": {
+            "description": "No leader or no serving node accepts the write. Retry the request."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ListedPeer": {
+        "properties": {
+          "tenant_id": {
+            "type": "integer",
+            "title": "Tenant Id",
+            "description": "Tenant of the peer.",
+            "examples": [
+              42
+            ]
+          },
+          "client_id": {
+            "type": "integer",
+            "title": "Client Id",
+            "description": "Peer number within the tenant.",
+            "examples": [
+              9
+            ]
+          },
+          "address": {
+            "type": "string",
+            "title": "Address",
+            "description": "Interface address of the peer.",
+            "examples": [
+              "fdac:1:2:0:2a::9/128"
+            ]
+          },
+          "allowed_ips": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Ips",
+            "description": "The VM addresses of the tenant. The peer puts them in its own AllowedIPs.",
+            "examples": [
+              [
+                "fdaa:1:0:2a::/64"
+              ]
+            ]
+          },
+          "endpoint": {
+            "type": "string",
+            "title": "Endpoint",
+            "description": "Node that serves the peer. Empty when that node was archived.",
+            "examples": [
+              "wireguard-002.par-1.example.com:51820"
+            ]
+          },
+          "public_key": {
+            "type": "string",
+            "title": "Public Key",
+            "description": "Public key of that node. Empty when that node was archived.",
+            "examples": [
+              "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+            ]
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id",
+            "description": "Node that serves the peer.",
+            "examples": [
+              "wireguard-002"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "client_id",
+          "address",
+          "allowed_ips",
+          "endpoint",
+          "public_key",
+          "node_id"
+        ],
+        "title": "ListedPeer",
+        "description": "One registered peer and the node that serves it."
+      },
+      "PeerIdentity": {
+        "properties": {
+          "tenant_id": {
+            "type": "integer",
+            "title": "Tenant Id",
+            "description": "Tenant that owns the VMs the peer reaches.",
+            "examples": [
+              42
+            ]
+          },
+          "client_id": {
+            "type": "integer",
+            "title": "Client Id",
+            "description": "Peer number, unique within the tenant.",
+            "examples": [
+              9
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "client_id"
+        ],
+        "title": "PeerIdentity",
+        "description": "One peer, by tenant and client."
+      },
+      "PeerRegistration": {
+        "properties": {
+          "tenant_id": {
+            "type": "integer",
+            "title": "Tenant Id",
+            "description": "Tenant that owns the VMs the peer reaches.",
+            "examples": [
+              42
+            ]
+          },
+          "client_id": {
+            "type": "integer",
+            "title": "Client Id",
+            "description": "Peer number, unique within the tenant.",
+            "examples": [
+              9
+            ]
+          },
+          "public_key": {
+            "type": "string",
+            "title": "Public Key",
+            "description": "WireGuard public key of the peer.",
+            "examples": [
+              "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "client_id",
+          "public_key"
+        ],
+        "title": "PeerRegistration",
+        "description": "One peer to register."
+      },
+      "PeerSettings": {
+        "properties": {
+          "tenant_id": {
+            "type": "integer",
+            "title": "Tenant Id",
+            "description": "Tenant of the peer.",
+            "examples": [
+              42
+            ]
+          },
+          "client_id": {
+            "type": "integer",
+            "title": "Client Id",
+            "description": "Peer number within the tenant.",
+            "examples": [
+              9
+            ]
+          },
+          "address": {
+            "type": "string",
+            "title": "Address",
+            "description": "Interface address of the peer.",
+            "examples": [
+              "fdac:1:2:0:2a::9/128"
+            ]
+          },
+          "allowed_ips": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Ips",
+            "description": "The VM addresses of the tenant. The peer puts them in its own AllowedIPs.",
+            "examples": [
+              [
+                "fdaa:1:0:2a::/64"
+              ]
+            ]
+          },
+          "endpoint": {
+            "type": "string",
+            "title": "Endpoint",
+            "description": "Node that serves the peer. Empty when that node was archived.",
+            "examples": [
+              "wireguard-002.par-1.example.com:51820"
+            ]
+          },
+          "public_key": {
+            "type": "string",
+            "title": "Public Key",
+            "description": "Public key of that node. Empty when that node was archived.",
+            "examples": [
+              "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "client_id",
+          "address",
+          "allowed_ips",
+          "endpoint",
+          "public_key"
+        ],
+        "title": "PeerSettings",
+        "description": "The WireGuard settings of one peer."
+      },
+      "PeerTable": {
+        "properties": {
+          "peers": {
+            "items": {
+              "$ref": "#/components/schemas/RestoredPeer"
+            },
+            "type": "array",
+            "title": "Peers",
+            "description": "Every peer. A peer without node_id is assigned like a new one."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "peers"
+        ],
+        "title": "PeerTable",
+        "description": "The complete peer table, for a restore."
+      },
+      "RestoredPeer": {
+        "properties": {
+          "tenant_id": {
+            "type": "integer",
+            "title": "Tenant Id",
+            "description": "Tenant that owns the VMs the peer reaches.",
+            "examples": [
+              42
+            ]
+          },
+          "client_id": {
+            "type": "integer",
+            "title": "Client Id",
+            "description": "Peer number, unique within the tenant.",
+            "examples": [
+              9
+            ]
+          },
+          "public_key": {
+            "type": "string",
+            "title": "Public Key",
+            "description": "WireGuard public key of the peer.",
+            "examples": [
+              "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="
+            ]
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id",
+            "description": "Node that served the peer. Keep it, so the address stays.",
+            "default": "",
+            "examples": [
+              "wireguard-002"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "client_id",
+          "public_key"
+        ],
+        "title": "RestoredPeer",
+        "description": "One peer of a restored table."
+      },
+      "TableReplaced": {
+        "properties": {
+          "peers": {
+            "type": "integer",
+            "title": "Peers",
+            "description": "Number of peers in the restored table.",
+            "examples": [
+              1
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "peers"
+        ],
+        "title": "TableReplaced",
+        "description": "Result of a table restore."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "description": "Use the regional service password or a valid JWT.",
+        "scheme": "bearer",
+        "bearerFormat": "password or JWT"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Use these routes for liveness and readiness checks."
+    },
+    {
+      "name": "Peers",
+      "description": "Register, list, restore, and remove customer WireGuard peers."
+    }
+  ]
+}

@@ -27,6 +27,7 @@ This page shows every file and dataset that Metal keeps on a host. After a resta
 └── machines/<vm-id>/
     ├── config.json                desired state and reservation
     ├── status.json                observed state and cleanup progress
+    ├── metrics/                  seven days of daily VM usage files
     ├── jailer.env                 arguments for metal-vm@<id>
     ├── migration/                 only while a migration holds this VM
     │   ├── destination.json       destination reservation and progress
