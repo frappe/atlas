@@ -65,7 +65,7 @@ class AwsInfrastructure:
 			"Vpcs",
 			"VpcIds",
 			self.provider.configuration.vpc_id,
-			self.resource_name("vpc"),
+			self.resource_name("VPC"),
 		)
 		if existing is not None:
 			if existing["CidrBlock"] != cidr:
@@ -76,7 +76,7 @@ class AwsInfrastructure:
 				"ec2",
 				"create_vpc",
 				CidrBlock=cidr,
-				TagSpecifications=[self.tag_specification("vpc", "vpc")],
+				TagSpecifications=[self.tag_specification("vpc", "VPC")],
 			)
 			vpc_id = response["Vpc"]["VpcId"]
 		self.provider.client.call(
@@ -96,24 +96,23 @@ class AwsInfrastructure:
 
 	def create_internet_access(self, vpc_id: str) -> None:
 		"""Give the Atlas VPC a default route to the internet."""
-		gateway = self.find(
-			"ec2", "describe_internet_gateways", "InternetGateways", self.resource_name("internet-gateway")
-		)
-		if gateway is None:
+		gateways = self.provider.client.call(
+			"ec2",
+			"describe_internet_gateways",
+			Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}],
+		).get("InternetGateways", [])
+		if gateways:
+			gateway_id = gateways[0]["InternetGatewayId"]
+		else:
 			response = self.provider.client.call(
 				"ec2",
 				"create_internet_gateway",
-				TagSpecifications=[self.tag_specification("internet-gateway", "internet-gateway")],
+				TagSpecifications=[self.tag_specification("internet-gateway", "internet gateway")],
 			)
-			gateway = response["InternetGateway"]
-		gateway_id = gateway["InternetGatewayId"]
-
-		if not gateway.get("Attachments"):
+			gateway_id = response["InternetGateway"]["InternetGatewayId"]
 			self.provider.client.call(
 				"ec2", "attach_internet_gateway", InternetGatewayId=gateway_id, VpcId=vpc_id
 			)
-		elif not any(attachment.get("VpcId") == vpc_id for attachment in gateway["Attachments"]):
-			raise AwsError(f"Internet gateway {gateway_id} belongs to another VPC")
 
 		route_table_id, default_gateway_id = self.main_route_table(vpc_id)
 		if default_gateway_id and default_gateway_id != gateway_id:
@@ -189,7 +188,7 @@ class AwsInfrastructure:
 			"SecurityGroups",
 			"GroupIds",
 			self.provider.configuration.security_group_id,
-			self.resource_name("security-group"),
+			self.resource_name("security group"),
 		)
 		if existing is not None:
 			if existing.get("VpcId") != vpc_id:
@@ -200,10 +199,10 @@ class AwsInfrastructure:
 			response = self.provider.client.call(
 				"ec2",
 				"create_security_group",
-				GroupName=self.resource_name("security-group"),
-				Description="Atlas host traffic",
+				GroupName=self.resource_name("security group"),
+				Description=self.resource_name("hosts"),
 				VpcId=vpc_id,
-				TagSpecifications=[self.tag_specification("security-group", "security-group")],
+				TagSpecifications=[self.tag_specification("security-group", "security group")],
 			)
 			group_id = response["GroupId"]
 			permissions = []
@@ -228,7 +227,7 @@ class AwsInfrastructure:
 
 	def create_key_pair(self, public_key: str) -> str:
 		"""Return the Atlas key pair name, or import the Atlas public key."""
-		name = self.resource_name("ssh-key")
+		name = self.provider.configuration.key_pair_name or self.resource_name("SSH key")
 		existing = self.provider.client.call("ec2", "describe_key_pairs", KeyNames=[name], allow_missing=True)
 		if existing.get("KeyPairs"):
 			return name
@@ -238,7 +237,7 @@ class AwsInfrastructure:
 			"import_key_pair",
 			KeyName=name,
 			PublicKeyMaterial=public_key.encode(),
-			TagSpecifications=[self.tag_specification("key-pair", "ssh-key")],
+			TagSpecifications=[self.tag_specification("key-pair", "SSH key")],
 		)
 		return name
 
@@ -350,9 +349,9 @@ class AwsInfrastructure:
 				return True
 		return False
 
-	def resource_name(self, kind: str) -> str:
+	def resource_name(self, detail: str) -> str:
 		"""Return the Atlas name for one shared AWS resource."""
-		return f"{self.provider.configuration.resource_name_prefix}{kind}"
+		return self.provider.configuration.resource_name(detail)
 
 	def tag_specification(self, resource_type: str, kind: str) -> dict:
 		"""Return the Atlas name tag for one new AWS resource."""
@@ -363,14 +362,18 @@ class AwsInfrastructure:
 
 	@property
 	def ingress_rules(self) -> list[dict]:
-		"""Allow all inbound traffic during development."""
+		"""Allow all inbound traffic. The host firewall and Metal filter it."""
 		return [
 			{
 				"IpProtocol": "-1",
-				"IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "Atlas development access"}],
+				"IpRanges": [
+					{"CidrIp": "0.0.0.0/0", "Description": self.resource_name("all inbound traffic")}
+				],
 			},
 			{
 				"IpProtocol": "-1",
-				"Ipv6Ranges": [{"CidrIpv6": "::/0", "Description": "Atlas development access"}],
+				"Ipv6Ranges": [
+					{"CidrIpv6": "::/0", "Description": self.resource_name("all inbound traffic")}
+				],
 			},
 		]

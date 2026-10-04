@@ -264,7 +264,7 @@ jobs:
       - name: Find the changed paths
         id: changes
         working-directory: ${{ github.workspace }}
-        run: .github/scripts/changed-paths.sh '^(services/(wg-gateway|control-cluster)/|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
+        run: .github/scripts/changed-paths.sh '^(services/(wg-gateway|control-cluster)/|scripts/generate-api-client\.py$|clients/atlas-wg-gateway-client/|clients/openapi/atlas-wg-gateway-client\.json$|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
 
       - name: Set up Python
         if: steps.changes.outputs.matched == 'true'
@@ -283,6 +283,19 @@ jobs:
       - name: Run daemon unit tests
         if: steps.changes.outputs.matched == 'true'
         run: python -m pytest -q daemon/tests
+
+      - name: Check the generated API client
+        if: steps.changes.outputs.matched == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          daemon_python="$(command -v python)"
+          python -m venv "$RUNNER_TEMP/openapi-generator"
+          "$RUNNER_TEMP/openapi-generator/bin/pip" install --quiet openapi-python-client==0.29.1
+          export PATH="$RUNNER_TEMP/openapi-generator/bin:$PATH"
+          "$daemon_python" scripts/generate-api-client.py atlas-wg-gateway-client
+          git add --all --intent-to-add clients
+          git diff --exit-code -- clients \
+            || { echo "The committed client is stale. Run scripts/generate-api-client.py atlas-wg-gateway-client and commit clients/."; exit 1; }
 
       - name: Check the installer syntax
         if: steps.changes.outputs.matched == 'true'

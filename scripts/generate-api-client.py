@@ -26,6 +26,30 @@ fullchain_pem = "leaf"
 private_key_pem = "key"
 """
 
+WG_GATEWAY_CONFIGURATION = """[gateway]
+region_id = 1
+node_id = "wireguard-001"
+private_key = "key"
+
+[[nodes]]
+node_id = "wireguard-001"
+gateway_id = 1
+endpoint = "wireguard-001.example.com"
+listen_port = 51820
+public_key = "key"
+
+[auth]
+
+[cluster]
+node_id = "wireguard-001"
+password = "password"
+peers = [{ node_id = "wireguard-001", address = "https://wireguard-001.example.com" }]
+
+[tls]
+fullchain_pem = "leaf"
+private_key_pem = "key"
+"""
+
 
 def build_atlas_specification() -> dict[str, Any]:
 	"""Return the OpenAPI document of the Atlas tenant API."""
@@ -48,6 +72,18 @@ def build_http_proxy_specification() -> dict[str, Any]:
 		return app.openapi()
 
 
+def build_wg_gateway_specification() -> dict[str, Any]:
+	"""Return the OpenAPI document of the WireGuard gateway daemon."""
+	with tempfile.TemporaryDirectory() as directory:
+		path = Path(directory) / "wireguard-gateway.toml"
+		path.write_text(WG_GATEWAY_CONFIGURATION)
+		os.environ["ATLAS_WG_GATEWAY_CONFIG"] = str(path)
+
+		from gatewayd.main import app
+
+		return app.openapi()
+
+
 @dataclass(frozen=True)
 class Client:
 	"""One generated client and the specification that it comes from."""
@@ -55,6 +91,7 @@ class Client:
 	name: str
 	package: str
 	build_specification: Callable[[], dict[str, Any]]
+	sort_keys: bool = True
 
 	@property
 	def specification_path(self) -> Path:
@@ -69,7 +106,7 @@ class Client:
 	def write_specification(self) -> None:
 		"""Write the OpenAPI document of the component."""
 		self.specification_path.parent.mkdir(parents=True, exist_ok=True)
-		document = json.dumps(self.build_specification(), indent=2, sort_keys=True)
+		document = json.dumps(self.build_specification(), indent=2, sort_keys=self.sort_keys)
 		self.specification_path.write_text(document + "\n")
 
 	def write_client(self) -> None:
@@ -105,6 +142,12 @@ CLIENTS_BY_NAME = {
 	for client in (
 		Client("atlas-client", "atlas_client", build_atlas_specification),
 		Client("atlas-proxy-client", "atlas_proxy_client", build_http_proxy_specification),
+		Client(
+			"atlas-wg-gateway-client",
+			"atlas_wg_gateway_client",
+			build_wg_gateway_specification,
+			sort_keys=False,
+		),
 	)
 }
 

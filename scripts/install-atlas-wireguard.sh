@@ -40,6 +40,31 @@ table inet atlas_$interface {
 EOF
 nft -c -f "$rules_file"
 
+# wg syncconf changes only peers, so an [Interface] change needs a restart.
+install -d -m 0755 /usr/local/libexec
+cat > /usr/local/libexec/atlas-wireguard-apply <<'APPLY'
+#!/usr/bin/env bash
+set -eu
+source_file=$1
+interface=$2
+target_file=/etc/wireguard/$interface.conf
+
+interface_section() { sed '/^\[Peer\]/,$d' "$1" 2>/dev/null || true; }
+
+if ip link show "$interface" >/dev/null 2>&1; then
+	cmp -s "$source_file" "$target_file" && exit 0
+	if cmp -s <(interface_section "$source_file") <(interface_section "$target_file"); then
+		install -m 0600 "$source_file" "$target_file"
+		wg syncconf "$interface" <(wg-quick strip "$interface")
+		exit 0
+	fi
+	wg-quick down "$interface"
+fi
+install -m 0600 "$source_file" "$target_file"
+wg-quick up "$interface"
+APPLY
+chmod 0755 /usr/local/libexec/atlas-wireguard-apply
+
 cat > /etc/systemd/system/$unit.service <<EOF
 [Unit]
 Description=Apply the Atlas WireGuard file $interface.conf
@@ -51,7 +76,7 @@ Type=oneshot
 LogLevelMax=notice
 ExecStartPre=$(command -v nft) -f $rules_file
 # SELinux lets wg-quick read only /etc/wireguard.
-ExecStart=/usr/bin/bash -c 'cmp -s $config_file /etc/wireguard/$interface.conf && ip link show $interface >/dev/null 2>&1 && exit 0; install -m 0600 $config_file /etc/wireguard/$interface.conf; if ip link show $interface >/dev/null 2>&1; then wg syncconf $interface <(wg-quick strip $interface); else wg-quick up $interface; fi'
+ExecStart=/usr/local/libexec/atlas-wireguard-apply $config_file $interface
 EOF
 
 # SELinux can hide a home directory from a path unit, so a timer polls the file.

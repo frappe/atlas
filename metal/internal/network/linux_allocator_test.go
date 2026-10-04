@@ -12,7 +12,6 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// fakeTrafficMonitor records traffic monitor calls.
 type fakeTrafficMonitor struct {
 	attached []traffic.AttachmentRequest
 	detached []string
@@ -30,16 +29,16 @@ func (monitor *fakeTrafficMonitor) Detach(virtualMachineID string) error {
 
 func TestTrafficTrackingFollowsTheRequestedSetting(t *testing.T) {
 	monitor := &fakeTrafficMonitor{}
-	allocator := newLinuxAllocator(nil, monitor)
+	allocator := newLinuxAllocator(nil, monitor, nil)
 	request := request{VirtualMachineID: "vm-1", UserID: 1001}
 
-	if err := allocator.convergeTrafficMonitoring(true, request); err != nil {
+	if err := allocator.convergeTrafficMonitoring(true, false, request); err != nil {
 		t.Fatal(err)
 	}
 	if len(monitor.attached) != 1 || monitor.attached[0].Target.VirtualMachineID != request.VirtualMachineID {
 		t.Fatalf("attachments = %+v", monitor.attached)
 	}
-	if err := allocator.convergeTrafficMonitoring(false, request); err != nil {
+	if err := allocator.convergeTrafficMonitoring(false, false, request); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(monitor.detached, []string{request.VirtualMachineID}) {
@@ -59,10 +58,33 @@ func TestGuestMACAddressIsTheSameForEveryVirtualMachine(t *testing.T) {
 }
 
 func TestTrafficTrackingIsSkippedWithoutAMonitor(t *testing.T) {
-	allocator := NewLinuxAllocator(nil, nil)
-	if err := allocator.convergeTrafficMonitoring(true, request{VirtualMachineID: "vm-1", UserID: 1001}); err != nil {
+	allocator := NewLinuxAllocator(nil, nil, nil)
+	if err := allocator.convergeTrafficMonitoring(true, false, request{VirtualMachineID: "vm-1", UserID: 1001}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestFailedAttachIsFatalOnlyWhenRequired(t *testing.T) {
+	monitor := &failingTrafficMonitor{}
+	allocator := newLinuxAllocator(nil, monitor, nil)
+	request := request{VirtualMachineID: "vm-1", UserID: 1001}
+
+	if err := allocator.convergeTrafficMonitoring(true, false, request); err != nil {
+		t.Fatalf("a non-required attach failure should not fail the request: %v", err)
+	}
+	if err := allocator.convergeTrafficMonitoring(true, true, request); err == nil {
+		t.Fatal("a required attach failure should fail the request")
+	}
+}
+
+type failingTrafficMonitor struct{}
+
+func (*failingTrafficMonitor) Attach(traffic.AttachmentRequest) error {
+	return errors.New("attach failed")
+}
+
+func (*failingTrafficMonitor) Detach(string) error {
+	return nil
 }
 
 func TestFirewallAuditRunsForChangesAndAtItsInterval(t *testing.T) {
@@ -95,7 +117,7 @@ func TestFirewallAuditRunsForChangesAndAtItsInterval(t *testing.T) {
 }
 
 func TestFirewallAuditCanBeForcedAndForgotten(t *testing.T) {
-	allocator := newLinuxAllocator(nil, nil)
+	allocator := newLinuxAllocator(nil, nil, nil)
 	fingerprint, err := firewallFingerprint(vm.FirewallConfiguration{})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +155,7 @@ func TestDisabledFirewallIgnoresRetainedRuleChanges(t *testing.T) {
 }
 
 func TestMeshRegistrationIsSkippedWithoutAMesh(t *testing.T) {
-	allocator := NewLinuxAllocator(nil, nil)
+	allocator := NewLinuxAllocator(nil, nil, nil)
 	if err := allocator.addMeshRegistration(context.Background(), request{VirtualMachineID: "vm-1", UserID: 100000, NetworkConfiguration: vm.NetworkConfiguration{WireGuardMeshIPv6: "fdaa:1:0:1::1"}}); err != nil {
 		t.Fatal(err)
 	}

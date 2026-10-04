@@ -146,6 +146,17 @@ func (manager *Manager) stopAfterIdle(
 	return true, manager.writeAppliedState(desired, observed, StateStopped)
 }
 
+// resetIdle starts the idle time of a Sleepy VM again after it starts.
+func (manager *Manager) resetIdle(desired DesiredRecord) {
+	if manager.traffic == nil || desired.Specification.SleepAfterIdleSeconds <= 0 {
+		return
+	}
+	target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
+	if err := manager.traffic.ResetIdle(target); err != nil {
+		manager.logTrafficError(desired.ID, err)
+	}
+}
+
 // stopTrafficWatch disables packet events and logs a failure.
 func (manager *Manager) stopTrafficWatch(target traffic.Target) {
 	if manager.traffic == nil {
