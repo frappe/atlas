@@ -51,9 +51,6 @@ func (s *Server) resizeVirtualMachine(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	unlockCapacity := s.virtualMachineManager.LockCapacity()
-	defer unlockCapacity()
-
 	virtualMachine, err := s.loadVirtualMachine(c)
 	if err != nil {
 		return err

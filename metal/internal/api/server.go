@@ -50,7 +50,6 @@ type VirtualMachineManager interface {
 	SetCompute(context.Context, string, vm.Compute) error
 	SetDisk(context.Context, string, int, vm.Disk) error
 	Resize(context.Context, string, vm.Compute, int) error
-	LockCapacity() func()
 	SetNetwork(context.Context, string, vm.NetworkConfiguration) error
 	ReplaceSSHKeys(context.Context, string, []string) (bool, error)
 	ReplaceMetadata(context.Context, string, map[string]string) (bool, error)
