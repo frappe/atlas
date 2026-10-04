@@ -114,6 +114,17 @@ class TestRedfishRegistration(UnitTestCase):
 		MetalServer.after_insert(server)
 		server._enqueue_setup_server.assert_not_called()
 
+	def test_browser_values_cannot_mark_a_system_as_discovered(self) -> None:
+		for identity in (True, {"url": SYSTEM.url, "id": SYSTEM.id, "name": SYSTEM.name, "uuid": None}):
+			server = SimpleNamespace(
+				settings=self.settings, is_new=lambda: True, _redfish_registration=identity
+			)
+			with (
+				self.subTest(identity=identity),
+				self.assertRaisesRegex(frappe.ValidationError, "Use Register"),
+			):
+				MetalServer.before_validate(server)
+
 	def test_other_providers_require_catalogs_and_enqueue_provisioning(self) -> None:
 		provider = Mock()
 		server = SimpleNamespace(
