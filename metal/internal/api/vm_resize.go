@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -57,28 +56,24 @@ func (s *Server) resizeVirtualMachine(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.virtualMachineManager.ResizeWithCapacity(c.Request().Context(), identifier, vm.Compute{
-		CPUMillicores: request.CPUMillicores, MemoryMiB: request.MemoryMiB,
-		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds,
-	}, request.DiskMiB, s.resizeCapacity); err != nil {
-		if errors.Is(err, vm.ErrInsufficientCapacity) {
+	admit := func(ctx context.Context, current vm.Information) error {
+		capacity, err := s.hostService.Capacity(ctx)
+		if err != nil {
+			return err
+		}
+		if needsMoreThanAvailable(request.MemoryMiB, current.MemoryMiB, capacity.AvailableMemoryMiB) ||
+			needsMoreThanAvailable(request.DiskMiB, current.DiskMiB, capacity.AvailableStorageMiB) {
 			return newAPIError(http.StatusConflict, insufficientCapacityCode, "not enough host capacity")
 		}
+		return nil
+	}
+	if err := s.virtualMachineManager.Resize(c.Request().Context(), identifier, vm.Compute{
+		CPUMillicores: request.CPUMillicores, MemoryMiB: request.MemoryMiB,
+		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds,
+	}, request.DiskMiB, admit); err != nil {
 		return err
 	}
 
 	s.wakeReconciler()
 	return s.respondWithCurrentVirtualMachine(c, http.StatusAccepted)
-}
-
-// resizeCapacity reads stored capacity without acquiring either resize lock.
-func (s *Server) resizeCapacity(ctx context.Context) (vm.ResizeCapacity, error) {
-	capacity, err := s.hostService.Capacity(ctx)
-	if err != nil {
-		return vm.ResizeCapacity{}, err
-	}
-	return vm.ResizeCapacity{
-		AvailableMemoryMiB:  capacity.AvailableMemoryMiB,
-		AvailableStorageMiB: capacity.AvailableStorageMiB,
-	}, nil
 }

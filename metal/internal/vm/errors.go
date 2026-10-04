@@ -11,9 +11,6 @@ var ErrNotFound = errors.New("vm: not found")
 // ErrConflict indicates that the current state blocks an operation.
 var ErrConflict = errors.New("vm: conflict")
 
-// ErrInsufficientCapacity indicates that growth does not fit on this host.
-var ErrInsufficientCapacity = errors.New("vm: insufficient capacity")
-
 // ErrInUse indicates that a host artifact still has dependent virtual machines.
 var ErrInUse = errors.New("vm: in use")
 

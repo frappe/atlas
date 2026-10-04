@@ -77,75 +77,20 @@ func (manager *Manager) SetDisk(ctx context.Context, identifier string, diskMiB 
 	})
 }
 
-// ResizeCapacity is free host capacity for one resize admission check.
-type ResizeCapacity struct {
-	AvailableMemoryMiB  int
-	AvailableStorageMiB int
-}
+// Resize stores the complete compute and disk shape in one desired-record write.
+// admit checks host capacity under the operation lock, then the allocation lock, the order SetNetwork uses.
+func (manager *Manager) Resize(ctx context.Context, identifier string, compute Compute, diskMiB int, admit func(context.Context, Information) error) error {
+	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		manager.allocationMutex.Lock()
+		defer manager.allocationMutex.Unlock()
+		current, err := manager.Information(ctx, identifier)
+		if err != nil {
+			return false, err
+		}
+		if err := admit(ctx, current); err != nil {
+			return false, err
+		}
 
-// ResizeCapacitySource runs while both resize locks are held and must not acquire either lock.
-type ResizeCapacitySource func(ctx context.Context) (ResizeCapacity, error)
-
-// ResizeWithCapacity holds the operation lock before the allocation lock for an atomic resize admission and reservation.
-func (manager *Manager) ResizeWithCapacity(ctx context.Context, identifier string, compute Compute, diskMiB int, capacity ResizeCapacitySource) error {
-	unlockOperation, err := manager.operationLocks.Lock(ctx, identifier)
-	if err != nil {
-		return err
-	}
-	defer unlockOperation()
-	if err := manager.assertNotSourceLocked(identifier); err != nil {
-		return err
-	}
-	manager.allocationMutex.Lock()
-	defer manager.allocationMutex.Unlock()
-
-	record, err := manager.store.readDesired(identifier)
-	if err != nil {
-		return err
-	}
-	// Disk growth uses observed size, with desired size as the fallback before usage is available.
-	observed, err := manager.readObservedForResize(identifier)
-	if err != nil {
-		return err
-	}
-	diskBase := observed.Disk.SizeMiB
-	if diskBase == 0 {
-		diskBase = record.Specification.DiskMiB
-	}
-	available, err := capacity(ctx)
-	if err != nil {
-		return err
-	}
-	if exceedsAvailable(compute.MemoryMiB, record.Specification.MemoryMiB, available.AvailableMemoryMiB) ||
-		exceedsAvailable(diskMiB, diskBase, available.AvailableStorageMiB) {
-		return ErrInsufficientCapacity
-	}
-
-	change := manager.resizeChange(identifier, compute, diskMiB)
-	changed, err := change(&record)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil
-	}
-	record.Generation++
-	return manager.store.writeDesired(record)
-}
-
-// exceedsAvailable checks only growth because the current shape is already reserved.
-func exceedsAvailable(requested, current, available int) bool {
-	return requested-current > available
-}
-
-// readObservedForResize requires the operation lock, which prevents concurrent removal.
-func (manager *Manager) readObservedForResize(identifier string) (ObservedRecord, error) {
-	return manager.store.readObserved(identifier)
-}
-
-// resizeChange returns the mutate closure storing one complete shape.
-func (manager *Manager) resizeChange(identifier string, compute Compute, diskMiB int) func(*DesiredRecord) (bool, error) {
-	return func(record *DesiredRecord) (bool, error) {
 		if record.State == StateDestroyed || diskMiB < record.Specification.DiskMiB {
 			return false, ErrConflict
 		}
@@ -177,7 +122,7 @@ func (manager *Manager) resizeChange(identifier string, compute Compute, diskMiB
 			record.State = StateRunning
 		}
 		return true, nil
-	}
+	})
 }
 
 // SetNetwork stores the complete requested network configuration.
