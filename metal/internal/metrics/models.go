@@ -2,7 +2,6 @@
 package metrics
 
 // Sample describes the current resource use of one virtual machine.
-// Embedded groups keep the stored JSON fields flat.
 type Sample struct {
 	Up bool `json:"up"`
 	ComputeUsage

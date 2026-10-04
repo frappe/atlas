@@ -12,7 +12,6 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// fakeTrafficMonitor records traffic monitor calls.
 type fakeTrafficMonitor struct {
 	attached []traffic.AttachmentRequest
 	detached []string

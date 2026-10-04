@@ -93,7 +93,7 @@ func (allocator *LinuxAllocator) Ensure(ctx context.Context, desired vm.NetworkR
 	if err := allocator.converge(ctx, request, namespaceCreated); err != nil {
 		return vm.NetworkInterface{}, err
 	}
-	if err := allocator.convergeTrafficMonitoring(desired.TrackTraffic, desired.RequireTrafficMonitor, request); err != nil {
+	if err := allocator.convergeTrafficMonitoring(desired.TrackTraffic, desired.FailOnTrafficMonitorAttachError, request); err != nil {
 		return vm.NetworkInterface{}, err
 	}
 
@@ -126,10 +126,7 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseReq
 	return errors.Join(trafficError, meshError, rulesError, namespaceRulesError, namespaceError)
 }
 
-// convergeTrafficMonitoring attaches or detaches packet monitoring as
-// requested. A failed attach only fails the request when required is true;
-// otherwise it is logged and the VM proceeds without traffic counters.
-func (allocator *LinuxAllocator) convergeTrafficMonitoring(enabled, required bool, request request) error {
+func (allocator *LinuxAllocator) convergeTrafficMonitoring(enabled, failOnAttachError bool, request request) error {
 	if allocator.trafficMonitor == nil {
 		return nil
 	}
@@ -151,7 +148,7 @@ func (allocator *LinuxAllocator) convergeTrafficMonitoring(enabled, required boo
 	if err == nil {
 		return nil
 	}
-	if required {
+	if failOnAttachError {
 		return fmt.Errorf("attach traffic monitor: %w", err)
 	}
 	allocator.logger.Warn("traffic monitor attach failed, continuing without traffic metrics",

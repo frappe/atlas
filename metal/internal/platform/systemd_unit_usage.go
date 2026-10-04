@@ -119,8 +119,6 @@ func readCPUTimeMicroseconds(path string) (uint64, error) {
 	return parseCPUTimeMicroseconds(data)
 }
 
-// parseCPUTimeMicroseconds parses cpu.stat's "key value" lines and returns
-// usage_usec, the cumulative CPU time the cgroup has consumed.
 func parseCPUTimeMicroseconds(data []byte) (uint64, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {

@@ -19,14 +19,12 @@ type Network interface {
 
 // NetworkRequest contains the complete desired host network state.
 type NetworkRequest struct {
-	VirtualMachineID string
-	UserID           uint32
-	GroupID          uint32
-	Configuration    NetworkConfiguration
-	TrackTraffic     bool
-	// RequireTrafficMonitor fails the request when traffic monitoring cannot
-	// attach. Idle-shutdown needs this; metrics collection alone does not.
-	RequireTrafficMonitor bool
+	VirtualMachineID                string
+	UserID                          uint32
+	GroupID                         uint32
+	Configuration                   NetworkConfiguration
+	TrackTraffic                    bool
+	FailOnTrafficMonitorAttachError bool
 }
 
 // NetworkReleaseRequest identifies host network resources to remove.
