@@ -4,24 +4,12 @@ import (
 	"context"
 	"errors"
 
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 )
 
-// Metrics describes the current resource use of one virtual machine. CPU and
-// network are cumulative counters; memory is a point-in-time gauge; disk
-// usage is as fresh as the last reconcile pass. Network counters last for the
-// traffic attachment's lifetime, including while the guest is stopped.
-type Metrics struct {
-	Up                   bool
-	DiskMiB              int
-	DiskUsedMiB          int
-	CPUUsageMicroseconds uint64
-	MemoryBytes          uint64
-	ReceivedBytes        uint64
-	ReceivedPackets      uint64
-	SentBytes            uint64
-	SentPackets          uint64
-}
+// Metrics is one resource-use snapshot supplied to the metrics sampler.
+type Metrics = metrics.Sample
 
 // Metrics returns the current resource use of the virtual machine identified
 // by identifier.
@@ -40,15 +28,23 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (Metrics
 		diskMiB = desired.Specification.DiskMiB
 	}
 	up := observed.State == StateRunning || observed.State == StatePaused
-	metrics := Metrics{Up: up, DiskMiB: diskMiB, DiskUsedMiB: observed.Disk.UsedMiB}
+	sample := Metrics{Up: up, DiskUsage: metrics.DiskUsage{
+		DiskMiB: diskMiB, DiskUsedMiB: observed.Disk.UsedMiB,
+		DiskThroughputLimitMiBps: desired.Specification.Disk.ThroughputMiBps,
+		DiskIOPSLimit:            desired.Specification.Disk.IOPS,
+	}}
 
 	if up {
 		usage, err := manager.runtime.GetUsage(ctx, RuntimeMachine{ID: desired.ID})
 		if err != nil {
 			return Metrics{}, err
 		}
-		metrics.CPUUsageMicroseconds = usage.CPUUsageMicroseconds
-		metrics.MemoryBytes = usage.MemoryBytes
+		sample.CPUUsageMicroseconds = usage.CPUUsageMicroseconds
+		sample.MemoryBytes = usage.MemoryBytes
+		sample.Counters = metrics.DiskCounters{
+			ReadBytes: usage.DiskReadBytes, WriteBytes: usage.DiskWriteBytes,
+			ReadOperations: usage.DiskReadOperations, WriteOperations: usage.DiskWriteOperations,
+		}
 	}
 
 	if manager.traffic != nil {
@@ -57,11 +53,15 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (Metrics
 		if err != nil && !errors.Is(err, traffic.ErrNotFound) {
 			return Metrics{}, err
 		}
-		metrics.ReceivedBytes = received.Bytes
-		metrics.ReceivedPackets = received.Packets
-		metrics.SentBytes = sent.Bytes
-		metrics.SentPackets = sent.Packets
+		sample.ReceivedBytes = received.Bytes
+		sample.ReceivedPackets = received.Packets
+		sample.SentBytes = sent.Bytes
+		sample.SentPackets = sent.Packets
+		sample.SentICMPPackets = sent.ICMPPackets
+		sample.SentUDPPackets = sent.UDPPackets
+		sample.SentTCPSYNPackets = sent.TCPSYNPackets
+		sample.SentTCPRSTPackets = sent.TCPRSTPackets
 	}
 
-	return metrics, nil
+	return sample, nil
 }

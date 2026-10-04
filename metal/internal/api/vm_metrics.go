@@ -11,11 +11,12 @@ import (
 )
 
 type virtualMachineMetricsResponse struct {
-	Samples []virtualMachineMetricsSample `json:"samples"`
+	Samples               []virtualMachineMetricsSample `json:"samples"`
+	SampleIntervalSeconds int                           `json:"sample_interval_seconds,omitempty"`
 }
 
 type virtualMachineMetricsSample struct {
-	Timestamp time.Time            `json:"timestamp"`
+	Timestamp int64                `json:"timestamp"`
 	Up        bool                 `json:"up"`
 	Compute   computeUsageResponse `json:"compute"`
 	Disk      diskUsageResponse    `json:"disk"`
@@ -28,15 +29,25 @@ type computeUsageResponse struct {
 }
 
 type diskUsageResponse struct {
-	SizeMiB int `json:"size_mib"`
-	UsedMiB int `json:"used_mib"`
+	SizeMiB              int    `json:"size_mib"`
+	UsedMiB              int    `json:"used_mib"`
+	ThroughputLimitMiBps int    `json:"throughput_limit_mibps"`
+	IOPSLimit            int    `json:"iops_limit"`
+	ReadBytesPerSecond   uint64 `json:"read_bytes_per_second"`
+	WriteBytesPerSecond  uint64 `json:"write_bytes_per_second"`
+	ReadMilliIOPS        uint64 `json:"read_milli_iops"`
+	WriteMilliIOPS       uint64 `json:"write_milli_iops"`
 }
 
 type networkUsageResponse struct {
-	ReceivedBytes   uint64 `json:"received_bytes"`
-	ReceivedPackets uint64 `json:"received_packets"`
-	SentBytes       uint64 `json:"sent_bytes"`
-	SentPackets     uint64 `json:"sent_packets"`
+	ReceivedBytes     uint64 `json:"received_bytes"`
+	ReceivedPackets   uint64 `json:"received_packets"`
+	SentBytes         uint64 `json:"sent_bytes"`
+	SentPackets       uint64 `json:"sent_packets"`
+	SentICMPPackets   uint64 `json:"sent_icmp_packets"`
+	SentUDPPackets    uint64 `json:"sent_udp_packets"`
+	SentTCPSYNPackets uint64 `json:"sent_tcp_syn_packets"`
+	SentTCPRSTPackets uint64 `json:"sent_tcp_rst_packets"`
 }
 
 // @Summary Read virtual machine metrics history
@@ -59,7 +70,7 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	}
 
 	now := time.Now().UTC()
-	start, end := now.Add(-metrics.Retention), now
+	start, end := now.Add(-24*time.Hour), now
 	for name, destination := range map[string]*time.Time{"start": &start, "end": &end} {
 		if value := c.QueryParam(name); value != "" {
 			parsed, err := time.Parse(time.RFC3339Nano, value)
@@ -81,17 +92,23 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	if _, err := s.virtualMachineManager.Information(c.Request().Context(), identifier); err != nil {
 		return err
 	}
-	records, err := s.metricsStore.History(c.Request().Context(), "vm:"+identifier, start, end)
+	interval := time.Duration(0)
+	if end.Sub(start) > 24*time.Hour {
+		interval = 5 * time.Minute
+	}
+	var records []metrics.Record
+	if interval > 0 {
+		records, err = s.metricsStore.DownsampledHistory(c.Request().Context(), identifier, start, end, interval)
+	} else {
+		records, err = s.metricsStore.History(c.Request().Context(), identifier, start, end)
+	}
 	if err != nil {
 		return err
 	}
-	response := virtualMachineMetricsResponse{Samples: make([]virtualMachineMetricsSample, 0, len(records))}
+	response := virtualMachineMetricsResponse{Samples: make([]virtualMachineMetricsSample, 0, len(records)), SampleIntervalSeconds: int(interval.Seconds())}
 	for _, record := range records {
-		if record.VM == nil {
-			continue
-		}
-		sample := toVirtualMachineMetrics(*record.VM)
-		sample.Timestamp = record.Timestamp
+		sample := toVirtualMachineMetrics(record.Metrics)
+		sample.Timestamp = record.Timestamp.Unix()
 		response.Samples = append(response.Samples, sample)
 	}
 	return c.JSON(http.StatusOK, response)
@@ -105,14 +122,24 @@ func toVirtualMachineMetrics(metrics vm.Metrics) virtualMachineMetricsSample {
 			MemoryBytes:     metrics.MemoryBytes,
 		},
 		Disk: diskUsageResponse{
-			SizeMiB: metrics.DiskMiB,
-			UsedMiB: metrics.DiskUsedMiB,
+			SizeMiB:              metrics.DiskMiB,
+			UsedMiB:              metrics.DiskUsedMiB,
+			ThroughputLimitMiBps: metrics.DiskThroughputLimitMiBps,
+			IOPSLimit:            metrics.DiskIOPSLimit,
+			ReadBytesPerSecond:   metrics.DiskReadBytesPerSecond,
+			WriteBytesPerSecond:  metrics.DiskWriteBytesPerSecond,
+			ReadMilliIOPS:        metrics.DiskReadMilliIOPS,
+			WriteMilliIOPS:       metrics.DiskWriteMilliIOPS,
 		},
 		Network: networkUsageResponse{
-			ReceivedBytes:   metrics.ReceivedBytes,
-			ReceivedPackets: metrics.ReceivedPackets,
-			SentBytes:       metrics.SentBytes,
-			SentPackets:     metrics.SentPackets,
+			ReceivedBytes:     metrics.ReceivedBytes,
+			ReceivedPackets:   metrics.ReceivedPackets,
+			SentBytes:         metrics.SentBytes,
+			SentPackets:       metrics.SentPackets,
+			SentICMPPackets:   metrics.SentICMPPackets,
+			SentUDPPackets:    metrics.SentUDPPackets,
+			SentTCPSYNPackets: metrics.SentTCPSYNPackets,
+			SentTCPRSTPackets: metrics.SentTCPRSTPackets,
 		},
 	}
 }

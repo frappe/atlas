@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 
 
 
@@ -30,12 +31,20 @@ class VirtualMachineNetworkUsage:
             received_packets (int): Cumulative packets received by the guest.
             sent_bytes (int): Cumulative bytes sent by the guest.
             sent_packets (int): Cumulative packets sent by the guest.
+            sent_icmp_packets (int | Unset): Cumulative ICMP packets sent by the guest. Default: 0.
+            sent_tcp_rst_packets (int | Unset): Cumulative TCP RST packets sent by the guest. Default: 0.
+            sent_tcp_syn_packets (int | Unset): Cumulative TCP SYN packets sent by the guest. Default: 0.
+            sent_udp_packets (int | Unset): Cumulative UDP packets sent by the guest. Default: 0.
      """
 
     received_bytes: int
     received_packets: int
     sent_bytes: int
     sent_packets: int
+    sent_icmp_packets: int | Unset = 0
+    sent_tcp_rst_packets: int | Unset = 0
+    sent_tcp_syn_packets: int | Unset = 0
+    sent_udp_packets: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -51,6 +60,14 @@ class VirtualMachineNetworkUsage:
 
         sent_packets = self.sent_packets
 
+        sent_icmp_packets = self.sent_icmp_packets
+
+        sent_tcp_rst_packets = self.sent_tcp_rst_packets
+
+        sent_tcp_syn_packets = self.sent_tcp_syn_packets
+
+        sent_udp_packets = self.sent_udp_packets
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -60,6 +77,14 @@ class VirtualMachineNetworkUsage:
             "sent_bytes": sent_bytes,
             "sent_packets": sent_packets,
         })
+        if sent_icmp_packets is not UNSET:
+            field_dict["sent_icmp_packets"] = sent_icmp_packets
+        if sent_tcp_rst_packets is not UNSET:
+            field_dict["sent_tcp_rst_packets"] = sent_tcp_rst_packets
+        if sent_tcp_syn_packets is not UNSET:
+            field_dict["sent_tcp_syn_packets"] = sent_tcp_syn_packets
+        if sent_udp_packets is not UNSET:
+            field_dict["sent_udp_packets"] = sent_udp_packets
 
         return field_dict
 
@@ -76,11 +101,23 @@ class VirtualMachineNetworkUsage:
 
         sent_packets = d.pop("sent_packets")
 
+        sent_icmp_packets = d.pop("sent_icmp_packets", UNSET)
+
+        sent_tcp_rst_packets = d.pop("sent_tcp_rst_packets", UNSET)
+
+        sent_tcp_syn_packets = d.pop("sent_tcp_syn_packets", UNSET)
+
+        sent_udp_packets = d.pop("sent_udp_packets", UNSET)
+
         virtual_machine_network_usage = cls(
             received_bytes=received_bytes,
             received_packets=received_packets,
             sent_bytes=sent_bytes,
             sent_packets=sent_packets,
+            sent_icmp_packets=sent_icmp_packets,
+            sent_tcp_rst_packets=sent_tcp_rst_packets,
+            sent_tcp_syn_packets=sent_tcp_syn_packets,
+            sent_udp_packets=sent_udp_packets,
         )
 
 

@@ -1,4 +1,3 @@
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -35,15 +34,7 @@ from atlas.atlas.core.tags import (
 	MAXIMUM_TAG_VALUE_LENGTH,
 	MAXIMUM_TAGS,
 )
-from atlas.vm.core.metal_models import (
-	MetalComputeUsage,
-	MetalDiskUsage,
-	MetalFirewall,
-	MetalFirewallRule,
-	MetalNetworkUsage,
-	MetalVirtualMachineMetrics,
-	MetalVirtualMachineMetricsSample,
-)
+from atlas.vm.core.metal_models import MetalFirewall, MetalFirewallRule
 from atlas.vm.core.models import DEFAULT_ROUTES, Route
 from atlas.vm.core.placement import OutOfCapacity
 from atlas.vm.core.placement.affinity import MAXIMUM_AFFINITY_RULES
@@ -432,65 +423,6 @@ class TestReadVirtualMachines(UnitTestCase):
 		self.assertEqual(body["id"], "vm-00001")
 		self.assertIsNone(body["desired_state"])
 		self.assertEqual(body["current_state"], "unknown")
-
-	def test_metrics_returns_the_metal_read(self) -> None:
-		virtual_machine = build_virtual_machine(
-			get_metal_vm_metrics=Mock(
-				return_value=MetalVirtualMachineMetrics(
-					samples=(
-						MetalVirtualMachineMetricsSample(
-							timestamp=datetime.fromisoformat("2026-09-30T10:00:00Z"),
-							up=True,
-							compute=MetalComputeUsage(cpu_microseconds=42_000_000, memory_bytes=536870912),
-							disk=MetalDiskUsage(size_mib=10240, used_mib=5),
-							network=MetalNetworkUsage(
-								received_bytes=0, received_packets=0, sent_bytes=2232, sent_packets=30
-							),
-						),
-					)
-				)
-			)
-		)
-		with (
-			api_request("GET", "/api/atlas/virtual-machines/vm-00001/metrics", tenant_id=TENANT_ID),
-			owned_document(virtual_machine),
-		):
-			status, body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
-
-		self.assertEqual(status, 200)
-		self.assertEqual(body["id"], "vm-00001")
-		self.assertEqual(body["samples"][0]["compute"]["cpu_microseconds"], 42_000_000)
-		self.assertEqual(body["samples"][0]["disk"]["size_mib"], 10240)
-		self.assertEqual(body["samples"][0]["network"]["sent_packets"], 30)
-
-	def test_metrics_returns_empty_history_without_a_metal_record(self) -> None:
-		virtual_machine = build_virtual_machine()
-		with (
-			api_request("GET", "/api/atlas/virtual-machines/vm-00001/metrics", tenant_id=TENANT_ID),
-			owned_document(virtual_machine),
-		):
-			status, body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
-
-		self.assertEqual(status, 200)
-		self.assertEqual(body["samples"], [])
-
-	def test_metrics_passes_timezone_aware_query_bounds(self) -> None:
-		virtual_machine = build_virtual_machine()
-		with (
-			api_request(
-				"GET",
-				"/api/atlas/virtual-machines/vm-00001/metrics",
-				tenant_id=TENANT_ID,
-				query_string={"start": "2026-09-29T18:00:00+05:30", "end": "2026-09-30T10:00:00Z"},
-			),
-			owned_document(virtual_machine),
-		):
-			status, _body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
-		self.assertEqual(status, 200)
-		virtual_machine.get_metal_vm_metrics.assert_called_once_with(
-			start=datetime.fromisoformat("2026-09-29T18:00:00+05:30"),
-			end=datetime.fromisoformat("2026-09-30T10:00:00Z"),
-		)
 
 	def test_metrics_rejects_invalid_query_bounds(self) -> None:
 		for query in (

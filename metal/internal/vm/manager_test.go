@@ -141,14 +141,12 @@ func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (Usage, er
 }
 
 type fakeNetwork struct {
-	ensures     int
-	releases    int
-	lastRequest NetworkRequest
+	ensures  int
+	releases int
 }
 
-func (network *fakeNetwork) Ensure(_ context.Context, request NetworkRequest) (NetworkInterface, error) {
+func (network *fakeNetwork) Ensure(context.Context, NetworkRequest) (NetworkInterface, error) {
 	network.ensures++
-	network.lastRequest = request
 	return NetworkInterface{MACAddress: "06:00:ac:10:00:02"}, nil
 }
 

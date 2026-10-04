@@ -188,25 +188,35 @@ class MetalComputeUsage:
 
 @dataclass(frozen=True, slots=True)
 class MetalDiskUsage:
-	"""Store the disk's requested size and its use as of the last reconcile pass."""
+	"""Store disk size, configured limits, and sampled I/O rates."""
 
 	size_mib: int
 	used_mib: int
+	throughput_limit_mibps: int = 0
+	iops_limit: int = 0
+	read_bytes_per_second: int = 0
+	write_bytes_per_second: int = 0
+	read_milli_iops: int = 0
+	write_milli_iops: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class MetalNetworkUsage:
-	"""Store cumulative received and sent bytes and packets."""
+	"""Store cumulative received and sent IP traffic counters."""
 
 	received_bytes: int
 	received_packets: int
 	sent_bytes: int
 	sent_packets: int
+	sent_icmp_packets: int = 0
+	sent_udp_packets: int = 0
+	sent_tcp_syn_packets: int = 0
+	sent_tcp_rst_packets: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class MetalVirtualMachineMetricsSample:
-	timestamp: datetime
+	timestamp: int
 	up: bool
 	compute: MetalComputeUsage
 	disk: MetalDiskUsage
@@ -217,11 +227,8 @@ class MetalVirtualMachineMetricsSample:
 		compute = object_field(value, "compute")
 		disk = object_field(value, "disk")
 		network = object_field(value, "network")
-		timestamp = datetime.fromisoformat(string_field(value, "timestamp"))
-		if timestamp.tzinfo is None:
-			raise ValueError("timestamp must include a timezone")
 		return cls(
-			timestamp=timestamp,
+			timestamp=integer_field(value, "timestamp"),
 			up=boolean_field(value, "up"),
 			compute=MetalComputeUsage(
 				cpu_microseconds=integer_field(compute, "cpu_microseconds"),
@@ -230,12 +237,22 @@ class MetalVirtualMachineMetricsSample:
 			disk=MetalDiskUsage(
 				size_mib=integer_field(disk, "size_mib"),
 				used_mib=integer_field(disk, "used_mib"),
+				throughput_limit_mibps=integer_field(disk, "throughput_limit_mibps", default=0),
+				iops_limit=integer_field(disk, "iops_limit", default=0),
+				read_bytes_per_second=integer_field(disk, "read_bytes_per_second", default=0),
+				write_bytes_per_second=integer_field(disk, "write_bytes_per_second", default=0),
+				read_milli_iops=integer_field(disk, "read_milli_iops", default=0),
+				write_milli_iops=integer_field(disk, "write_milli_iops", default=0),
 			),
 			network=MetalNetworkUsage(
 				received_bytes=integer_field(network, "received_bytes"),
 				received_packets=integer_field(network, "received_packets"),
 				sent_bytes=integer_field(network, "sent_bytes"),
 				sent_packets=integer_field(network, "sent_packets"),
+				sent_icmp_packets=integer_field(network, "sent_icmp_packets", default=0),
+				sent_udp_packets=integer_field(network, "sent_udp_packets", default=0),
+				sent_tcp_syn_packets=integer_field(network, "sent_tcp_syn_packets", default=0),
+				sent_tcp_rst_packets=integer_field(network, "sent_tcp_rst_packets", default=0),
 			),
 		)
 
@@ -243,6 +260,7 @@ class MetalVirtualMachineMetricsSample:
 @dataclass(frozen=True, slots=True)
 class MetalVirtualMachineMetrics:
 	samples: tuple[MetalVirtualMachineMetricsSample, ...]
+	sample_interval_seconds: int = 0
 
 	@classmethod
 	def from_dict(cls, value: dict[str, Any]) -> MetalVirtualMachineMetrics:
@@ -253,7 +271,8 @@ class MetalVirtualMachineMetrics:
 			samples=tuple(
 				MetalVirtualMachineMetricsSample.from_dict(object_value(sample, "sample"))
 				for sample in samples
-			)
+			),
+			sample_interval_seconds=integer_field(value, "sample_interval_seconds", default=0),
 		)
 
 
@@ -404,9 +423,9 @@ def timestamp_field(value: dict[str, Any], field_name: str) -> datetime | None:
 	return convert_utc_to_system_timezone(parsed).replace(tzinfo=None)
 
 
-def integer_field(value: dict[str, Any], field_name: str) -> int:
-	"""Return one integer field, or zero."""
-	field_value = value.get(field_name)
+def integer_field(value: dict[str, Any], field_name: str, *, default: int | None = None) -> int:
+	"""Return one non-negative integer field, with an optional default."""
+	field_value = value.get(field_name, default)
 	if not isinstance(field_value, int) or isinstance(field_value, bool) or field_value < 0:
 		raise ValueError(f"{field_name} must be a non-negative integer")
 	return field_value

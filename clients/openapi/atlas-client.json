@@ -2133,16 +2133,52 @@
         "type": "object"
       },
       "VirtualMachineDiskUsage": {
-        "description": "The disk's requested size and its use as of the last reconcile pass.",
+        "description": "The disk's size, configured limits, and sampled I/O rates.",
         "properties": {
+          "iops_limit": {
+            "default": 0,
+            "description": "Configured disk IOPS limit. Zero means unlimited.",
+            "title": "Iops Limit",
+            "type": "integer"
+          },
+          "read_bytes_per_second": {
+            "default": 0,
+            "description": "Average disk read throughput during the sample interval.",
+            "title": "Read Bytes Per Second",
+            "type": "integer"
+          },
+          "read_milli_iops": {
+            "default": 0,
+            "description": "Average disk read operations per second, in thousandths of an IOPS.",
+            "title": "Read Milli Iops",
+            "type": "integer"
+          },
           "size_mib": {
             "description": "Requested disk size.",
             "title": "Size Mib",
             "type": "integer"
           },
+          "throughput_limit_mibps": {
+            "default": 0,
+            "description": "Configured disk throughput limit. Zero means unlimited.",
+            "title": "Throughput Limit Mibps",
+            "type": "integer"
+          },
           "used_mib": {
             "description": "Disk use as of the last reconcile pass.",
             "title": "Used Mib",
+            "type": "integer"
+          },
+          "write_bytes_per_second": {
+            "default": 0,
+            "description": "Average disk write throughput during the sample interval.",
+            "title": "Write Bytes Per Second",
+            "type": "integer"
+          },
+          "write_milli_iops": {
+            "default": 0,
+            "description": "Average disk write operations per second, in thousandths of an IOPS.",
+            "title": "Write Milli Iops",
             "type": "integer"
           }
         },
@@ -2346,6 +2382,12 @@
             "title": "Id",
             "type": "string"
           },
+          "sample_interval_seconds": {
+            "default": 0,
+            "description": "Zero for raw samples; five-minute downsampling for ranges over one day.",
+            "title": "Sample Interval Seconds",
+            "type": "integer"
+          },
           "samples": {
             "items": {
               "$ref": "#/components/schemas/VirtualMachineMetricsSample"
@@ -2373,9 +2415,9 @@
             "$ref": "#/components/schemas/VirtualMachineNetworkUsage"
           },
           "timestamp": {
-            "format": "date-time",
+            "description": "UTC Unix timestamp in seconds.",
             "title": "Timestamp",
-            "type": "string"
+            "type": "integer"
           },
           "up": {
             "title": "Up",
@@ -2500,9 +2542,33 @@
             "title": "Sent Bytes",
             "type": "integer"
           },
+          "sent_icmp_packets": {
+            "default": 0,
+            "description": "Cumulative ICMP packets sent by the guest.",
+            "title": "Sent Icmp Packets",
+            "type": "integer"
+          },
           "sent_packets": {
             "description": "Cumulative packets sent by the guest.",
             "title": "Sent Packets",
+            "type": "integer"
+          },
+          "sent_tcp_rst_packets": {
+            "default": 0,
+            "description": "Cumulative TCP RST packets sent by the guest.",
+            "title": "Sent Tcp Rst Packets",
+            "type": "integer"
+          },
+          "sent_tcp_syn_packets": {
+            "default": 0,
+            "description": "Cumulative TCP SYN packets sent by the guest.",
+            "title": "Sent Tcp Syn Packets",
+            "type": "integer"
+          },
+          "sent_udp_packets": {
+            "default": 0,
+            "description": "Cumulative UDP packets sent by the guest.",
+            "title": "Sent Udp Packets",
             "type": "integer"
           }
         },

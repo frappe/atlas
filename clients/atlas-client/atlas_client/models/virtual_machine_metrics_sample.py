@@ -9,7 +9,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from typing import cast
-import datetime
 
 if TYPE_CHECKING:
   from ..models.virtual_machine_compute_usage import VirtualMachineComputeUsage
@@ -29,19 +28,19 @@ class VirtualMachineMetricsSample:
     """ 
         Attributes:
             compute (VirtualMachineComputeUsage): Cumulative CPU time and current memory use.
-            disk (VirtualMachineDiskUsage): The disk's requested size and its use as of the last reconcile pass.
+            disk (VirtualMachineDiskUsage): The disk's size, configured limits, and sampled I/O rates.
             network (VirtualMachineNetworkUsage): Cumulative unicast IP traffic for the lifetime of the traffic attachment.
 
                 Counters survive guest stops while the attachment remains. Recreating the
                 attachment or restarting Metal resets the counters.
-            timestamp (datetime.datetime):
+            timestamp (int): UTC Unix timestamp in seconds.
             up (bool):
      """
 
     compute: VirtualMachineComputeUsage
     disk: VirtualMachineDiskUsage
     network: VirtualMachineNetworkUsage
-    timestamp: datetime.datetime
+    timestamp: int
     up: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -59,7 +58,7 @@ class VirtualMachineMetricsSample:
 
         network = self.network.to_dict()
 
-        timestamp = self.timestamp.isoformat()
+        timestamp = self.timestamp
 
         up = self.up
 
@@ -99,10 +98,7 @@ class VirtualMachineMetricsSample:
 
 
 
-        timestamp = datetime.datetime.fromisoformat(d.pop("timestamp"))
-
-
-
+        timestamp = d.pop("timestamp")
 
         up = d.pop("up")
 

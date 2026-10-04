@@ -351,11 +351,11 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
 	}
-	metricsStore, err := metrics.NewStore(filepath.Join(options.baseDir, "metrics"))
+	metricsStore, err := metrics.NewStore(options.cfg.MachinesDir)
 	if err != nil {
 		return fmt.Errorf("configure metrics store: %w", err)
 	}
-	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, hostService, logger)
+	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, logger)
 
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)

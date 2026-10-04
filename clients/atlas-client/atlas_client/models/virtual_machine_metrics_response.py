@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
@@ -27,10 +28,13 @@ class VirtualMachineMetricsResponse:
         Attributes:
             id (str):
             samples (list[VirtualMachineMetricsSample]):
+            sample_interval_seconds (int | Unset): Zero for raw samples; five-minute downsampling for ranges over one day.
+                Default: 0.
      """
 
     id: str
     samples: list[VirtualMachineMetricsSample]
+    sample_interval_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -48,6 +52,8 @@ class VirtualMachineMetricsResponse:
 
 
 
+        sample_interval_seconds = self.sample_interval_seconds
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -55,6 +61,8 @@ class VirtualMachineMetricsResponse:
             "id": id,
             "samples": samples,
         })
+        if sample_interval_seconds is not UNSET:
+            field_dict["sample_interval_seconds"] = sample_interval_seconds
 
         return field_dict
 
@@ -76,9 +84,12 @@ class VirtualMachineMetricsResponse:
             samples.append(samples_item)
 
 
+        sample_interval_seconds = d.pop("sample_interval_seconds", UNSET)
+
         virtual_machine_metrics_response = cls(
             id=id,
             samples=samples,
+            sample_interval_seconds=sample_interval_seconds,
         )
 
 

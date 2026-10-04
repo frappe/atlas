@@ -1018,10 +1018,26 @@ class VirtualMachineComputeUsage(BaseModel):
 
 
 class VirtualMachineDiskUsage(BaseModel):
-	"""The disk's requested size and its use as of the last reconcile pass."""
+	"""The disk's size, configured limits, and sampled I/O rates."""
 
 	size_mib: int = Field(description="Requested disk size.")
 	used_mib: int = Field(description="Disk use as of the last reconcile pass.")
+	throughput_limit_mibps: int = Field(
+		default=0, description="Configured disk throughput limit. Zero means unlimited."
+	)
+	iops_limit: int = Field(default=0, description="Configured disk IOPS limit. Zero means unlimited.")
+	read_bytes_per_second: int = Field(
+		default=0, description="Average disk read throughput during the sample interval."
+	)
+	write_bytes_per_second: int = Field(
+		default=0, description="Average disk write throughput during the sample interval."
+	)
+	read_milli_iops: int = Field(
+		default=0, description="Average disk read operations per second, in thousandths of an IOPS."
+	)
+	write_milli_iops: int = Field(
+		default=0, description="Average disk write operations per second, in thousandths of an IOPS."
+	)
 
 
 class VirtualMachineNetworkUsage(BaseModel):
@@ -1035,6 +1051,10 @@ class VirtualMachineNetworkUsage(BaseModel):
 	received_packets: int = Field(description="Cumulative packets received by the guest.")
 	sent_bytes: int = Field(description="Cumulative bytes sent by the guest.")
 	sent_packets: int = Field(description="Cumulative packets sent by the guest.")
+	sent_icmp_packets: int = Field(default=0, description="Cumulative ICMP packets sent by the guest.")
+	sent_udp_packets: int = Field(default=0, description="Cumulative UDP packets sent by the guest.")
+	sent_tcp_syn_packets: int = Field(default=0, description="Cumulative TCP SYN packets sent by the guest.")
+	sent_tcp_rst_packets: int = Field(default=0, description="Cumulative TCP RST packets sent by the guest.")
 
 
 class VirtualMachineMetricsQuery(StrictModel):
@@ -1049,7 +1069,7 @@ class VirtualMachineMetricsQuery(StrictModel):
 
 
 class VirtualMachineMetricsSample(BaseModel):
-	timestamp: AwareDatetime
+	timestamp: int = Field(description="UTC Unix timestamp in seconds.")
 	up: bool
 	compute: VirtualMachineComputeUsage
 	disk: VirtualMachineDiskUsage
@@ -1059,6 +1079,9 @@ class VirtualMachineMetricsSample(BaseModel):
 class VirtualMachineMetricsResponse(BaseModel):
 	id: str
 	samples: list[VirtualMachineMetricsSample]
+	sample_interval_seconds: int = Field(
+		default=0, description="Zero for raw samples; five-minute downsampling for ranges over one day."
+	)
 
 	@classmethod
 	def from_metrics(
@@ -1066,6 +1089,7 @@ class VirtualMachineMetricsResponse(BaseModel):
 	) -> VirtualMachineMetricsResponse:
 		return cls(
 			id=virtual_machine_id,
+			sample_interval_seconds=metrics.sample_interval_seconds if metrics is not None else 0,
 			samples=[VirtualMachineMetricsSample.model_validate(asdict(sample)) for sample in metrics.samples]
 			if metrics is not None
 			else [],
