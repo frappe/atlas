@@ -124,7 +124,7 @@ func (store *VirtualMachineStore) provisionDisk(ctx context.Context, request Vir
 // releaseCreatedDisk removes a disk only when this call created it.
 func (store *VirtualMachineStore) releaseCreatedDisk(ctx context.Context, virtualMachineID string, created bool) {
 	if created {
-		_ = store.Release(ctx, virtualMachineID)
+		_ = store.Release(context.WithoutCancel(ctx), virtualMachineID)
 	}
 }
 

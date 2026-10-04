@@ -148,3 +148,16 @@ func TestReleaseFailsWhenPromoteFails(t *testing.T) {
 		t.Error("the VM dataset was destroyed after a failed promotion")
 	}
 }
+
+func TestReleaseCreatedDiskDestroysAfterCancel(t *testing.T) {
+	logFile := fakeZFS(t, "-\n", "none")
+	store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	store.releaseCreatedDisk(cancelled, "vm-1", true)
+
+	if got := commandLog(t, logFile); !slices.Contains(got, "destroy -r metal/vms/vm-1") {
+		t.Errorf("commands = %v, want a destroy of the created disk", got)
+	}
+}
