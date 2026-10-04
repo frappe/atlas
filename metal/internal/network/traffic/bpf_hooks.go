@@ -17,8 +17,8 @@ import (
 var trafficBPFObject []byte
 
 type trafficPrograms struct {
-	TrackTraffic        *ebpf.Program `ebpf:"track_traffic"`
-	TrackTrafficIngress *ebpf.Program `ebpf:"track_traffic_ingress"`
+	GuestReceived *ebpf.Program `ebpf:"track_guest_received"`
+	GuestSent     *ebpf.Program `ebpf:"track_guest_sent"`
 }
 
 // TrafficCounters holds cumulative byte and packet counts for one direction.
@@ -27,13 +27,22 @@ type TrafficCounters struct {
 	Packets uint64
 }
 
+// SentCounters holds cumulative guest-sent traffic and packet categories.
+type SentCounters struct {
+	TrafficCounters
+	ICMPPackets   uint64
+	UDPPackets    uint64
+	TCPSYNPackets uint64
+	TCPRSTPackets uint64
+}
+
 type bpfHooks struct {
-	activity   *ebpf.Map
-	watch      *ebpf.Map
-	events     *ebpf.Map
-	rxCounters *ebpf.Map
-	txCounters *ebpf.Map
-	reader     *ringbuf.Reader
+	activity         *ebpf.Map
+	watch            *ebpf.Map
+	events           *ebpf.Map
+	receivedCounters *ebpf.Map
+	sentCounters     *ebpf.Map
+	reader           *ringbuf.Reader
 }
 
 // open creates shared eBPF maps and the event reader.
@@ -51,17 +60,17 @@ func (hooks *bpfHooks) open(capacity uint32) error {
 	if err != nil {
 		return errors.Join(err, hooks.activity.Close())
 	}
-	hooks.rxCounters, err = createHashMap(specification, "rx_counters_by_user_id", capacity)
+	hooks.receivedCounters, err = createHashMap(specification, "rx_counters_by_user_id", capacity)
 	if err != nil {
 		return errors.Join(err, hooks.activity.Close(), hooks.watch.Close())
 	}
-	hooks.txCounters, err = createHashMap(specification, "tx_counters_by_user_id", capacity)
+	hooks.sentCounters, err = createHashMap(specification, "tx_counters_by_user_id", capacity)
 	if err != nil {
-		return errors.Join(err, hooks.activity.Close(), hooks.watch.Close(), hooks.rxCounters.Close())
+		return errors.Join(err, hooks.activity.Close(), hooks.watch.Close(), hooks.receivedCounters.Close())
 	}
 	hooks.events, err = ebpf.NewMap(specification.Maps["traffic_events"].Copy())
 	if err != nil {
-		return errors.Join(err, hooks.activity.Close(), hooks.watch.Close(), hooks.rxCounters.Close(), hooks.txCounters.Close())
+		return errors.Join(err, hooks.activity.Close(), hooks.watch.Close(), hooks.receivedCounters.Close(), hooks.sentCounters.Close())
 	}
 	hooks.reader, err = ringbuf.NewReader(hooks.events)
 	if err != nil {
@@ -87,7 +96,7 @@ func (hooks *bpfHooks) attach(userID uint32, namespacePath, interfaceName string
 		}
 		interfaceIndex = device.Index
 		egress, err = link.AttachTCX(link.TCXOptions{
-			Program:   programs.TrackTraffic,
+			Program:   programs.GuestReceived,
 			Attach:    ebpf.AttachTCXEgress,
 			Interface: interfaceIndex,
 		})
@@ -95,7 +104,7 @@ func (hooks *bpfHooks) attach(userID uint32, namespacePath, interfaceName string
 			return fmt.Errorf("attach TCX egress: %w", err)
 		}
 		ingress, err = link.AttachTCX(link.TCXOptions{
-			Program:   programs.TrackTrafficIngress,
+			Program:   programs.GuestSent,
 			Attach:    ebpf.AttachTCXIngress,
 			Interface: interfaceIndex,
 		})
@@ -105,11 +114,11 @@ func (hooks *bpfHooks) attach(userID uint32, namespacePath, interfaceName string
 		return nil
 	})
 	if err != nil {
-		return 0, nil, errors.Join(err, closeIfNotNil(egress), programs.TrackTraffic.Close(), programs.TrackTrafficIngress.Close())
+		return 0, nil, errors.Join(err, closeIfNotNil(egress), programs.GuestReceived.Close(), programs.GuestSent.Close())
 	}
 
 	closeHook := func() error {
-		return errors.Join(egress.Close(), ingress.Close(), programs.TrackTraffic.Close(), programs.TrackTrafficIngress.Close())
+		return errors.Join(egress.Close(), ingress.Close(), programs.GuestReceived.Close(), programs.GuestSent.Close())
 	}
 	return interfaceIndex, closeHook, nil
 }
@@ -128,8 +137,8 @@ func (hooks *bpfHooks) loadPrograms(userID uint32) (trafficPrograms, error) {
 	}
 	specification.Maps["activity_by_user_id"].MaxEntries = hooks.activity.MaxEntries()
 	specification.Maps["watch_by_user_id"].MaxEntries = hooks.watch.MaxEntries()
-	specification.Maps["rx_counters_by_user_id"].MaxEntries = hooks.rxCounters.MaxEntries()
-	specification.Maps["tx_counters_by_user_id"].MaxEntries = hooks.txCounters.MaxEntries()
+	specification.Maps["rx_counters_by_user_id"].MaxEntries = hooks.receivedCounters.MaxEntries()
+	specification.Maps["tx_counters_by_user_id"].MaxEntries = hooks.sentCounters.MaxEntries()
 	if err := specification.Variables["virtual_machine_user_id"].Set(userID); err != nil {
 		return trafficPrograms{}, fmt.Errorf("set user ID constant: %w", err)
 	}
@@ -139,8 +148,8 @@ func (hooks *bpfHooks) loadPrograms(userID uint32) (trafficPrograms, error) {
 		MapReplacements: map[string]*ebpf.Map{
 			"activity_by_user_id":    hooks.activity,
 			"watch_by_user_id":       hooks.watch,
-			"rx_counters_by_user_id": hooks.rxCounters,
-			"tx_counters_by_user_id": hooks.txCounters,
+			"rx_counters_by_user_id": hooks.receivedCounters,
+			"tx_counters_by_user_id": hooks.sentCounters,
 			"traffic_events":         hooks.events,
 		},
 	})
@@ -190,33 +199,22 @@ func (hooks *bpfHooks) clearIdle(userID uint32) error {
 func (hooks *bpfHooks) clear(userID uint32) error {
 	return errors.Join(
 		hooks.clearIdle(userID),
-		deleteMapValue(hooks.rxCounters, userID),
-		deleteMapValue(hooks.txCounters, userID),
+		deleteMapValue(hooks.receivedCounters, userID),
+		deleteMapValue(hooks.sentCounters, userID),
 	)
 }
 
-// readTrafficCounters reads the cumulative received and sent counters for one user ID. A
-// direction with no traffic yet reads as zero.
-func (hooks *bpfHooks) readTrafficCounters(userID uint32) (rx, tx TrafficCounters, err error) {
-	rx, err = readCounters(hooks.rxCounters, userID)
-	if err != nil {
-		return TrafficCounters{}, TrafficCounters{}, err
+// readTrafficCounters reads both directions. An absent key has zero counters.
+func (hooks *bpfHooks) readTrafficCounters(userID uint32) (TrafficCounters, SentCounters, error) {
+	var received TrafficCounters
+	if err := hooks.receivedCounters.Lookup(userID, &received); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return TrafficCounters{}, SentCounters{}, err
 	}
-	tx, err = readCounters(hooks.txCounters, userID)
-	if err != nil {
-		return TrafficCounters{}, TrafficCounters{}, err
+	var sent SentCounters
+	if err := hooks.sentCounters.Lookup(userID, &sent); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return TrafficCounters{}, SentCounters{}, err
 	}
-	return rx, tx, nil
-}
-
-// readCounters reads one direction's counters and treats an absent key as zero.
-func readCounters(kernelMap *ebpf.Map, userID uint32) (TrafficCounters, error) {
-	var counters TrafficCounters
-	err := kernelMap.Lookup(userID, &counters)
-	if errors.Is(err, ebpf.ErrKeyNotExist) {
-		return TrafficCounters{}, nil
-	}
-	return counters, err
+	return received, sent, nil
 }
 
 // deleteMapValue removes one map value and accepts an absent value.
@@ -250,7 +248,7 @@ func (hooks *bpfHooks) closeEventReader() error {
 // closeMaps releases all shared eBPF maps.
 func (hooks *bpfHooks) closeMaps() error {
 	var closeErrors []error
-	for _, kernelMap := range []*ebpf.Map{hooks.activity, hooks.watch, hooks.rxCounters, hooks.txCounters, hooks.events} {
+	for _, kernelMap := range []*ebpf.Map{hooks.activity, hooks.watch, hooks.receivedCounters, hooks.sentCounters, hooks.events} {
 		if kernelMap != nil {
 			closeErrors = append(closeErrors, kernelMap.Close())
 		}

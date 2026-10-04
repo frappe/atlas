@@ -37,6 +37,14 @@ struct traffic_counters {
 	__u64 packets;
 };
 
+struct sent_counters {
+	struct traffic_counters total;
+	__u64 icmp_packets;
+	__u64 udp_packets;
+	__u64 tcp_syn_packets;
+	__u64 tcp_rst_packets;
+};
+
 /* Egress on the TAP: host stack writing toward the guest. */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -50,7 +58,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 1);
 	__type(key, __u32);
-	__type(value, struct traffic_counters);
+	__type(value, struct sent_counters);
 } tx_counters_by_user_id SEC(".maps");
 
 /* Sends the VM user ID to userspace when watched traffic is detected. */
@@ -62,20 +70,71 @@ struct {
 /* Set by the loader for the VM this program is attached to. */
 const volatile __u32 virtual_machine_user_id = 0;
 
-static __always_inline void add_traffic_counters(void *counters_map, __u32 user_id, __u32 packet_length)
+static __always_inline struct traffic_counters *add_traffic_counters(void *counters_map, __u32 user_id, __u32 packet_length)
 {
 	struct traffic_counters *counters = bpf_map_lookup_elem(counters_map, &user_id);
 	if (!counters) {
 		/* Another CPU can create the entry before this insertion. Never replace it. */
-		struct traffic_counters initial = {};
+		struct sent_counters initial = {};
 		bpf_map_update_elem(counters_map, &user_id, &initial, BPF_NOEXIST);
 		counters = bpf_map_lookup_elem(counters_map, &user_id);
 		if (!counters)
-			return;
+			return 0;
 	}
 
 	__sync_fetch_and_add(&counters->bytes, packet_length);
 	__sync_fetch_and_add(&counters->packets, 1);
+	return counters;
+}
+
+static __always_inline void count_sent_protocol(struct __sk_buff *packet, struct sent_counters *counters)
+{
+	__u16 ethernet_type;
+	__u8 protocol;
+	__u8 first_header_byte;
+	__u16 transport_offset;
+
+	if (bpf_skb_load_bytes(packet, ETHERNET_TYPE_OFFSET, &ethernet_type, sizeof(ethernet_type)) < 0)
+		return;
+	if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV4)) {
+		if (bpf_skb_load_bytes(packet, 14, &first_header_byte, 1) < 0 ||
+		    (first_header_byte >> 4) != 4 || (first_header_byte & 15) < 5 ||
+		    bpf_skb_load_bytes(packet, 23, &protocol, 1) < 0)
+			return;
+		transport_offset = 14 + (first_header_byte & 15) * 4;
+		__u16 fragment_offset_and_flags;
+		if (bpf_skb_load_bytes(packet, 20, &fragment_offset_and_flags, sizeof(fragment_offset_and_flags)) < 0 ||
+		    (__builtin_bswap16(fragment_offset_and_flags) & 0x1fff) != 0)
+			return;
+	} else if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV6)) {
+		if (bpf_skb_load_bytes(packet, 14, &first_header_byte, 1) < 0 ||
+		    (first_header_byte >> 4) != 6 ||
+		    bpf_skb_load_bytes(packet, 20, &protocol, 1) < 0)
+			return;
+		transport_offset = 54;
+	} else {
+		return;
+	}
+
+	if (protocol == 1 || protocol == 58) {
+		__sync_fetch_and_add(&counters->icmp_packets, 1);
+		return;
+	}
+	if (protocol == 17) {
+		__sync_fetch_and_add(&counters->udp_packets, 1);
+		return;
+	}
+	if (protocol != 6)
+		return;
+
+	__u8 tcp_flags;
+	if (bpf_skb_load_bytes(packet, transport_offset + 13, &tcp_flags, 1) < 0)
+		return;
+	if (tcp_flags & 0x02) {
+		__sync_fetch_and_add(&counters->tcp_syn_packets, 1);
+	}
+	if (tcp_flags & 0x04)
+		__sync_fetch_and_add(&counters->tcp_rst_packets, 1);
 }
 
 /* Only IPv4 and IPv6 packets are considered activity. */
@@ -115,7 +174,7 @@ static __always_inline int is_unicast_packet(struct __sk_buff *packet)
 }
 
 SEC("tc")
-int track_traffic(struct __sk_buff *packet)
+int track_guest_received(struct __sk_buff *packet)
 {
 	if (!is_ip_packet(packet) || !is_unicast_packet(packet))
 		return TCX_NEXT;
@@ -162,12 +221,15 @@ int track_traffic(struct __sk_buff *packet)
 
 /* Counts only; activity and watch bookkeeping stays on the egress side. */
 SEC("tc")
-int track_traffic_ingress(struct __sk_buff *packet)
+int track_guest_sent(struct __sk_buff *packet)
 {
 	if (!is_ip_packet(packet) || !is_unicast_packet(packet))
 		return TCX_NEXT;
 
-	add_traffic_counters(&tx_counters_by_user_id, virtual_machine_user_id, packet->len);
+	__u32 user_id = virtual_machine_user_id;
+	struct traffic_counters *total = add_traffic_counters(&tx_counters_by_user_id, user_id, packet->len);
+	if (total)
+		count_sent_protocol(packet, (struct sent_counters *)total);
 
 	return TCX_NEXT;
 }
