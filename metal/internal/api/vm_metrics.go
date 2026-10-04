@@ -69,7 +69,7 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	}
 
 	now := time.Now().UTC()
-	start, end := now.Add(-24*time.Hour), now
+	start, end := now.Add(-time.Hour), now
 	for name, destination := range map[string]*time.Time{"start": &start, "end": &end} {
 		if value := c.QueryParam(name); value != "" {
 			parsed, err := time.Parse(time.RFC3339Nano, value)

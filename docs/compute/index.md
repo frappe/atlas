@@ -32,7 +32,7 @@ Metal keeps seven days of samples in daily files under `machines/<vm-id>/metrics
 
 Each JSONL line and metrics API sample stores its `timestamp` as UTC Unix seconds.
 
-Read samples with `GET /api/atlas/virtual-machines/<vm-id>/metrics`. The caller must own the VM. Optional `start` and `end` timestamps select a range within the last seven days. The default range is 24 hours. Atlas reads the host only when this endpoint is called.
+Read samples with `GET /api/atlas/virtual-machines/<vm-id>/metrics`. The caller must own the VM. Optional `start` and `end` timestamps select a range within the last seven days. The default range is the last hour. Atlas reads the host only when this endpoint is called.
 
 Ranges longer than one day return the latest sample in each five-minute bucket, with disk I/O rates averaged across the bucket. `sample_interval_seconds` is 300 for these ranges and 0 for raw samples. Network and CPU values are cumulative counters; divide the difference between adjacent samples by their elapsed seconds to calculate an average rate.
 

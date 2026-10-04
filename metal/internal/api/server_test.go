@@ -1222,7 +1222,7 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	server := newServer(t, manager)
 	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
 	now := time.Now().UTC().Truncate(time.Second)
-	for _, age := range []time.Duration{25 * time.Hour, 2 * time.Hour, time.Hour} {
+	for _, age := range []time.Duration{25 * time.Hour, 2 * time.Hour, time.Hour, 30 * time.Minute} {
 		usage := metrics.Sample{
 			ComputeUsage: metrics.ComputeUsage{MemoryBytes: uint64(age / time.Hour)},
 			NetworkUsage: metrics.NetworkUsage{SentICMPPackets: 4},
@@ -1250,8 +1250,8 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
 		t.Fatal(err)
 	}
-	if len(history.Samples) != 2 {
-		t.Fatalf("retention = %+v", history)
+	if len(history.Samples) != 1 {
+		t.Fatalf("default range = %+v", history)
 	}
 	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?start="+now.Add(-26*time.Hour).Format(time.RFC3339), "", http.StatusOK)
 	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
