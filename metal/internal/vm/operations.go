@@ -114,12 +114,6 @@ func (manager *Manager) Resize(ctx context.Context, identifier string, compute C
 	})
 }
 
-// LockCapacity serializes capacity checks with VM resource changes.
-func (manager *Manager) LockCapacity() func() {
-	manager.allocationMutex.Lock()
-	return manager.allocationMutex.Unlock
-}
-
 // SetNetwork stores the complete requested network configuration.
 func (manager *Manager) SetNetwork(ctx context.Context, identifier string, configuration NetworkConfiguration) error {
 	unlock, err := manager.operationLocks.Lock(ctx, identifier)

@@ -35,10 +35,6 @@ type fakeVirtualMachineManager struct {
 	deferMetadata   bool
 }
 
-func (manager *fakeVirtualMachineManager) LockCapacity() func() {
-	return func() {}
-}
-
 func (manager *fakeVirtualMachineManager) Create(_ context.Context, id string, specification vm.Specification) (vm.Information, error) {
 	if existing, found := manager.virtualMachines[id]; found {
 		return existing.info, nil
@@ -807,6 +803,20 @@ func TestSetDiskRejectsInsufficientCapacity(t *testing.T) {
 	srv := newTestServer(t)
 	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
 	recorder := do(t, srv, http.MethodPut, "/v1/vms/vm1/disk", `{"size_mib":2048,"throughput_mibps":0,"iops":0}`, http.StatusConflict)
+
+	var response errorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != insufficientCapacityCode {
+		t.Fatalf("error code = %q, want %q", response.Error.Code, insufficientCapacityCode)
+	}
+}
+
+func TestResizeRejectsInsufficientCapacity(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+	recorder := do(t, srv, http.MethodPut, "/v1/vms/vm1/resize", `{"cpu_millicores":1000,"memory_mib":512,"disk_mib":2048}`, http.StatusConflict)
 
 	var response errorResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
