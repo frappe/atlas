@@ -120,6 +120,7 @@ func newMigrationTestServerWithWake(t *testing.T, migrations MigrationManager, w
 		t.Fatal(err)
 	}
 	server, err := New(Config{}, Dependencies{
+		MetricsStore:          newTestMetricsStore(t),
 		VirtualMachineManager: manager,
 		MigrationManager:      migrations,
 		SnapshotStore:         services,

@@ -65,6 +65,5 @@ To check a sleepy VM, see [Automatic idle shutdown](../operate/metal.md#automati
 - [Traffic monitor](../../metal/internal/network/traffic/monitor.go) and [eBPF program](../../metal/internal/network/traffic/bpf/track_traffic.c) record host-to-guest traffic.
 - [Firecracker machine](../../metal/internal/firecracker/machine.go) saves and restores the VM state.
 - [Placement strategies](../../atlas/vm/core/placement/strategies/balanced.py) apply the sleepy pools and overcommit factor.
-- [Traffic integration tests](../../metal/internal/network/traffic/monitor_integration_test.go) exercise packet activity on Linux.
 
 :::

@@ -14,6 +14,7 @@ Package `platform` is the Metal boundary to host files, commands, and systemd. M
 |---|---|
 | `UnitManager` | The systemd operations a VM runtime needs. |
 | `DBus` | The `UnitManager` implementation and the system-bus connection. |
+| `SystemdUnitUsage` | CPU time, memory, and root disk I/O read from a unit's cgroup. |
 | `Status`, `Result`, `Limits` | systemd state across the boundary. |
 | `FileDescriptorStore` | Open descriptors held by systemd across a restart. |
 
@@ -34,6 +35,7 @@ Each error keeps the command diagnostics. A context can stop a running command.
 - Reset failed ignores an absent unit.
 - The context cancels systemd waits and polling.
 - The `firecracker` package maps unit state to VM state.
+- `GetUsage` reads CPU, memory, and root disk I/O counters from the VM cgroup. The VM unit must have `IOAccounting=yes`; the reader selects the root disk device in `io.stat`.
 
 ## File descriptor store
 

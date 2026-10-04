@@ -11,6 +11,7 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/host"
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
 	"github.com/frappe/atlas/metal/internal/vm/migration"
@@ -75,6 +76,7 @@ type MigrationManager interface {
 
 // Dependencies contains services used by the HTTP handlers.
 type Dependencies struct {
+	MetricsStore          *metrics.Store
 	VirtualMachineManager VirtualMachineManager
 	MigrationManager      MigrationManager
 	SnapshotStore         SnapshotStore
@@ -85,6 +87,7 @@ type Dependencies struct {
 
 // Server owns the HTTP handlers and their dependencies.
 type Server struct {
+	metricsStore          *metrics.Store
 	virtualMachineManager VirtualMachineManager
 	migrationManager      MigrationManager
 	snapshotStore         SnapshotStore
@@ -101,6 +104,7 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 	}
 
 	server := &Server{
+		metricsStore:          dependencies.MetricsStore,
 		virtualMachineManager: dependencies.VirtualMachineManager,
 		migrationManager:      dependencies.MigrationManager,
 		snapshotStore:         dependencies.SnapshotStore,
@@ -167,7 +171,7 @@ func (s *Server) logRequest(next echo.HandlerFunc) echo.HandlerFunc {
 
 // validateServerConfiguration rejects unsafe server configuration.
 func validateServerConfiguration(_ Config, dependencies Dependencies) error {
-	if dependencies.VirtualMachineManager == nil || dependencies.MigrationManager == nil || dependencies.SnapshotStore == nil || dependencies.WakeReconciler == nil || dependencies.HostService == nil || dependencies.SerialBroker == nil {
+	if dependencies.MetricsStore == nil || dependencies.VirtualMachineManager == nil || dependencies.MigrationManager == nil || dependencies.SnapshotStore == nil || dependencies.WakeReconciler == nil || dependencies.HostService == nil || dependencies.SerialBroker == nil {
 		return fmt.Errorf("API dependencies are required")
 	}
 	return nil

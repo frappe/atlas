@@ -25,6 +25,7 @@ This package converges one VM network and applies the host WireGuard peer set. I
 - Traffic policers sit on the namespace end of the veth. WG Mesh owns the host end. Private filters have priority over public filters.
 - `LinuxAllocator` attaches monitoring after TAP creation and detaches it before TAP removal. `vm.Manager` decides when a VM sleeps. The monitor only reports activity.
 - The TAP eBPF hook counts unicast packets and returns `TCX_NEXT`. IPv6 multicast must not keep an idle VM awake. Use attachment time as the idle baseline, not wall-clock time.
+- The guest-outgoing TAP hook also counts ICMP, UDP, TCP SYN, and TCP RST packets. Its maps belong to the Metal process; a restart creates new maps and resets all counters.
 - `withNetworkNamespace` is the only in-process namespace helper. Only TCX attachment uses it.
 
 ## Host sync boundary

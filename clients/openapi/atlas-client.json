@@ -1883,6 +1883,27 @@
         "title": "VirtualMachineCompute",
         "type": "object"
       },
+      "VirtualMachineComputeUsage": {
+        "description": "Cumulative CPU time and current memory use.",
+        "properties": {
+          "cpu_microseconds": {
+            "description": "Cumulative CPU time since the guest's process started.",
+            "title": "Cpu Microseconds",
+            "type": "integer"
+          },
+          "memory_bytes": {
+            "description": "Current memory charged to the Firecracker cgroup, in bytes.",
+            "title": "Memory Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cpu_microseconds",
+          "memory_bytes"
+        ],
+        "title": "VirtualMachineComputeUsage",
+        "type": "object"
+      },
       "VirtualMachineDetailResponse": {
         "description": "One virtual machine with its state, addresses, and guest configuration.",
         "examples": [
@@ -2111,6 +2132,63 @@
         "title": "VirtualMachineDisk",
         "type": "object"
       },
+      "VirtualMachineDiskUsage": {
+        "description": "The disk's size, configured limits, and sampled I/O rates.",
+        "properties": {
+          "iops_limit": {
+            "default": 0,
+            "description": "Configured disk IOPS limit. Zero means unlimited.",
+            "title": "Iops Limit",
+            "type": "integer"
+          },
+          "read_bytes_per_second": {
+            "default": 0,
+            "description": "Average disk read throughput during the sample interval.",
+            "title": "Read Bytes Per Second",
+            "type": "integer"
+          },
+          "read_milli_iops": {
+            "default": 0,
+            "description": "Average disk read operations per second, in thousandths of an IOPS.",
+            "title": "Read Milli Iops",
+            "type": "integer"
+          },
+          "size_mib": {
+            "description": "Requested disk size.",
+            "title": "Size Mib",
+            "type": "integer"
+          },
+          "throughput_limit_mibps": {
+            "default": 0,
+            "description": "Configured disk throughput limit. Zero means unlimited.",
+            "title": "Throughput Limit Mibps",
+            "type": "integer"
+          },
+          "used_mib": {
+            "description": "Disk use as of the last reconcile pass.",
+            "title": "Used Mib",
+            "type": "integer"
+          },
+          "write_bytes_per_second": {
+            "default": 0,
+            "description": "Average disk write throughput during the sample interval.",
+            "title": "Write Bytes Per Second",
+            "type": "integer"
+          },
+          "write_milli_iops": {
+            "default": 0,
+            "description": "Average disk write operations per second, in thousandths of an IOPS.",
+            "title": "Write Milli Iops",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size_mib",
+          "used_mib"
+        ],
+        "title": "VirtualMachineDiskUsage",
+        "type": "object"
+      },
       "VirtualMachineGuest": {
         "description": "The guest configuration of one virtual machine.",
         "properties": {
@@ -2298,6 +2376,64 @@
         "title": "VirtualMachineListResponse",
         "type": "object"
       },
+      "VirtualMachineMetricsResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sample_interval_seconds": {
+            "default": 0,
+            "description": "Zero for raw samples; five-minute downsampling for ranges over one day.",
+            "title": "Sample Interval Seconds",
+            "type": "integer"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/VirtualMachineMetricsSample"
+            },
+            "title": "Samples",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "samples"
+        ],
+        "title": "VirtualMachineMetricsResponse",
+        "type": "object"
+      },
+      "VirtualMachineMetricsSample": {
+        "properties": {
+          "compute": {
+            "$ref": "#/components/schemas/VirtualMachineComputeUsage"
+          },
+          "disk": {
+            "$ref": "#/components/schemas/VirtualMachineDiskUsage"
+          },
+          "network": {
+            "$ref": "#/components/schemas/VirtualMachineNetworkUsage"
+          },
+          "timestamp": {
+            "description": "UTC Unix timestamp in seconds.",
+            "title": "Timestamp",
+            "type": "integer"
+          },
+          "up": {
+            "title": "Up",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "timestamp",
+          "up",
+          "compute",
+          "disk",
+          "network"
+        ],
+        "title": "VirtualMachineMetricsSample",
+        "type": "object"
+      },
       "VirtualMachineNetwork": {
         "description": "The addresses, internet access, and network limits of one virtual machine.",
         "properties": {
@@ -2386,6 +2522,63 @@
           "firewall"
         ],
         "title": "VirtualMachineNetwork",
+        "type": "object"
+      },
+      "VirtualMachineNetworkUsage": {
+        "description": "Cumulative unicast IP traffic for the lifetime of the traffic attachment.\n\nCounters survive guest stops while the attachment remains. Recreating the\nattachment or restarting Metal resets the counters.",
+        "properties": {
+          "received_bytes": {
+            "description": "Cumulative bytes received by the guest.",
+            "title": "Received Bytes",
+            "type": "integer"
+          },
+          "received_packets": {
+            "description": "Cumulative packets received by the guest.",
+            "title": "Received Packets",
+            "type": "integer"
+          },
+          "sent_bytes": {
+            "description": "Cumulative bytes sent by the guest.",
+            "title": "Sent Bytes",
+            "type": "integer"
+          },
+          "sent_icmp_packets": {
+            "default": 0,
+            "description": "Cumulative ICMP packets sent by the guest.",
+            "title": "Sent Icmp Packets",
+            "type": "integer"
+          },
+          "sent_packets": {
+            "description": "Cumulative packets sent by the guest.",
+            "title": "Sent Packets",
+            "type": "integer"
+          },
+          "sent_tcp_rst_packets": {
+            "default": 0,
+            "description": "Cumulative TCP RST packets sent by the guest.",
+            "title": "Sent Tcp Rst Packets",
+            "type": "integer"
+          },
+          "sent_tcp_syn_packets": {
+            "default": 0,
+            "description": "Cumulative TCP SYN packets sent by the guest.",
+            "title": "Sent Tcp Syn Packets",
+            "type": "integer"
+          },
+          "sent_udp_packets": {
+            "default": 0,
+            "description": "Cumulative UDP packets sent by the guest.",
+            "title": "Sent Udp Packets",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "received_bytes",
+          "received_packets",
+          "sent_bytes",
+          "sent_packets"
+        ],
+        "title": "VirtualMachineNetworkUsage",
         "type": "object"
       },
       "VirtualMachineResponse": {
@@ -5406,6 +5599,135 @@
         "summary": "Replace metadata",
         "tags": [
           "VM Configuration"
+        ]
+      }
+    },
+    "/api/atlas/virtual-machines/{virtual_machine_id}/metrics": {
+      "get": {
+        "operationId": "get_virtual_machine_metrics",
+        "parameters": [
+          {
+            "description": "Virtual machine ID.",
+            "in": "path",
+            "name": "virtual_machine_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VirtualMachineMetricsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The resource does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Get VM metrics history",
+        "tags": [
+          "VM Lifecycle"
         ]
       }
     },
