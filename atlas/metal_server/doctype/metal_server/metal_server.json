@@ -19,6 +19,10 @@
   "server_size",
   "column_break_iiyh",
   "architecture",
+  "redfish_section",
+  "redfish_url",
+  "redfish_username",
+  "redfish_password",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -127,6 +131,29 @@
    "read_only": 1,
    "reqd": 1,
    "set_only_once": 1
+  },
+  {
+   "fieldname": "redfish_section",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "Redfish"
+  },
+  {
+   "fieldname": "redfish_url",
+   "fieldtype": "Data",
+   "label": "Redfish URL",
+   "options": "URL"
+  },
+  {
+   "fieldname": "redfish_username",
+   "fieldtype": "Data",
+   "label": "Redfish Username"
+  },
+  {
+   "fieldname": "redfish_password",
+   "fieldtype": "Password",
+   "label": "Redfish Password",
+   "no_copy": 1
   },
   {
    "fieldname": "section_break_public_network",

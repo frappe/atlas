@@ -66,6 +66,9 @@ class MetalServer(Document):
 		provider_server_id: DF.Data | None
 		public_ipv4_address: DF.Data | None
 		public_network_interface: DF.Data | None
+		redfish_password: DF.Password | None
+		redfish_url: DF.Data | None
+		redfish_username: DF.Data | None
 		server_image: DF.Link
 		server_size: DF.Link
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]

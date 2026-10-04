@@ -3,7 +3,12 @@
 
 frappe.ui.form.on("Metal Server", {
 	refresh(frm) {
+		frm.toggle_display("redfish_section", frm.doc.__onload?.server_provider === "Redfish");
+
 		if (frm.is_new()) {
+			frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
+				frm.toggle_display("redfish_section", provider === "Redfish");
+			});
 			return;
 		}
 
