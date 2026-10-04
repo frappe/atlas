@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, override
 
 from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.base import (
+	ProviderOperationError,
 	ProviderServer,
 	ServerCreateRequest,
 	ServerImageData,
@@ -18,17 +19,23 @@ if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
 
+class RedfishError(ProviderOperationError):
+	"""Report a Redfish provider failure."""
+
+
 @register
 class RedfishProvider(ServerProvider):
 	"""Define the Redfish provider without remote operations."""
 
 	provider_type = "Redfish"
 	credential_fields = ()
+	error_class = RedfishError
 
 	@override
 	def validate_settings(self) -> None:
-		"""Accept the provider selection without connection settings."""
-		return None
+		"""Reject automatic host creation for existing Redfish machines."""
+		if self.settings.auto_spawn_metal_server:
+			raise RedfishError("The Redfish provider cannot create a Metal Server automatically")
 
 	@override
 	def setup_infrastructure(self) -> None:
