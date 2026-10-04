@@ -125,6 +125,14 @@ class TestPlacementContext(UnitTestCase):
 		)
 		self.assertFalse(placement.apply_affinity)
 
+	def test_preferred_resize_keeps_every_host_when_no_matching_host_has_room(self) -> None:
+		placement = self.affinity_placement(current_host_name="c")
+
+		self.assertEqual(
+			self.filter_by_affinity(placement, self.affinity_rows(0), "Preferred"), ["a", "b", "c"]
+		)
+		self.assertFalse(placement.apply_affinity)
+
 	def test_a_rule_that_fails_under_the_lock_counts_as_contention(self) -> None:
 		for has_capacity, is_contended in ((True, True), (False, False)):
 			placement = object.__new__(PlacementContext)
