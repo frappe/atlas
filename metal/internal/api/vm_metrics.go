@@ -2,11 +2,19 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/frappe/atlas/metal/internal/metrics"
+)
+
+const (
+	defaultMetricsRange      = 24 * time.Hour
+	defaultMetricsMaxSamples = 300
+	minimumMetricsMaxSamples = 10
+	maximumMetricsMaxSamples = 2000
 )
 
 type virtualMachineMetricsResponse struct {
@@ -56,6 +64,7 @@ type networkUsageResponse struct {
 // @Param id path string true "Virtual machine identifier"
 // @Param start query string false "Inclusive RFC 3339 timestamp"
 // @Param end query string false "Exclusive RFC 3339 timestamp"
+// @Param max_samples query int false "Maximum samples to return, 10 to 2000" default(300)
 // @Success 200 {object} virtualMachineMetricsResponse
 // @Failure 400 {object} errorResponse
 // @Failure 401 {object} errorResponse
@@ -69,7 +78,7 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	}
 
 	now := time.Now().UTC()
-	start, end := now.Add(-time.Hour), now
+	start, end := now.Add(-defaultMetricsRange), now
 	for name, destination := range map[string]*time.Time{"start": &start, "end": &end} {
 		if value := c.QueryParam(name); value != "" {
 			parsed, err := time.Parse(time.RFC3339Nano, value)
@@ -88,19 +97,19 @@ func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
 	if end.After(now) {
 		end = now
 	}
+	maxSamples := defaultMetricsMaxSamples
+	if value := c.QueryParam("max_samples"); value != "" {
+		maxSamples, err = strconv.Atoi(value)
+		if err != nil || maxSamples < minimumMetricsMaxSamples || maxSamples > maximumMetricsMaxSamples {
+			return newAPIError(http.StatusBadRequest, "invalid_request", "max_samples must be an integer from 10 to 2000")
+		}
+	}
 	if _, err := s.virtualMachineManager.Information(c.Request().Context(), identifier); err != nil {
 		return err
 	}
-	interval := time.Duration(0)
-	if end.Sub(start) > 24*time.Hour {
-		interval = 5 * time.Minute
-	}
-	var records []metrics.Record
-	if interval > 0 {
-		records, err = s.metricsStore.DownsampledHistory(c.Request().Context(), identifier, start, end, interval)
-	} else {
-		records, err = s.metricsStore.History(c.Request().Context(), identifier, start, end)
-	}
+
+	interval := metrics.Step(end.Sub(start), maxSamples)
+	records, err := s.metricsStore.DownsampledHistory(c.Request().Context(), identifier, start, end, interval)
 	if err != nil {
 		return err
 	}

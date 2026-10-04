@@ -1250,17 +1250,17 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
 		t.Fatal(err)
 	}
-	if len(history.Samples) != 1 {
+	if len(history.Samples) != 3 || history.SampleIntervalSeconds != 300 {
 		t.Fatalf("default range = %+v", history)
 	}
-	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?start="+now.Add(-26*time.Hour).Format(time.RFC3339), "", http.StatusOK)
+	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?max_samples=10&start="+now.Add(-26*time.Hour).Format(time.RFC3339), "", http.StatusOK)
 	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
 		t.Fatal(err)
 	}
-	if history.SampleIntervalSeconds != 300 {
-		t.Fatalf("long range sample interval = %d", history.SampleIntervalSeconds)
+	if history.SampleIntervalSeconds != 3*60*60 {
+		t.Fatalf("max samples interval = %d", history.SampleIntervalSeconds)
 	}
-	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z"} {
+	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z", "max_samples=9", "max_samples=2001", "max_samples=all"} {
 		do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?"+query, "", http.StatusBadRequest)
 	}
 }

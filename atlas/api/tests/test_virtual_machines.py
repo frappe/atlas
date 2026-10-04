@@ -424,11 +424,29 @@ class TestReadVirtualMachines(UnitTestCase):
 		self.assertIsNone(body["desired_state"])
 		self.assertEqual(body["current_state"], "unknown")
 
+	def test_metrics_passes_max_samples_to_metal(self) -> None:
+		virtual_machine = build_virtual_machine()
+		with (
+			api_request(
+				"GET",
+				"/api/atlas/virtual-machines/vm-00001/metrics",
+				tenant_id=TENANT_ID,
+				query_string={"max_samples": "50"},
+			),
+			owned_document(virtual_machine),
+		):
+			status, _body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
+
+		self.assertEqual(status, 200)
+		virtual_machine.get_metal_vm_metrics.assert_called_once_with(start=None, end=None, max_samples=50)
+
 	def test_metrics_rejects_invalid_query_bounds(self) -> None:
 		for query in (
 			{"start": "yesterday"},
 			{"start": "2026-09-30T10:00:00"},
 			{"start": "2026-09-30T10:00:00Z", "end": "2026-09-29T10:00:00Z"},
+			{"max_samples": "9"},
+			{"max_samples": "2001"},
 		):
 			virtual_machine = build_virtual_machine()
 			with (

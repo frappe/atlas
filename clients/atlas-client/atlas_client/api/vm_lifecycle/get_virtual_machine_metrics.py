@@ -21,6 +21,7 @@ def _get_kwargs(
     *,
     start: datetime.datetime | None | Unset = UNSET,
     end: datetime.datetime | None | Unset = UNSET,
+    max_samples: int | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> dict[str, Any]:
@@ -51,6 +52,13 @@ def _get_kwargs(
     else:
         json_end = end
     params["end"] = json_end
+
+    json_max_samples: int | None | Unset
+    if isinstance(max_samples, Unset):
+        json_max_samples = UNSET
+    else:
+        json_max_samples = max_samples
+    params["max_samples"] = json_max_samples
 
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
@@ -132,6 +140,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     start: datetime.datetime | None | Unset = UNSET,
     end: datetime.datetime | None | Unset = UNSET,
+    max_samples: int | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> Response[ApiErrorResponse | VirtualMachineMetricsResponse]:
@@ -141,6 +150,7 @@ def sync_detailed(
         virtual_machine_id (str):
         start (datetime.datetime | None | Unset):
         end (datetime.datetime | None | Unset):
+        max_samples (int | None | Unset): Maximum samples to return. Metal uses 300 by default.
         x_tenant_id (int):
 
     Raises:
@@ -156,6 +166,7 @@ def sync_detailed(
         virtual_machine_id=virtual_machine_id,
 start=start,
 end=end,
+max_samples=max_samples,
 x_tenant_id=x_tenant_id,
 
     )
@@ -172,6 +183,7 @@ def sync(
     client: AuthenticatedClient | Client,
     start: datetime.datetime | None | Unset = UNSET,
     end: datetime.datetime | None | Unset = UNSET,
+    max_samples: int | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> ApiErrorResponse | VirtualMachineMetricsResponse | None:
@@ -181,6 +193,7 @@ def sync(
         virtual_machine_id (str):
         start (datetime.datetime | None | Unset):
         end (datetime.datetime | None | Unset):
+        max_samples (int | None | Unset): Maximum samples to return. Metal uses 300 by default.
         x_tenant_id (int):
 
     Raises:
@@ -197,6 +210,7 @@ def sync(
 client=client,
 start=start,
 end=end,
+max_samples=max_samples,
 x_tenant_id=x_tenant_id,
 
     ).parsed
@@ -207,6 +221,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     start: datetime.datetime | None | Unset = UNSET,
     end: datetime.datetime | None | Unset = UNSET,
+    max_samples: int | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> Response[ApiErrorResponse | VirtualMachineMetricsResponse]:
@@ -216,6 +231,7 @@ async def asyncio_detailed(
         virtual_machine_id (str):
         start (datetime.datetime | None | Unset):
         end (datetime.datetime | None | Unset):
+        max_samples (int | None | Unset): Maximum samples to return. Metal uses 300 by default.
         x_tenant_id (int):
 
     Raises:
@@ -231,6 +247,7 @@ async def asyncio_detailed(
         virtual_machine_id=virtual_machine_id,
 start=start,
 end=end,
+max_samples=max_samples,
 x_tenant_id=x_tenant_id,
 
     )
@@ -247,6 +264,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     start: datetime.datetime | None | Unset = UNSET,
     end: datetime.datetime | None | Unset = UNSET,
+    max_samples: int | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> ApiErrorResponse | VirtualMachineMetricsResponse | None:
@@ -256,6 +274,7 @@ async def asyncio(
         virtual_machine_id (str):
         start (datetime.datetime | None | Unset):
         end (datetime.datetime | None | Unset):
+        max_samples (int | None | Unset): Maximum samples to return. Metal uses 300 by default.
         x_tenant_id (int):
 
     Raises:
@@ -272,6 +291,7 @@ async def asyncio(
 client=client,
 start=start,
 end=end,
+max_samples=max_samples,
 x_tenant_id=x_tenant_id,
 
     )).parsed

@@ -113,16 +113,22 @@ class MetalClient:
 		return self._virtual_machine(response)
 
 	def get_virtual_machine_metrics(
-		self, virtual_machine_id: str, *, start: datetime | None = None, end: datetime | None = None
+		self,
+		virtual_machine_id: str,
+		*,
+		start: datetime | None = None,
+		end: datetime | None = None,
+		max_samples: int | None = None,
 	) -> MetalVirtualMachineMetrics:
+		params = {
+			name: value.isoformat() for name, value in (("start", start), ("end", end)) if value is not None
+		}
+		if max_samples is not None:
+			params["max_samples"] = str(max_samples)
 		response = self._request(
 			"GET",
 			f"/v1/vms/{quote(virtual_machine_id, safe='')}/metrics",
-			params={
-				name: value.isoformat()
-				for name, value in (("start", start), ("end", end))
-				if value is not None
-			},
+			params=params,
 			timeout=self.status_timeout_seconds,
 			attempts=self.status_attempts,
 			budget_seconds=self.status_budget_seconds,

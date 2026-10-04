@@ -85,11 +85,11 @@ class VirtualMachine(Document):
 		return VirtualMachineService(self).get_information()
 
 	def get_metal_vm_metrics(
-		self, *, start: datetime | None = None, end: datetime | None = None
+		self, *, start: datetime | None = None, end: datetime | None = None, max_samples: int | None = None
 	) -> MetalVirtualMachineMetrics | None:
 		if not self.server:
 			return None
-		return VirtualMachineService(self).get_metrics(start=start, end=end)
+		return VirtualMachineService(self).get_metrics(start=start, end=end, max_samples=max_samples)
 
 	def before_insert(self) -> None:
 		"""Reject a record created outside the Virtual Machine API."""

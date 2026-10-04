@@ -193,7 +193,9 @@ def get_virtual_machine_metrics(
 ) -> VirtualMachineMetricsResponse:
 	"""Get VM metrics history."""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
-	metrics = virtual_machine.get_metal_vm_metrics(start=query.start, end=query.end)
+	metrics = virtual_machine.get_metal_vm_metrics(
+		start=query.start, end=query.end, max_samples=query.max_samples
+	)
 	return VirtualMachineMetricsResponse.from_metrics(virtual_machine_id, metrics)
 
 

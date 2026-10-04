@@ -28,8 +28,7 @@ class VirtualMachineMetricsResponse:
         Attributes:
             id (str):
             samples (list[VirtualMachineMetricsSample]):
-            sample_interval_seconds (int | Unset): Zero for raw samples; five-minute downsampling for ranges over one day.
-                Default: 0.
+            sample_interval_seconds (int | Unset): Seconds covered by each sample. Default: 0.
      """
 
     id: str

@@ -155,3 +155,21 @@ func TestDownsampledHistoryKeepsLatestCounterInEachBucket(t *testing.T) {
 		t.Fatalf("downsampled records = %+v", records)
 	}
 }
+
+func TestStepFitsMaxSamples(t *testing.T) {
+	for _, test := range []struct {
+		window     time.Duration
+		maxSamples int
+		want       time.Duration
+	}{
+		{10 * time.Minute, 300, 10 * time.Second},
+		{time.Hour, 300, 20 * time.Second},
+		{24 * time.Hour, 300, 5 * time.Minute},
+		{25 * time.Hour, 300, 10 * time.Minute},
+		{Retention, 10, 24 * time.Hour},
+	} {
+		if got := Step(test.window, test.maxSamples); got != test.want {
+			t.Errorf("Step(%s, %d) = %s, want %s", test.window, test.maxSamples, got, test.want)
+		}
+	}
+}

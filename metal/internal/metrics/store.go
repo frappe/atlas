@@ -141,6 +141,22 @@ func scanRecords(ctx context.Context, path string, start, end time.Time, accept 
 	return nil
 }
 
+var steps = []time.Duration{
+	sampleInterval, 20 * time.Second, 30 * time.Second,
+	time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute, 15 * time.Minute, 30 * time.Minute,
+	time.Hour, 3 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour,
+}
+
+// Step returns the smallest step that splits window into at most maxSamples clock-aligned buckets.
+func Step(window time.Duration, maxSamples int) time.Duration {
+	for _, step := range steps {
+		if window <= step*time.Duration(maxSamples-1) {
+			return step
+		}
+	}
+	return steps[len(steps)-1]
+}
+
 // History returns records in [start, end), in timestamp order.
 func (store *Store) History(ctx context.Context, identifier string, start, end time.Time) ([]Record, error) {
 	return store.history(ctx, identifier, start, end, 0)

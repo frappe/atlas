@@ -263,11 +263,11 @@ class VirtualMachineService:
 		)
 
 	def get_metrics(
-		self, *, start: datetime | None = None, end: datetime | None = None
+		self, *, start: datetime | None = None, end: datetime | None = None, max_samples: int | None = None
 	) -> MetalVirtualMachineMetrics | None:
 		try:
 			return self.metal_client.get_virtual_machine_metrics(
-				cast(str, self.virtual_machine.name), start=start, end=end
+				cast(str, self.virtual_machine.name), start=start, end=end, max_samples=max_samples
 			)
 		except MetalClientError as error:
 			if error.is_not_found:

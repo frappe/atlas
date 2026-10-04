@@ -1060,6 +1060,9 @@ class VirtualMachineNetworkUsage(BaseModel):
 class VirtualMachineMetricsQuery(StrictModel):
 	start: AwareDatetime | None = None
 	end: AwareDatetime | None = None
+	max_samples: int | None = Field(
+		default=None, ge=10, le=2000, description="Maximum samples to return. Metal uses 300 by default."
+	)
 
 	@model_validator(mode="after")
 	def validate_range(self) -> VirtualMachineMetricsQuery:
@@ -1079,9 +1082,7 @@ class VirtualMachineMetricsSample(BaseModel):
 class VirtualMachineMetricsResponse(BaseModel):
 	id: str
 	samples: list[VirtualMachineMetricsSample]
-	sample_interval_seconds: int = Field(
-		default=0, description="Zero for raw samples; five-minute downsampling for ranges over one day."
-	)
+	sample_interval_seconds: int = Field(default=0, description="Seconds covered by each sample.")
 
 	@classmethod
 	def from_metrics(
