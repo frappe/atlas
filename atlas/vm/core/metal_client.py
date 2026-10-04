@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import time
+from datetime import datetime
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -10,7 +11,7 @@ import frappe
 import requests
 
 from atlas.atlas.core.tls.metal import ca_file, client_certificate_files
-from atlas.vm.core.metal_models import MetalVirtualMachine
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -110,6 +111,23 @@ class MetalClient:
 			budget_seconds=self.status_budget_seconds,
 		)
 		return self._virtual_machine(response)
+
+	def get_virtual_machine_metrics(
+		self, virtual_machine_id: str, *, start: datetime | None = None, end: datetime | None = None
+	) -> MetalVirtualMachineMetrics:
+		response = self._request(
+			"GET",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/metrics",
+			params={
+				name: value.isoformat()
+				for name, value in (("start", start), ("end", end))
+				if value is not None
+			},
+			timeout=self.status_timeout_seconds,
+			attempts=self.status_attempts,
+			budget_seconds=self.status_budget_seconds,
+		)
+		return self._virtual_machine_metrics(response)
 
 	def request_virtual_machine_restart(self, virtual_machine_id: str) -> MetalVirtualMachine:
 		"""Store a restart request for one VM."""
@@ -446,6 +464,12 @@ class MetalClient:
 			return MetalVirtualMachine.from_dict(response)
 		except ValueError as error:
 			raise MetalClientError("Metal returned an invalid virtual machine response") from error
+
+	def _virtual_machine_metrics(self, response: dict[str, Any]) -> MetalVirtualMachineMetrics:
+		try:
+			return MetalVirtualMachineMetrics.from_dict(response)
+		except ValueError as error:
+			raise MetalClientError("Metal returned an invalid virtual machine metrics response") from error
 
 	@staticmethod
 	def _error_data(response: requests.Response) -> tuple[str, str | None, bool | None]:

@@ -16,6 +16,28 @@ A resize uses the current host if it has enough capacity. Otherwise, Atlas can r
 
 Read [Metal's requested and applied generations](reconciliation.md) for current progress. The Atlas VM list uses [cached host reports](../region/host-sync.md).
 
+## Read VM metrics
+
+Metal samples each VM every 10 seconds. It records CPU time, memory use, disk size and use, disk read and write rates, configured disk limits, and received and sent network traffic.
+
+Sent traffic includes ICMP, UDP, TCP SYN, and TCP RST packet counters. Disk use is from the last reconcile pass, so it can be older than the sample time. A stopped VM has no current CPU, memory, or disk I/O use.
+
+Disk rates come from the VM systemd cgroup's `io.stat` counters for the root disk device. Metal stores whole read and write bytes per second and milli-IOPS, where 1,000 milli-IOPS is one operation per second.
+
+The first sample after Metal starts, and the first sample after a counter reset, stores zero rates. Configured throughput and IOPS limits are zero when unlimited.
+
+The VM unit template enables `IOAccounting=yes`. Before the template takes effect on an existing running VM, enable accounting on that unit with `systemctl set-property --runtime metal-vm@<vm-id>.service IOAccounting=yes`. If `io.stat` is absent, Metal logs a VM sampling error.
+
+Metal keeps seven days of samples in daily files under `machines/<vm-id>/metrics/` on the VM's current host. An hourly cleanup removes complete expired files, so disk cleanup can lag by less than one day. Deleting or migrating a VM removes its local history. The metrics worker does not collect host usage.
+
+Each JSONL line and metrics API sample stores its `timestamp` as UTC Unix seconds.
+
+Read samples with `GET /api/atlas/virtual-machines/<vm-id>/metrics`. The caller must own the VM. Optional `start` and `end` timestamps select a range within the last seven days. The default range is 24 hours. Atlas reads the host only when this endpoint is called.
+
+Ranges longer than one day return the latest sample in each five-minute bucket, with disk I/O rates averaged across the bucket. `sample_interval_seconds` is 300 for these ranges and 0 for raw samples. Network and CPU values are cumulative counters; divide the difference between adjacent samples by their elapsed seconds to calculate an average rate.
+
+Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol counters read direct transport headers; IPv6 extension headers and later IPv4 fragments still increase the total packet count but not the protocol count. A Metal restart or TAP reattachment resets network counters, so discard a negative counter difference when calculating rates.
+
 ## Terminate a VM
 
 1. Atlas requests destruction and marks its record as terminating.

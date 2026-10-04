@@ -786,6 +786,11 @@ class VirtualMachine:
 		return self.paths.configuration.exists()
 
 	@property
+	def has_current_kernel(self) -> bool:
+		configuration = json.loads(self.paths.configuration.read_text())
+		return configuration["boot-source"]["kernel_image_path"] == str(self.paths.kernel_image)
+
+	@property
 	def port_forwards(self) -> list[tuple[int, int]]:
 		ports = () if self.settings.developer_public_key else FORWARD_PORTS
 		if self.settings.has_warpgate:
@@ -886,8 +891,10 @@ Type=exec
 ExecStartPre=/bin/rm -f {self.paths.api_socket}
 ExecStartPre={self.paths.network_script} start
 ExecStart={self.paths.firecracker_binary} --api-sock {self.paths.api_socket} --config-file {self.paths.configuration}
+# The guest reboots on Ctrl+Alt+Del, and Firecracker exits on a guest reboot.
+ExecStop=/bin/sh -c "curl -fsS --max-time 5 --unix-socket {self.paths.api_socket} -X PUT -H 'Content-Type: application/json' -d '{{\\"action_type\\": \\"SendCtrlAltDel\\"}}' http://localhost/actions && while kill -0 ${{MAINPID}} 2>/dev/null; do sleep 1; done"
 ExecStopPost={self.paths.network_script} stop
-TimeoutStopSec=30
+TimeoutStopSec=120
 StandardOutput=append:{self.paths.console_log}
 StandardError=append:{self.paths.console_log}
 Restart=no
@@ -1198,6 +1205,8 @@ def command_logs(machine: VirtualMachine, arguments: argparse.Namespace) -> None
 def command_setup(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
 		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
+	if not machine.has_current_kernel:
+		raise AtlasVmError("the VM boots an older kernel; run: atlas-vm stop && atlas-vm create")
 	if machine.settings.developer_public_key:
 		machine.setup_gateway()
 		return

@@ -117,7 +117,8 @@ def sync_detailed(
 ) -> Response[Any | ApiErrorResponse]:
     """ Revoke host access
 
-     Closes one host, or every host when the ID is `all`, to one person now.
+     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
+    sessions to the hosts they can no longer open.
 
     Args:
         host_id (str):
@@ -156,7 +157,8 @@ def sync(
 ) -> Any | ApiErrorResponse | None:
     """ Revoke host access
 
-     Closes one host, or every host when the ID is `all`, to one person now.
+     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
+    sessions to the hosts they can no longer open.
 
     Args:
         host_id (str):
@@ -190,7 +192,8 @@ async def asyncio_detailed(
 ) -> Response[Any | ApiErrorResponse]:
     """ Revoke host access
 
-     Closes one host, or every host when the ID is `all`, to one person now.
+     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
+    sessions to the hosts they can no longer open.
 
     Args:
         host_id (str):
@@ -229,7 +232,8 @@ async def asyncio(
 ) -> Any | ApiErrorResponse | None:
     """ Revoke host access
 
-     Closes one host, or every host when the ID is `all`, to one person now.
+     Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live
+    sessions to the hosts they can no longer open.
 
     Args:
         host_id (str):

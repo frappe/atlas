@@ -67,7 +67,9 @@ def grant_host_access(host_id: str, payload: HostAccessGrantPayload) -> HostAcce
 @api_docs(
 	request_example={"email": "alice@frappe.io"},
 	responses={
-		204: {"description": "The person can no longer open the host. Revoking twice is safe."},
+		204: {
+			"description": "The person can no longer open the host, and has no live session to it. Revoking twice is safe."
+		},
 		404: {"description": "The host does not exist."},
 		503: {"description": "This region has no Warpgate, or it did not answer. Retry later."},
 	},
@@ -75,7 +77,7 @@ def grant_host_access(host_id: str, payload: HostAccessGrantPayload) -> HostAcce
 def revoke_host_access(host_id: str, payload: HostAccessRevokePayload) -> ApiResult[None]:
 	"""Revoke host access.
 
-	Closes one host, or every host when the ID is `all`, to one person now.
+	Closes one host, or every host when the ID is `all`, to one person now, and ends the person's live sessions to the hosts they can no longer open.
 	"""
 	require_tenant_zero_operator()
 	HostAccess(host_id).revoke(payload.email)

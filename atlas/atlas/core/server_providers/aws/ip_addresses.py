@@ -4,6 +4,7 @@ import ipaddress
 
 from atlas.atlas.core.server_providers.aws.client import AwsClient, AwsError
 from atlas.atlas.core.server_providers.aws.configuration import AwsConfiguration
+from atlas.atlas.core.server_providers.aws.servers import AwsServers
 from atlas.atlas.core.server_providers.base import ReservedIPAddress
 
 
@@ -23,7 +24,7 @@ class AwsIPAddresses:
 			TagSpecifications=[
 				{
 					"ResourceType": "elastic-ip",
-					"Tags": [{"Key": "Name", "Value": f"{self.configuration.resource_name_prefix}address"}],
+					"Tags": [{"Key": "Name", "Value": self.configuration.resource_name("VM address")}],
 				}
 			],
 		)
@@ -37,6 +38,63 @@ class AwsIPAddresses:
 	def delete(self, provider_resource_id: str) -> None:
 		"""Release one public IPv4 address if it exists."""
 		self.client.call("ec2", "release_address", AllocationId=provider_resource_id, allow_missing=True)
+
+	def ensure_host_address(self, server_name: str) -> str:
+		"""Return the allocation ID of the host Elastic IP, and allocate it when absent. The tag makes a retry safe."""
+		addresses = self.client.call(
+			"ec2",
+			"describe_addresses",
+			Filters=[{"Name": f"tag:{AwsServers.identity_tag_key}", "Values": [server_name]}],
+		).get("Addresses", [])
+		if len(addresses) > 1:
+			raise AwsError(f"AWS returned multiple Elastic IP addresses for Atlas server {server_name}")
+		if addresses:
+			return addresses[0]["AllocationId"]
+
+		response = self.client.call(
+			"ec2",
+			"allocate_address",
+			Domain="vpc",
+			TagSpecifications=[
+				{
+					"ResourceType": "elastic-ip",
+					"Tags": [
+						{"Key": "Name", "Value": self.configuration.resource_name(server_name)},
+						{"Key": AwsServers.identity_tag_key, "Value": server_name},
+					],
+				}
+			],
+		)
+		allocation_id = response.get("AllocationId")
+		if not isinstance(allocation_id, str):
+			raise AwsError(f"AWS did not return an Elastic IP allocation ID for Atlas server {server_name}")
+		return allocation_id
+
+	def associate_host_address(self, allocation_id: str, network_interface_id: str) -> None:
+		"""Associate the host Elastic IP with the primary private address of an interface."""
+		primary_address = self.primary_private_address(network_interface_id)
+		association = self.association(allocation_id)
+		if (
+			association.get("NetworkInterfaceId") == network_interface_id
+			and association.get("PrivateIpAddress") == primary_address
+		):
+			return
+
+		self.client.call(
+			"ec2",
+			"associate_address",
+			AllocationId=allocation_id,
+			NetworkInterfaceId=network_interface_id,
+			PrivateIpAddress=primary_address,
+			AllowReassociation=False,
+		)
+
+	def release_host_address(self, allocation_id: str) -> None:
+		"""Disassociate and release the host Elastic IP if it exists."""
+		association_id = self.association(allocation_id).get("AssociationId")
+		if association_id:
+			self.client.call("ec2", "disassociate_address", AssociationId=association_id, allow_missing=True)
+		self.delete(allocation_id)
 
 	def attach(self, provider_resource_id: str, network_interface_id: str) -> str:
 		"""Attach one public address to a dedicated host address."""

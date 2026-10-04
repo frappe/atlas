@@ -40,9 +40,6 @@ class AwsProvider(ServerProvider):
 	ssh_users = ("ubuntu", "admin", "root")
 	private_network_min_prefix = 16
 	private_network_max_prefix = 28
-	# AWS gives no stable guest device name, so the setup script renames the mesh
-	# interface by its MAC address. metald then uses this name as its mesh uplink.
-	private_network_interface: ClassVar[str] = "atlas-mesh"
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		super().__init__(settings)
@@ -149,26 +146,19 @@ class AwsProvider(ServerProvider):
 	def prepare_server(self, server: "MetalServer") -> None:
 		"""Prepare the AWS instance before Secure Shell access."""
 		self.wait_for_server_ready(server)
-		self.attach_mesh_interface(server)
+		self.attach_host_address(server)
+
+		private_address = self.primary_network_interface(server).get("PrivateIpAddress")
+		if not isinstance(private_address, str):
+			raise AwsError("Atlas server has no private IPv4 address on its AWS primary network interface")
+		server.private_ipv4_address = private_address
 
 	@override
 	def configure_server_network(self, server: "MetalServer") -> None:
-		"""Configure and check the mesh interface through Secure Shell."""
-		device = server.private_network_interface
-		if not device:
-			raise AwsError("Atlas server has no private network interface")
-
-		server.public_network_interface = self.uplink_interface(server)
-		self.run_setup_script(
-			server,
-			"aws/configure-private-network.sh",
-			environment={
-				"DEVICE": device,
-				"MAC_ADDRESS": self.mesh_mac_address(server),
-				"ADDRESS": f"{server.private_ipv4_address}/{self.private_network_prefix_length}",
-				"MTU": self.settings.private_network_mtu,
-			},
-		)
+		"""Use the primary interface for the mesh and the public traffic."""
+		interface = self.uplink_interface(server)
+		server.public_network_interface = interface
+		server.private_network_interface = interface
 		self.wait_for_private_address(server)
 
 	@override
@@ -185,13 +175,11 @@ class AwsProvider(ServerProvider):
 
 	@override
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, object]) -> None:
-		"""Delete one AWS instance and its owned resources if they exist."""
-		interface = provider_metadata.get("mesh_interface")
-		interface_id = interface.get("NetworkInterfaceId") if isinstance(interface, Mapping) else None
-		self.servers.delete(
-			provider_server_id,
-			interface_id if isinstance(interface_id, str) else None,
-		)
+		"""Delete one AWS instance and its stored Elastic IP if they exist."""
+		allocation_id = provider_metadata.get("host_address_allocation_id")
+		if isinstance(allocation_id, str):
+			self.ip_addresses.release_host_address(allocation_id)
+		self.servers.delete(provider_server_id)
 
 	@override
 	def reserve_public_ip_address(self, version: int) -> ReservedIPAddress:
@@ -221,8 +209,8 @@ class AwsProvider(ServerProvider):
 		return self.ip_addresses.attach(provider_resource_id, interface_id)
 
 	@staticmethod
-	def primary_network_interface_id(server: "MetalServer") -> str:
-		"""Return the interface that carries public traffic for one server."""
+	def primary_network_interface(server: "MetalServer") -> Mapping:
+		"""Return the only network interface of one server."""
 		metadata = frappe.parse_json(server.provider_metadata or "{}")
 		instance = metadata.get("instance") if isinstance(metadata, Mapping) else None
 		interfaces = instance.get("NetworkInterfaces") if isinstance(instance, Mapping) else []
@@ -231,10 +219,14 @@ class AwsProvider(ServerProvider):
 				continue
 			attachment = interface.get("Attachment")
 			index = attachment.get("DeviceIndex") if isinstance(attachment, Mapping) else None
-			identifier = interface.get("NetworkInterfaceId")
-			if index == 0 and isinstance(identifier, str):
-				return identifier
+			if index == 0 and isinstance(interface.get("NetworkInterfaceId"), str):
+				return interface
 		raise AwsError("Atlas server has no AWS primary network interface")
+
+	@classmethod
+	def primary_network_interface_id(cls, server: "MetalServer") -> str:
+		"""Return the interface that carries the host, mesh, and public traffic."""
+		return cls.primary_network_interface(server)["NetworkInterfaceId"]
 
 	@override
 	def detach_public_ip_address(
@@ -254,45 +246,14 @@ class AwsProvider(ServerProvider):
 			raise AwsError(f"AWS cannot promote Secure Shell user {user}")
 		self.run_setup_script(server, "promote-ssh-user.sh", ssh_user=user)
 
-	def attach_mesh_interface(self, server: "MetalServer") -> None:
-		"""Attach the mesh network interface and let it receive discovery traffic."""
-		if not server.provider_server_id:
-			raise AwsError("Atlas server has no AWS instance ID")
-
-		interface = self.servers.ensure_mesh_interface(server.provider_server_id, server.name)
-		interface_id = interface.get("NetworkInterfaceId")
-		if not isinstance(interface_id, str):
-			raise AwsError("AWS did not return a mesh network interface ID")
-		self.update_provider_metadata(server, mesh_interface=dict(interface))
-		self.servers.attach_mesh_interface(interface_id, server.provider_server_id)
-
-		def attached_interface() -> Mapping | None:
-			current = self.servers.fetch_mesh_interface(interface_id)
-			attachment = current.get("Attachment", {})
-			attached_instance = attachment.get("InstanceId")
-			if attached_instance and attached_instance != server.provider_server_id:
-				raise AwsError(f"AWS mesh interface {interface_id} belongs to another instance")
-			status = attachment.get("Status")
-			if status == "attached":
-				return current
-			if status not in {None, "attaching"}:
-				raise AwsError(f"AWS reported attachment state {status} for mesh interface {interface_id}")
-			return None
-
-		interface = self.poll(
-			attached_interface,
-			timeout_seconds=self.setup_poll_timeout_seconds,
-			poll_interval_seconds=self.setup_poll_interval_seconds,
-			description=f"AWS mesh interface {interface_id}",
+	def attach_host_address(self, server: "MetalServer") -> None:
+		"""Give the host an Elastic IP, which keeps its public address across a stop and start."""
+		allocation_id = self.ip_addresses.ensure_host_address(server.name)
+		self.update_provider_metadata(server, host_address_allocation_id=allocation_id)
+		self.ip_addresses.associate_host_address(allocation_id, self.primary_network_interface_id(server))
+		self.apply_provider_server(
+			server, self.servers.to_provider_server(self.servers.fetch(server.provider_server_id))
 		)
-		self.servers.configure_mesh_interface(interface)
-		private_address = interface.get("PrivateIpAddress")
-		if not isinstance(private_address, str):
-			raise AwsError("AWS did not return a private IPv4 address for the mesh interface")
-
-		server.private_network_interface = self.private_network_interface
-		server.private_ipv4_address = private_address
-		self.update_provider_metadata(server, mesh_interface=dict(interface))
 
 	def wait_for_server_ready(self, server: "MetalServer") -> None:
 		"""Wait until the AWS instance runs and passes both status checks."""
@@ -331,16 +292,6 @@ class AwsProvider(ServerProvider):
 		"""Store one created provider resource ID on Atlas Settings."""
 		setattr(self.settings, field, value)
 		self.settings.db_set(field, value, update_modified=False)
-
-	@staticmethod
-	def mesh_mac_address(server: "MetalServer") -> str:
-		"""Return the MAC address that AWS assigned to the mesh interface."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		interface = metadata.get("mesh_interface") if isinstance(metadata, Mapping) else None
-		mac_address = interface.get("MacAddress") if isinstance(interface, Mapping) else None
-		if not isinstance(mac_address, str):
-			raise AwsError("Atlas server has no AWS mesh interface MAC address")
-		return mac_address
 
 
 def is_ipv6_prefix(provider_resource_id: str) -> bool:

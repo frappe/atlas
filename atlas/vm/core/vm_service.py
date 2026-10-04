@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Never, TypedDict, cast
 
 import frappe
@@ -10,7 +11,7 @@ from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
 from atlas.metal_server.core.public_ip_service import PublicIPService
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
-from atlas.vm.core.metal_models import MetalVirtualMachine
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
 	IPV4_INTERNET_DESTINATION,
 	IPV6_INTERNET_DESTINATION,
@@ -260,6 +261,18 @@ class VirtualMachineService:
 				cast(str, self.virtual_machine.name), state
 			)
 		)
+
+	def get_metrics(
+		self, *, start: datetime | None = None, end: datetime | None = None
+	) -> MetalVirtualMachineMetrics | None:
+		try:
+			return self.metal_client.get_virtual_machine_metrics(
+				cast(str, self.virtual_machine.name), start=start, end=end
+			)
+		except MetalClientError as error:
+			if error.is_not_found:
+				return None
+			self.raise_metal_error(error)
 
 	def request_restart(self) -> None:
 		"""Request one restart in Metal."""

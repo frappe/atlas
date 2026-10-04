@@ -85,26 +85,21 @@ func syncPeers(path string, unicast bool) error {
 	return nil
 }
 
-// readPeerState converts the peer state file into peers. A peer uses its private address when the uplink is a private network.
+// readPeerState converts the peer state file into peers.
 func readPeerState(path string) ([]peer, error) {
-	config, err := readPinnedConfig()
-	if err != nil {
-		return nil, err
-	}
-	isPrivateUplink := config.UplinkIfIndex != config.PublicIfIndex
-
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	peers, err := decodePeerState(contents, isPrivateUplink)
+	peers, err := decodePeerState(contents)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	return peers, nil
 }
 
-func decodePeerState(contents []byte, isPrivateUplink bool) ([]peer, error) {
+// decodePeerState reaches a peer at its private address when Atlas sends one. Atlas sends it only in a region with a private network.
+func decodePeerState(contents []byte) ([]peer, error) {
 	var entries []peerState
 	if err := json.Unmarshal(contents, &entries); err != nil {
 		return nil, err
@@ -116,7 +111,7 @@ func decodePeerState(contents []byte, isPrivateUplink bool) ([]peer, error) {
 	macAddresses := make(map[string]bool)
 	for index, entry := range entries {
 		ipv4Text := entry.PublicAddress
-		if isPrivateUplink && entry.PrivateAddress != "" {
+		if entry.PrivateAddress != "" {
 			ipv4Text = entry.PrivateAddress
 		}
 

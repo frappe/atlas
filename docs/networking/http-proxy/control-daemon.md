@@ -37,7 +37,7 @@ A read route returns only permitted names. A constrained resource cannot replace
 ```
 
 ```sh
-export ATLAS_PROXY_CONTROL_URL='https://proxy-001.iad.frappe.dev'
+export ATLAS_PROXY_CONTROL_URL='https://proxy-001.region-1.example.com'
 export ATLAS_PROXY_CONTROL_TOKEN='<proxy password or JWT>'
 curl -H "Authorization: Bearer $ATLAS_PROXY_CONTROL_TOKEN" \
   "$ATLAS_PROXY_CONTROL_URL/v1/sites"
@@ -68,7 +68,7 @@ The reference gives request fields, response fields, and examples. It selects cU
 
 ## Sites
 
-A site name is one label below the wildcard domain. For example, `erp` routes `erp.iad.frappe.dev` when the wildcard is `*.iad.frappe.dev`. Use `GET /v1/sites` to read the map, `PUT /v1/sites` to replace it, and `PATCH` or `DELETE` on `/v1/sites/<name>` to change one site.
+A site name is one label below the wildcard domain. For example, `erp` routes `erp.region-1.example.com` when the wildcard is `*.region-1.example.com`. Use `GET /v1/sites` to read the map, `PUT /v1/sites` to replace it, and `PATCH` or `DELETE` on `/v1/sites/<name>` to change one site.
 
 ```sh
 curl -X PUT \

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from datetime import datetime
 from typing import Any
 
 import frappe
@@ -17,7 +18,7 @@ from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
 from atlas.vm.core import reconciliation
-from atlas.vm.core.metal_models import MetalVirtualMachine
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
 	IPV6_INTERNET_DESTINATION,
 	ROUTE_VIA_HOST,
@@ -82,6 +83,13 @@ class VirtualMachine(Document):
 		if not self.server:
 			return None
 		return VirtualMachineService(self).get_information()
+
+	def get_metal_vm_metrics(
+		self, *, start: datetime | None = None, end: datetime | None = None
+	) -> MetalVirtualMachineMetrics | None:
+		if not self.server:
+			return None
+		return VirtualMachineService(self).get_metrics(start=start, end=end)
 
 	def before_insert(self) -> None:
 		"""Reject a record created outside the Virtual Machine API."""

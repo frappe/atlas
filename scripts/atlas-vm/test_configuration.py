@@ -211,6 +211,29 @@ class ConfigurationTest(unittest.TestCase):
 		with self.assertRaisesRegex(atlas_vm.AtlasVmError, "image.version must be a string"):
 			atlas_vm.Settings.read(self.path)
 
+	def test_setup_fast_forwards_an_existing_atlas_app_and_restarts_the_bench(self) -> None:
+		configuration = setup.Configuration.read(self.path)
+		bench_path = Path(self.temporary_directory.name) / "bench"
+		(bench_path / "apps/atlas").mkdir(parents=True)
+		stage = setup.Setup(configuration)
+
+		with (
+			patch.object(
+				setup.Configuration, "bench_path", new_callable=PropertyMock, return_value=bench_path
+			),
+			patch.object(stage, "as_bench") as as_bench,
+			patch.object(stage, "pilot") as pilot,
+		):
+			is_update = stage.get_atlas()
+			stage.install_atlas(is_update)
+
+		self.assertTrue(is_update)
+		self.assertIn("merge --ff-only", as_bench.call_args.args[0])
+		commands = [call.args[0] for call in pilot.call_args_list]
+		self.assertNotIn("get-app", " ".join(commands))
+		self.assertEqual(commands[-1], "restart")
+		self.assertTrue(any(command.endswith(" migrate") for command in commands))
+
 	def test_guest_setup_reuses_the_ssh_key_and_forwards_json(self) -> None:
 		configuration = setup.Configuration.read(self.path)
 		private_key = Path(self.temporary_directory.name) / "id_ed25519"
@@ -253,6 +276,24 @@ class ConfigurationTest(unittest.TestCase):
 		self.path.write_text(self.path.read_text().replace('client_secret = "secret"\n', ""))
 		with self.assertRaisesRegex(atlas_vm.AtlasVmError, "client_secret"):
 			atlas_vm.Settings.read(self.path)
+
+	def test_setup_refuses_a_vm_that_boots_an_older_kernel(self) -> None:
+		with patch.object(atlas_vm, "find_host_key", return_value=self.path):
+			machine = atlas_vm.VirtualMachine(atlas_vm.Settings.read(self.path))
+		machine.paths = atlas_vm.Paths(Path(self.temporary_directory.name))
+		machine.paths.vm_directory.mkdir()
+		machine.paths.configuration.write_text(
+			json.dumps({"boot-source": {"kernel_image_path": "/var/lib/atlas-vm/downloads/vmlinux-5.10"}})
+		)
+
+		with (
+			patch.object(atlas_vm.VirtualMachine, "is_running", new_callable=PropertyMock, return_value=True),
+			patch.object(machine, "run_setup") as run_setup,
+			self.assertRaisesRegex(atlas_vm.AtlasVmError, "atlas-vm create"),
+		):
+			atlas_vm.command_setup(machine, None)
+
+		run_setup.assert_not_called()
 
 
 class TestNetworkRules(unittest.TestCase):

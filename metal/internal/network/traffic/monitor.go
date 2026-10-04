@@ -1,4 +1,4 @@
-// Package traffic monitors host-to-guest IP traffic.
+// Package traffic monitors IP traffic between the host and each guest.
 package traffic
 
 import (
@@ -60,7 +60,7 @@ type Monitor struct {
 	logger   *slog.Logger
 	clock    func() (uint64, error)
 
-	mutex       sync.Mutex
+	mutex       sync.RWMutex
 	loaded      bool
 	closed      bool
 	attachments map[string]*attachment
@@ -88,7 +88,9 @@ type trafficHooks interface {
 	interfaceIndex(namespacePath, interfaceName string) (int, error)
 	lastPacket(userID uint32) (nanoseconds uint64, found bool, err error)
 	setWatching(userID uint32, watching bool) error
+	clearIdle(userID uint32) error
 	clear(userID uint32) error
+	readTrafficCounters(userID uint32) (TrafficCounters, SentCounters, error)
 	readEvent() (userID uint32, err error)
 	closeEventReader() error
 	closeMaps() error
@@ -194,8 +196,8 @@ func (monitor *Monitor) Detach(virtualMachineID string) error {
 
 // Sample returns the current monotonic idle duration and packet sequence.
 func (monitor *Monitor) Sample(target Target) (Sample, error) {
-	monitor.mutex.Lock()
-	defer monitor.mutex.Unlock()
+	monitor.mutex.RLock()
+	defer monitor.mutex.RUnlock()
 
 	existing := monitor.attachments[target.VirtualMachineID]
 	if existing == nil || existing.target != target || !monitor.loaded {
@@ -219,6 +221,43 @@ func (monitor *Monitor) Sample(target Target) (Sample, error) {
 	return Sample{IdleFor: time.Duration(now - lastActivity), PacketSequence: packetTime}, nil
 }
 
+// ReadTrafficCounters returns cumulative received and sent traffic for one VM.
+func (monitor *Monitor) ReadTrafficCounters(target Target) (received TrafficCounters, sent SentCounters, err error) {
+	monitor.mutex.RLock()
+	defer monitor.mutex.RUnlock()
+
+	existing := monitor.attachments[target.VirtualMachineID]
+	if existing == nil || existing.target != target || !monitor.loaded {
+		return TrafficCounters{}, SentCounters{}, fmt.Errorf("read traffic counters for VM %s: %w", target.VirtualMachineID, ErrNotFound)
+	}
+	received, sent, err = monitor.hooks.readTrafficCounters(target.UserID)
+	if err != nil {
+		return TrafficCounters{}, SentCounters{}, fmt.Errorf("read traffic counters for VM %s: %w", target.VirtualMachineID, err)
+	}
+	return received, sent, nil
+}
+
+// ResetIdle starts the idle time of one target again from now.
+func (monitor *Monitor) ResetIdle(target Target) error {
+	monitor.mutex.Lock()
+	defer monitor.mutex.Unlock()
+
+	existing := monitor.attachments[target.VirtualMachineID]
+	if existing == nil || existing.target != target || !monitor.loaded {
+		return fmt.Errorf("reset traffic idle time for VM %s: %w", target.VirtualMachineID, ErrNotFound)
+	}
+	baseline, err := monitor.clock()
+	if err != nil {
+		return fmt.Errorf("read traffic clock for VM %s: %w", target.VirtualMachineID, err)
+	}
+	if err := monitor.hooks.clearIdle(target.UserID); err != nil {
+		return fmt.Errorf("reset traffic idle time for VM %s: %w", target.VirtualMachineID, err)
+	}
+
+	existing.baseline = baseline
+	return nil
+}
+
 // StartWatching enables traffic events for one target.
 func (monitor *Monitor) StartWatching(target Target) error {
 	return monitor.setWatching(target, true)
@@ -229,7 +268,6 @@ func (monitor *Monitor) StopWatching(target Target) error {
 	return monitor.setWatching(target, false)
 }
 
-// setWatching changes whether one attachment emits packet events.
 // Events returns packet events for watched targets.
 func (monitor *Monitor) Events() <-chan Event {
 	return monitor.events
@@ -333,9 +371,9 @@ func (monitor *Monitor) readEvents() {
 
 // publishEvent maps a kernel user ID to its virtual machine and emits an event.
 func (monitor *Monitor) publishEvent(userID uint32) {
-	monitor.mutex.Lock()
+	monitor.mutex.RLock()
 	virtualMachineID, found := monitor.byUserID[userID]
-	monitor.mutex.Unlock()
+	monitor.mutex.RUnlock()
 	if !found {
 		return
 	}

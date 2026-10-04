@@ -9,11 +9,15 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/host"
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -24,6 +28,7 @@ type fakeVM struct {
 }
 
 type fakeVirtualMachineManager struct {
+	metricsStore    *metrics.Store
 	virtualMachines map[string]*fakeVM
 	listError       error
 	services        *fakeRuntimeServices
@@ -351,7 +356,9 @@ func newServerWithServices(
 ) http.Handler {
 	t.Helper()
 
+	store := newTestMetricsStore(t)
 	if manager, ok := virtualMachineManager.(*fakeVirtualMachineManager); ok {
+		manager.metricsStore = store
 		manager.services = services
 	}
 	hostService, err := host.NewService(host.Dependencies{
@@ -362,6 +369,7 @@ func newServerWithServices(
 		t.Fatal(err)
 	}
 	server, err := New(Config{}, Dependencies{
+		MetricsStore:          store,
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      &stubMigrationManager{},
 		SnapshotStore:         services,
@@ -1195,5 +1203,68 @@ func TestRemovedSnapshotAndImageRoutesReturnNotFound(t *testing.T) {
 		{http.MethodPost, "/v1/vms/vm1/snapshots/snapshot-1/restore"},
 	} {
 		do(t, server, request.method, request.path, "", http.StatusNotFound)
+	}
+}
+
+func newTestMetricsStore(t *testing.T) *metrics.Store {
+	t.Helper()
+	directory := t.TempDir()
+	for _, identifier := range []string{"vm1", "another"} {
+		if err := os.Mkdir(filepath.Join(directory, identifier), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := metrics.NewStore(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestMetricsHistoryQuery(t *testing.T) {
+	manager := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
+	server := newServer(t, manager)
+	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, age := range []time.Duration{25 * time.Hour, 2 * time.Hour, time.Hour} {
+		usage := metrics.Sample{
+			ComputeUsage: metrics.ComputeUsage{MemoryBytes: uint64(age / time.Hour)},
+			NetworkUsage: metrics.NetworkUsage{SentICMPPackets: 4},
+		}
+		if err := manager.metricsStore.Append("vm1", metrics.Record{Timestamp: now.Add(-age), Metrics: usage}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usage := metrics.Sample{ComputeUsage: metrics.ComputeUsage{MemoryBytes: 999}}
+	if err := manager.metricsStore.Append("another", metrics.Record{Timestamp: now.Add(-time.Hour), Metrics: usage}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/vms/vm1/metrics?start=" + now.Add(-2*time.Hour).Format(time.RFC3339) + "&end=" + now.Add(-time.Hour).Format(time.RFC3339)
+	response := do(t, server, http.MethodGet, path, "", http.StatusOK)
+	var history virtualMachineMetricsResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Samples) != 1 || history.Samples[0].Timestamp != now.Add(-2*time.Hour).Unix() ||
+		history.Samples[0].Compute.MemoryBytes != 2 ||
+		history.Samples[0].Network.SentICMPPackets != 4 {
+		t.Fatalf("history = %+v", history)
+	}
+	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics", "", http.StatusOK)
+	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Samples) != 2 {
+		t.Fatalf("retention = %+v", history)
+	}
+	response = do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?start="+now.Add(-26*time.Hour).Format(time.RFC3339), "", http.StatusOK)
+	if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if history.SampleIntervalSeconds != 300 {
+		t.Fatalf("long range sample interval = %d", history.SampleIntervalSeconds)
+	}
+	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z"} {
+		do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?"+query, "", http.StatusBadRequest)
 	}
 }
