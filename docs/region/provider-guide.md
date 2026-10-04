@@ -117,7 +117,11 @@ Attach and detach change only Metal's VM network. Atlas does not change provider
 
 Redfish is registered as a server provider and appears in Atlas Settings. The automated setup input accepts `Redfish` with no provider-specific fields.
 
-The provider is scaffolding only. It has no connection settings or API client. Infrastructure setup, credential validation, catalog discovery, host preparation, and power operations raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup.
+Each Metal Server has `redfish_url`, `redfish_username`, and `redfish_password` fields. The Redfish section appears when Atlas Settings selects Redfish, including on a new Metal Server. The password uses a Frappe Password field.
+
+Redfish manages existing machines. Atlas Settings refuses **Metal Auto-spawn Config > Enabled**. Settings validation does not contact a baseboard management controller (BMC) or check the per-server credentials.
+
+The provider is scaffolding only. It has no API client. Infrastructure setup, credential validation, catalog discovery, host preparation, and power operations raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup.
 
 The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 
