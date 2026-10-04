@@ -110,7 +110,6 @@
    "in_list_view": 1,
    "label": "Server Size",
    "options": "Metal Server Size",
-   "reqd": 1,
    "set_only_once": 1
   },
   {
@@ -119,7 +118,6 @@
    "in_list_view": 1,
    "label": "Server Image",
    "options": "Metal Server Image",
-   "reqd": 1,
    "set_only_once": 1
   },
   {
@@ -142,7 +140,8 @@
    "fieldname": "redfish_url",
    "fieldtype": "Data",
    "label": "Redfish URL",
-   "options": "URL"
+   "options": "URL",
+   "description": "Service root, single-machine Systems collection, or individual system URL."
   },
   {
    "fieldname": "redfish_username",

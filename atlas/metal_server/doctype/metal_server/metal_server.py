@@ -15,6 +15,7 @@ from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
+from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
@@ -27,6 +28,7 @@ from atlas.metal_server.core.host_installation import (
 	HostInstallation,
 )
 from atlas.metal_server.core.provisioning import ServerProvisioner
+from atlas.metal_server.core.redfish_registration import register_server as register_redfish
 from atlas.metal_server.usage import enqueue_server_sync
 
 if TYPE_CHECKING:
@@ -69,8 +71,8 @@ class MetalServer(Document):
 		redfish_password: DF.Password | None
 		redfish_url: DF.Data | None
 		redfish_username: DF.Data | None
-		server_image: DF.Link
-		server_size: DF.Link
+		server_image: DF.Link | None
+		server_size: DF.Link | None
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
 		tags: DF.Table[AtlasTag]
 		title: DF.Data
@@ -106,6 +108,13 @@ class MetalServer(Document):
 		provider = self.settings.server_provider_controller
 		provider.validate_settings()
 		provider.validate_server(self)
+		if isinstance(provider, RedfishProvider):
+			if self.is_new() and not getattr(self, "_redfish_registration", False):
+				frappe.throw(_("Use Register on the Metal Server form to register a Redfish system."))
+			return
+
+		if not self.server_size or not self.server_image:
+			frappe.throw(_("Server Size and Server Image are required for this provider."))
 		if self.provider_server_id:
 			return
 
@@ -150,8 +159,9 @@ class MetalServer(Document):
 			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
 
 	def after_insert(self) -> None:
-		"""Start provisioning in the background."""
-		self._enqueue_setup_server()
+		"""Start provisioning for providers that create or prepare hosts."""
+		if not isinstance(self.settings.server_provider_controller, RedfishProvider):
+			self._enqueue_setup_server()
 
 	@property
 	def setup_job_id(self) -> str:
@@ -540,6 +550,13 @@ def renew_expiring_tls_certificates() -> None:
 		if is_job_enqueued(server.metald_job_id):
 			continue
 		server.enqueue_tls_certificate_renewal()
+
+
+@frappe.whitelist(methods=["POST"])
+def register_redfish_server(redfish_url: str, redfish_username: str = "", redfish_password: str = "") -> str:
+	"""Register an existing Redfish system and return its Metal Server name."""
+	frappe.only_for("System Manager")
+	return register_redfish(redfish_url, redfish_username, redfish_password).name
 
 
 @frappe.whitelist(methods=["POST"])

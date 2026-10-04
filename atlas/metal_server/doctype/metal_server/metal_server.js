@@ -3,14 +3,60 @@
 
 frappe.ui.form.on("Metal Server", {
 	refresh(frm) {
-		frm.toggle_display("redfish_section", frm.doc.__onload?.server_provider === "Redfish");
+		function configure_provider(provider) {
+			const is_redfish = provider === "Redfish";
+			frm.toggle_display("redfish_section", is_redfish);
+			frm.toggle_reqd("redfish_url", is_redfish);
+			for (const field of [
+				"section_break_configuration",
+				"section_break_cjau",
+				"section_break_public_network",
+				"wireguard_section",
+				"section_break_metadata",
+				"tags_section",
+				"is_sleepy_vm_host",
+			]) {
+				frm.toggle_display(field, !(frm.is_new() && is_redfish));
+			}
+			for (const field of ["server_size", "server_image"]) {
+				frm.toggle_display(field, !is_redfish);
+				frm.toggle_reqd(field, !is_redfish);
+			}
+
+			if (frm.is_new() && is_redfish) {
+				frm.disable_save();
+				frm.page.set_primary_action(__("Register"), () => {
+					if (!frm.doc.redfish_url) {
+						frappe.msgprint(__("Enter the Redfish URL."));
+						return;
+					}
+					frappe.call({
+						method: "atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server",
+						args: {
+							redfish_url: frm.doc.redfish_url,
+							redfish_username: frm.doc.redfish_username || "",
+							redfish_password: frm.doc.redfish_password || "",
+						},
+						freeze: true,
+						freeze_message: __("Registering Redfish server..."),
+					}).then(({ message }) => {
+						frm.doc.__unsaved = 0;
+						frappe.set_route("Form", "Metal Server", message);
+					});
+				});
+			} else if (frm.save_disabled) {
+				frm.enable_save();
+			}
+		}
 
 		if (frm.is_new()) {
 			frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
-				frm.toggle_display("redfish_section", provider === "Redfish");
+				configure_provider(provider);
 			});
 			return;
 		}
+		configure_provider(frm.doc.__onload?.server_provider);
+		if (frm.doc.__onload?.server_provider === "Redfish") return;
 
 		const is_deleted = frm.doc.status === "Deleted";
 		const is_running = frm.doc.status === "Running";
