@@ -46,7 +46,7 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (metrics
 
 	if manager.traffic != nil {
 		target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
-		received, sent, err := manager.traffic.Counters(target)
+		received, sent, err := manager.traffic.ReadTrafficCounters(target)
 		if err != nil && !errors.Is(err, traffic.ErrNotFound) {
 			return metrics.Sample{}, err
 		}

@@ -169,7 +169,7 @@ func TestMonitorResetIdleStartsTheIdleTimeAgain(t *testing.T) {
 	if sample.IdleFor != 5*time.Second || sample.PacketSequence != 0 {
 		t.Fatalf("sample = %+v, want 5s idle since the reset", sample)
 	}
-	received, sent, err := monitor.Counters(target)
+	received, sent, err := monitor.ReadTrafficCounters(target)
 	if err != nil {
 		t.Fatal(err)
 	}

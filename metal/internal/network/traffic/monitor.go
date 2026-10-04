@@ -221,8 +221,8 @@ func (monitor *Monitor) Sample(target Target) (Sample, error) {
 	return Sample{IdleFor: time.Duration(now - lastActivity), PacketSequence: packetTime}, nil
 }
 
-// Counters returns cumulative received and sent traffic for one VM.
-func (monitor *Monitor) Counters(target Target) (received TrafficCounters, sent SentCounters, err error) {
+// ReadTrafficCounters returns cumulative received and sent traffic for one VM.
+func (monitor *Monitor) ReadTrafficCounters(target Target) (received TrafficCounters, sent SentCounters, err error) {
 	monitor.mutex.RLock()
 	defer monitor.mutex.RUnlock()
 
@@ -268,7 +268,6 @@ func (monitor *Monitor) StopWatching(target Target) error {
 	return monitor.setWatching(target, false)
 }
 
-// setWatching changes whether one attachment emits packet events.
 // Events returns packet events for watched targets.
 func (monitor *Monitor) Events() <-chan Event {
 	return monitor.events
