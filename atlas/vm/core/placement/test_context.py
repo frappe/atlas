@@ -125,23 +125,12 @@ class TestPlacementContext(UnitTestCase):
 		)
 		self.assertFalse(placement.apply_affinity)
 
-	def test_preferred_resize_keeps_a_fallback_when_current_and_matching_hosts_are_full(self) -> None:
+	def test_preferred_resize_keeps_every_host_when_no_matching_host_has_room(self) -> None:
 		placement = self.affinity_placement(current_host_name="c")
-		with (
-			patch.object(PlacementContext, "_find_affinity_hosts", return_value=["a"]),
-			patch(
-				"atlas.vm.core.placement.context.load_affinity_matching", return_value="Preferred"
-			) as matching,
-		):
-			rows = placement._filter_by_affinity(self.affinity_rows(0))
 
 		self.assertEqual(
-			[row.name for row in rows if placement._has_room(row)],
-			["b"],
-			f"Retained hosts: {[row.name for row in rows]}; affinity setting reads: {matching.call_count}",
+			self.filter_by_affinity(placement, self.affinity_rows(0), "Preferred"), ["a", "b", "c"]
 		)
-		self.assertIn("c", [row.name for row in rows])
-		matching.assert_called_once_with()
 		self.assertFalse(placement.apply_affinity)
 
 	def test_a_rule_that_fails_under_the_lock_counts_as_contention(self) -> None:

@@ -346,8 +346,8 @@ class PlacementContext:
 	def _filter_by_affinity(self, rows: list[frappe._dict]) -> list[frappe._dict]:
 		"""Keep only the hosts that meet the affinity rules, when one of them has room.
 
-		Without such a host, `Enforced` matching fails and `Preferred` matching keeps every
-		host. The current host of a resize always stays, so an in-place resize ignores the rules.
+		Without such a host, `Preferred` matching keeps every host. `Enforced` matching fails, but a
+		resize keeps the matching hosts and its current host, so an in-place resize can still run.
 		"""
 		if not self.requirements.placement_rules.nodes:
 			return rows
@@ -361,9 +361,6 @@ class PlacementContext:
 		affinity_matching = load_affinity_matching()
 		if affinity_matching == "Enforced":
 			if self.current_host_name:
-				# A resize keeps its current host so an in-place resize can
-				# still proceed, but Enforced matching never gains a
-				# nonmatching fallback.
 				self.apply_affinity = True
 				return matching
 			frappe.throw(
