@@ -14,55 +14,55 @@ import (
 
 const cgroupRoot = "/sys/fs/cgroup"
 
-// Usage describes a unit's current cgroup resource use.
-type Usage struct {
+// SystemdUnitUsage describes a unit's current cgroup resource use.
+type SystemdUnitUsage struct {
 	// MemoryBytes is a gauge, not cumulative.
 	MemoryBytes uint64
-	// CPUUsageMicroseconds is cumulative since the cgroup was created.
-	CPUUsageMicroseconds uint64
-	DiskReadBytes        uint64
-	DiskWriteBytes       uint64
-	DiskReadOperations   uint64
-	DiskWriteOperations  uint64
+	// CPUTimeMicroseconds is cumulative since the cgroup was created.
+	CPUTimeMicroseconds uint64
+	DiskReadBytes       uint64
+	DiskWriteBytes      uint64
+	DiskReadOperations  uint64
+	DiskWriteOperations uint64
 }
 
 // controlGroup is the path reported by systemd's ControlGroup property.
-func readUsage(controlGroup string) (Usage, error) {
+func readUsage(controlGroup string) (SystemdUnitUsage, error) {
 	memoryBytes, err := readMemoryCurrent(cgroupFile(controlGroup, "memory.current"))
 	if err != nil {
-		return Usage{}, err
+		return SystemdUnitUsage{}, err
 	}
-	cpuMicroseconds, err := readCPUUsageMicroseconds(cgroupFile(controlGroup, "cpu.stat"))
+	cpuMicroseconds, err := readCPUTimeMicroseconds(cgroupFile(controlGroup, "cpu.stat"))
 	if err != nil {
-		return Usage{}, err
+		return SystemdUnitUsage{}, err
 	}
-	return Usage{MemoryBytes: memoryBytes, CPUUsageMicroseconds: cpuMicroseconds}, nil
+	return SystemdUnitUsage{MemoryBytes: memoryBytes, CPUTimeMicroseconds: cpuMicroseconds}, nil
 }
 
-func readDiskUsage(controlGroup, device string) (Usage, error) {
+func readDiskUsage(controlGroup, device string) (SystemdUnitUsage, error) {
 	path := cgroupFile(controlGroup, "io.stat")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Usage{}, fmt.Errorf("read %s: %w", path, err)
+		return SystemdUnitUsage{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	return parseDiskUsage(data, device)
 }
 
-func parseDiskUsage(data []byte, device string) (Usage, error) {
+func parseDiskUsage(data []byte, device string) (SystemdUnitUsage, error) {
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		fields := bytes.Fields(line)
 		if len(fields) == 0 || string(fields[0]) != device {
 			continue
 		}
-		var usage Usage
+		var usage SystemdUnitUsage
 		for _, field := range fields[1:] {
 			key, value, found := bytes.Cut(field, []byte{'='})
 			if !found {
-				return Usage{}, fmt.Errorf("malformed io.stat field %q", field)
+				return SystemdUnitUsage{}, fmt.Errorf("malformed io.stat field %q", field)
 			}
 			count, err := strconv.ParseUint(string(value), 10, 64)
 			if err != nil {
-				return Usage{}, fmt.Errorf("parse io.stat %s: %w", key, err)
+				return SystemdUnitUsage{}, fmt.Errorf("parse io.stat %s: %w", key, err)
 			}
 			switch string(key) {
 			case "rbytes":
@@ -77,7 +77,7 @@ func parseDiskUsage(data []byte, device string) (Usage, error) {
 		}
 		return usage, nil
 	}
-	return Usage{}, nil
+	return SystemdUnitUsage{}, nil
 }
 
 func cgroupFile(controlGroup, name string) string {
@@ -105,10 +105,10 @@ func parseMemoryCurrent(data []byte) (uint64, error) {
 	return value, nil
 }
 
-// readCPUUsageMicroseconds reads a cgroup v2 cpu.stat file's usage_usec
+// readCPUTimeMicroseconds reads a cgroup v2 cpu.stat file's usage_usec
 // field. A cgroup that has already been removed reads as zero, the same as
 // an absent systemd unit.
-func readCPUUsageMicroseconds(path string) (uint64, error) {
+func readCPUTimeMicroseconds(path string) (uint64, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
@@ -116,12 +116,12 @@ func readCPUUsageMicroseconds(path string) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
-	return parseCPUUsageMicroseconds(data)
+	return parseCPUTimeMicroseconds(data)
 }
 
-// parseCPUUsageMicroseconds parses cpu.stat's "key value" lines and returns
+// parseCPUTimeMicroseconds parses cpu.stat's "key value" lines and returns
 // usage_usec, the cumulative CPU time the cgroup has consumed.
-func parseCPUUsageMicroseconds(data []byte) (uint64, error) {
+func parseCPUTimeMicroseconds(data []byte) (uint64, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())

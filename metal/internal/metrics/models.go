@@ -12,8 +12,8 @@ type Sample struct {
 
 // ComputeUsage holds cumulative CPU time and current memory use.
 type ComputeUsage struct {
-	CPUUsageMicroseconds uint64 `json:"cpu_usage_microseconds"`
-	MemoryBytes          uint64 `json:"memory_bytes"`
+	CPUTimeMicroseconds uint64 `json:"cpu_usage_microseconds"`
+	MemoryBytes         uint64 `json:"memory_bytes"`
 }
 
 // DiskUsage holds disk size, configured limits, and measured I/O rates.

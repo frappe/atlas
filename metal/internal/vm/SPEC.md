@@ -64,6 +64,7 @@ The migration lifecycle lives in [internal/vm/migration/SPEC.md](migration/SPEC.
 ## Boundaries
 
 - Host packages implement `Runtime`, `Network`, `Storage`, and `Snapshots`.
+- `RuntimeUsage` carries a runtime's CPU time, memory, and disk I/O to the VM metrics sampler.
 - The daemon traffic listener passes each `traffic.Event` to `Manager.RestoreAfterTraffic`.
 - `WarmImageBuilder` creates shared start artifacts. It does not use the saved state of an idle VM.
 

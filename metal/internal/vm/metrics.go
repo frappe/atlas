@@ -39,7 +39,7 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (Metrics
 		if err != nil {
 			return Metrics{}, err
 		}
-		sample.CPUUsageMicroseconds = usage.CPUUsageMicroseconds
+		sample.CPUTimeMicroseconds = usage.CPUTimeMicroseconds
 		sample.MemoryBytes = usage.MemoryBytes
 		sample.Counters = metrics.DiskCounters{
 			ReadBytes: usage.DiskReadBytes, WriteBytes: usage.DiskWriteBytes,

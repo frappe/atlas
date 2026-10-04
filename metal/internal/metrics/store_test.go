@@ -99,7 +99,7 @@ func TestMetricJSONUsesSnakeCaseAndUnixSeconds(t *testing.T) {
 	now := time.Date(2026, 10, 4, 17, 30, 0, 0, time.FixedZone("IST", 5*60*60+30*60))
 	record := Record{Timestamp: now, Metrics: Sample{
 		Up:           true,
-		ComputeUsage: ComputeUsage{CPUUsageMicroseconds: 42, MemoryBytes: 512},
+		ComputeUsage: ComputeUsage{CPUTimeMicroseconds: 42, MemoryBytes: 512},
 		DiskUsage:    DiskUsage{DiskMiB: 1024, DiskUsedMiB: 128},
 		NetworkUsage: NetworkUsage{ReceivedBytes: 1, ReceivedPackets: 2, SentBytes: 3, SentPackets: 4},
 	}}
@@ -120,7 +120,7 @@ func TestMetricJSONUsesSnakeCaseAndUnixSeconds(t *testing.T) {
 	}
 	if stored.Timestamp != now.Unix() || stored.Metrics["cpu_usage_microseconds"] == nil ||
 		stored.Metrics["sent_tcp_syn_packets"] == nil || stored.Metrics["disk_read_milli_iops"] == nil ||
-		stored.Metrics["CPUUsageMicroseconds"] != nil {
+		stored.Metrics["CPUTimeMicroseconds"] != nil {
 		t.Fatalf("stored metrics = %s", data)
 	}
 	records, err := store.History(context.Background(), "one", now.Add(-time.Second), now.Add(time.Second))

@@ -118,7 +118,7 @@ func toVirtualMachineMetrics(metrics vm.Metrics) virtualMachineMetricsSample {
 	return virtualMachineMetricsSample{
 		Up: metrics.Up,
 		Compute: computeUsageResponse{
-			CPUMicroseconds: metrics.CPUUsageMicroseconds,
+			CPUMicroseconds: metrics.CPUTimeMicroseconds,
 			MemoryBytes:     metrics.MemoryBytes,
 		},
 		Disk: diskUsageResponse{

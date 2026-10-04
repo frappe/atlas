@@ -33,7 +33,7 @@ type fakeRuntime struct {
 	saveError      error
 	deleteError    error
 	coldStartError error
-	usage          Usage
+	usage          RuntimeUsage
 	usageError     error
 }
 
@@ -136,7 +136,7 @@ func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHConn
 	return nil, nil
 }
 
-func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (Usage, error) {
+func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error) {
 	return runtime.usage, runtime.usageError
 }
 

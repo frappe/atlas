@@ -169,31 +169,31 @@ func (d *DBus) SetLimits(ctx context.Context, id string, limits Limits) error {
 }
 
 // GetUsage reads the unit's current cgroup CPU, memory, and root disk use. An absent
-// unit reads as a zero Usage.
-func (d *DBus) GetUsage(ctx context.Context, id, diskDevice string) (Usage, error) {
+// unit reads as a zero SystemdUnitUsage.
+func (d *DBus) GetUsage(ctx context.Context, id, diskDevice string) (SystemdUnitUsage, error) {
 	unit := unitName(id)
 
 	// ControlGroup is a Service-type property, like MainPID, not a generic Unit
 	// property.
 	controlGroupProperty, err := d.connection.GetUnitTypePropertyContext(ctx, unit, "Service", "ControlGroup")
 	if isUnitNotLoaded(err) {
-		return Usage{}, nil
+		return SystemdUnitUsage{}, nil
 	}
 	if err != nil {
-		return Usage{}, err
+		return SystemdUnitUsage{}, err
 	}
 
 	controlGroup := asString(controlGroupProperty.Value.Value())
 	if controlGroup == "" {
-		return Usage{}, nil
+		return SystemdUnitUsage{}, nil
 	}
 	usage, err := readUsage(controlGroup)
 	if err != nil {
-		return Usage{}, err
+		return SystemdUnitUsage{}, err
 	}
 	disk, err := readDiskUsage(controlGroup, diskDevice)
 	if err != nil {
-		return Usage{}, err
+		return SystemdUnitUsage{}, err
 	}
 	usage.DiskReadBytes = disk.DiskReadBytes
 	usage.DiskWriteBytes = disk.DiskWriteBytes
