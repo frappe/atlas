@@ -26,6 +26,7 @@ flowchart TB
 ```text
 machines/<id>/config.json   desired state and specification
 machines/<id>/status.json   observed state and operation progress
+machines/<id>/metrics/     seven days of daily VM usage files
 ```
 
 - The create fingerprint excludes signed image URLs.
@@ -63,6 +64,7 @@ The migration lifecycle lives in [internal/vm/migration/SPEC.md](migration/SPEC.
 ## Boundaries
 
 - Host packages implement `Runtime`, `Network`, `Storage`, and `Snapshots`.
+- `RuntimeUsage` carries a runtime's CPU time, memory, and disk I/O to the VM metrics sampler.
 - The daemon traffic listener passes each `traffic.Event` to `Manager.RestoreAfterTraffic`.
 - `WarmImageBuilder` creates shared start artifacts. It does not use the saved state of an idle VM.
 

@@ -19,16 +19,16 @@ class TestAwsCatalog(UnitTestCase):
 
 		self.assertEqual([size.name for size in sizes], ["c6i.metal", "m8i.2xlarge"])
 
-	def test_types_with_local_storage_or_without_a_mesh_interface_are_skipped(self) -> None:
+	def test_types_with_local_storage_are_skipped_and_one_interface_is_enough(self) -> None:
 		with_local_storage = self.instance_type(
 			"i7i.2xlarge", nested_virtualization=True, local_storage_gb=1_875
 		)
-		without_mesh_interface = self.instance_type("m8i.2xlarge", nested_virtualization=True)
-		without_mesh_interface["NetworkInfo"] = {"MaximumNetworkInterfaces": 1}
+		with_one_interface = self.instance_type("m8i.2xlarge", nested_virtualization=True)
+		with_one_interface["NetworkInfo"] = {"MaximumNetworkInterfaces": 1}
 
-		sizes = AwsCatalog().get_server_sizes([with_local_storage, without_mesh_interface])
+		sizes = AwsCatalog().get_server_sizes([with_local_storage, with_one_interface])
 
-		self.assertEqual(sizes, ())
+		self.assertEqual([size.name for size in sizes], ["m8i.2xlarge"])
 
 	def test_size_uses_binary_memory_and_the_block_store_pool(self) -> None:
 		catalog = AwsCatalog()

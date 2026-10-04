@@ -107,9 +107,13 @@ func (manager *Manager) reconcileActive(
 		observed.RestartGeneration = desired.RestartGeneration
 	}
 
+	previousState := status.State
 	status, err = manager.applyDesiredState(ctx, desired.ID, machine, status, desired.State, &observed, operationID)
 	if err != nil {
 		return err
+	}
+	if previousState != StateRunning && status.State == StateRunning {
+		manager.resetIdle(desired)
 	}
 	if desired.Generation != observed.Generation {
 		if err := manager.applyDesiredSpecification(ctx, desired, machine, status, &observed, operationID); err != nil {

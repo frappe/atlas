@@ -14,6 +14,7 @@ from atlas.api.routes.virtual_machines import (
 	detach_virtual_machine_public_ipv4,
 	detach_virtual_machine_public_ipv6,
 	get_virtual_machine,
+	get_virtual_machine_metrics,
 	list_virtual_machines,
 	resize_virtual_machine,
 	restart_virtual_machine,
@@ -67,6 +68,7 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"reboot": Mock(),
 		"terminate": Mock(),
 		"get_metal_vm_info": Mock(return_value=None),
+		"get_metal_vm_metrics": Mock(return_value=None),
 		"public_ipv6": "2001:db8:5::7/128",
 		"resize": Mock(),
 		"attach_public_ip": Mock(),
@@ -421,6 +423,36 @@ class TestReadVirtualMachines(UnitTestCase):
 		self.assertEqual(body["id"], "vm-00001")
 		self.assertIsNone(body["desired_state"])
 		self.assertEqual(body["current_state"], "unknown")
+
+	def test_metrics_rejects_invalid_query_bounds(self) -> None:
+		for query in (
+			{"start": "yesterday"},
+			{"start": "2026-09-30T10:00:00"},
+			{"start": "2026-09-30T10:00:00Z", "end": "2026-09-29T10:00:00Z"},
+		):
+			virtual_machine = build_virtual_machine()
+			with (
+				api_request(
+					"GET",
+					"/api/atlas/virtual-machines/vm-00001/metrics",
+					tenant_id=TENANT_ID,
+					query_string=query,
+				),
+				owned_document(virtual_machine),
+			):
+				status, _body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
+			self.assertEqual(status, 400)
+			virtual_machine.get_metal_vm_metrics.assert_not_called()
+
+	def test_metrics_hides_another_tenants_vm(self) -> None:
+		virtual_machine = build_virtual_machine(tenant_id=OTHER_TENANT_ID, doctype="Virtual Machine")
+		with (
+			api_request("GET", "/api/atlas/virtual-machines/vm-00001/metrics", tenant_id=TENANT_ID),
+			patch("frappe.get_doc", return_value=virtual_machine),
+		):
+			status, _body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
+		self.assertEqual(status, 404)
+		virtual_machine.get_metal_vm_metrics.assert_not_called()
 
 
 class TestVirtualMachineActions(UnitTestCase):

@@ -1,3 +1,4 @@
 clients/atlas-client/** linguist-generated=true
 clients/atlas-proxy-client/** linguist-generated=true
+clients/atlas-wg-gateway-client/** linguist-generated=true
 clients/openapi/*.json linguist-generated=true

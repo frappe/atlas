@@ -6,6 +6,8 @@
 - After context compaction, summarization, restart, or loss of working context, read this file again before you continue.
 - Preserve a reference to `CLAUDE.md` in a handover or context summary so the next context reloads it.
 - Do not rely on remembered repository rules when this file is available.
+- Mandatory: Follow the [engineering playbook](llm/engineering-playbook/SKILL.md) for every task. Read `SKILL.md` at the start of a session and the references that the task needs. This file wins on conflict.
+- Mandatory: After context compaction, summarization, restart, or a resumed session, read `SKILL.md` again, together with this file, before you continue. Keep a reference to both in a handover or context summary.
 
 Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe app, Go services, an OpenResty proxy, and eBPF programs.
 
@@ -26,25 +28,34 @@ Read the [incident reports](docs/incidents/README.md) before you change a compon
 ## Core principles
 
 - Keep changes small, direct, and in the component that owns the behavior.
+- When the user states a problem without a solution direction, investigate first, ask focused questions, and offer options with a recommendation before you build.
 - Keep decision-making visible to the user. Before implementation, explain the proposed design, assumptions, ownership, state, dependencies, error flow, risks, and important trade-offs. Use a small ASCII relationship diagram when it helps. Do not leave a material engineering decision unstated. Proceed after the user agrees with the plan.
 - Do not change unrelated dirty files, generated artifacts, or local data.
 - Do not add plan files, such as `plan_*.md`.
 - Prefer clear, explicit code over clever code and unnecessary abstraction.
 - Store mutable and temporary state in the object, task, or goroutine that owns its lifecycle. Do not duplicate mutable state across owners.
 - Fail near the cause. Retry only operations that are safe to repeat.
+- Make code safe for concurrent requests, jobs and Desk users. Before handover, check for stale document saves (`TimestampMismatchError`), version conflicts, lock wait timeouts, deadlocks and duplicate allocation. Do not call a remote service while you hold a database lock.
+- Follow the existing pattern in the codebase for the same job. Do not add a second way. If a better way exists, change every existing use, or propose that change first.
+- Get user approval before you add a doctype or change a doctype or dialog layout. Keep forms balanced and grouped. Keep field descriptions short and show them on click.
 - Do not add a dependency when the standard library or an existing repository dependency is sufficient.
 - Do not commit secrets, private keys, tokens, `.env` content, or production credentials.
 - Regenerate checked-in generated artifacts only when their source changes.
 - Use `git mv` when you intentionally move or rename a tracked file.
 
-## Temporary rules
+## Compatibility
 
-Atlas is in active development and is not deployed to production.
+Atlas is in production. Existing clients, hosts and data must keep working after every change.
 
-- Do not preserve backward compatibility unless the task or specification requires it.
-- Prefer the target design over compatibility layers, migration shims, deprecated aliases, or fallback behavior.
-- Do not design for rolling upgrades, mixed-version deployments, or zero-downtime migration unless required.
-- Revisit these rules before the first production deployment.
+- Keep API contracts backward compatible: the Atlas tenant API, the Metal API, the proxy control API, webhooks and the generated clients. Add only optional fields. Do not rename, remove or retype a field, route, status value or error code. Do not change a default that a client uses.
+- Do not add a new API version. Change the current contract so that old clients keep working.
+- Avoid breaking changes to eBPF programs, maps and wire formats as far as possible. Prefer new maps or fields that old programs ignore.
+- When a break cannot be avoided, explain the break and the upgrade path to the user before you implement it.
+- Add a migration patch when you change stored data or a schema.
+
+## Environments
+
+Act freely in development. Ask the user before each write in staging. Never act on production or on a resource that is not declared. See [environments and access](llm/engineering-playbook/references/environments.md).
 
 ## Code style
 
@@ -120,6 +131,7 @@ Atlas is in active development and is not deployed to production.
 - Use a short Conventional Commit subject: `type(scope): Sentence case`.
 - Use one of `feat`, `fix`, `refactor`, `test`, `docs`, `build`, or `chore`. Use a component as the scope: `atlas`, `metal`, `http-proxy`, `ipv6-router`, `wg-mesh` or `wireguard-gateway`.
 - Do not add an AI co-author, session data, or agent data.
+- When an external document explains the change (official docs, an RFC, an upstream issue or a good technical blog post), add its link on a `Refs:` line at the end of the body. Do not link private documents.
 
 ### Commit sequence
 
@@ -140,10 +152,15 @@ Use this flow when a change needs more than one commit.
 - Follow the validation and handover rules before you write the description.
 - State what changed and why it matters. Do not narrate the implementation.
 - Group related changes. Include visual evidence only for visual changes.
+- Write "What changed" for the reviewer. List only changes a reviewer must know to judge the PR: behavior, API or contract changes, data or schema changes, risky areas and rollout steps. Do not list file names, renames, formatting, comment edits, test or doc updates, regenerated clients, lint fixes or internal refactor steps unless they change behavior.
+
+Put each linked issue on the first line of the description as `Closes #<issue>`, so GitHub links and closes it on merge. Omit the line when there is no issue. Do not add a separate related-issues section.
 
 For a bug fix, use this structure:
 
 ```text
+Closes #<issue>
+
 ## Issue
 <One sentence that states the user-visible or operational problem.>
 
@@ -158,14 +175,13 @@ For a bug fix, use this structure:
 
 ## Screenshots
 <Before and after evidence. Omit this section when it does not apply.>
-
-## Related issues
-Closes #<issue>
 ```
 
 For a feature, use this structure:
 
 ```text
+Closes #<issue>
+
 ## Summary
 <1 or 2 sentences that state the capability and why it matters.>
 
@@ -177,14 +193,11 @@ For a feature, use this structure:
 
 ## Screenshots
 <Before and after evidence. Omit this section when it does not apply.>
-
-## Related issues
-Refs #<issue>
 ```
 
 ## Agent tooling
 
-Use the most specific available skill for the task. See [Frappe skills](llm/README.md#frappe-skills), [review skills](llm/README.md#review-skills), and [focused output](llm/README.md#focused-output) for sources and installation commands.
+Follow the [engineering playbook](llm/engineering-playbook/SKILL.md) as described in [session continuity](#session-continuity). Use the most specific available skill for the task. See [Frappe skills](llm/README.md#frappe-skills), [review skills](llm/README.md#review-skills), and [focused output](llm/README.md#focused-output) for sources and installation commands.
 
 ### Frappe skills
 

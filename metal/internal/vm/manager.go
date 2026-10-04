@@ -224,26 +224,11 @@ func (manager *Manager) ListIDs(_ context.Context) ([]string, error) {
 
 // information retries a read when removal leaves one record temporarily absent.
 func (manager *Manager) information(identifier string) (Information, error) {
-	var lastError error
-
-	for attempt := range informationAttempts {
-		if attempt > 0 {
-			time.Sleep(informationRetryDelay)
-		}
-
-		desired, desiredError := manager.store.readDesired(identifier)
-		observed, observedError := manager.store.readObserved(identifier)
-		if desiredError == nil && observedError == nil {
-			return informationFromRecords(desired, observed, observed.Disk), nil
-		}
-
-		lastError = errors.Join(desiredError, observedError)
-		if !isTornRemoval(desiredError, observedError) {
-			return Information{}, lastError
-		}
+	desired, observed, err := manager.newVirtualMachine(identifier).records()
+	if err != nil {
+		return Information{}, err
 	}
-
-	return Information{}, lastError
+	return informationFromRecords(desired, observed, observed.Disk), nil
 }
 
 // isTornRemoval reports whether removal left one record temporarily absent.

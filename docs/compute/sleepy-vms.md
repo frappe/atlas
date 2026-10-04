@@ -55,6 +55,7 @@ Because most sleepy VMs are asleep at any time, the `balanced` strategy divides 
 - **Some actions throw the saved state away:** an explicit stop, a restart, a shape change, or deleting the VM. The next start is a normal boot.
 - **A failed restore keeps the saved state** for another try. Metal never cold-boots instead, because that would lose the VM's memory without warning.
 - A `metald` restart resets the idle clock, so a VM can sleep later than expected, never earlier.
+- A start resets the idle clock, so a VM is never put to sleep before the guest has booted.
 
 To check a sleepy VM, see [Automatic idle shutdown](../operate/metal.md#automatic-idle-shutdown-does-not-stop-or-restore-a-vm) in the Metal runbook.
 
@@ -64,6 +65,5 @@ To check a sleepy VM, see [Automatic idle shutdown](../operate/metal.md#automati
 - [Traffic monitor](../../metal/internal/network/traffic/monitor.go) and [eBPF program](../../metal/internal/network/traffic/bpf/track_traffic.c) record host-to-guest traffic.
 - [Firecracker machine](../../metal/internal/firecracker/machine.go) saves and restores the VM state.
 - [Placement strategies](../../atlas/vm/core/placement/strategies/balanced.py) apply the sleepy pools and overcommit factor.
-- [Traffic integration tests](../../metal/internal/network/traffic/monitor_integration_test.go) exercise packet activity on Linux.
 
 :::

@@ -18,14 +18,6 @@ from atlas.atlas.core.server_providers.base import (
 	ServerPowerAction,
 )
 
-# Cloud-init hotplug renames an attached interface
-# back after Atlas configures it.
-USER_DATA = """#cloud-config
-updates:
-  network:
-    when: [boot-new-instance]
-"""
-
 
 class AwsServers:
 	"""Own AWS Elastic Compute Cloud instance operations."""
@@ -80,12 +72,11 @@ class AwsServers:
 			SubnetId=self.configuration.subnet_id,
 			SecurityGroupIds=[self.configuration.security_group_id],
 			BlockDeviceMappings=[self.root_volume(request), self.storage_volume()],
-			UserData=USER_DATA,
 			TagSpecifications=[
 				{
 					"ResourceType": "instance",
 					"Tags": [
-						{"Key": "Name", "Value": request.name},
+						{"Key": "Name", "Value": self.configuration.resource_name(request.name)},
 						{"Key": self.identity_tag_key, "Value": request.name},
 					],
 				}
@@ -163,94 +154,6 @@ class AwsServers:
 			)
 		return False
 
-	def ensure_mesh_interface(self, provider_server_id: str, server_name: str) -> Mapping:
-		"""Create the mesh network interface idempotently."""
-		if not self.configuration.subnet_id or not self.configuration.security_group_id:
-			raise AwsError("Atlas Settings has no AWS subnet or security group")
-
-		response = self.client.call(
-			"ec2",
-			"create_network_interface",
-			ClientToken=self.client_token("mesh-interface", provider_server_id),
-			SubnetId=self.configuration.subnet_id,
-			Groups=[self.configuration.security_group_id],
-			Description=f"Atlas mesh interface for {server_name}",
-			TagSpecifications=[
-				{
-					"ResourceType": "network-interface",
-					"Tags": [{"Key": self.identity_tag_key, "Value": server_name}],
-				}
-			],
-		)
-		interface = response.get("NetworkInterface")
-		if not isinstance(interface, Mapping) or not isinstance(interface.get("NetworkInterfaceId"), str):
-			raise AwsError(f"AWS did not return a mesh interface for instance {provider_server_id}")
-		return interface
-
-	def attach_mesh_interface(self, network_interface_id: str, provider_server_id: str) -> None:
-		"""Attach the stored mesh network interface to its instance."""
-		interface = self.fetch_mesh_interface(network_interface_id)
-		attachment = interface.get("Attachment", {})
-		attached_instance = attachment.get("InstanceId")
-		if attached_instance and attached_instance != provider_server_id:
-			raise AwsError(
-				f"AWS mesh interface {network_interface_id} belongs to instance {attached_instance}"
-			)
-		if not attached_instance:
-			self.client.call(
-				"ec2",
-				"attach_network_interface",
-				NetworkInterfaceId=network_interface_id,
-				InstanceId=provider_server_id,
-				DeviceIndex=1,
-			)
-
-	def find_mesh_interface(self, network_interface_id: str) -> Mapping | None:
-		"""Return the mesh network interface with the exact ID if it exists."""
-		response = self.client.call(
-			"ec2",
-			"describe_network_interfaces",
-			NetworkInterfaceIds=[network_interface_id],
-			allow_missing=True,
-		)
-		interfaces = response.get("NetworkInterfaces", [])
-		if not isinstance(interfaces, list):
-			raise AwsError("AWS returned an invalid NetworkInterfaces list")
-		if len(interfaces) > 1:
-			raise AwsError(f"AWS returned multiple mesh interfaces for ID {network_interface_id}")
-		if not interfaces:
-			return None
-		if not isinstance(interfaces[0], Mapping):
-			raise AwsError(f"AWS returned an invalid mesh interface for ID {network_interface_id}")
-		return interfaces[0]
-
-	def fetch_mesh_interface(self, network_interface_id: str) -> Mapping:
-		"""Return one AWS mesh network interface."""
-		interface = self.find_mesh_interface(network_interface_id)
-		if interface is None:
-			raise AwsError(f"AWS has no mesh interface {network_interface_id}")
-		return interface
-
-	def configure_mesh_interface(self, interface: Mapping) -> None:
-		"""Set the required attributes on an attached mesh interface."""
-		interface_id = interface["NetworkInterfaceId"]
-		attachment_id = interface.get("Attachment", {}).get("AttachmentId")
-		if not isinstance(attachment_id, str):
-			raise AwsError(f"AWS mesh interface {interface_id} has no attachment ID")
-
-		self.client.call(
-			"ec2",
-			"modify_network_interface_attribute",
-			NetworkInterfaceId=interface_id,
-			Attachment={"AttachmentId": attachment_id, "DeleteOnTermination": True},
-		)
-		self.client.call(
-			"ec2",
-			"modify_network_interface_attribute",
-			NetworkInterfaceId=interface_id,
-			SourceDestCheck={"Value": False},
-		)
-
 	@staticmethod
 	def client_token(kind: str, server_name: str) -> str:
 		"""Return a stable AWS idempotency token for one server resource."""
@@ -260,38 +163,8 @@ class AwsServers:
 		"""Apply one power action to an AWS instance."""
 		self.client.call("ec2", self.power_operation_map[action], InstanceIds=[provider_server_id])
 
-	def delete(self, provider_server_id: str, network_interface_id: str | None) -> None:
-		"""Delete one AWS instance and its mesh interface if they exist."""
-		interface = self.find_mesh_interface(network_interface_id) if network_interface_id else None
-		if interface is not None:
-			interface_id = interface["NetworkInterfaceId"]
-			if interface_id != network_interface_id:
-				raise AwsError(
-					f"AWS returned mesh interface {interface_id} for requested ID {network_interface_id}"
-				)
-			attachment = interface.get("Attachment", {})
-			attached_instance = attachment.get("InstanceId")
-			if attached_instance and attached_instance != provider_server_id:
-				raise AwsError(f"AWS mesh interface {interface_id} belongs to instance {attached_instance}")
-			attachment_id = attachment.get("AttachmentId")
-			if attached_instance and not isinstance(attachment_id, str):
-				raise AwsError(f"AWS mesh interface {interface_id} has no attachment ID")
-
-			if attached_instance:
-				self.client.call(
-					"ec2",
-					"modify_network_interface_attribute",
-					NetworkInterfaceId=interface_id,
-					Attachment={"AttachmentId": attachment_id, "DeleteOnTermination": True},
-				)
-			else:
-				self.client.call(
-					"ec2",
-					"delete_network_interface",
-					NetworkInterfaceId=interface_id,
-					allow_missing=True,
-				)
-
+	def delete(self, provider_server_id: str) -> None:
+		"""Delete one AWS instance if it exists."""
 		self.client.call("ec2", "terminate_instances", InstanceIds=[provider_server_id], allow_missing=True)
 
 	@classmethod
