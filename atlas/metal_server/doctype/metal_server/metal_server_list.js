@@ -434,7 +434,9 @@ frappe.listview_settings["Metal Server"] = {
 		if (!frappe.user.has_role("System Manager")) return;
 		frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
 			if (provider === "Redfish") {
-				listview.page.set_primary_action(__("Register Server"), () => frappe.new_doc("Metal Server"));
+				listview.page.set_primary_action(__("Register Server"), () =>
+					frappe.new_doc("Metal Server")
+				);
 			}
 			if (["AWS", "Scaleway"].includes(provider)) {
 				listview.page.add_inner_button(__("Import Server"), () =>
