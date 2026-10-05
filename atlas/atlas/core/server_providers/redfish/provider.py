@@ -92,7 +92,10 @@ class RedfishProvider(ServerProvider):
 
 	@override
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
-		raise UnsupportedProviderOperation(f"the Redfish {action} power action")
+		if action == ServerPowerAction.START:
+			self._client(provider_server_id).power_on()
+		else:
+			raise UnsupportedProviderOperation(f"the Redfish {action} power action")
 
 	@override
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, object]) -> None:

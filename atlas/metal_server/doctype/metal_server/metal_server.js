@@ -58,13 +58,14 @@ frappe.ui.form.on("Metal Server", {
 		configure_provider(frm.doc.__onload?.server_provider);
 		if (frm.doc.__onload?.server_provider === "Redfish") {
 			if (frm.doc.status !== "Deleted") {
-				frm.add_custom_button(__("Refresh Power State"), () => {
-					frm.call({
-						method: "refresh_redfish_power_state",
-						doc: frm.doc,
-						freeze: true,
-						freeze_message: __("Reading BMC power state..."),
-					}).then(() => frm.reload_doc());
+				[
+					[__("Refresh Power State"), "refresh_redfish_power_state", true, __("Reading BMC power state...")],
+					[__("Power On"), "poweron_server", frm.doc.redfish_power_state === "Off", __("Powering on server...")],
+				].forEach(([label, method, enabled, freeze_message]) => {
+					if (!enabled) return;
+					frm.add_custom_button(label, () => {
+						frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => frm.reload_doc());
+					});
 				});
 			}
 			return;

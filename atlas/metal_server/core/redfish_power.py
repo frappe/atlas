@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe.utils import now_datetime
 
+from atlas.atlas.core.server_providers.base import ServerPowerAction
 from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishPowerStatus
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 
@@ -24,6 +25,13 @@ class RedfishPower:
 
 	def refresh(self) -> None:
 		"""Refresh power and health without promoting the host to Running."""
+		self._run()
+
+	def set_power_state(self, action: ServerPowerAction) -> None:
+		"""Apply one power action and store the resulting observation."""
+		self._run(action)
+
+	def _run(self, action: ServerPowerAction | None = None) -> None:
 		lock_name = (
 			"redfish-power:" + sha256(f"{frappe.db.cur_db_name}:{self.server.name}".encode()).hexdigest()[:32]
 		)
@@ -31,6 +39,8 @@ class RedfishPower:
 			frappe.db.rollback()  # nosemgrep
 			self.server.reload()
 			self.server._validate_power_action()
+			if action is not None:
+				self.provider.set_power_state(self.server._provider_server_id(), action)
 			status = self.provider.read_power_status(self.server._provider_server_id())
 			self._apply_status(status)
 			frappe.db.commit()  # nosemgrep
