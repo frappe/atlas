@@ -17,6 +17,7 @@ Behavior: [provisioning](../../docs/region/index.md), [hosts](../../docs/region/
 | `disk_inventory` | Block devices to Metal Server Disk rows |
 | `catalog_sync` | Size and Image catalogs from the provider |
 | `host_inspection` | Generic host registration. See [providers](../../docs/region/provider-guide.md#generic-provider). |
+| `redfish_registration` | Inserts or reuses an existing Redfish system without provisioning. See [Redfish registration](../../docs/region/provider-guide.md#register-a-machine). |
 | `PublicIPPool` (DocType) | One address range and its attachment |
 | `PublicIPAllocation` (DocType) | One tenant prefix and its requested VM attachment |
 | `PublicIPService` | Allocation, attachment, and reconciliation |
@@ -28,6 +29,8 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 
 - Provisioning commits after each phase. Every phase must be safe to repeat.
 - Creation reuses the stored identity key, so a lost provider response cannot create a second host.
+- Redfish registration identifies a ComputerSystem with GET requests. Its canonical URL determines the provider server ID. An advisory lock covers the active-record lookup and committed insert.
+- A new Redfish record must use the registration API. It stays Pending, has optional size and image, and does not enqueue provisioning. Other providers require both catalog fields.
 - `metald` listens only on the host WireGuard address. The provider returns the storage pool device. Host installation never searches for a disk.
 - `ssh_host` is the host WireGuard address once the host has a WireGuard key. Only setup before that uses the public address.
 - `title` is one lowercase DNS label, unique across all hosts, including deleted ones (a database unique index). It is read-only; `before_insert` sets it to `metal-<region_name>-<counter>`. Warpgate names the host target and role after it.
@@ -40,3 +43,7 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 
 - [Provider guide](../../docs/region/provider-guide.md): the provider contract.
 - [Atlas settings module](../atlas/SPEC.md): provider implementations and settings.
+
+## Validation
+
+`core/test_redfish_registration.py` covers provider selection, permissions, duplicate reuse, optional catalogs, and provisioning suppression. `doctype/metal_server/test_metal_server.py` covers the existing host lifecycle. Live registration checks are described in the [provider guide](../../docs/region/provider-guide.md#implementation-and-validation).

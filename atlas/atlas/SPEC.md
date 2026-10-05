@@ -30,7 +30,9 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 
 ## Provider boundary
 
-Domain code reaches a provider only through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. Redfish is registered scaffolding with no remote operations. See the [Redfish provider guide](../../docs/region/provider-guide.md#redfish).
+Host lifecycle code reaches a provider through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. Redfish registration reads an existing system through `RedfishClient`; remote host creation and provisioning remain unsupported. See the [Redfish provider guide](../../docs/region/provider-guide.md#redfish).
+
+`redfish/client.py` returns a typed `RedfishSystem` identity. It validates HTTP resources and keeps links on one service. It does not save documents or commit transactions. `redfish/test_client.py` covers discovery and error boundaries.
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
 - Metal Server Size stores disk in GiB and price in integer USD cents.

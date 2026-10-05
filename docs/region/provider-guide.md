@@ -7,7 +7,7 @@ Choose the provider configured for your region.
 | [Generic](#generic-provider) | Register hosts you prepare. |
 | [Scaleway](#scaleway) | Provider-managed Elastic Metal hosts. |
 | [AWS](#aws) | EC2 hosts with one network interface and an Elastic IP. |
-| [Redfish](#redfish) | Provider scaffolding. Remote operations are not implemented. |
+| [Redfish](#redfish) | Register an existing machine through its Redfish endpoint. |
 
 To add an adapter, start with [Add a provider](#add-a-provider).
 
@@ -117,11 +117,43 @@ Attach and detach change only Metal's VM network. Atlas does not change provider
 
 Redfish is registered as a server provider and appears in Atlas Settings. The automated setup input accepts `Redfish` with no provider-specific fields.
 
-Each Metal Server has `redfish_url`, `redfish_username`, and `redfish_password` fields. The Redfish section appears when Atlas Settings selects Redfish, including on a new Metal Server. The password uses a Frappe Password field.
-
 Redfish manages existing machines. Atlas Settings refuses **Metal Auto-spawn Config > Enabled**. Settings validation does not contact a baseboard management controller (BMC) or check the per-server credentials.
 
-The provider is scaffolding only. It has no API client. Infrastructure setup, credential validation, catalog discovery, host preparation, and power operations raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup.
+### Register a machine
+
+Select **Redfish** as **Server Provider** in Atlas Settings. Keep **Metal Auto-spawn Config > Enabled** off. Sign in with the **System Manager** role.
+
+Open the Metal Server list and select **Register Server**. Registration uses one Metal Server form. Enter the connection values and select **Register**:
+
+| Field | Value |
+| --- | --- |
+| Redfish URL | Service root, Systems collection with one member, or individual ComputerSystem URL. |
+| Redfish Username | BMC account name. Leave empty for an endpoint that accepts requests without authentication. |
+| Redfish Password | BMC account password. Leave empty only when the username is also empty. |
+
+For the local sample endpoint, set **Redfish URL** to `http://127.0.0.1:18000/redfish/v1/Systems` and leave both credential fields empty. The endpoint must be reachable from the Atlas process. `127.0.0.1` refers to the host where Atlas runs.
+
+The local sample identifies the same system at `http://127.0.0.1:18000/redfish/v1/Systems/5b5fbab3-d07c-4b27-b551-fbdb78c77912`. Use an individual system URL when the collection has zero or multiple members.
+
+Atlas follows the advertised service links with GET requests. It accepts only links on the configured service and refuses redirects. HTTPS uses certificate verification. A connection, authentication, or response error prevents registration.
+
+Registration stores the canonical system URL in `redfish_url`, credentials in `redfish_username` and the encrypted `redfish_password` field, and the system Id, Name, and UUID in `provider_metadata`. Atlas generates `provider_server_id` from the canonical system URL.
+
+An active record with the same provider server ID is reused without changing its credentials. Registration opens that record. A Deleted record does not block a new registration.
+
+The record stays **Pending** with provisioning incomplete. Registration does not create a machine, change BMC state, install software, prepare disks, or enqueue provisioning.
+
+Size and image are optional for Redfish and remain required for the other providers. Registration does not establish hardware inventory or VM capacity.
+
+### Implementation and validation
+
+The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport and system identity discovery. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection. A database lock covers the lookup and committed insert.
+
+The form uses the POST API `atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server`. It requires the System Manager role and accepts `redfish_url`, `redfish_username`, and `redfish_password`. Direct insertion of a new Redfish Metal Server through the standard Save API is refused.
+
+Deterministic tests cover discovery, credentials, malformed responses, unsafe links, duplicate registration, permissions, and provisioning suppression. Live checks against the local sample cover root, collection, and individual system URLs, existing-record reuse, and a fresh insert rolled back after password encryption checks. The checks compare BMC responses before and after registration.
+
+Infrastructure setup, standalone credential validation, catalog discovery, host preparation, and power operations still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide these unsupported host actions.
 
 The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 
