@@ -36,7 +36,9 @@ The **Enable BMC Access** option in Atlas Settings shows only for the Generic pr
 
 When it is on, you can store the BMC Redfish details of each host: the ComputerSystem URL, such as `https://10.0.0.5/redfish/v1/Systems/1`, the username, and the password. Enter all three or none.
 
-The **Power State** field in the **BMC** section of the Metal Server form shows the live Redfish `PowerState`, such as `On` or `Off`. Atlas reads it each time you open the form. If the read fails, the form shows the reason at the top. Atlas does not change the host power through the BMC yet.
+The **Power State** field in the **BMC** section of the Metal Server form shows the live Redfish `PowerState`, such as `On` or `Off`. Atlas reads it each time you open the form. If the read fails, the form shows the reason at the top.
+
+When BMC access is on, **Reboot**, **Power Off**, and **Power On** on the Metal Server form use the Redfish `ComputerSystem.Reset` action. Atlas sends a graceful reset type when the BMC offers it, and a forced one only when the BMC offers no graceful type. Atlas does not wait for the new power state. Check **Power State** to see the result. When BMC access is off, Atlas refuses these actions for Generic hosts.
 
 ### Prepare a host
 
