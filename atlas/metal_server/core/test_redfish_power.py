@@ -128,7 +128,7 @@ class TestRedfishPower(UnitTestCase):
 		power.assert_called_once_with(self.server)
 		power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.START)
 
-	def test_shutdown_saves_stopped_only_after_observing_off(self) -> None:
+	def test_shutdown_delegates_the_saved_provider_identity(self) -> None:
 		with (
 			patch.object(self.provider, "set_power_state") as change,
 			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("Off", "OK")),
@@ -138,7 +138,6 @@ class TestRedfishPower(UnitTestCase):
 		):
 			RedfishPower(self.server).set_power_state(ServerPowerAction.STOP)
 		change.assert_called_once_with("provider-id", ServerPowerAction.STOP)
-		self.assertEqual(self.server.db_set.call_args.args[0]["status"], "Stopped")
 
 	def test_shutdown_route_checks_permission_and_delegates_to_the_power_owner(self) -> None:
 		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:

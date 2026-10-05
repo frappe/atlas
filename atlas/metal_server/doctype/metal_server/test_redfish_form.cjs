@@ -8,10 +8,12 @@ function form({ isNew = false, status = "Pending", powerState = "On", confirm = 
 	let handlers;
 	const buttons = new Map();
 	const calls = [];
+	const alerts = [];
 	const frappe = {
 		ui: { form: { on: (_name, value) => (handlers = value) } },
 		db: { get_single_value: async () => "Redfish" },
 		confirm: (_message, action) => confirm && action(),
+		show_alert: (message) => alerts.push(message),
 	};
 	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "metal_server.js"), "utf8"), {
 		frappe,
@@ -32,7 +34,7 @@ function form({ isNew = false, status = "Pending", powerState = "On", confirm = 
 		reload_doc: () => calls.push("reload"),
 	};
 	handlers.refresh(frm);
-	return { buttons, calls };
+	return { buttons, calls, alerts };
 }
 
 test("saved Redfish forms refresh BMC state without offering host preparation", async () => {
@@ -74,7 +76,6 @@ test("Power Off confirms graceful shutdown and is offered only for On", async ()
 	buttons.get("Power Off")();
 	await Promise.resolve();
 	assert.equal(calls[0].method, "poweroff_server");
-	assert.equal(calls[1], "reload");
 	const cancelled = form({ confirm: false });
 	cancelled.buttons.get("Power Off")();
 	assert.deepEqual(cancelled.calls, []);

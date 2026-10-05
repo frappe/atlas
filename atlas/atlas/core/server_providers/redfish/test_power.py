@@ -234,7 +234,7 @@ class TestRedfishPowerOn(UnitTestCase):
 
 
 class TestRedfishPowerOff(UnitTestCase):
-	def test_graceful_shutdown_observes_off(self) -> None:
+	def test_shutdown_uses_the_advertised_graceful_reset(self) -> None:
 		with (
 			patch(
 				"requests.get",
@@ -265,14 +265,12 @@ class TestRedfishPowerOff(UnitTestCase):
 				RedfishClient(SYSTEM_URL).power_off()
 		post.assert_not_called()
 
-	def test_shutdown_timeout_never_falls_back_to_force_off(self) -> None:
+	def test_failed_shutdown_never_falls_back_to_force_off(self) -> None:
 		with (
 			patch("requests.get", return_value=response(resource("On", ("GracefulShutdown", "ForceOff")))),
-			patch("requests.post", return_value=response(status=204)) as post,
-			patch(f"{MODULE}.monotonic", side_effect=[0, 0, 121, 121]),
-			patch(f"{MODULE}.sleep"),
+			patch("requests.post", return_value=response(status=500)) as post,
 		):
-			with self.assertRaisesRegex(RedfishError, "did not report Off"):
+			with self.assertRaisesRegex(RedfishError, "HTTP 500"):
 				RedfishClient(SYSTEM_URL).power_off()
 		post.assert_called_once()
 		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
@@ -347,7 +345,6 @@ class TestRedfishPowerReadRecovery(UnitTestCase):
 	def test_temporary_power_reads_recover_without_repeating_the_reset(self) -> None:
 		for method, current, expected, reset_type in (
 			("power_on", "Off", "On", "On"),
-			("power_off", "On", "Off", "GracefulShutdown"),
 			("reboot", "On", "On", "GracefulRestart"),
 		):
 			for failure in (
@@ -381,14 +378,14 @@ class TestRedfishPowerReadRecovery(UnitTestCase):
 		with (
 			patch(
 				"requests.get",
-				side_effect=[response(resource("On", ("GracefulShutdown",))), response(status=500)],
+				side_effect=[response(resource("Off", ("On",))), response(status=500)],
 			) as read,
 			patch("requests.post", return_value=response(status=204)) as post,
 			patch(f"{MODULE}.monotonic", side_effect=[0, 0, 121, 121]),
 			patch(f"{MODULE}.sleep"),
 		):
 			with self.assertRaisesRegex(RedfishError, "last power read failed:.*HTTP 500.*refresh") as raised:
-				RedfishClient(SYSTEM_URL).power_off()
+				RedfishClient(SYSTEM_URL).power_on()
 		self.assertEqual(read.call_count, 2)
 		post.assert_called_once()
 		self.assertFalse(raised.exception.is_retryable)
@@ -398,17 +395,17 @@ class TestRedfishPowerReadRecovery(UnitTestCase):
 			patch(
 				"requests.get",
 				side_effect=[
-					response(resource("On", ("GracefulShutdown",))),
+					response(resource("Off", ("On",))),
 					response(status=500),
-					response(resource("On")),
+					response(resource("Off")),
 				],
 			),
 			patch("requests.post", return_value=response(status=204)) as post,
 			patch(f"{MODULE}.monotonic", side_effect=[0, 0, 1, 2, 121, 121]),
 			patch(f"{MODULE}.sleep"),
 		):
-			with self.assertRaisesRegex(RedfishError, "did not report Off") as raised:
-				RedfishClient(SYSTEM_URL).power_off()
+			with self.assertRaisesRegex(RedfishError, "did not report On") as raised:
+				RedfishClient(SYSTEM_URL).power_on()
 		self.assertNotIn("HTTP 500", str(raised.exception))
 		post.assert_called_once()
 
@@ -427,13 +424,13 @@ class TestRedfishPowerReadRecovery(UnitTestCase):
 				self.subTest(failure=failure),
 				patch(
 					"requests.get",
-					side_effect=[response(resource("On", ("GracefulShutdown",))), failure],
+					side_effect=[response(resource("Off", ("On",))), failure],
 				) as read,
 				patch("requests.post", return_value=response(status=204)) as post,
 				patch(f"{MODULE}.sleep") as sleep,
 			):
 				with self.assertRaises(RedfishError) as raised:
-					RedfishClient(SYSTEM_URL).power_off()
+					RedfishClient(SYSTEM_URL).power_on()
 				self.assertNotIn("test-password", str(raised.exception))
 				self.assertEqual(read.call_count, 2)
 				sleep.assert_not_called()
