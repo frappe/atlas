@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.server_providers.base import ServerPowerAction
 from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishPowerStatus
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.core.redfish_power import RedfishPower
@@ -93,3 +94,36 @@ class TestRedfishPower(UnitTestCase):
 			with self.assertRaises(frappe.PermissionError):
 				MetalServer.refresh_redfish_power_state(self.server)
 			power.assert_not_called()
+
+	def test_power_on_stores_an_observation_only_after_the_action_succeeds(self) -> None:
+		self.server.status = "Stopped"
+		with (
+			patch.object(self.provider, "set_power_state") as change,
+			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")),
+			patch("frappe.db.advisory_lock", return_value=nullcontext()),
+			patch("frappe.db.rollback"),
+			patch("frappe.db.commit"),
+		):
+			RedfishPower(self.server).set_power_state(ServerPowerAction.START)
+		change.assert_called_once_with("provider-id", ServerPowerAction.START)
+		self.assertEqual(self.server.db_set.call_args.args[0]["status"], "Pending")
+
+	def test_failed_power_on_does_not_save_an_optimistic_state(self) -> None:
+		with (
+			patch.object(self.provider, "set_power_state", side_effect=RedfishError("outcome unknown")),
+			patch.object(self.provider, "read_power_status") as read,
+			patch("frappe.db.advisory_lock", return_value=nullcontext()),
+			patch("frappe.db.rollback"),
+			patch("frappe.db.commit") as commit,
+		):
+			with self.assertRaises(RedfishError):
+				RedfishPower(self.server).set_power_state(ServerPowerAction.START)
+		read.assert_not_called()
+		self.server.db_set.assert_not_called()
+		commit.assert_not_called()
+
+	def test_redfish_power_on_route_delegates_to_the_power_owner(self) -> None:
+		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
+			MetalServer.poweron_server(self.server)
+		power.assert_called_once_with(self.server)
+		power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.START)

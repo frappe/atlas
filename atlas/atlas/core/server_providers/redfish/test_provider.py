@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.server_providers.base import ServerPowerAction
 from atlas.atlas.core.server_providers.redfish import RedfishError, RedfishProvider
 from atlas.atlas.core.server_providers.registry import get_server_provider
 
@@ -82,3 +83,10 @@ class TestRedfishProvider(UnitTestCase):
 				with self.assertRaises(RedfishError):
 					RedfishProvider(SimpleNamespace()).read_power_status("unverified-id")
 				read.assert_not_called()
+
+	def test_start_uses_the_registered_client_power_on_action(self) -> None:
+		provider = RedfishProvider(SimpleNamespace())
+		with patch.object(provider, "_client") as client:
+			provider.set_power_state("provider-id", ServerPowerAction.START)
+		client.assert_called_once_with("provider-id")
+		client.return_value.power_on.assert_called_once_with()

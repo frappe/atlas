@@ -53,3 +53,15 @@ test("new forms keep the single Register action", async () => {
 	assert.ok(buttons.has("Register"));
 	assert.ok(!buttons.has("Refresh Power State"));
 });
+
+test("Power On is available for an Off BMC and uses the saved-document method", async () => {
+	const { buttons, calls } = form({ powerState: "Off", status: "Stopped" });
+	assert.ok(buttons.has("Power On"));
+	buttons.get("Power On")();
+	await Promise.resolve();
+	assert.equal(calls[0].method, "poweron_server");
+	assert.equal(calls[1], "reload");
+	for (const powerState of ["On", "PoweringOn", "PoweringOff", ""]) {
+		assert.ok(!form({ powerState }).buttons.has("Power On"));
+	}
+});
