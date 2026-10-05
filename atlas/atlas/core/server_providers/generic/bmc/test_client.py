@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import requests
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.redfish.client import RedfishClient, RedfishError
+from atlas.atlas.core.server_providers.generic.bmc.client import RedfishClient, RedfishError
 
 ROOT = "http://bmc.example/redfish/v1"
 SYSTEM_PATH = "/redfish/v1/Systems/machine-1"

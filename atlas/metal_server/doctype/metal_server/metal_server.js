@@ -3,10 +3,10 @@
 
 frappe.ui.form.on("Metal Server", {
 	refresh(frm) {
-		function configure_provider(provider) {
-			const is_redfish = provider === "Redfish";
-			frm.toggle_display("redfish_section", is_redfish);
-			frm.toggle_reqd("redfish_url", is_redfish);
+		function configure_provider(provider, driver) {
+			const is_bmc = provider === "Generic" && driver === "BMC";
+			frm.toggle_display("redfish_section", is_bmc);
+			frm.toggle_reqd("redfish_url", is_bmc);
 			for (const field of [
 				"section_break_configuration",
 				"section_break_cjau",
@@ -16,18 +16,18 @@ frappe.ui.form.on("Metal Server", {
 				"tags_section",
 				"is_sleepy_vm_host",
 			]) {
-				frm.toggle_display(field, !(frm.is_new() && is_redfish));
+				frm.toggle_display(field, !(frm.is_new() && is_bmc));
 			}
 			for (const field of ["server_size", "server_image"]) {
-				frm.toggle_display(field, !is_redfish);
-				frm.toggle_reqd(field, !is_redfish);
+				frm.toggle_display(field, !is_bmc);
+				frm.toggle_reqd(field, !is_bmc);
 			}
 
-			if (frm.is_new() && is_redfish) {
+			if (frm.is_new() && is_bmc) {
 				frm.disable_save();
 				frm.page.set_primary_action(__("Register"), () => {
 					if (!frm.doc.redfish_url) {
-						frappe.msgprint(__("Enter the Redfish URL."));
+						frappe.msgprint(__("Enter the BMC URL."));
 						return;
 					}
 					frappe
@@ -39,7 +39,7 @@ frappe.ui.form.on("Metal Server", {
 								redfish_password: frm.doc.redfish_password || "",
 							},
 							freeze: true,
-							freeze_message: __("Registering Redfish server..."),
+							freeze_message: __("Registering BMC server..."),
 						})
 						.then(({ message }) => {
 							frm.doc.__unsaved = 0;
@@ -52,13 +52,20 @@ frappe.ui.form.on("Metal Server", {
 		}
 
 		if (frm.is_new()) {
-			frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
-				configure_provider(provider);
-			});
+			Promise.all([
+				frappe.db.get_single_value("Atlas Settings", "server_provider"),
+				frappe.db.get_single_value("Atlas Settings", "generic_provider_driver"),
+			]).then(([provider, driver]) => configure_provider(provider, driver));
 			return;
 		}
-		configure_provider(frm.doc.__onload?.server_provider);
-		if (frm.doc.__onload?.server_provider === "Redfish") {
+		configure_provider(
+			frm.doc.__onload?.server_provider,
+			frm.doc.__onload?.generic_provider_driver
+		);
+		if (
+			frm.doc.__onload?.server_provider === "Generic" &&
+			frm.doc.__onload?.generic_provider_driver === "BMC"
+		) {
 			if (frm.doc.__onload.redfish_power_error) {
 				frappe.show_alert({
 					message: frm.doc.__onload.redfish_power_error,

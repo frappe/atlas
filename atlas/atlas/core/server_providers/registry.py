@@ -36,12 +36,11 @@ def get_server_provider(
 	if provider_class is None:
 		raise ValueError(f"No implementation exists for server provider type {resolved_type!r}")
 
-	return provider_class(settings)
+	return provider_class.from_settings(settings)
 
 
 def load_implementations() -> None:
 	"""Load the built-in server provider implementations."""
 	import atlas.atlas.core.server_providers.aws
 	import atlas.atlas.core.server_providers.generic
-	import atlas.atlas.core.server_providers.redfish
 	import atlas.atlas.core.server_providers.scaleway

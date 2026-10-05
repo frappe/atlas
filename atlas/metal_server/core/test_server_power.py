@@ -8,8 +8,8 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerPowerAction, ServerPowerStatus
-from atlas.atlas.core.server_providers.redfish.client import RedfishError
-from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
+from atlas.atlas.core.server_providers.generic.bmc.client import RedfishError
+from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver
 from atlas.metal_server.core.server_power import ServerPower
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
@@ -17,7 +17,7 @@ from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 class TestServerPower(UnitTestCase):
 	def setUp(self) -> None:
 		super().setUp()
-		self.provider = RedfishProvider(SimpleNamespace())
+		self.provider = BMCDriver(SimpleNamespace())
 		self.server = SimpleNamespace(
 			name="record",
 			doctype="Metal Server",

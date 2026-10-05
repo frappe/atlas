@@ -5,12 +5,12 @@ from unittest.mock import Mock, patch
 import requests
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.redfish.client import RedfishClient, RedfishError
+from atlas.atlas.core.server_providers.generic.bmc.client import RedfishClient, RedfishError
 
 SYSTEM_URL = "http://bmc.example/redfish/v1/Systems/host-1"
 RESET_URL = SYSTEM_URL + "/Actions/ComputerSystem.Reset"
 TASK_URL = "http://bmc.example/redfish/v1/TaskService/TaskMonitors/1"
-MODULE = "atlas.atlas.core.server_providers.redfish.client"
+MODULE = "atlas.atlas.core.server_providers.generic.bmc.client"
 
 
 def resource(power_state: str, reset_types: tuple[str, ...] = ("On",)) -> dict:

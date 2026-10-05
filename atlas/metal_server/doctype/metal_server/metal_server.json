@@ -136,31 +136,31 @@
    "fieldname": "redfish_section",
    "fieldtype": "Section Break",
    "hidden": 1,
-   "label": "Redfish"
+   "label": "BMC"
   },
   {
    "fieldname": "redfish_url",
    "fieldtype": "Data",
-   "label": "Redfish URL",
+   "label": "BMC URL",
    "options": "URL",
    "description": "Service root, single-machine Systems collection, or individual system URL."
   },
   {
    "fieldname": "redfish_username",
    "fieldtype": "Data",
-   "label": "Redfish Username"
+   "label": "BMC Username"
   },
   {
    "fieldname": "redfish_password",
    "fieldtype": "Password",
-   "label": "Redfish Password",
+   "label": "BMC Password",
    "no_copy": 1
   },
   {
    "fieldname": "redfish_power_state",
    "fieldtype": "Select",
    "is_virtual": 1,
-   "label": "Redfish Power State",
+   "label": "BMC Power State",
    "options": "\nOn\nOff\nPoweringOn\nPoweringOff\nPaused\nSleeping\nHibernating",
    "read_only": 1,
    "description": "BMC power state read on demand. This does not confirm Metal readiness.",
@@ -170,7 +170,7 @@
    "fieldname": "redfish_health",
    "fieldtype": "Data",
    "is_virtual": 1,
-   "label": "Redfish Health",
+   "label": "BMC Health",
    "read_only": 1
   },
   {

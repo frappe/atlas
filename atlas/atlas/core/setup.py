@@ -18,8 +18,7 @@ from atlas.service.core.warpgate.installation import WarpgateTokenManager, publi
 # The setup input carries the fields of the selected server provider only.
 PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 	{
-		"Generic": (),
-		"Redfish": (),
+		"Generic": ("generic_provider_driver",),
 		"Scaleway": (
 			"scaleway_organization_id",
 			"scaleway_project_id",
@@ -40,8 +39,7 @@ PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 # A provider resource carries these values, so a completed region cannot change them.
 PROVIDER_IMMUTABLE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 	{
-		"Generic": (),
-		"Redfish": (),
+		"Generic": ("generic_provider_driver",),
 		"Scaleway": ("scaleway_organization_id", "scaleway_project_id", "scaleway_zone"),
 		"AWS": ("aws_region", "aws_availability_zone"),
 	}
@@ -83,6 +81,7 @@ class AtlasSetupConfiguration:
 	auto_spawn_metal_server: bool
 	default_metal_machine_size: str
 	default_metal_machine_image: str
+	generic_provider_driver: str = "SSH"
 	warpgate_url: str = ""
 	warpgate_api_token: str = ""
 	warpgate_api_token_id: str = ""
@@ -103,7 +102,13 @@ class AtlasSetupConfiguration:
 		if not isinstance(values, dict):
 			raise ValueError("Atlas setup configuration must be a JSON object")
 
+		values = dict(values)
 		provider = values.get("server_provider")
+		if provider == "Redfish":
+			provider = values["server_provider"] = "Generic"
+			values["generic_provider_driver"] = "BMC"
+		if provider == "Generic":
+			values.setdefault("generic_provider_driver", "SSH")
 		if provider not in PROVIDER_FIELDS:
 			raise ValueError(
 				f"Atlas setup field server_provider must be one of {', '.join(sorted(PROVIDER_FIELDS))}"
@@ -165,6 +170,9 @@ class AtlasSetupConfiguration:
 					raise ValueError(
 						f"Atlas setup field {field} is required when auto_spawn_metal_server is true"
 					)
+
+		if provider == "Generic" and values["generic_provider_driver"] not in ("SSH", "BMC"):
+			raise ValueError("Atlas setup field generic_provider_driver must be SSH or BMC")
 
 		normalized_values = {
 			**values,

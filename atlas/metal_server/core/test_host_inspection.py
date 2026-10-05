@@ -356,5 +356,5 @@ class TestHostRegistrationChecks(UnitTestCase):
 		from atlas.atlas.core.server_providers.generic import GenericProvider
 
 		settings = SimpleNamespace(private_network_cidr="10.0.0.0/16")
-		settings.server_provider_controller = Mock(spec=GenericProvider)
+		settings.server_provider_controller = GenericProvider(settings)
 		return patch(f"{MODULE}.frappe.get_single", return_value=settings)

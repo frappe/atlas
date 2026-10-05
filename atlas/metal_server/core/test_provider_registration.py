@@ -7,9 +7,9 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.base import UnsupportedProviderOperation
-from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishSystem
-from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
+from atlas.atlas.core.server_providers.base import ProviderOperationError, UnsupportedProviderOperation
+from atlas.atlas.core.server_providers.generic.bmc.client import RedfishSystem
+from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver
 from atlas.metal_server.core.provider_registration import register_server
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
@@ -21,12 +21,12 @@ class TestProviderRegistration(UnitTestCase):
 	def setUp(self) -> None:
 		super().setUp()
 		self.settings = SimpleNamespace(auto_spawn_metal_server=0)
-		self.settings.server_provider_controller = RedfishProvider(self.settings)
+		self.settings.server_provider_controller = BMCDriver(self.settings)
 
 	def test_reuses_an_active_record_without_changing_or_provisioning_it(self) -> None:
 		server = SimpleNamespace(insert=Mock(), db_set=Mock(), _enqueue_setup_server=Mock())
 		with (
-			patch("atlas.atlas.core.server_providers.redfish.provider.RedfishClient") as client,
+			patch("atlas.atlas.core.server_providers.generic.bmc.driver.RedfishClient") as client,
 			patch(f"{MODULE}.frappe.get_doc", return_value=server),
 			patch(f"{MODULE}.frappe.db.get_value", return_value="registered-server"),
 			patch(f"{MODULE}.frappe.db.advisory_lock", return_value=nullcontext()),
@@ -55,9 +55,9 @@ class TestProviderRegistration(UnitTestCase):
 			settings = SimpleNamespace(server_provider_controller=provider)
 			self.settings.auto_spawn_metal_server = enabled
 			with (
-				patch("atlas.atlas.core.server_providers.redfish.provider.RedfishClient") as client,
+				patch("atlas.atlas.core.server_providers.generic.bmc.driver.RedfishClient") as client,
 			):
-				with self.assertRaises(RedfishError if enabled else UnsupportedProviderOperation):
+				with self.assertRaises(ProviderOperationError if enabled else UnsupportedProviderOperation):
 					register_server(SimpleNamespace(settings=settings))
 				client.assert_not_called()
 

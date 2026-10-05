@@ -18,6 +18,7 @@ from atlas.atlas.core.server_providers.base import (
 )
 
 if TYPE_CHECKING:
+	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
 
@@ -27,16 +28,26 @@ class GenericError(ProviderOperationError):
 
 @register
 class GenericProvider(ServerProvider):
-	"""Use hosts that an operator prepares and registers after a host inspection.
-
-	The host network routes each public address to any host, so Metal only
-	adds an attached address to the virtual machine port.
-	"""
+	"""Manage operator-owned hosts through the selected Generic driver."""
 
 	provider_type = "Generic"
 	credential_fields = ()
 	ssh_users = ("root",)
 	error_class = GenericError
+
+	@classmethod
+	@override
+	def from_settings(cls, settings: "AtlasSettings | None" = None) -> ServerProvider:
+		"""Select the SSH or BMC driver for Generic hosts."""
+		settings = settings or frappe.get_single("Atlas Settings")
+		driver = getattr(settings, "generic_provider_driver", None) or "SSH"
+		if driver == "BMC":
+			from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver
+
+			return BMCDriver(settings)
+		if driver != "SSH":
+			raise GenericError(f"Unknown Generic provider driver {driver!r}")
+		return cls(settings)
 
 	@override
 	def validate_settings(self) -> None:

@@ -17,7 +17,10 @@ function form({
   const alerts = [];
   const frappe = {
     ui: { form: { on: (_name, value) => (handlers = value) } },
-    db: { get_single_value: async () => "Redfish" },
+    db: {
+      get_single_value: async (_doctype, field) =>
+        field === "server_provider" ? "Generic" : "BMC",
+    },
     confirm: (_message, action) => confirm && action(),
     show_alert: (message) => alerts.push(message),
     call: async (request) => calls.push(request),
@@ -34,7 +37,11 @@ function form({
       name: "record",
       status,
       redfish_power_state: powerState,
-      __onload: { server_provider: "Redfish", redfish_power_error: powerError },
+      __onload: {
+        server_provider: "Generic",
+        generic_provider_driver: "BMC",
+        redfish_power_error: powerError,
+      },
     },
     is_new: () => isNew,
     toggle_display: () => {},
@@ -52,7 +59,7 @@ function form({
   return { buttons, calls, alerts };
 }
 
-test("saved Redfish forms refresh BMC state without offering host preparation", async () => {
+test("saved Generic BMC forms refresh BMC state without offering host preparation", async () => {
   const { buttons, calls } = form();
   assert.ok(buttons.has("Refresh Power State"));
   assert.ok(!buttons.has("Retry Provisioning"));
@@ -69,7 +76,7 @@ test("deleted records have no BMC actions", () => {
 
 test("new forms keep the single Register action", async () => {
   const { buttons } = form({ isNew: true });
-  await Promise.resolve();
+  await new Promise(setImmediate);
   assert.ok(buttons.has("Register"));
   assert.ok(!buttons.has("Refresh Power State"));
 });

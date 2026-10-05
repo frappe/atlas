@@ -7,14 +7,15 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.redfish import RedfishError, RedfishProvider
-from atlas.atlas.core.server_providers.redfish.test_client import COLLECTION, ROOT, SYSTEM, response
+from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver, RedfishError
+from atlas.atlas.core.server_providers.generic.bmc.test_client import COLLECTION, ROOT, SYSTEM, response
+from atlas.atlas.core.server_providers.generic.provider import GenericError
 from atlas.atlas.core.server_providers.registry import get_server_provider
 
 
-class TestRedfishProvider(UnitTestCase):
+class TestBMCDriver(UnitTestCase):
 	def test_import_discovers_a_canonical_identity_without_saving_or_provisioning(self) -> None:
-		provider = RedfishProvider(SimpleNamespace(auto_spawn_metal_server=0))
+		provider = BMCDriver(SimpleNamespace(auto_spawn_metal_server=0))
 		server = frappe.new_doc("Metal Server")
 		server.redfish_url = "HTTP://BMC.EXAMPLE:80/redfish/v1/Systems/"
 		server.redfish_username = "operator"
@@ -46,20 +47,20 @@ class TestRedfishProvider(UnitTestCase):
 		save.assert_not_called()
 		commit.assert_not_called()
 
-	def test_registry_returns_the_redfish_provider(self) -> None:
-		settings = SimpleNamespace(auto_spawn_metal_server=0)
+	def test_registry_selects_bmc_as_a_generic_driver(self) -> None:
+		settings = SimpleNamespace(auto_spawn_metal_server=0, generic_provider_driver="BMC")
 
-		self.assertIsInstance(get_server_provider("Redfish", settings=settings), RedfishProvider)
+		self.assertIsInstance(get_server_provider("Generic", settings=settings), BMCDriver)
 
 	def test_settings_accept_manual_host_management(self) -> None:
-		provider = RedfishProvider(SimpleNamespace(auto_spawn_metal_server=0))
+		provider = BMCDriver(SimpleNamespace(auto_spawn_metal_server=0))
 
 		self.assertIsNone(provider.validate_settings())
 
 	def test_settings_reject_automatic_host_creation(self) -> None:
-		provider = RedfishProvider(SimpleNamespace(auto_spawn_metal_server=1))
+		provider = BMCDriver(SimpleNamespace(auto_spawn_metal_server=1))
 
-		with self.assertRaisesRegex(RedfishError, "automatically") as raised:
+		with self.assertRaisesRegex(GenericError, "automatically") as raised:
 			provider.validate_settings()
 
 		self.assertEqual(raised.exception.code, "provider_error")
@@ -97,7 +98,7 @@ class TestRedfishProvider(UnitTestCase):
 			patch("frappe.db.set_value") as save,
 			patch("frappe.db.commit") as commit,
 		):
-			self.assertTrue(RedfishProvider(SimpleNamespace()).validate_credentials())
+			self.assertTrue(BMCDriver(SimpleNamespace()).validate_credentials())
 		records.assert_called_once_with(
 			"Metal Server",
 			filters={"provider_server_id": ["like", "redfish-%"], "status": ["!=", "Deleted"]},
@@ -116,12 +117,12 @@ class TestRedfishProvider(UnitTestCase):
 
 	def test_credentials_refuse_an_empty_registration_set_without_network_access(self) -> None:
 		with patch("frappe.get_all", return_value=[]), patch("requests.get") as read:
-			with self.assertRaisesRegex(RedfishError, "Register a Redfish Metal Server"):
-				RedfishProvider(SimpleNamespace()).validate_credentials()
+			with self.assertRaisesRegex(RedfishError, "Register a BMC Metal Server"):
+				BMCDriver(SimpleNamespace()).validate_credentials()
 		read.assert_not_called()
 
 	def test_credentials_fail_on_the_first_inaccessible_system(self) -> None:
-		provider = RedfishProvider(SimpleNamespace())
+		provider = BMCDriver(SimpleNamespace())
 		for status in (401, 403, 500):
 			with (
 				self.subTest(status=status),
@@ -136,7 +137,7 @@ class TestRedfishProvider(UnitTestCase):
 			client.assert_called_once_with("first")
 
 	def test_credentials_reject_a_different_system_in_a_successful_response(self) -> None:
-		provider = RedfishProvider(SimpleNamespace())
+		provider = BMCDriver(SimpleNamespace())
 		with (
 			patch("frappe.get_all", return_value=["provider-id"]),
 			patch.object(provider, "_client") as client,
@@ -165,7 +166,7 @@ class TestRedfishProvider(UnitTestCase):
 				"@odata.id": url,
 				"PowerState": "On",
 			}
-			status = RedfishProvider(SimpleNamespace()).read_power_status(provider_id)
+			status = BMCDriver(SimpleNamespace()).read_power_status(provider_id)
 		self.assertEqual(status.power_state, "On")
 		self.assertEqual(read.call_args.kwargs["auth"], ("operator", "test-password"))
 		server.get_password.assert_called_once_with("redfish_password", raise_exception=False)
@@ -186,5 +187,5 @@ class TestRedfishProvider(UnitTestCase):
 				patch("requests.get") as read,
 			):
 				with self.assertRaises(RedfishError):
-					RedfishProvider(SimpleNamespace()).read_power_status("unverified-id")
+					BMCDriver(SimpleNamespace()).read_power_status("unverified-id")
 				read.assert_not_called()

@@ -401,11 +401,10 @@ class HostInspection:
 
 def validate_addresses(public_ipv4_address: str, private_ipv4_address: str) -> None:
 	"""Check both host addresses and refuse ones that an active Metal Server uses."""
-	from atlas.atlas.core.server_providers.generic import GenericProvider
-
 	settings = frappe.get_single("Atlas Settings")
-	if not isinstance(settings.server_provider_controller, GenericProvider):
-		frappe.throw(_("Host registration needs the Generic server provider."))
+	provider = settings.server_provider_controller
+	if provider.provider_type != "Generic" or provider.is_registration_only:
+		frappe.throw(_("Host inspection needs the Generic SSH driver."))
 
 	for label, address in (("Public", public_ipv4_address), ("Private", private_ipv4_address)):
 		try:

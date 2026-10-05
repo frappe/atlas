@@ -16,6 +16,7 @@
   "is_dns_setup_completed",
   "general_section",
   "server_provider",
+  "generic_provider_driver",
   "column_break_ywxk",
   "region_name",
   "column_break_kxwi",
@@ -280,9 +281,19 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Server Provider",
-   "options": "Generic\nScaleway\nAWS\nRedfish",
+   "options": "Generic\nScaleway\nAWS",
    "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
    "reqd": 1
+  },
+  {
+   "fieldname": "generic_provider_driver",
+   "fieldtype": "Select",
+   "label": "Generic Provider Driver",
+   "options": "SSH\nBMC",
+   "default": "SSH",
+   "depends_on": "eval: doc.server_provider == \"Generic\"",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Generic\"",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
   },
   {
    "fieldname": "dns_provider",

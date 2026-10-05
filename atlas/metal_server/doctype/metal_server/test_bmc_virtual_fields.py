@@ -9,20 +9,20 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerPowerStatus, UnsupportedProviderOperation
+from atlas.atlas.core.server_providers.generic.bmc.client import RedfishError
+from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver
 from atlas.atlas.core.server_providers.generic.provider import GenericProvider
-from atlas.atlas.core.server_providers.redfish.client import RedfishError
-from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer, poweroff_redfish_server
 
 FIELDS = ("redfish_power_state", "redfish_health")
 
 
-class TestRedfishVirtualFields(UnitTestCase):
+class TestBMCVirtualFields(UnitTestCase):
 	def setUp(self) -> None:
 		super().setUp()
 		self.previous_cache = frappe.local.request_cache
 		frappe.local.request_cache = defaultdict(dict)
-		self.provider = RedfishProvider(SimpleNamespace())
+		self.provider = BMCDriver(SimpleNamespace())
 		url = "http://bmc.example/redfish/v1/Systems/host-1"
 		self.server = MetalServer(
 			{

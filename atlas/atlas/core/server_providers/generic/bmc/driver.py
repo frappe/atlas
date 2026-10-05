@@ -6,43 +6,33 @@ from typing import TYPE_CHECKING, override
 
 import frappe
 
-from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.base import (
 	ProviderServer,
 	ServerCreateRequest,
 	ServerImageData,
 	ServerPowerAction,
 	ServerPowerStatus,
-	ServerProvider,
 	ServerSizeData,
 	UnsupportedProviderOperation,
 )
-from atlas.atlas.core.server_providers.redfish.client import RedfishClient, RedfishError, RedfishSystem
+from atlas.atlas.core.server_providers.generic.bmc.client import RedfishClient, RedfishError, RedfishSystem
+from atlas.atlas.core.server_providers.generic.provider import GenericProvider
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
 
-@register
-class RedfishProvider(ServerProvider):
-	"""Manage the BMC of a registered Redfish system."""
+class BMCDriver(GenericProvider):
+	"""Register Generic hosts and control power through their BMC."""
 
-	provider_type = "Redfish"
-	credential_fields = ()
 	error_class = RedfishError
 	is_registration_only = True
-
-	@override
-	def validate_settings(self) -> None:
-		"""Reject automatic host creation for existing Redfish machines."""
-		if self.settings.auto_spawn_metal_server:
-			raise RedfishError("The Redfish provider cannot create a Metal Server automatically")
 
 	@override
 	def validate_server(self, server: "MetalServer") -> None:
 		"""Require discovery through the registration flow for a new record."""
 		if server.is_new() and not isinstance(getattr(server, "_redfish_registration", None), RedfishSystem):
-			frappe.throw(frappe._("Use Register on the Metal Server form to register a Redfish system."))
+			frappe.throw(frappe._("Use Register on the Metal Server form to register a BMC system."))
 
 	@override
 	def import_server(self, server: "MetalServer") -> None:
@@ -89,7 +79,7 @@ class RedfishProvider(ServerProvider):
 
 	@override
 	def setup_infrastructure(self) -> None:
-		raise UnsupportedProviderOperation("Redfish infrastructure setup")
+		raise UnsupportedProviderOperation("BMC infrastructure setup")
 
 	@override
 	def validate_credentials(self) -> bool:
@@ -101,7 +91,7 @@ class RedfishProvider(ServerProvider):
 			order_by="name",
 		)
 		if not provider_ids:
-			raise RedfishError("Register a Redfish Metal Server before validating credentials")
+			raise RedfishError("Register a BMC Metal Server before validating credentials")
 
 		for provider_id in provider_ids:
 			client = self._client(provider_id)
@@ -111,27 +101,27 @@ class RedfishProvider(ServerProvider):
 
 	@override
 	def fetch_server_sizes(self) -> tuple[ServerSizeData, ...]:
-		raise UnsupportedProviderOperation("Redfish server size discovery")
+		raise UnsupportedProviderOperation("BMC server size discovery")
 
 	@override
 	def fetch_server_images(self) -> tuple[ServerImageData, ...]:
-		raise UnsupportedProviderOperation("Redfish server image discovery")
+		raise UnsupportedProviderOperation("BMC server image discovery")
 
 	@override
 	def ensure_server(self, request: ServerCreateRequest) -> ProviderServer:
-		raise UnsupportedProviderOperation("Redfish server creation")
+		raise UnsupportedProviderOperation("BMC server creation")
 
 	@override
 	def prepare_server(self, server: "MetalServer") -> None:
-		raise UnsupportedProviderOperation("Redfish server preparation")
+		raise UnsupportedProviderOperation("BMC server preparation")
 
 	@override
 	def configure_server_network(self, server: "MetalServer") -> None:
-		raise UnsupportedProviderOperation("Redfish server network configuration")
+		raise UnsupportedProviderOperation("BMC server network configuration")
 
 	@override
 	def storage_pool_device(self, server: "MetalServer") -> str:
-		raise UnsupportedProviderOperation("Redfish storage pool device discovery")
+		raise UnsupportedProviderOperation("BMC storage pool device discovery")
 
 	@override
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
@@ -142,8 +132,24 @@ class RedfishProvider(ServerProvider):
 		elif action == ServerPowerAction.REBOOT:
 			self._client(provider_server_id).reboot()
 		else:
-			raise UnsupportedProviderOperation(f"the Redfish {action} power action")
+			raise UnsupportedProviderOperation(f"the BMC {action} power action")
 
 	@override
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, object]) -> None:
-		raise UnsupportedProviderOperation("Redfish server deletion")
+		raise UnsupportedProviderOperation("BMC server deletion")
+
+	@override
+	def delete_public_ip_address(self, provider_resource_id: str) -> None:
+		raise UnsupportedProviderOperation("public IP address deletion")
+
+	@override
+	def attach_public_ip_address(
+		self, provider_resource_id: str, public_address: str, server: "MetalServer"
+	) -> str:
+		raise UnsupportedProviderOperation("public IP address attachment")
+
+	@override
+	def detach_public_ip_address(
+		self, provider_resource_id: str, host_address: str | None, server: "MetalServer"
+	) -> None:
+		raise UnsupportedProviderOperation("public IP address detachment")

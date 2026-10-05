@@ -432,8 +432,11 @@ frappe.listview_settings["Metal Server"] = {
 	add_fields: ["title"],
 	onload(listview) {
 		if (!frappe.user.has_role("System Manager")) return;
-		frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
-			if (provider === "Redfish") {
+		Promise.all([
+			frappe.db.get_single_value("Atlas Settings", "server_provider"),
+			frappe.db.get_single_value("Atlas Settings", "generic_provider_driver"),
+		]).then(([provider, driver]) => {
+			if (provider === "Generic" && driver === "BMC") {
 				listview.page.set_primary_action(__("Register Server"), () =>
 					frappe.new_doc("Metal Server")
 				);
@@ -454,8 +457,11 @@ frappe.listview_settings["Metal Server"] = {
 		);
 	},
 	primary_action() {
-		frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
-			if (provider === "Generic") {
+		Promise.all([
+			frappe.db.get_single_value("Atlas Settings", "server_provider"),
+			frappe.db.get_single_value("Atlas Settings", "generic_provider_driver"),
+		]).then(([provider, driver]) => {
+			if (provider === "Generic" && driver !== "BMC") {
 				new HostRegistrationDialog();
 				return;
 			}

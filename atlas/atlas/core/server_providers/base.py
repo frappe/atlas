@@ -136,6 +136,11 @@ class ServerProvider(ABC):
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
 
+	@classmethod
+	def from_settings(cls, settings: "AtlasSettings | None" = None) -> "ServerProvider":
+		"""Build the provider with the driver selected in its settings."""
+		return cls(settings)
+
 	@abstractmethod
 	def setup_infrastructure(self) -> None:
 		"""Set up the named provider resources that Atlas needs."""

@@ -331,6 +331,7 @@ class MetalServer(Document):
 
 	def onload(self) -> None:
 		self.set_onload("server_provider", self.settings.server_provider)
+		self.set_onload("generic_provider_driver", self.settings.generic_provider_driver)
 
 	@frappe.whitelist(methods=["POST"])
 	def get_volume(self, kind: str) -> dict:
@@ -586,7 +587,7 @@ def renew_expiring_tls_certificates() -> None:
 
 @frappe.whitelist(methods=["POST"])
 def register_redfish_server(redfish_url: str, redfish_username: str = "", redfish_password: str = "") -> str:
-	"""Register an existing Redfish system and return its Metal Server name."""
+	"""Register an existing BMC system and return its Metal Server name."""
 	frappe.only_for("System Manager")
 	server: MetalServer = frappe.new_doc("Metal Server")
 	server.redfish_url = redfish_url

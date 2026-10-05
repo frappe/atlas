@@ -70,6 +70,7 @@ class AtlasSettings(Document):
 		default_metal_machine_image: DF.Autocomplete | None
 		default_metal_machine_size: DF.Autocomplete | None
 		dns_provider: DF.Literal["Route53"]
+		generic_provider_driver: DF.Literal["SSH", "BMC"]
 		http_proxy_package_file: DF.Link | None
 		http_proxy_package_hash: DF.Data | None
 		ipv6_router_package_file: DF.Link | None
@@ -127,7 +128,7 @@ class AtlasSettings(Document):
 			"pl-waw-2",
 			"pl-waw-3",
 		]
-		server_provider: DF.Literal["Generic", "Scaleway", "AWS", "Redfish"]
+		server_provider: DF.Literal["Generic", "Scaleway", "AWS"]
 		sleepy_vm_overcommit_factor: DF.Float
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_ipv6_router_for_auto_assignment: DF.Check
