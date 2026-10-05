@@ -1,8 +1,8 @@
 const HOST_REGISTRATION_METHOD = "atlas.metal_server.doctype.metal_server.metal_server";
 const HOST_INSPECTION_POLL_MILLISECONDS = 2_000;
 const HOST_INSPECTION_TIMEOUT_MILLISECONDS = 300_000;
-const REDFISH_FIELDS = ["redfish_url", "redfish_username", "redfish_password"];
-const OPTIONAL_HOST_REGISTRATION_FIELDS = ["provider_server_id", ...REDFISH_FIELDS];
+const BMC_FIELDS = ["bmc_url", "bmc_username", "bmc_password"];
+const OPTIONAL_HOST_REGISTRATION_FIELDS = ["provider_server_id", ...BMC_FIELDS];
 const HOST_REGISTRATION_FIELDS = [
 	"public_ipv4_address",
 	"private_ipv4_address",
@@ -12,8 +12,9 @@ const HOST_REGISTRATION_FIELDS = [
 ];
 
 class HostRegistrationDialog {
-	constructor(is_bmc_access_enabled) {
-		this.is_bmc_access_enabled = is_bmc_access_enabled;
+	constructor(bmc_driver) {
+		this.bmc_driver = bmc_driver;
+		this.has_bmc_driver = Boolean(bmc_driver) && bmc_driver !== "None";
 		this.dialog = new frappe.ui.Dialog({
 			title: __("Add Server"),
 			fields: [
@@ -49,17 +50,17 @@ class HostRegistrationDialog {
 					description: __("The ID of this host at your provider. Atlas suggests one."),
 				},
 				{
-					fieldname: "redfish_url",
+					fieldname: "bmc_url",
 					fieldtype: "Data",
 					options: "URL",
-					label: __("BMC Redfish URL"),
+					label: __("BMC URL"),
 					description: __(
-						"Optional. The ComputerSystem URL, such as https://10.0.0.5/redfish/v1/Systems/1. Enter the URL, username, and password together."
+						"For Redfish, the ComputerSystem URL, such as https://10.0.0.5/redfish/v1/Systems/1."
 					),
 				},
-				{ fieldname: "redfish_username", fieldtype: "Data", label: __("BMC Username") },
+				{ fieldname: "bmc_username", fieldtype: "Data", label: __("BMC Username") },
 				{
-					fieldname: "redfish_password",
+					fieldname: "bmc_password",
 					fieldtype: "Password",
 					label: __("BMC Password"),
 				},
@@ -72,7 +73,7 @@ class HostRegistrationDialog {
 	show_addresses_step() {
 		this.set_step(
 			["public_ipv4_address", "private_ipv4_address"],
-			__("Step 1 of 4: Enter the host addresses"),
+			this.step_title(1, __("Enter the host addresses")),
 			`<ul>
 				<li>${__("The host runs Ubuntu or Debian on x86_64 with KVM.")}</li>
 				<li>${__("Atlas can connect as root to the public address with its SSH key.")}</li>
@@ -80,7 +81,31 @@ class HostRegistrationDialog {
 				<li>${__("One whole raw disk is empty for the storage pool.")}</li>
 			</ul>`
 		);
-		this.set_actions(__("Inspect"), () => this.inspect());
+		if (this.has_bmc_driver) {
+			this.set_actions(__("Next"), () => this.dialog.get_values() && this.show_bmc_step());
+		} else {
+			this.set_actions(__("Inspect"), () => this.inspect());
+		}
+	}
+
+	show_bmc_step() {
+		this.set_step(
+			BMC_FIELDS,
+			__("Step 2 of 5: Enter the {0} BMC credentials", [this.bmc_driver]),
+			""
+		);
+		this.set_actions(
+			__("Inspect"),
+			() => this.inspect(),
+			__("Back"),
+			() => this.show_addresses_step()
+		);
+	}
+
+	step_title(step, title) {
+		const bmc_steps = this.has_bmc_driver ? 1 : 0;
+		const number = step > 1 ? step + bmc_steps : step;
+		return __("Step {0} of {1}: {2}", [number, 4 + bmc_steps, title]);
 	}
 
 	inspect() {
@@ -99,7 +124,7 @@ class HostRegistrationDialog {
 			.then(({ message }) => {
 				this.inspection_id = message;
 				this.wait(
-					__("Step 2 of 4: Inspecting the host"),
+					this.step_title(2, __("Inspecting the host")),
 					__("Atlas is reading the host facts...")
 				);
 			});
@@ -138,7 +163,7 @@ class HostRegistrationDialog {
 
 		this.state = state;
 		if (state.failures.length) {
-			this.set_step([], __("Step 2 of 4: The host is not ready"), "");
+			this.set_step([], this.step_title(2, __("The host is not ready")), "");
 			this.set_result(this.render_failures() + this.render_facts());
 			this.set_actions(__("Back"), () => this.show_addresses_step());
 			return;
@@ -148,7 +173,7 @@ class HostRegistrationDialog {
 
 	show_disk_step() {
 		const free_devices = this.free_devices;
-		const title = __("Step 3 of 4: Choose the storage disk");
+		const title = this.step_title(3, __("Choose the storage disk"));
 		if (free_devices.length) {
 			const selected = this.dialog.get_value("storage_pool_device");
 			this.set_step(["storage_pool_device"], title, "");
@@ -211,7 +236,7 @@ class HostRegistrationDialog {
 			})
 			.then(() =>
 				this.wait(
-					__("Step 3 of 4: Creating the disk image"),
+					this.step_title(3, __("Creating the disk image")),
 					__("Atlas is creating the disk image and will inspect the host again...")
 				)
 			);
@@ -219,12 +244,7 @@ class HostRegistrationDialog {
 
 	show_review_step() {
 		const storage_pool_device = this.dialog.get_value("storage_pool_device");
-		const redfish_fields = this.is_bmc_access_enabled ? REDFISH_FIELDS : [];
-		this.set_step(
-			["provider_server_id", ...redfish_fields],
-			__("Step 4 of 4: Review the host"),
-			""
-		);
+		this.set_step(["provider_server_id"], this.step_title(4, __("Review the host")), "");
 		this.set_result(
 			`<div class="alert alert-danger">${__(
 				"Atlas destroys all data on {0} when it creates the storage pool.",
@@ -256,9 +276,9 @@ class HostRegistrationDialog {
 					inspection_id: this.inspection_id,
 					storage_pool_device,
 					provider_server_id: this.dialog.get_value("provider_server_id"),
-					redfish_url: this.dialog.get_value("redfish_url"),
-					redfish_username: this.dialog.get_value("redfish_username"),
-					redfish_password: this.dialog.get_value("redfish_password"),
+					bmc_url: this.dialog.get_value("bmc_url"),
+					bmc_username: this.dialog.get_value("bmc_username"),
+					bmc_password: this.dialog.get_value("bmc_password"),
 				},
 				freeze: true,
 				freeze_message: __("Creating Metal Server..."),
@@ -480,10 +500,7 @@ frappe.listview_settings["Metal Server"] = {
 			frappe.new_doc("Metal Server");
 			return;
 		}
-		const is_bmc_access_enabled = await frappe.db.get_single_value(
-			"Atlas Settings",
-			"is_bmc_access_enabled"
-		);
-		new HostRegistrationDialog(Boolean(is_bmc_access_enabled));
+		const bmc_driver = await frappe.db.get_single_value("Atlas Settings", "bmc_driver");
+		new HostRegistrationDialog(bmc_driver);
 	},
 };

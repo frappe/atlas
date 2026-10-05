@@ -91,8 +91,8 @@ class GenericProvider(ServerProvider):
 
 	@override
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
-		"""Apply the power action through the host BMC. Refuse it when BMC access is off."""
-		if not self.settings.is_bmc_access_enabled:
+		"""Apply the power action through the host BMC. Refuse it without a BMC driver."""
+		if self.settings.bmc_driver != "Redfish":
 			raise UnsupportedProviderOperation(f"the {action} power action")
 
 		servers = frappe.get_all(
@@ -106,10 +106,10 @@ class GenericProvider(ServerProvider):
 			)
 
 		server: "MetalServer" = frappe.get_doc("Metal Server", servers[0])
-		if not server.redfish_url:
-			raise GenericError(f"Metal Server {server.name} has no BMC Redfish details")
+		if not server.bmc_url:
+			raise GenericError(f"Metal Server {server.name} has no BMC details")
 
-		server.redfish_client.set_power_state(action)
+		server.bmc_client.set_power_state(action)
 
 	@override
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, object]) -> None:

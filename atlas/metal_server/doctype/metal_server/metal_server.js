@@ -7,7 +7,7 @@ frappe.ui.form.on("Metal Server", {
 			return;
 		}
 
-		const power_error = frm.doc.__onload?.redfish_power_error;
+		const power_error = frm.doc.__onload?.bmc_power_error;
 		frm.set_intro(
 			power_error && __("BMC power state: {0}", [frappe.utils.escape_html(power_error)]),
 			"red"
@@ -16,7 +16,7 @@ frappe.ui.form.on("Metal Server", {
 		const is_deleted = frm.doc.status === "Deleted";
 		const is_running = frm.doc.status === "Running";
 		const is_stopped = frm.doc.status === "Stopped";
-		const is_bmc_power_off = frm.doc.redfish_power_state === "Off";
+		const is_bmc_power_off = frm.doc.bmc_power_state === "Off";
 
 		[
 			[

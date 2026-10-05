@@ -293,9 +293,9 @@ class TestHostInspection(UnitTestCase):
 			HostInspection("inspection-1").register(
 				"/dev/nvme1n1",
 				"",
-				redfish_url="https://bmc.local",
-				redfish_username="admin",
-				redfish_password="secret",
+				bmc_url="https://bmc.local",
+				bmc_username="admin",
+				bmc_password="secret",
 			)
 
 		values = server.update.call_args.args[0]
@@ -307,7 +307,7 @@ class TestHostInspection(UnitTestCase):
 		self.assertEqual(metadata["storage_pool_device"], "/dev/nvme1n1")
 		self.assertEqual(metadata["storage_pool_size_gib"], 1800)
 		self.assertEqual(
-			(values["redfish_url"], values["redfish_username"], values["redfish_password"]),
+			(values["bmc_url"], values["bmc_username"], values["bmc_password"]),
 			("https://bmc.local", "admin", "secret"),
 		)
 		self.assertNotIn("secret", values["provider_metadata"])

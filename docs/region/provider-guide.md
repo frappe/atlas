@@ -32,13 +32,13 @@ This route makes a VM address available on any Metal Server. A VM can keep its p
 
 You can subclass the Generic provider to add automation for one bare metal provider.
 
-The **Enable BMC Access** option in Atlas Settings shows only for the Generic provider. It is off by default.
+The **BMC Driver** option in Atlas Settings shows only for the Generic provider. It can be `None` or `Redfish`. The default is `None`.
 
-When it is on, you can store the BMC Redfish details of each host: the ComputerSystem URL, such as `https://10.0.0.5/redfish/v1/Systems/1`, the username, and the password. Enter all three or none.
+When a driver is set, you can store the BMC credentials of each host: the URL, the username, and the password. Enter all three or none. For Redfish, the URL is the ComputerSystem URL, such as `https://10.0.0.5/redfish/v1/Systems/1`.
 
-The **Power State** field in the **BMC** section of the Metal Server form shows the live Redfish `PowerState`, such as `On` or `Off`. Atlas reads it each time you open the form. If the read fails, the form shows the reason at the top.
+The **BMC Power State** field in the **BMC** section of the Metal Server form shows the live Redfish `PowerState`, such as `On` or `Off`. Atlas reads it each time you open the form. If the read fails, the form shows the reason at the top.
 
-When BMC access is on, **Reboot**, **Power Off**, and **Power On** on the Metal Server form use the Redfish `ComputerSystem.Reset` action. Atlas sends a graceful reset type when the BMC offers it, and a forced one only when the BMC offers no graceful type. Atlas does not wait for the new power state. Check **Power State** to see the result. When BMC access is off, Atlas refuses these actions for Generic hosts.
+When the driver is `Redfish`, **Reboot**, **Power Off**, and **Power On** on the Metal Server form use the Redfish `ComputerSystem.Reset` action. Atlas sends a graceful reset type when the BMC offers it, and a forced one only when the BMC offers no graceful type. Atlas does not wait for the new power state. Check **BMC Power State** to see the result. When the driver is `None`, Atlas refuses these actions for Generic hosts.
 
 ### Prepare a host
 
@@ -56,12 +56,13 @@ Atlas does not create or change these network resources. It checks that the priv
 
 ### Register a host
 
-On the Metal Server list, select **Add Metal Server**. The dialog has 4 steps:
+On the Metal Server list, select **Add Metal Server**. The dialog has 4 steps, or 5 steps when a BMC driver is set:
 
 1. Enter the public and private IPv4 addresses. Atlas checks the addresses and starts a host check.
-2. Wait for the host check. Atlas runs `generic/inspect-host.sh` as `root`. You cannot continue if a host check fails.
-3. Select an empty disk for the storage pool. Atlas selects the disk when the host has one empty raw disk.
-4. Review the host facts. Set the provider server ID and create the Metal Server. When BMC access is on, you can also enter the BMC details. You can change them later in the **BMC** section of the Metal Server form.
+2. When a BMC driver is set, enter the BMC credentials of the host. This step is optional.
+3. Wait for the host check. Atlas runs `generic/inspect-host.sh` as `root`. You cannot continue if a host check fails.
+4. Select an empty disk for the storage pool. Atlas selects the disk when the host has one empty raw disk.
+5. Review the host facts. Set the provider server ID and create the Metal Server. You can change the BMC credentials later in the **BMC** section of the Metal Server form.
 
 `HostInspection` in `metal_server/core/host_inspection.py` owns the host check. Atlas keeps the report in the cache for 30 minutes.
 

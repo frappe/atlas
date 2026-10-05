@@ -347,9 +347,9 @@ class HostInspection:
 		storage_pool_device: str,
 		provider_server_id: str | None,
 		*,
-		redfish_url: str | None = None,
-		redfish_username: str | None = None,
-		redfish_password: str | None = None,
+		bmc_url: str | None = None,
+		bmc_username: str | None = None,
+		bmc_password: str | None = None,
 	) -> "MetalServer":
 		"""Create the Metal Server for a passed inspection and start its provisioning."""
 		state = self.state
@@ -367,9 +367,9 @@ class HostInspection:
 				report,
 				storage_pool_device,
 				provider_server_id,
-				redfish_url=redfish_url,
-				redfish_username=redfish_username,
-				redfish_password=redfish_password,
+				bmc_url=bmc_url,
+				bmc_username=bmc_username,
+				bmc_password=bmc_password,
 			)
 			frappe.cache.delete_value(self.cache_key)
 		return server
@@ -381,9 +381,9 @@ class HostInspection:
 		storage_pool_device: str,
 		provider_server_id: str | None,
 		*,
-		redfish_url: str | None = None,
-		redfish_username: str | None = None,
-		redfish_password: str | None = None,
+		bmc_url: str | None = None,
+		bmc_username: str | None = None,
+		bmc_password: str | None = None,
 	) -> "MetalServer":
 		"""Insert the Pending Metal Server with the inspected host facts."""
 		disk = next(disk for disk in report.disks if disk.device == storage_pool_device)
@@ -413,9 +413,9 @@ class HostInspection:
 					}
 				),
 				"status": "Pending",
-				"redfish_url": redfish_url,
-				"redfish_username": redfish_username,
-				"redfish_password": redfish_password,
+				"bmc_url": bmc_url,
+				"bmc_username": bmc_username,
+				"bmc_password": bmc_password,
 			}
 		)
 		server.insert(ignore_permissions=True)

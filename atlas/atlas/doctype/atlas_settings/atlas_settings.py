@@ -65,6 +65,7 @@ class AtlasSettings(Document):
 		aws_security_group_id: DF.Data | None
 		aws_subnet_id: DF.Data | None
 		aws_vpc_id: DF.Data | None
+		bmc_driver: DF.Literal["None", "Redfish"]
 		central_jwks: DF.JSON | None
 		central_jwks_url: DF.Data | None
 		default_metal_machine_image: DF.Autocomplete | None
@@ -74,7 +75,6 @@ class AtlasSettings(Document):
 		http_proxy_package_hash: DF.Data | None
 		ipv6_router_package_file: DF.Link | None
 		ipv6_router_package_hash: DF.Data | None
-		is_bmc_access_enabled: DF.Check
 		is_dns_setup_completed: DF.Check
 		is_letsencrypt_staging: DF.Check
 		is_server_provider_setup_completed: DF.Check

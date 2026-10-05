@@ -16,7 +16,6 @@
   "is_dns_setup_completed",
   "general_section",
   "server_provider",
-  "is_bmc_access_enabled",
   "column_break_ywxk",
   "region_name",
   "column_break_kxwi",
@@ -56,6 +55,7 @@
   "warpgate_url",
   "column_break_warpgate",
   "warpgate_api_token",
+  "column_break_kccn",
   "warpgate_api_token_id",
   "ipv6_router_section",
   "use_ipv6_router_for_auto_assignment",
@@ -94,6 +94,8 @@
   "column_break_qavs",
   "aws_security_group_id",
   "aws_key_pair_name",
+  "generic_tab",
+  "bmc_driver",
   "proxy_tab",
   "dns_provider",
   "column_break_caqd",
@@ -286,12 +288,14 @@
    "reqd": 1
   },
   {
-   "default": "0",
+   "default": "None",
    "depends_on": "eval: doc.server_provider == \"Generic\"",
-   "description": "Lets Atlas control Generic hosts through their BMC Redfish API.",
-   "fieldname": "is_bmc_access_enabled",
-   "fieldtype": "Check",
-   "label": "Enable BMC Access"
+   "description": "The BMC API that Atlas uses to read and control the power of Generic hosts.",
+   "fieldname": "bmc_driver",
+   "fieldtype": "Select",
+   "label": "BMC Driver",
+   "options": "None\nRedfish",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "dns_provider",
@@ -940,13 +944,23 @@
    "fieldtype": "Data",
    "label": "API Token ID",
    "show_description_on_click": 1
+  },
+  {
+   "depends_on": "eval: doc.server_provider == \"Generic\"",
+   "fieldname": "generic_tab",
+   "fieldtype": "Tab Break",
+   "label": "Generic"
+  },
+  {
+   "fieldname": "column_break_kccn",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-05 16:30:00.000000",
+ "modified": "2026-10-05 16:32:57.985752",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

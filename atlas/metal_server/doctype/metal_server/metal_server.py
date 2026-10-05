@@ -53,6 +53,9 @@ class MetalServer(Document):
 		from atlas.metal_server.doctype.metal_server_disk.metal_server_disk import MetalServerDisk
 
 		architecture: DF.Literal["amd64", "arm64"]
+		bmc_password: DF.Password | None
+		bmc_url: DF.Data | None
+		bmc_username: DF.Data | None
 		disks: DF.Table[MetalServerDisk]
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check
@@ -67,15 +70,11 @@ class MetalServer(Document):
 		provider_server_id: DF.Data | None
 		public_ipv4_address: DF.Data | None
 		public_network_interface: DF.Data | None
-		redfish_password: DF.Password | None
-		redfish_power_state: DF.Data | None
-		redfish_url: DF.Data | None
-		redfish_username: DF.Data | None
 		server_image: DF.Link
 		server_size: DF.Link
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
 		tags: DF.Table[AtlasTag]
-		title: DF.Data
+		title: DF.Data | None
 		wireguard_ip_address: DF.Data | None
 		wireguard_public_key: DF.Data | None
 	# end: auto-generated types
@@ -139,9 +138,9 @@ class MetalServer(Document):
 		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
 
 	def validate(self) -> None:
-		"""Fill the mesh address and check the title, tags, and Redfish access."""
+		"""Fill the mesh address and check the title, tags, and BMC details."""
 		self._validate_title()
-		self._validate_redfish()
+		self._validate_bmc()
 		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
 
@@ -152,10 +151,10 @@ class MetalServer(Document):
 		if not HOST_TITLE.fullmatch(self.title or ""):
 			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
 
-	def _validate_redfish(self) -> None:
-		values = (self.redfish_url, self.redfish_username, self.redfish_password)
+	def _validate_bmc(self) -> None:
+		values = (self.bmc_url, self.bmc_username, self.bmc_password)
 		if any(values) and not all(values):
-			frappe.throw(_("Enter the Redfish URL, username, and password together."))
+			frappe.throw(_("Enter the BMC URL, username, and password together."))
 
 	def after_insert(self) -> None:
 		"""Start provisioning in the background."""
@@ -297,27 +296,27 @@ class MetalServer(Document):
 
 	def onload(self) -> None:
 		self.set_onload("server_provider", self.settings.server_provider)
-		self.set_onload("is_bmc_access_enabled", self.is_bmc_access_enabled)
+		self.set_onload("has_bmc_driver", self.has_bmc_driver)
 
 	@property
-	def is_bmc_access_enabled(self) -> bool:
-		return self.settings.server_provider == "Generic" and bool(self.settings.is_bmc_access_enabled)
+	def has_bmc_driver(self) -> bool:
+		return self.settings.server_provider == "Generic" and self.settings.bmc_driver != "None"
 
 	@property
-	def redfish_client(self) -> RedfishClient:
-		return RedfishClient(self.redfish_url, self.redfish_username, self.get_password("redfish_password"))
+	def bmc_client(self) -> RedfishClient:
+		return RedfishClient(self.bmc_url, self.bmc_username, self.get_password("bmc_password"))
 
 	@property
 	@request_cache
-	def redfish_power_state(self) -> str | None:
+	def bmc_power_state(self) -> str | None:
 		"""Read the live BMC power state for Desk. A failed read leaves the reason in the form onload."""
-		if not (self.is_bmc_access_enabled and self.redfish_url):
+		if not (self.has_bmc_driver and self.bmc_url):
 			return None
 
 		try:
-			return self.redfish_client.read_power_state()
+			return self.bmc_client.read_power_state()
 		except RedfishError as error:
-			self.set_onload("redfish_power_error", str(error))
+			self.set_onload("bmc_power_error", str(error))
 			return None
 
 	@frappe.whitelist(methods=["POST"])
@@ -605,9 +604,9 @@ def register_host(
 	inspection_id: str,
 	storage_pool_device: str,
 	provider_server_id: str | None = None,
-	redfish_url: str | None = None,
-	redfish_username: str | None = None,
-	redfish_password: str | None = None,
+	bmc_url: str | None = None,
+	bmc_username: str | None = None,
+	bmc_password: str | None = None,
 ) -> str:
 	"""Create the Metal Server for an inspected host and return its name."""
 	frappe.only_for("System Manager")
@@ -616,9 +615,9 @@ def register_host(
 		.register(
 			storage_pool_device,
 			provider_server_id,
-			redfish_url=redfish_url,
-			redfish_username=redfish_username,
-			redfish_password=redfish_password,
+			bmc_url=bmc_url,
+			bmc_username=bmc_username,
+			bmc_password=bmc_password,
 		)
 		.name
 	)

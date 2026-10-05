@@ -33,26 +33,26 @@ class TestGenericProvider(UnitTestCase):
 			GenericProvider(self.settings()).set_power_state("host-1", ServerPowerAction.REBOOT)
 
 	def test_power_action_uses_the_bmc_of_the_server(self) -> None:
-		server = self.server(redfish_url="https://bmc.local/redfish/v1/Systems/1", redfish_client=Mock())
+		server = self.server(bmc_url="https://bmc.local/redfish/v1/Systems/1", bmc_client=Mock())
 
 		with (
 			patch(f"{MODULE}.frappe.get_all", return_value=["host-1"]) as get_all,
 			patch(f"{MODULE}.frappe.get_doc", return_value=server),
 		):
-			GenericProvider(self.settings(is_bmc_access_enabled=1)).set_power_state(
+			GenericProvider(self.settings(bmc_driver="Redfish")).set_power_state(
 				"generic-1", ServerPowerAction.STOP
 			)
 
 		self.assertEqual(get_all.call_args.kwargs["filters"]["provider_server_id"], "generic-1")
-		server.redfish_client.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
+		server.bmc_client.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
 
 	def test_power_action_needs_bmc_details(self) -> None:
 		with (
 			patch(f"{MODULE}.frappe.get_all", return_value=["host-1"]),
-			patch(f"{MODULE}.frappe.get_doc", return_value=self.server(redfish_url=None)),
-			self.assertRaisesRegex(GenericError, "no BMC Redfish details"),
+			patch(f"{MODULE}.frappe.get_doc", return_value=self.server(bmc_url=None)),
+			self.assertRaisesRegex(GenericError, "no BMC details"),
 		):
-			GenericProvider(self.settings(is_bmc_access_enabled=1)).set_power_state(
+			GenericProvider(self.settings(bmc_driver="Redfish")).set_power_state(
 				"generic-1", ServerPowerAction.START
 			)
 
@@ -93,7 +93,7 @@ class TestGenericProvider(UnitTestCase):
 
 	@staticmethod
 	def settings(**values: object) -> SimpleNamespace:
-		return SimpleNamespace(**{"auto_spawn_metal_server": 0, "is_bmc_access_enabled": 0, **values})
+		return SimpleNamespace(**{"auto_spawn_metal_server": 0, "bmc_driver": "None", **values})
 
 	@staticmethod
 	def server(**values: object) -> SimpleNamespace:
