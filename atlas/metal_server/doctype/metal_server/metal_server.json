@@ -31,10 +31,10 @@
   "public_network_interface",
   "bmc_section",
   "redfish_url",
+  "redfish_power_state",
   "column_break_bmc",
   "redfish_username",
   "redfish_password",
-  "redfish_power_state",
   "wireguard_section",
   "wireguard_ip_address",
   "column_break_ffpx",
@@ -203,7 +203,8 @@
    "fieldname": "redfish_url",
    "fieldtype": "Data",
    "label": "Redfish URL",
-   "options": "URL"
+   "options": "URL",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "column_break_bmc",
@@ -330,7 +331,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-05 18:30:00.000000",
+ "modified": "2026-10-05 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",
