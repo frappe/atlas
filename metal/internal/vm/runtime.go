@@ -21,6 +21,17 @@ type Runtime interface {
 	// lower the limit in the machine specification for a temporary throttle.
 	RefreshDisk(context.Context, RuntimeMachine) error
 	ConnectSSH(context.Context, RuntimeMachine) (SSHConnection, error)
+	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
+}
+
+// RuntimeUsage describes a running machine's current resource use.
+type RuntimeUsage struct {
+	MemoryBytes         uint64
+	CPUTimeMicroseconds uint64
+	DiskReadBytes       uint64
+	DiskWriteBytes      uint64
+	DiskReadOperations  uint64
+	DiskWriteOperations uint64
 }
 
 // RuntimeMachine contains the complete input for one runtime operation.

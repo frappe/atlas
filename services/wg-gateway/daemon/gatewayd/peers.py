@@ -16,8 +16,9 @@ CLIENT_PREFIX = 0xFDAC
 MESH_PREFIX = 0xFDAA
 TENANT_LIMIT = (1 << 32) - 1
 CLIENT_LIMIT = (1 << 16) - 1
+NODE_LIMIT = (1 << 16) - 1
 PUBLIC_KEY_PATTERN = re.compile(r"[A-Za-z0-9+/]{43}=")
-NODE_ID_PATTERN = re.compile(r"wireguard-[0-9]{3,5}")
+NODE_ID_PATTERN = re.compile(r"wireguard-(?P<number>[0-9]{3,5})")
 INTERFACE = "wg0"
 SERVING_CHECK_SECONDS = 1.0
 
@@ -37,6 +38,12 @@ def validate_device(tenant_id: int, client_id: int, public_key: str) -> None:
 			raise HTTPException(status_code=400, detail=f"{label} must be from 1 to {limit}")
 	if not PUBLIC_KEY_PATTERN.fullmatch(public_key):
 		raise HTTPException(status_code=400, detail="public_key must be a 44-character WireGuard key")
+
+
+def get_node_number(node_id: str) -> int | None:
+	"""Return the number in a node ID such as wireguard-002, or None for another value."""
+	match = NODE_ID_PATTERN.fullmatch(node_id)
+	return int(match.group("number")) if match else None
 
 
 class PeerState:
@@ -132,11 +139,15 @@ class PeerState:
 		"""Return one new peer, or refuse a key or node that conflicts with the table.
 
 		A restored table can hold devices of an archived node until an operator removes them."""
-		if not isinstance(value, dict) or not NODE_ID_PATTERN.fullmatch(str(value.get("node_id", ""))):
+		node_id = str(value.get("node_id") or "") if isinstance(value, dict) else ""
+		node_number = get_node_number(node_id)
+		if node_number is None:
 			raise HTTPException(status_code=400, detail="a peer needs a public_key and a node_id")
-		if is_current_node_required and value["node_id"] not in self.nodes:
-			raise HTTPException(status_code=400, detail=f"node {value['node_id']} is not a cluster member")
-		peer = {"public_key": str(value.get("public_key", "")), "node_id": str(value["node_id"])}
+		if node_number > NODE_LIMIT:
+			raise HTTPException(status_code=400, detail=f"node number must be from 0 to {NODE_LIMIT}")
+		if is_current_node_required and node_id not in self.nodes:
+			raise HTTPException(status_code=400, detail=f"node {node_id} is not a cluster member")
+		peer = {"public_key": str(value.get("public_key", "")), "node_id": node_id}
 
 		current = peers.get(identity)
 		if current and current["public_key"] != peer["public_key"]:
@@ -181,7 +192,7 @@ class PeerState:
 		tenant_id, client_id = (int(value) for value in identity.split(":"))
 		node = self.nodes.get(peer["node_id"])
 		# The node number is part of the record name, so an archived node still gives the address.
-		gateway_id = int(peer["node_id"].rsplit("-", 1)[-1])
+		gateway_id = get_node_number(peer.get("node_id", ""))
 		region = self.config.region_id
 		address = (CLIENT_PREFIX << 112) | (region << 96) | (gateway_id << 80) | (tenant_id << 48) | client_id
 		tenant_network = (MESH_PREFIX << 112) | (region << 96) | (tenant_id << 64)

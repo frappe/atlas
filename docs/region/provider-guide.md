@@ -331,7 +331,7 @@ The Atlas security group allows all inbound traffic. The host firewall and Metal
 
 ### Resource names
 
-Each AWS resource has the name `Atlas - <region> - <detail>`, for example `Atlas - mumbai - security group`. Setup finds the internet gateway by its VPC and keeps a stored key pair name.
+Each AWS resource has the name `Atlas - <region> - <detail>`, for example `Atlas - region-1 - security group`. Setup finds the internet gateway by its VPC and keeps a stored key pair name.
 
 ### Instance types
 

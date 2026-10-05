@@ -23,33 +23,33 @@ class PeerRegistration:
     """ One peer to register.
 
         Attributes:
+            tenant_id (int): Tenant that owns the VMs the peer reaches.
             client_id (int): Peer number, unique within the tenant.
             public_key (str): WireGuard public key of the peer.
-            tenant_id (int): Tenant that owns the VMs the peer reaches.
      """
 
+    tenant_id: int
     client_id: int
     public_key: str
-    tenant_id: int
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
+        tenant_id = self.tenant_id
+
         client_id = self.client_id
 
         public_key = self.public_key
-
-        tenant_id = self.tenant_id
 
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update({
+            "tenant_id": tenant_id,
             "client_id": client_id,
             "public_key": public_key,
-            "tenant_id": tenant_id,
         })
 
         return field_dict
@@ -59,16 +59,16 @@ class PeerRegistration:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        tenant_id = d.pop("tenant_id")
+
         client_id = d.pop("client_id")
 
         public_key = d.pop("public_key")
 
-        tenant_id = d.pop("tenant_id")
-
         peer_registration = cls(
+            tenant_id=tenant_id,
             client_id=client_id,
             public_key=public_key,
-            tenant_id=tenant_id,
         )
 
         return peer_registration

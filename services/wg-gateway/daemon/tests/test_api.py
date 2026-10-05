@@ -80,6 +80,27 @@ def test_a_restore_replaces_the_table_and_keeps_the_nodes(client):
 	]
 
 
+@pytest.mark.parametrize("node_id", ["wireguard-65536", "wireguard-99999"])
+def test_a_restore_rejects_a_node_number_above_sixteen_bits(client, node_id):
+	response = client.put(
+		"/v1/peers",
+		json={"peers": [{"tenant_id": 42, "client_id": 9, "public_key": KEY_A, "node_id": node_id}]},
+	)
+
+	assert response.status_code == 400
+
+
+@pytest.mark.parametrize("node_id", ["wireguard-003", "wireguard-65535"])
+def test_a_restore_keeps_representable_nonmember_nodes(client, node_id):
+	response = client.put(
+		"/v1/peers",
+		json={"peers": [{"tenant_id": 42, "client_id": 9, "public_key": KEY_A, "node_id": node_id}]},
+	)
+
+	assert response.status_code == 200
+	assert client.get("/v1/peers").json()[0]["node_id"] == node_id
+
+
 def test_a_removal_names_the_peer_in_the_body_and_can_repeat(client):
 	client.post("/v1/peers", json={"tenant_id": 42, "client_id": 9, "public_key": KEY_A})
 

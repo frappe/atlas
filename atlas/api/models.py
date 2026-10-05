@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from zoneinfo import ZoneInfo
@@ -8,6 +9,7 @@ import frappe
 from frappe.utils import get_datetime, get_system_timezone
 from pydantic import (
 	AnyHttpUrl,
+	AwareDatetime,
 	BaseModel,
 	ConfigDict,
 	Discriminator,
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
 		PublicIPAllocation,
 	)
-	from atlas.vm.core.metal_models import MetalVirtualMachine
+	from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
@@ -1006,6 +1008,93 @@ def public_ip_allocations_for(virtual_machine: str) -> dict[int, PublicIPRespons
 	)
 	tags = read_tags_for("Public IP Allocation", [row.name for row in rows])
 	return {int(row.version): PublicIPResponse.from_document(row, tags[row.name]) for row in rows}
+
+
+class VirtualMachineComputeUsage(BaseModel):
+	"""Cumulative CPU time and current memory use."""
+
+	cpu_microseconds: int = Field(description="Cumulative CPU time since the guest's process started.")
+	memory_bytes: int = Field(description="Current memory charged to the Firecracker cgroup, in bytes.")
+
+
+class VirtualMachineDiskUsage(BaseModel):
+	"""The disk's size, configured limits, and sampled I/O rates."""
+
+	size_mib: int = Field(description="Requested disk size.")
+	used_mib: int = Field(description="Disk use as of the last reconcile pass.")
+	throughput_limit_mibps: int = Field(
+		default=0, description="Configured disk throughput limit. Zero means unlimited."
+	)
+	iops_limit: int = Field(default=0, description="Configured disk IOPS limit. Zero means unlimited.")
+	read_bytes_per_second: int = Field(
+		default=0, description="Average disk read throughput during the sample interval."
+	)
+	write_bytes_per_second: int = Field(
+		default=0, description="Average disk write throughput during the sample interval."
+	)
+	read_milli_iops: int = Field(
+		default=0, description="Average disk read operations per second, in thousandths of an IOPS."
+	)
+	write_milli_iops: int = Field(
+		default=0, description="Average disk write operations per second, in thousandths of an IOPS."
+	)
+
+
+class VirtualMachineNetworkUsage(BaseModel):
+	"""Cumulative unicast IP traffic for the lifetime of the traffic attachment.
+
+	Counters survive guest stops while the attachment remains. Recreating the
+	attachment or restarting Metal resets the counters.
+	"""
+
+	received_bytes: int = Field(description="Cumulative bytes received by the guest.")
+	received_packets: int = Field(description="Cumulative packets received by the guest.")
+	sent_bytes: int = Field(description="Cumulative bytes sent by the guest.")
+	sent_packets: int = Field(description="Cumulative packets sent by the guest.")
+	sent_icmp_packets: int = Field(default=0, description="Cumulative ICMP packets sent by the guest.")
+	sent_udp_packets: int = Field(default=0, description="Cumulative UDP packets sent by the guest.")
+	sent_tcp_syn_packets: int = Field(default=0, description="Cumulative TCP SYN packets sent by the guest.")
+	sent_tcp_rst_packets: int = Field(default=0, description="Cumulative TCP RST packets sent by the guest.")
+
+
+class VirtualMachineMetricsQuery(StrictModel):
+	start: AwareDatetime | None = None
+	end: AwareDatetime | None = None
+	max_samples: int | None = Field(
+		default=None, ge=10, le=2000, description="Maximum samples to return. Metal uses 300 by default."
+	)
+
+	@model_validator(mode="after")
+	def validate_range(self) -> VirtualMachineMetricsQuery:
+		if self.start is not None and self.end is not None and self.start >= self.end:
+			raise ValueError("start must precede end")
+		return self
+
+
+class VirtualMachineMetricsSample(BaseModel):
+	timestamp: int = Field(description="UTC Unix timestamp in seconds.")
+	up: bool
+	compute: VirtualMachineComputeUsage
+	disk: VirtualMachineDiskUsage
+	network: VirtualMachineNetworkUsage
+
+
+class VirtualMachineMetricsResponse(BaseModel):
+	id: str
+	samples: list[VirtualMachineMetricsSample]
+	sample_interval_seconds: int = Field(default=0, description="Seconds covered by each sample.")
+
+	@classmethod
+	def from_metrics(
+		cls, virtual_machine_id: str, metrics: MetalVirtualMachineMetrics | None
+	) -> VirtualMachineMetricsResponse:
+		return cls(
+			id=virtual_machine_id,
+			sample_interval_seconds=metrics.sample_interval_seconds if metrics is not None else 0,
+			samples=[VirtualMachineMetricsSample.model_validate(asdict(sample)) for sample in metrics.samples]
+			if metrics is not None
+			else [],
+		)
 
 
 class ConsoleTokenResponse(BaseModel):

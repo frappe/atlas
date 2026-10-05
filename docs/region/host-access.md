@@ -117,7 +117,7 @@ person ──https://warpgate.<wildcard>──> nginx (region wildcard certifica
 Central ──/api/atlas/hosts/{id}/access/grant──> Atlas ──admin API──> Warpgate
 ```
 
-Example: `ssh -p 2223 alice@frappe.io:metal-par-1-2@warpgate.par-1.frappe.cloud`. Warpgate prints a link. The person opens it, signs in to Central, and approves the login. People need no SSH keys.
+Example: `ssh -p 2223 alice@example.com:metal-region-1-2@warpgate.region-1.example.com`. Warpgate prints a link. The person opens it, signs in to Central, and approves the login. People need no SSH keys.
 
 ### Access
 
@@ -144,7 +144,7 @@ A job runs every minute. It makes the Warpgate targets match the hosts that have
 - The first time a running host is seen, Atlas adds the Warpgate client keys to root `authorized_keys` and gives Warpgate the host key. Warpgate refuses any other host key.
 - Targets and roles of deleted hosts are removed. Targets that Atlas did not create are left alone.
 
-Atlas names a new host `metal-<region name>-<counter>`, such as `metal-waw-3-4`. The title is read-only. It must be one lowercase DNS label and unique across all hosts, including deleted ones.
+Atlas names a new host `metal-<region name>-<counter>`, such as `metal-region-1-4`. The title is read-only. It must be one lowercase DNS label and unique across all hosts, including deleted ones.
 
 ### Install
 

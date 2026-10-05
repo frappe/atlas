@@ -7,9 +7,29 @@ from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
 
-from atlas.vm.core.metal_models import MetalVirtualMachine, timestamp_field
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetricsSample, timestamp_field
 
 SWAGGER_PATH = pathlib.Path(__file__).parents[3] / "metal" / "internal" / "api" / "swagger.json"
+
+
+class TestMetalMetrics(UnitTestCase):
+	def test_reads_unix_seconds_and_integer_disk_rates(self) -> None:
+		sample = MetalVirtualMachineMetricsSample.from_dict(
+			{
+				"timestamp": 1791115200,
+				"up": True,
+				"compute": {"cpu_microseconds": 100, "memory_bytes": 1024},
+				"disk": {
+					"size_mib": 4096,
+					"used_mib": 512,
+					"read_bytes_per_second": 1024,
+					"read_milli_iops": 100,
+				},
+				"network": {"received_bytes": 0, "received_packets": 0, "sent_bytes": 0, "sent_packets": 0},
+			}
+		)
+		self.assertEqual(sample.timestamp, 1791115200)
+		self.assertEqual(sample.disk.read_milli_iops, 100)
 
 
 def complete_response() -> dict:

@@ -120,6 +120,7 @@ TTYPath=$WORKDIR/run/consoles/%i
 TTYReset=yes
 TTYVHangup=yes
 Restart=no
+IOAccounting=yes
 EOF
 systemctl daemon-reload
 

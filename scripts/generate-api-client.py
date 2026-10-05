@@ -91,6 +91,7 @@ class Client:
 	name: str
 	package: str
 	build_specification: Callable[[], dict[str, Any]]
+	sort_keys: bool = True
 
 	@property
 	def specification_path(self) -> Path:
@@ -105,7 +106,7 @@ class Client:
 	def write_specification(self) -> None:
 		"""Write the OpenAPI document of the component."""
 		self.specification_path.parent.mkdir(parents=True, exist_ok=True)
-		document = json.dumps(self.build_specification(), indent=2, sort_keys=True)
+		document = json.dumps(self.build_specification(), indent=2, sort_keys=self.sort_keys)
 		self.specification_path.write_text(document + "\n")
 
 	def write_client(self) -> None:
@@ -141,7 +142,12 @@ CLIENTS_BY_NAME = {
 	for client in (
 		Client("atlas-client", "atlas_client", build_atlas_specification),
 		Client("atlas-proxy-client", "atlas_proxy_client", build_http_proxy_specification),
-		Client("atlas-wg-gateway-client", "atlas_wg_gateway_client", build_wg_gateway_specification),
+		Client(
+			"atlas-wg-gateway-client",
+			"atlas_wg_gateway_client",
+			build_wg_gateway_specification,
+			sort_keys=False,
+		),
 	)
 }
 
