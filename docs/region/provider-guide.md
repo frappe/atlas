@@ -32,7 +32,7 @@ This route makes a VM address available on any Metal Server. A VM can keep its p
 
 You can subclass the Generic provider to add automation for one bare metal provider.
 
-The **Enable BMC Access** option in Atlas Settings shows only for the Generic provider. It is off by default. It does not change behavior yet, because the Redfish client is a placeholder.
+The **Enable BMC Access** option in Atlas Settings shows only for the Generic provider. It is off by default. When it is on, you can store the BMC Redfish URL, username, and password of each host. Enter all three or none. Atlas does not connect to the BMC yet, because the Redfish client is a placeholder.
 
 ### Prepare a host
 
@@ -55,7 +55,7 @@ On the Metal Server list, select **Add Metal Server**. The dialog has 4 steps:
 1. Enter the public and private IPv4 addresses. Atlas checks the addresses and starts a host check.
 2. Wait for the host check. Atlas runs `generic/inspect-host.sh` as `root`. You cannot continue if a host check fails.
 3. Select an empty disk for the storage pool. Atlas selects the disk when the host has one empty raw disk.
-4. Review the host facts. Set the provider server ID and create the Metal Server.
+4. Review the host facts. Set the provider server ID and create the Metal Server. When BMC access is on, you can also enter the BMC details. You can change them later in the **BMC** section of the Metal Server form.
 
 `HostInspection` in `metal_server/core/host_inspection.py` owns the host check. Atlas keeps the report in the cache for 30 minutes.
 
