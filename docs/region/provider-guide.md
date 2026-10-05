@@ -171,11 +171,11 @@ Size and image are optional for Redfish and remain required for the other provid
 
 ### Read power state
 
-Open or reload a saved Redfish Metal Server. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On** as virtual fields.
+Open or reload a saved Redfish Metal Server. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State** and **Redfish Health** as virtual fields.
 
-The three fields share one GET response for that document in the current request. A new request reads the BMC again. Atlas does not store these values in the database or poll in the background. The timestamp records the successful read for the displayed values.
+The two fields share one GET response for that document in the current request. A new request reads the BMC again. Atlas does not store these values in the database or poll in the background.
 
-An unavailable or unauthorized BMC leaves all three fields blank and shows the read error. Atlas does not display a stale database observation. New, Deleted, unregistered, and other-provider records do not trigger a Redfish read.
+An unavailable or unauthorized BMC leaves both fields blank and shows the read error. Atlas does not display a stale database observation. New, Deleted, unregistered, and other-provider records do not trigger a Redfish read.
 
 `On` means that the BMC reports power on. It does not confirm that the operating system has booted or that Metal is available. Loading virtual fields does not change the Metal Server lifecycle.
 
@@ -237,7 +237,7 @@ Deterministic tests cover discovery, credentials, malformed responses, unsafe li
 
 Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. Virtual-field tests cover one shared read, fresh values on a new request, blank fields on failure, permission checks, and exclusion from database writes.
 
-The Node form tests cover Refresh Power State, the single Register form, read errors, and Deleted records. Live checks matched all three virtual fields to Redfish with one GET and confirmed that the database fields and lifecycle did not change. An authenticated local instance also verified the saved credential path.
+The Node form tests cover Refresh Power State, the single Register form, read errors, and Deleted records. Live checks matched both virtual fields to Redfish with one GET and confirmed that the database fields and lifecycle did not change. An authenticated local instance also verified the saved credential path.
 
 Power-on tests cover idempotent On requests, ForceOn selection, ActionInfo, task monitors, failed tasks, state timeouts, and unknown POST outcomes.
 
