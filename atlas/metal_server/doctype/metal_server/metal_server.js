@@ -49,6 +49,7 @@ frappe.ui.form.on("Metal Server", {
 			} else if (frm.save_disabled) {
 				frm.enable_save();
 			}
+			return is_bmc;
 		}
 
 		if (frm.is_new()) {
@@ -58,14 +59,57 @@ frappe.ui.form.on("Metal Server", {
 			]).then(([provider, driver]) => configure_provider(provider, driver));
 			return;
 		}
-		configure_provider(
+		const is_bmc = configure_provider(
 			frm.doc.__onload?.server_provider,
 			frm.doc.__onload?.generic_provider_driver
 		);
-		if (
-			frm.doc.__onload?.server_provider === "Generic" &&
-			frm.doc.__onload?.generic_provider_driver === "BMC"
-		) {
+
+		function add_actions(actions) {
+			actions.forEach(
+				([label, method, enabled, freeze_message, confirm_message, is_dangerous]) => {
+					if (!enabled) return;
+
+					const call = () => {
+						if (is_bmc && method === "poweroff_server") {
+							return frappe
+								.call({
+									method: "atlas.metal_server.doctype.metal_server.metal_server.poweroff_redfish_server",
+									args: { name: frm.doc.name },
+									freeze: true,
+									freeze_message,
+								})
+								.then(() =>
+									frappe.show_alert({
+										message: __("Shutdown request accepted."),
+										indicator: "green",
+									})
+								);
+						}
+						return frm
+							.call({ method, doc: frm.doc, freeze: true, freeze_message })
+							.then(() => {
+								if (["sync_disks", "sync_state"].includes(method)) {
+									frappe.msgprint(
+										__(
+											"Synchronization is queued. This page will refresh in a few seconds."
+										)
+									);
+									setTimeout(() => frm.reload_doc(), 5_000);
+									return;
+								}
+								frm.reload_doc();
+							});
+					};
+					frm.add_custom_button(
+						label,
+						() => (confirm_message ? frappe.confirm(confirm_message, call) : call()),
+						is_dangerous ? __("Dangerous Actions") : __("Actions")
+					);
+				}
+			);
+		}
+
+		if (is_bmc) {
 			if (frm.doc.__onload.redfish_power_error) {
 				frappe.show_alert({
 					message: frm.doc.__onload.redfish_power_error,
@@ -73,7 +117,7 @@ frappe.ui.form.on("Metal Server", {
 				});
 			}
 			if (frm.doc.status !== "Deleted") {
-				[
+				add_actions([
 					[
 						__("Refresh Power State"),
 						"refresh_redfish_power_state",
@@ -100,40 +144,7 @@ frappe.ui.form.on("Metal Server", {
 						__("Requesting server restart..."),
 						__("Restart {0} gracefully?", [frm.doc.title || frm.doc.name]),
 					],
-				].forEach(([label, method, enabled, freeze_message, confirm_message]) => {
-					if (!enabled) return;
-					frm.add_custom_button(
-						label,
-						() => {
-							const call = () => {
-								if (method === "poweroff_server") {
-									return frappe
-										.call({
-											method: "atlas.metal_server.doctype.metal_server.metal_server.poweroff_redfish_server",
-											args: { name: frm.doc.name },
-											freeze: true,
-											freeze_message,
-										})
-										.then(() =>
-											frappe.show_alert({
-												message: __("Shutdown request accepted."),
-												indicator: "green",
-											})
-										);
-								}
-								return frm
-									.call({ method, doc: frm.doc, freeze: true, freeze_message })
-									.then(() => frm.reload_doc());
-							};
-							if (confirm_message) {
-								frappe.confirm(confirm_message, call);
-							} else {
-								call();
-							}
-						},
-						__("Actions")
-					);
-				});
+				]);
 			}
 			return;
 		}
@@ -142,7 +153,7 @@ frappe.ui.form.on("Metal Server", {
 		const is_running = frm.doc.status === "Running";
 		const is_stopped = frm.doc.status === "Stopped";
 
-		[
+		add_actions([
 			[
 				__("Retry Provisioning"),
 				"setup_server",
@@ -218,33 +229,7 @@ frappe.ui.form.on("Metal Server", {
 				]),
 				true,
 			],
-		].forEach(([label, method, condition, freeze_message, confirm_message, is_dangerous]) => {
-			if (!condition) {
-				return;
-			}
-
-			const call = () => {
-				frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => {
-					if (["sync_disks", "sync_state"].includes(method)) {
-						frappe.msgprint(
-							__(
-								"Synchronization is queued. This page will refresh in a few seconds."
-							)
-						);
-						setTimeout(() => frm.reload_doc(), 5_000);
-						return;
-					}
-
-					frm.reload_doc();
-				});
-			};
-
-			frm.add_custom_button(
-				label,
-				() => (confirm_message ? frappe.confirm(confirm_message, call) : call()),
-				is_dangerous ? __("Dangerous Actions") : __("Actions")
-			);
-		});
+		]);
 
 		if (is_running && frm.doc.__onload?.server_provider === "AWS") {
 			["root", "storage"].forEach((kind) => {
