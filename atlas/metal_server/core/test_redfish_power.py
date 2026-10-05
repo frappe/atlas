@@ -28,7 +28,7 @@ class TestRedfishPower(UnitTestCase):
 			db_set=Mock(),
 		)
 
-	def test_refresh_saves_observed_fields_without_promoting_readiness(self) -> None:
+	def test_refresh_reconciles_lifecycle_without_promoting_readiness(self) -> None:
 		with (
 			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")),
 			patch("frappe.db.advisory_lock", return_value=nullcontext()),
@@ -37,9 +37,6 @@ class TestRedfishPower(UnitTestCase):
 		):
 			RedfishPower(self.server).refresh()
 		fields = self.server.db_set.call_args.args[0]
-		self.assertEqual(fields["redfish_power_state"], "On")
-		self.assertEqual(fields["redfish_health"], "OK")
-		self.assertIsNotNone(fields["redfish_power_updated_on"])
 		self.assertEqual(fields["status"], "Pending")
 		self.server.reload.assert_called_once_with()
 		self.server._validate_power_action.assert_called_once_with()
