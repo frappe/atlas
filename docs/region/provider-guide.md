@@ -149,6 +149,8 @@ Size and image are optional for Redfish and remain required for the other provid
 
 On a saved Metal Server, select **Refresh Power State**. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On**.
 
+Refresh after registration to load the first observation and enable the matching power buttons.
+
 These fields record the last successful BMC observation. Refresh does not send a remote write. A failed refresh preserves the previous observation and its timestamp.
 
 `On` means that the BMC reports power on. It does not confirm that the operating system has booted or that Metal is available. Refresh never promotes a Pending or Stopped record to Running. `Off` marks the lifecycle Stopped. An On observation changes a Stopped lifecycle to Pending.
@@ -170,6 +172,16 @@ Select **Power Off** when the last observed power state is On, then confirm grac
 Atlas requires the advertised `GracefulShutdown` reset value. It waits for the BMC to report Off, then marks the Metal Server Stopped. It refuses a controller that advertises only ForceOff. A timeout does not trigger a forced shutdown.
 
 The operating system must handle the graceful request. A machine can remain On after the BMC accepts it. Allow a newly powered machine to boot before testing shutdown. Refresh after a timeout because the machine can turn off later.
+
+### Reboot
+
+Select **Reboot** when the last observed power state is On, then confirm the request. Atlas reads the current state and requires On. It sends the advertised `GracefulRestart` value. It refuses ForceRestart-only controllers and does not reboot an Off or transitioning machine.
+
+Reboot always sends a new request, even when the BMC reports On. It is not idempotent. Do not repeat a request after an unknown outcome without checking the machine first.
+
+Atlas waits for an asynchronous task to complete, when present, then observes On. A synchronous acceptance followed by On does not prove that the operating system has finished rebooting. The BMC can report On throughout a restart. Check the operating system or Metal separately before using the host.
+
+After reboot acceptance and an On observation, Atlas changes a previously Running lifecycle to Pending because the previous readiness check is no longer valid. An unprovisioned host stays Pending. Power actions never mark a host Running.
 
 ### Power request completion and recovery
 
@@ -203,7 +215,11 @@ The check restored the sample to On and Pending.
 
 An earlier live request was accepted while the CirrOS guest was still booting. It stayed On past the 120-second deadline and shut down later. Atlas reported the timeout without a forced fallback. The successful check allowed the guest to boot first.
 
-Infrastructure setup, standalone credential validation, catalog discovery, host preparation, and reboot still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
+Reboot tests cover On requests, Off and transitional-state refusal, ForceRestart-only controllers, unknown outcomes, asynchronous completion, readiness invalidation, and lock commit order. The form tests cover confirmation and action visibility.
+
+A live check sent one GracefulRestart request through the Atlas document method. The sample remained On and Pending. A read-only libvirt event listener observed the guest reboot. This confirms the sample handled the request. It does not validate Metal readiness or every BMC implementation.
+
+Infrastructure setup, standalone credential validation, catalog discovery, and host preparation still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
 
 The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 
