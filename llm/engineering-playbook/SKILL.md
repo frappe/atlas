@@ -44,7 +44,8 @@ Read only the references relevant to the task, fully on first use. Before a host
 
 ## Pre-handover checklist
 
-- [ ] The diff solves the request with no unrelated changes or unnecessary complexity.
+- [ ] The diff solves the request with no unrelated changes.
+- [ ] Mandatory: every added and changed line was reviewed for bugs, inconsistency, and verbosity, and trimmed to the fewest clear lines.
 - [ ] Existing clients, hosts, and data remain compatible; eBPF formats remain compatible or have an agreed upgrade path; schema and data changes have a migration patch.
 - [ ] Concurrency is safe: one writer per field; no stale save after slow work; select-then-update is locked; locks have a fixed order and short lifetime; no remote call holds a database lock; retries are safe. Run `go test -race` for Go concurrency changes.
 - [ ] The [reliability pre-mortem](references/reliability.md#pre-mortem) covers repeat, partial failure, capacity, observability, recovery, rollout, and user-visible states.

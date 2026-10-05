@@ -114,7 +114,7 @@ Act freely in development. Ask the user before each write in staging. Never act 
 
 ## Validation and handover
 
-- Mandatory: Review every changed line before you make a commit. Remove complexity that the change introduces or exposes only when the work stays within task scope.
+- Mandatory: Before handover and before each commit, review every added and changed line for bugs, inconsistency with the surrounding code, and verbosity. Trim the change to the fewest lines that stay clear. Less code is better.
 - For Go code, use the [Go code review guide](llm/go-code-review-guide.md). See [agent tooling setup](llm/README.md) for related skills.
 - Validate untrusted input at its boundary. Use concrete types in trusted code.
 - Remove unnecessary helpers, wrappers, forwarding layers, generic maps, interfaces, and defensive fallbacks when they do not represent a real need.
