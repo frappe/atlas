@@ -164,25 +164,25 @@ class TestServer(UnitTestCase):
 			)
 
 	def test_redfish_power_state_skips_the_bmc_when_access_is_off(self) -> None:
-		server = SimpleNamespace(is_bmc_access_enabled=False, redfish_url="https://bmc.local")
+		client = Mock()
+		server = SimpleNamespace(
+			is_bmc_access_enabled=False, redfish_url="https://bmc.local", redfish_client=client
+		)
 
-		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishClient") as client:
-			self.assertIsNone(MetalServer.redfish_power_state.fget(server))
-
-		client.assert_not_called()
+		self.assertIsNone(MetalServer.redfish_power_state.fget(server))
+		client.read_power_state.assert_not_called()
 
 	def test_redfish_power_state_shows_a_failed_read_in_the_form(self) -> None:
+		client = Mock()
+		client.read_power_state.side_effect = RedfishError("status 401")
 		server = SimpleNamespace(
 			is_bmc_access_enabled=True,
 			redfish_url="https://bmc.local",
-			redfish_username="admin",
-			get_password=Mock(return_value="secret"),
+			redfish_client=client,
 			set_onload=Mock(),
 		)
 
-		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishClient") as client:
-			client.return_value.read_power_state.side_effect = RedfishError("status 401")
-			self.assertIsNone(MetalServer.redfish_power_state.fget(server))
+		self.assertIsNone(MetalServer.redfish_power_state.fget(server))
 
 		server.set_onload.assert_called_once_with("redfish_power_error", "status 401")
 

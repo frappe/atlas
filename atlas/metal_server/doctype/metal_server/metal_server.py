@@ -304,6 +304,10 @@ class MetalServer(Document):
 		return self.settings.server_provider == "Generic" and bool(self.settings.is_bmc_access_enabled)
 
 	@property
+	def redfish_client(self) -> RedfishClient:
+		return RedfishClient(self.redfish_url, self.redfish_username, self.get_password("redfish_password"))
+
+	@property
 	@request_cache
 	def redfish_power_state(self) -> str | None:
 		"""Read the live BMC power state for Desk. A failed read leaves the reason in the form onload."""
@@ -311,9 +315,7 @@ class MetalServer(Document):
 			return None
 
 		try:
-			return RedfishClient(
-				self.redfish_url, self.redfish_username, self.get_password("redfish_password")
-			).read_power_state()
+			return self.redfish_client.read_power_state()
 		except RedfishError as error:
 			self.set_onload("redfish_power_error", str(error))
 			return None
