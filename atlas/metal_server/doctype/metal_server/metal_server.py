@@ -7,7 +7,7 @@ import re
 from typing import TYPE_CHECKING
 
 import frappe
-from frappe import _
+from frappe import _, request_cache
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
 from frappe.utils import add_days, cint, now_datetime
@@ -15,6 +15,7 @@ from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
+from atlas.atlas.core.server_providers.generic import RedfishClient, RedfishError
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
@@ -67,6 +68,7 @@ class MetalServer(Document):
 		public_ipv4_address: DF.Data | None
 		public_network_interface: DF.Data | None
 		redfish_password: DF.Password | None
+		redfish_power_state: DF.Data | None
 		redfish_url: DF.Data | None
 		redfish_username: DF.Data | None
 		server_image: DF.Link
@@ -295,10 +297,26 @@ class MetalServer(Document):
 
 	def onload(self) -> None:
 		self.set_onload("server_provider", self.settings.server_provider)
-		self.set_onload(
-			"is_bmc_access_enabled",
-			self.settings.server_provider == "Generic" and self.settings.is_bmc_access_enabled,
-		)
+		self.set_onload("is_bmc_access_enabled", self.is_bmc_access_enabled)
+
+	@property
+	def is_bmc_access_enabled(self) -> bool:
+		return self.settings.server_provider == "Generic" and bool(self.settings.is_bmc_access_enabled)
+
+	@property
+	@request_cache
+	def redfish_power_state(self) -> str | None:
+		"""Read the live BMC power state for Desk. A failed read leaves the reason in the form onload."""
+		if not (self.is_bmc_access_enabled and self.redfish_url):
+			return None
+
+		try:
+			return RedfishClient(
+				self.redfish_url, self.redfish_username, self.get_password("redfish_password")
+			).read_power_state()
+		except RedfishError as error:
+			self.set_onload("redfish_power_error", str(error))
+			return None
 
 	@frappe.whitelist(methods=["POST"])
 	def get_volume(self, kind: str) -> dict:

@@ -34,6 +34,7 @@
   "column_break_bmc",
   "redfish_username",
   "redfish_password",
+  "redfish_power_state",
   "wireguard_section",
   "wireguard_ip_address",
   "column_break_ffpx",
@@ -198,6 +199,7 @@
    "label": "BMC"
   },
   {
+   "description": "The ComputerSystem URL, such as https://10.0.0.5/redfish/v1/Systems/1.",
    "fieldname": "redfish_url",
    "fieldtype": "Data",
    "label": "Redfish URL",
@@ -216,6 +218,13 @@
    "fieldname": "redfish_password",
    "fieldtype": "Password",
    "label": "Password"
+  },
+  {
+   "fieldname": "redfish_power_state",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Power State",
+   "read_only": 1
   },
   {
    "fieldname": "wireguard_section",
@@ -321,7 +330,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-05 17:00:00.000000",
+ "modified": "2026-10-05 18:30:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

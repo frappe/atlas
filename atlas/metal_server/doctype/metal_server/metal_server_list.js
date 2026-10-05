@@ -53,7 +53,9 @@ class HostRegistrationDialog {
 					fieldtype: "Data",
 					options: "URL",
 					label: __("BMC Redfish URL"),
-					description: __("Optional. Enter the URL, username, and password together."),
+					description: __(
+						"Optional. The ComputerSystem URL, such as https://10.0.0.5/redfish/v1/Systems/1. Enter the URL, username, and password together."
+					),
 				},
 				{ fieldname: "redfish_username", fieldtype: "Data", label: __("BMC Username") },
 				{
