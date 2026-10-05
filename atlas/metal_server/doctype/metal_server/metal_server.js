@@ -61,12 +61,18 @@ frappe.ui.form.on("Metal Server", {
 				[
 					[__("Refresh Power State"), "refresh_redfish_power_state", true, __("Reading BMC power state...")],
 					[__("Power On"), "poweron_server", frm.doc.redfish_power_state === "Off", __("Powering on server...")],
-					[__("Power Off"), "poweroff_server", frm.doc.redfish_power_state === "On", __("Shutting down server..."), __("Shut down {0} gracefully?", [frm.doc.title || frm.doc.name])],
+					[__("Power Off"), "poweroff_server", frm.doc.redfish_power_state === "On", __("Sending shutdown request..."), __("Shut down {0} gracefully?", [frm.doc.title || frm.doc.name])],
 					[__("Reboot"), "reboot_server", frm.doc.redfish_power_state === "On", __("Requesting server restart..."), __("Restart {0} gracefully?", [frm.doc.title || frm.doc.name])],
 				].forEach(([label, method, enabled, freeze_message, confirm_message]) => {
 					if (!enabled) return;
 					frm.add_custom_button(label, () => {
-						const call = () => frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => frm.reload_doc());
+						const call = () => frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => {
+							if (method === "poweroff_server") {
+								frappe.show_alert({ message: __("Shutdown request accepted."), indicator: "green" });
+								return;
+							}
+							frm.reload_doc();
+						});
 						if (confirm_message) {
 							frappe.confirm(confirm_message, call);
 						} else {

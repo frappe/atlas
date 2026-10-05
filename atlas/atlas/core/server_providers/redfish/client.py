@@ -155,14 +155,21 @@ class RedfishClient:
 		self._reset(("On", "ForceOn"), "On")
 
 	def power_off(self) -> None:
-		"""Request graceful shutdown and observe Off without a forced fallback."""
-		self._reset(("GracefulShutdown",), "Off")
+		"""Submit graceful shutdown without polling task or power state."""
+		self._reset(("GracefulShutdown",), "Off", wait_for_power=False)
 
 	def reboot(self) -> None:
 		"""Request an advertised graceful restart of an On system."""
 		self._reset(("GracefulRestart",), "On", reboot=True)
 
-	def _reset(self, reset_types: tuple[str, ...], expected_state: str, *, reboot: bool = False) -> None:
+	def _reset(
+		self,
+		reset_types: tuple[str, ...],
+		expected_state: str,
+		*,
+		reboot: bool = False,
+		wait_for_power: bool = True,
+	) -> None:
 		resource = self._read_system()
 		current = self._power_status(resource).power_state
 		if current == expected_state and not reboot:
@@ -195,6 +202,8 @@ class RedfishClient:
 			) from None
 		if response.status_code not in (200, 202, 204):
 			raise RedfishError(f"Redfish reset returned HTTP {response.status_code}")
+		if not wait_for_power:
+			return
 		if response.status_code == 202:
 			self._wait_for_task(response, deadline)
 		last_read_error: RedfishTransientReadError | None = None

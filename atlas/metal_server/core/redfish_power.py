@@ -41,6 +41,8 @@ class RedfishPower:
 			self.server._validate_power_action()
 			if action is not None:
 				self.provider.set_power_state(self.server._provider_server_id(), action)
+				if action == ServerPowerAction.STOP:
+					return
 			status = self.provider.read_power_status(self.server._provider_server_id())
 			self._apply_status(status, action)
 			frappe.db.commit()  # nosemgrep
