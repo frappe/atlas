@@ -155,6 +155,24 @@ These fields record the last successful BMC observation. Refresh does not send a
 
 Power reads require the System Manager role. Atlas rejects Deleted records and a host with an active provisioning job. It checks the saved system URL against the provider ID before contacting the BMC. A per-server database lock covers the saved-record reload, observation, and committed field update.
 
+### Power on
+
+Select **Power On** when the last observed power state is Off. Atlas reads the current state before it sends a request. If the machine is already On, Atlas updates its observation without sending a reset.
+
+Atlas sends `ResetType: On` to the advertised ComputerSystem.Reset target. It uses `ForceOn` only when On is absent and ForceOn is advertised. Supported values come from the inline allowable-values annotation or the advertised ActionInfo resource.
+
+After the request, Atlas waits for the BMC to report On. An unprovisioned host stays Pending. Power on does not install Metal or prove operating system readiness.
+
+### Power request completion and recovery
+
+Power requests use the same per-server lock as power reads. A request reloads the saved record and checks permissions and lifecycle state while it holds the lock. The provider reads credentials from the saved record.
+
+HTTP 200 or 204 accepts a synchronous reset. HTTP 202 requires a same-service Location task monitor. Atlas polls that monitor before checking power. A failed or cancelled task fails the action. Reset targets, ActionInfo links, and task monitors cannot move to another service. Redirects are refused.
+
+HTTP requests have a 10-second timeout. Task and power polling share a 120-second budget. If a request times out, the action outcome can be unknown. Atlas does not repeat the POST automatically. Select **Refresh Power State** before deciding whether to send another action.
+
+Power actions require a stable On or Off state. During a transition, refresh the observed state and wait for it to settle. A failed action does not save an assumed power state or promote the lifecycle to Running.
+
 ### Implementation and validation
 
 The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport, system identity discovery, and power observations. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection. [Redfish power](../../atlas/metal_server/core/redfish_power.py) owns stored observations and their per-server lock.
@@ -165,7 +183,9 @@ Deterministic tests cover discovery, credentials, malformed responses, unsafe li
 
 Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. The Node form tests cover Refresh Power State, the single Register form, and Deleted records. A live check on `atlas-bare.localhost` matched the observed `On` and `OK` values to the sample endpoint and confirmed that the BMC response did not change.
 
-Infrastructure setup, standalone credential validation, catalog discovery, host preparation, and power operations still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide these unsupported host actions.
+Power-on tests cover idempotent On requests, ForceOn selection, ActionInfo, task monitors, failed tasks, state timeouts, and unknown POST outcomes. A live check powered the sample from Off to On through the Atlas document method, confirmed its state with Redfish and a read-only libvirt query, and verified that a repeated Power On sent no POST. The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is covered with mocks.
+
+Infrastructure setup, standalone credential validation, catalog discovery, host preparation, power off, and reboot still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
 
 The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 
