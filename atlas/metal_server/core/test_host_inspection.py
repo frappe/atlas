@@ -290,7 +290,13 @@ class TestHostInspection(UnitTestCase):
 			patch(f"{MODULE}.frappe.db.advisory_lock"),
 			patch(f"{MODULE}.frappe.cache.delete_value") as delete_value,
 		):
-			HostInspection("inspection-1").register("/dev/nvme1n1", "")
+			HostInspection("inspection-1").register(
+				"/dev/nvme1n1",
+				"",
+				redfish_url="https://bmc.local",
+				redfish_username="admin",
+				redfish_password="secret",
+			)
 
 		values = server.update.call_args.args[0]
 		metadata = json.loads(values["provider_metadata"])
@@ -300,6 +306,11 @@ class TestHostInspection(UnitTestCase):
 		self.assertEqual(values["architecture"], "amd64")
 		self.assertEqual(metadata["storage_pool_device"], "/dev/nvme1n1")
 		self.assertEqual(metadata["storage_pool_size_gib"], 1800)
+		self.assertEqual(
+			(values["redfish_url"], values["redfish_username"], values["redfish_password"]),
+			("https://bmc.local", "admin", "secret"),
+		)
+		self.assertNotIn("secret", values["provider_metadata"])
 		ensure_size.assert_called_once()
 		validate.assert_called_once_with(PUBLIC_ADDRESS, PRIVATE_ADDRESS)
 		server.insert.assert_called_once_with(ignore_permissions=True)

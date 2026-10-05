@@ -66,6 +66,9 @@ class MetalServer(Document):
 		provider_server_id: DF.Data | None
 		public_ipv4_address: DF.Data | None
 		public_network_interface: DF.Data | None
+		redfish_password: DF.Password | None
+		redfish_url: DF.Data | None
+		redfish_username: DF.Data | None
 		server_image: DF.Link
 		server_size: DF.Link
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
@@ -134,8 +137,9 @@ class MetalServer(Document):
 		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
 
 	def validate(self) -> None:
-		"""Fill the mesh address and check the title and tags."""
+		"""Fill the mesh address and check the title, tags, and Redfish access."""
 		self._validate_title()
+		self._validate_redfish()
 		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
 
@@ -145,6 +149,11 @@ class MetalServer(Document):
 
 		if not HOST_TITLE.fullmatch(self.title or ""):
 			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
+
+	def _validate_redfish(self) -> None:
+		values = (self.redfish_url, self.redfish_username, self.redfish_password)
+		if any(values) and not all(values):
+			frappe.throw(_("Enter the Redfish URL, username, and password together."))
 
 	def after_insert(self) -> None:
 		"""Start provisioning in the background."""
@@ -286,6 +295,10 @@ class MetalServer(Document):
 
 	def onload(self) -> None:
 		self.set_onload("server_provider", self.settings.server_provider)
+		self.set_onload(
+			"is_bmc_access_enabled",
+			self.settings.server_provider == "Generic" and self.settings.is_bmc_access_enabled,
+		)
 
 	@frappe.whitelist(methods=["POST"])
 	def get_volume(self, kind: str) -> dict:
@@ -568,10 +581,27 @@ def create_host_disk_image(inspection_id: str, size_gib: int) -> None:
 
 
 @frappe.whitelist(methods=["POST"])
-def register_host(inspection_id: str, storage_pool_device: str, provider_server_id: str | None = None) -> str:
+def register_host(
+	inspection_id: str,
+	storage_pool_device: str,
+	provider_server_id: str | None = None,
+	redfish_url: str | None = None,
+	redfish_username: str | None = None,
+	redfish_password: str | None = None,
+) -> str:
 	"""Create the Metal Server for an inspected host and return its name."""
 	frappe.only_for("System Manager")
-	return HostInspection(inspection_id).register(storage_pool_device, provider_server_id).name
+	return (
+		HostInspection(inspection_id)
+		.register(
+			storage_pool_device,
+			provider_server_id,
+			redfish_url=redfish_url,
+			redfish_username=redfish_username,
+			redfish_password=redfish_password,
+		)
+		.name
+	)
 
 
 def on_doctype_update() -> None:

@@ -120,7 +120,10 @@ class TestServer(UnitTestCase):
 	def test_validate_trims_the_tags_and_fills_the_mesh_address(self) -> None:
 		tags = [SimpleNamespace(key=" env ", value=" local ")]
 		server = SimpleNamespace(
-			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+			get=lambda fieldname: tags,
+			_validate_title=Mock(),
+			_validate_redfish=Mock(),
+			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
 		MetalServer.validate(server)
@@ -131,13 +134,33 @@ class TestServer(UnitTestCase):
 	def test_validate_rejects_a_repeated_tag_key(self) -> None:
 		tags = [SimpleNamespace(key="env", value="local"), SimpleNamespace(key="env", value="dev")]
 		server = SimpleNamespace(
-			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+			get=lambda fieldname: tags,
+			_validate_title=Mock(),
+			_validate_redfish=Mock(),
+			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
 		with self.assertRaises(frappe.ValidationError):
 			MetalServer.validate(server)
 
 		server._set_wireguard_ip_address_if_not_set.assert_not_called()
+
+	def test_validate_redfish_requires_the_url_username_and_password_together(self) -> None:
+		MetalServer._validate_redfish(
+			SimpleNamespace(redfish_url=None, redfish_username=None, redfish_password=None)
+		)
+		MetalServer._validate_redfish(
+			SimpleNamespace(
+				redfish_url="https://bmc.local", redfish_username="admin", redfish_password="secret"
+			)
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			MetalServer._validate_redfish(
+				SimpleNamespace(
+					redfish_url="https://bmc.local", redfish_username="admin", redfish_password=None
+				)
+			)
 
 	def test_ensure_provider_server_identifies_the_host_by_name(self) -> None:
 		provider = SimpleNamespace(
