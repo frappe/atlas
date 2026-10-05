@@ -177,7 +177,7 @@ Registration stores the canonical system URL in `redfish_url`, credentials in `r
 
 An active record with the same provider server ID is reused without changing its credentials. Registration opens that record. A Deleted record does not block a new registration.
 
-The record stays **Pending** with provisioning incomplete. Registration does not create a machine, change BMC state, install software, prepare disks, or enqueue provisioning.
+The record stays **Pending** with provisioning incomplete. Registration does not create a machine, change BMC state, install software, prepare disks, or enqueue provisioning. Setup requests for BMC records are refused.
 
 Size and image are optional for BMC registration and remain required for SSH and cloud hosts. Registration does not establish hardware inventory or VM capacity.
 
