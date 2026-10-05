@@ -127,7 +127,7 @@ Attach and detach change only Metal's VM network. Atlas does not change provider
 
 The BMC driver registers existing machines through Redfish. Select **Generic** as **Server Provider** and **BMC** as **Generic Provider Driver**. Automated setup input uses `"server_provider": "Generic"` and `"generic_provider_driver": "BMC"`.
 
-Run `pilot --site SITE migrate` after installing the app changes. Site migration selects Generic+BMC for saved Redfish provider settings and SSH for Generic settings without a driver. It preserves machine records, provider identities, and encrypted credentials.
+Run `pilot --site SITE migrate` after installing the app changes.
 
 Atlas Settings refuses **Metal Auto-spawn Config > Enabled**. Settings validation does not contact a baseboard management controller (BMC) or check the per-server credentials.
 
@@ -249,7 +249,7 @@ The [BMC driver](../../atlas/atlas/core/server_providers/generic/bmc/driver.py) 
 
 The form uses the POST API `atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server`. It requires the System Manager role and accepts `redfish_url`, `redfish_username`, and `redfish_password`. Direct insertion of a new BMC Metal Server through the standard Save API is refused.
 
-Tests cover discovery, credentials, unsafe responses and links, duplicate registration, permissions, virtual fields, lifecycle reconciliation, and power failure paths. Generic driver tests check SSH defaults, BMC selection, setup input, and repeatable migration. Form tests check that BMC fields and actions appear only for Generic+BMC.
+Tests cover discovery, credentials, unsafe responses and links, duplicate registration, permissions, virtual fields, lifecycle reconciliation, and power failure paths. Generic driver tests check SSH defaults, BMC selection, and setup input. Form tests check that BMC fields and actions appear only for Generic+BMC.
 
 Live checks use the local Sushy emulator. They cover credential validation, discovery through root, collection, and system URLs, registration, virtual observations, power on, graceful reboot, and graceful shutdown. A repeated Power On sends no POST. Shutdown sends one POST with no later GET. The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is checked in protocol tests.
 

@@ -51,9 +51,7 @@ The provider resolves an active Metal Server by its canonical URL-derived identi
 - Power On and Reboot follow a same-service task monitor for HTTP 202 and wait for observed power before returning. The client never retries a reset POST.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
 
-The migration patch `move_redfish_to_generic_bmc` selects Generic+BMC for saved Redfish settings and SSH for Generic settings without a driver. It does not alter Metal Server records or credentials.
-
-`generic/test_provider.py` checks selection and migration. `generic/bmc/test_driver.py` checks registration, credentials, and driver boundaries.
+`generic/test_provider.py` checks driver selection. `generic/bmc/test_driver.py` checks registration, credentials, and driver boundaries.
 
 ## TLS
 
