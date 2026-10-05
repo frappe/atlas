@@ -127,3 +127,25 @@ class TestRedfishPower(UnitTestCase):
 			MetalServer.poweron_server(self.server)
 		power.assert_called_once_with(self.server)
 		power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.START)
+
+	def test_shutdown_saves_stopped_only_after_observing_off(self) -> None:
+		with (
+			patch.object(self.provider, "set_power_state") as change,
+			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("Off", "OK")),
+			patch("frappe.db.advisory_lock", return_value=nullcontext()),
+			patch("frappe.db.rollback"),
+			patch("frappe.db.commit"),
+		):
+			RedfishPower(self.server).set_power_state(ServerPowerAction.STOP)
+		change.assert_called_once_with("provider-id", ServerPowerAction.STOP)
+		self.assertEqual(self.server.db_set.call_args.args[0]["status"], "Stopped")
+
+	def test_shutdown_route_checks_permission_and_delegates_to_the_power_owner(self) -> None:
+		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
+			MetalServer.poweroff_server(self.server)
+			power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
+			power.reset_mock()
+			self.server._validate_power_action.side_effect = frappe.PermissionError
+			with self.assertRaises(frappe.PermissionError):
+				MetalServer.poweroff_server(self.server)
+			power.assert_not_called()

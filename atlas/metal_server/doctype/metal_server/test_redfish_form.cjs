@@ -4,14 +4,14 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function form({ isNew = false, status = "Pending", powerState = "On" } = {}) {
+function form({ isNew = false, status = "Pending", powerState = "On", confirm = true } = {}) {
 	let handlers;
 	const buttons = new Map();
 	const calls = [];
 	const frappe = {
 		ui: { form: { on: (_name, value) => (handlers = value) } },
 		db: { get_single_value: async () => "Redfish" },
-		confirm: (_message, action) => action(),
+		confirm: (_message, action) => confirm && action(),
 	};
 	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "metal_server.js"), "utf8"), {
 		frappe,
@@ -63,5 +63,19 @@ test("Power On is available for an Off BMC and uses the saved-document method", 
 	assert.equal(calls[1], "reload");
 	for (const powerState of ["On", "PoweringOn", "PoweringOff", ""]) {
 		assert.ok(!form({ powerState }).buttons.has("Power On"));
+	}
+});
+
+test("Power Off confirms graceful shutdown and is offered only for On", async () => {
+	const { buttons, calls } = form();
+	buttons.get("Power Off")();
+	await Promise.resolve();
+	assert.equal(calls[0].method, "poweroff_server");
+	assert.equal(calls[1], "reload");
+	const cancelled = form({ confirm: false });
+	cancelled.buttons.get("Power Off")();
+	assert.deepEqual(cancelled.calls, []);
+	for (const powerState of ["Off", "PoweringOn", "PoweringOff", ""]) {
+		assert.ok(!form({ powerState }).buttons.has("Power Off"));
 	}
 });

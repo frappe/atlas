@@ -231,3 +231,48 @@ class TestRedfishPowerOn(UnitTestCase):
 			with self.assertRaisesRegex(RedfishError, "task did not finish"):
 				RedfishClient(SYSTEM_URL).power_on()
 		post.assert_called_once()
+
+
+class TestRedfishPowerOff(UnitTestCase):
+	def test_graceful_shutdown_observes_off(self) -> None:
+		with (
+			patch(
+				"requests.get",
+				side_effect=[
+					response(resource("On", ("GracefulShutdown", "ForceOff"))),
+					response(resource("PoweringOff")),
+					response(resource("Off")),
+				],
+			),
+			patch("requests.post", return_value=response(status=204)) as post,
+			patch(f"{MODULE}.sleep"),
+		):
+			RedfishClient(SYSTEM_URL).power_off()
+		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
+		post.assert_called_once()
+
+	def test_already_off_does_not_send_a_reset(self) -> None:
+		with patch("requests.get", return_value=response(resource("Off"))), patch("requests.post") as post:
+			RedfishClient(SYSTEM_URL).power_off()
+		post.assert_not_called()
+
+	def test_force_off_only_is_refused(self) -> None:
+		with (
+			patch("requests.get", return_value=response(resource("On", ("ForceOff",)))),
+			patch("requests.post") as post,
+		):
+			with self.assertRaisesRegex(RedfishError, "GracefulShutdown"):
+				RedfishClient(SYSTEM_URL).power_off()
+		post.assert_not_called()
+
+	def test_shutdown_timeout_never_falls_back_to_force_off(self) -> None:
+		with (
+			patch("requests.get", return_value=response(resource("On", ("GracefulShutdown", "ForceOff")))),
+			patch("requests.post", return_value=response(status=204)) as post,
+			patch(f"{MODULE}.monotonic", side_effect=[0, 0, 121, 121]),
+			patch(f"{MODULE}.sleep"),
+		):
+			with self.assertRaisesRegex(RedfishError, "did not report Off"):
+				RedfishClient(SYSTEM_URL).power_off()
+		post.assert_called_once()
+		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
