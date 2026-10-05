@@ -164,7 +164,8 @@
    "label": "Redfish Power State",
    "options": "\nOn\nOff\nPoweringOn\nPoweringOff\nPaused\nSleeping\nHibernating",
    "read_only": 1,
-   "description": "BMC power state read on demand. This does not confirm Metal readiness."
+   "description": "BMC power state read on demand. This does not confirm Metal readiness.",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "redfish_health",
@@ -341,7 +342,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-05 08:00:28.977114",
+ "modified": "2026-10-05 08:07:16.737516",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",
