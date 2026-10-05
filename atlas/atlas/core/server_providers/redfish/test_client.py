@@ -45,14 +45,7 @@ class TestRedfishClient(UnitTestCase):
 		for call in read.call_args_list:
 			self.assertFalse(call.kwargs["allow_redirects"])
 			self.assertEqual(call.kwargs["timeout"], 10)
-
-	def test_reads_a_direct_system_with_the_supplied_credentials(self) -> None:
-		with patch("requests.get", return_value=response(SYSTEM)) as read:
-			RedfishClient("http://bmc.example" + SYSTEM_PATH, "operator", "test-password").discover_system()
-
-		read.assert_called_once()
-		self.assertEqual(read.call_args.kwargs["auth"], ("operator", "test-password"))
-		self.assertNotIn("verify", read.call_args.kwargs)
+			self.assertNotIn("verify", call.kwargs)
 
 	def test_rejects_ambiguous_and_empty_collections(self) -> None:
 		for members in ([], COLLECTION["Members"] * 2, None, ["invalid"]):

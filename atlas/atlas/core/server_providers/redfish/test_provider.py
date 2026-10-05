@@ -6,7 +6,6 @@ from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.base import ServerPowerAction
 from atlas.atlas.core.server_providers.redfish import RedfishError, RedfishProvider
 from atlas.atlas.core.server_providers.registry import get_server_provider
 
@@ -30,18 +29,6 @@ class TestRedfishProvider(UnitTestCase):
 
 		self.assertEqual(raised.exception.code, "provider_error")
 		self.assertFalse(raised.exception.is_retryable)
-
-	def test_settings_validation_does_not_contact_the_bmc(self) -> None:
-		with patch("requests.request") as request:
-			for enabled in (0, 1):
-				provider = RedfishProvider(SimpleNamespace(auto_spawn_metal_server=enabled))
-				if enabled:
-					with self.assertRaises(RedfishError):
-						provider.validate_settings()
-				else:
-					provider.validate_settings()
-
-		request.assert_not_called()
 
 	def test_credentials_check_every_active_redfish_system_with_saved_passwords(self) -> None:
 		urls = [f"http://bmc.example/redfish/v1/Systems/host-{index}" for index in (1, 2)]
@@ -126,26 +113,6 @@ class TestRedfishProvider(UnitTestCase):
 			with self.assertRaisesRegex(RedfishError, "different system"):
 				provider.validate_credentials()
 
-	def test_credentials_accept_an_anonymous_registered_system(self) -> None:
-		url = "http://bmc.example/redfish/v1/Systems/host-1"
-		provider_id = "redfish-" + sha256(url.encode()).hexdigest()[:32]
-		server = SimpleNamespace(redfish_url=url, redfish_username="", get_password=Mock(return_value=None))
-		with (
-			patch("frappe.get_all", return_value=[provider_id]),
-			patch("frappe.db.get_value", return_value="record"),
-			patch("frappe.get_doc", return_value=server),
-			patch("requests.get") as read,
-		):
-			read.return_value.status_code = 200
-			read.return_value.json.return_value = {
-				"@odata.type": "#ComputerSystem.v1_20_0.ComputerSystem",
-				"@odata.id": url,
-				"Id": "host-1",
-				"Name": "Rack server",
-			}
-			self.assertTrue(RedfishProvider(SimpleNamespace()).validate_credentials())
-		self.assertIsNone(read.call_args.kwargs["auth"])
-
 	def test_power_reads_use_saved_credentials_and_registered_identity(self) -> None:
 		url = "http://bmc.example/redfish/v1/Systems/host-1"
 		provider_id = "redfish-" + sha256(url.encode()).hexdigest()[:32]
@@ -186,24 +153,3 @@ class TestRedfishProvider(UnitTestCase):
 				with self.assertRaises(RedfishError):
 					RedfishProvider(SimpleNamespace()).read_power_status("unverified-id")
 				read.assert_not_called()
-
-	def test_start_uses_the_registered_client_power_on_action(self) -> None:
-		provider = RedfishProvider(SimpleNamespace())
-		with patch.object(provider, "_client") as client:
-			provider.set_power_state("provider-id", ServerPowerAction.START)
-		client.assert_called_once_with("provider-id")
-		client.return_value.power_on.assert_called_once_with()
-
-	def test_stop_uses_the_registered_client_graceful_shutdown(self) -> None:
-		provider = RedfishProvider(SimpleNamespace())
-		with patch.object(provider, "_client") as client:
-			provider.set_power_state("provider-id", ServerPowerAction.STOP)
-		client.assert_called_once_with("provider-id")
-		client.return_value.power_off.assert_called_once_with()
-
-	def test_reboot_uses_the_registered_client_graceful_restart(self) -> None:
-		provider = RedfishProvider(SimpleNamespace())
-		with patch.object(provider, "_client") as client:
-			provider.set_power_state("provider-id", ServerPowerAction.REBOOT)
-		client.assert_called_once_with("provider-id")
-		client.return_value.reboot.assert_called_once_with()

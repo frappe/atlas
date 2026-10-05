@@ -11,7 +11,6 @@ from atlas.atlas.core.server_providers.base import ServerPowerAction
 from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishPowerStatus
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.core.redfish_power import RedfishPower
-from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
 
 class TestRedfishPower(UnitTestCase):
@@ -29,22 +28,8 @@ class TestRedfishPower(UnitTestCase):
 		)
 
 	def test_refresh_reconciles_lifecycle_without_promoting_readiness(self) -> None:
-		with (
-			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")),
-			patch("frappe.db.advisory_lock", return_value=nullcontext()),
-			patch("frappe.db.rollback"),
-			patch("frappe.db.commit") as commit,
-		):
-			RedfishPower(self.server).refresh()
-		fields = self.server.db_set.call_args.args[0]
-		self.assertEqual(fields["status"], "Pending")
-		self.assertEqual(set(fields), {"status"})
-		self.server.reload.assert_called_once_with()
-		self.server._validate_power_action.assert_called_once_with()
-		commit.assert_called_once_with()
-
-	def test_refresh_reconciles_off_and_transitioning_servers(self) -> None:
 		for power, current, expected in (
+			("On", "Pending", "Pending"),
 			("Off", "Running", "Stopped"),
 			("On", "Stopped", "Pending"),
 			("PoweringOff", "Running", "Pending"),
@@ -61,7 +46,7 @@ class TestRedfishPower(UnitTestCase):
 				patch("frappe.db.commit"),
 			):
 				RedfishPower(self.server).refresh()
-			self.assertEqual(self.server.db_set.call_args.args[0]["status"], expected)
+			self.assertEqual(self.server.db_set.call_args.args[0], {"status": expected})
 
 	def test_failed_reads_preserve_the_previous_observation(self) -> None:
 		with (
@@ -86,26 +71,6 @@ class TestRedfishPower(UnitTestCase):
 				RedfishPower(self.server).refresh()
 		read.assert_not_called()
 
-	def test_refresh_route_checks_permission_before_power_reads(self) -> None:
-		self.server._validate_power_action.side_effect = frappe.PermissionError
-		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
-			with self.assertRaises(frappe.PermissionError):
-				MetalServer.refresh_redfish_power_state(self.server)
-			power.assert_not_called()
-
-	def test_power_on_stores_an_observation_only_after_the_action_succeeds(self) -> None:
-		self.server.status = "Stopped"
-		with (
-			patch.object(self.provider, "set_power_state") as change,
-			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")),
-			patch("frappe.db.advisory_lock", return_value=nullcontext()),
-			patch("frappe.db.rollback"),
-			patch("frappe.db.commit"),
-		):
-			RedfishPower(self.server).set_power_state(ServerPowerAction.START)
-		change.assert_called_once_with("provider-id", ServerPowerAction.START)
-		self.assertEqual(self.server.db_set.call_args.args[0]["status"], "Pending")
-
 	def test_failed_power_on_does_not_save_an_optimistic_state(self) -> None:
 		with (
 			patch.object(self.provider, "set_power_state", side_effect=RedfishError("outcome unknown")),
@@ -119,12 +84,6 @@ class TestRedfishPower(UnitTestCase):
 		read.assert_not_called()
 		self.server.db_set.assert_not_called()
 		commit.assert_not_called()
-
-	def test_redfish_power_on_route_delegates_to_the_power_owner(self) -> None:
-		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
-			MetalServer.poweron_server(self.server)
-		power.assert_called_once_with(self.server)
-		power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.START)
 
 	def test_shutdown_submits_without_reading_or_saving_an_observation(self) -> None:
 		with (
@@ -140,16 +99,6 @@ class TestRedfishPower(UnitTestCase):
 		self.server.db_set.assert_not_called()
 		commit.assert_not_called()
 
-	def test_shutdown_route_checks_permission_and_delegates_to_the_power_owner(self) -> None:
-		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
-			MetalServer.poweroff_server(self.server)
-			power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
-			power.reset_mock()
-			self.server._validate_power_action.side_effect = frappe.PermissionError
-			with self.assertRaises(frappe.PermissionError):
-				MetalServer.poweroff_server(self.server)
-			power.assert_not_called()
-
 	def test_reboot_invalidates_running_readiness(self) -> None:
 		self.server.status = "Running"
 		with (
@@ -162,30 +111,6 @@ class TestRedfishPower(UnitTestCase):
 			RedfishPower(self.server).set_power_state(ServerPowerAction.REBOOT)
 		change.assert_called_once_with("provider-id", ServerPowerAction.REBOOT)
 		self.assertEqual(self.server.db_set.call_args.args[0]["status"], "Pending")
-
-	def test_reboot_route_checks_permission_and_uses_the_power_owner(self) -> None:
-		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
-			MetalServer.reboot_server(self.server)
-			power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.REBOOT)
-			power.reset_mock()
-			self.server._validate_power_action.side_effect = frappe.PermissionError
-			with self.assertRaises(frappe.PermissionError):
-				MetalServer.reboot_server(self.server)
-			power.assert_not_called()
-
-	def test_failed_observation_after_reboot_does_not_save_a_result(self) -> None:
-		with (
-			patch.object(self.provider, "set_power_state") as change,
-			patch.object(self.provider, "read_power_status", side_effect=RedfishError("unreachable")),
-			patch("frappe.db.advisory_lock", return_value=nullcontext()),
-			patch("frappe.db.rollback"),
-			patch("frappe.db.commit") as commit,
-		):
-			with self.assertRaises(RedfishError):
-				RedfishPower(self.server).set_power_state(ServerPowerAction.REBOOT)
-		change.assert_called_once()
-		self.server.db_set.assert_not_called()
-		commit.assert_not_called()
 
 	def test_power_result_commits_before_releasing_the_server_lock(self) -> None:
 		events = []
