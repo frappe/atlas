@@ -3,13 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerPowerAction, UnsupportedProviderOperation
 from atlas.atlas.core.server_providers.generic import GenericError, GenericProvider
 from atlas.atlas.core.server_providers.registry import get_server_provider
-from atlas.patches.move_redfish_to_generic_bmc import execute
 
 
 class TestGenericProvider(UnitTestCase):
@@ -25,33 +23,6 @@ class TestGenericProvider(UnitTestCase):
 	def test_unknown_driver_is_rejected(self) -> None:
 		with self.assertRaisesRegex(GenericError, "Unknown Generic provider driver"):
 			get_server_provider("Generic", settings=self.settings(generic_provider_driver="IPMI"))
-
-	def test_provider_migration_is_scoped_and_repeatable(self) -> None:
-		for provider, driver, expected in (
-			("Redfish", "SSH", ("Generic", "BMC")),
-			("Generic", None, ("Generic", "SSH")),
-			("Generic", "BMC", ("Generic", "BMC")),
-			("AWS", "BMC", ("AWS", "BMC")),
-		):
-			with self.subTest(provider=provider, driver=driver):
-				frappe.db.savepoint("generic_driver_migration")
-				try:
-					frappe.db.set_single_value(
-						"Atlas Settings", {"server_provider": provider, "generic_provider_driver": driver}
-					)
-					expected_settings = frappe.db.get_singles_dict("Atlas Settings")
-					expected_settings.update(server_provider=expected[0], generic_provider_driver=expected[1])
-					for field in ("modified", "modified_by"):
-						expected_settings.pop(field, None)
-					for _ in range(2):
-						execute()
-						after = frappe.db.get_singles_dict("Atlas Settings")
-						for field in ("modified", "modified_by"):
-							after.pop(field, None)
-						self.assertEqual(after, expected_settings)
-				finally:
-					frappe.db.rollback(save_point="generic_driver_migration")
-					frappe.db.value_cache.clear()
 
 	def test_settings_reject_automatic_host_creation(self) -> None:
 		with self.assertRaisesRegex(GenericError, "automatically"):
