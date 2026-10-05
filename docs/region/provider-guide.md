@@ -32,6 +32,8 @@ This route makes a VM address available on any Metal Server. A VM can keep its p
 
 You can subclass the Generic provider to add automation for one bare metal provider.
 
+The **Enable BMC Access** option in Atlas Settings shows only for the Generic provider. It is off by default. It does not change behavior yet, because the Redfish client is a placeholder.
+
 ### Prepare a host
 
 Before you register a host, prepare it with these items:
