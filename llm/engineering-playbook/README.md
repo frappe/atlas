@@ -4,12 +4,7 @@ Shared agent skill for the Atlas team: workflow, environment access, code taste,
 
 ## Install
 
-Link the skill from the repository root:
-
-```sh
-ln -s "$PWD/llm/engineering-playbook" ~/.claude/skills/engineering-playbook
-ln -s "$PWD/llm/engineering-playbook" ~/.agents/skills/engineering-playbook
-```
+The skill loads automatically in this repository through the `.claude/skills` and `.agents/skills` links.
 
 Merge the shared classifier rules into your Git-ignored `.claude/settings.local.json`. The merge keeps your settings and unions the `autoMode` lists:
 
