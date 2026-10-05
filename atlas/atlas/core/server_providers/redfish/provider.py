@@ -64,7 +64,21 @@ class RedfishProvider(ServerProvider):
 
 	@override
 	def validate_credentials(self) -> bool:
-		raise UnsupportedProviderOperation("Redfish credential validation")
+		"""Check access to every active registered Redfish system."""
+		provider_ids = frappe.get_all(
+			"Metal Server",
+			filters={"provider_server_id": ["like", "redfish-%"], "status": ["!=", "Deleted"]},
+			pluck="provider_server_id",
+			order_by="name",
+		)
+		if not provider_ids:
+			raise RedfishError("Register a Redfish Metal Server before validating credentials")
+
+		for provider_id in provider_ids:
+			client = self._client(provider_id)
+			if client.discover_system().url != client.url:
+				raise RedfishError("Redfish returned a different system from the registered URL")
+		return True
 
 	@override
 	def fetch_server_sizes(self) -> tuple[ServerSizeData, ...]:
