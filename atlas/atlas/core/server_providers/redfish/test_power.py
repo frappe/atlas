@@ -341,3 +341,119 @@ class TestRedfishReboot(UnitTestCase):
 			RedfishClient(SYSTEM_URL).reboot()
 		self.assertEqual([call.args[0] for call in read.call_args_list], [SYSTEM_URL, TASK_URL, SYSTEM_URL])
 		post.assert_called_once()
+
+
+class TestRedfishPowerReadRecovery(UnitTestCase):
+	def test_temporary_power_reads_recover_without_repeating_the_reset(self) -> None:
+		for method, current, expected, reset_type in (
+			("power_on", "Off", "On", "On"),
+			("power_off", "On", "Off", "GracefulShutdown"),
+			("reboot", "On", "On", "GracefulRestart"),
+		):
+			for failure in (
+				response({"error": "private detail"}, 500),
+				response(status=502),
+				response(status=503),
+				response(status=504),
+				requests.ConnectionError("test-password"),
+				requests.ReadTimeout("test-password"),
+			):
+				with (
+					self.subTest(method=method, failure=failure),
+					patch(
+						"requests.get",
+						side_effect=[
+							response(resource(current, (reset_type,))),
+							failure,
+							response(resource(expected)),
+						],
+					) as read,
+					patch("requests.post", return_value=response(status=204)) as post,
+					patch(f"{MODULE}.sleep") as sleep,
+				):
+					getattr(RedfishClient(SYSTEM_URL), method)()
+					self.assertEqual(read.call_count, 3)
+					sleep.assert_called_once()
+					post.assert_called_once()
+					self.assertEqual(post.call_args.kwargs["json"], {"ResetType": reset_type})
+
+	def test_persistent_read_errors_stop_at_the_power_deadline(self) -> None:
+		with (
+			patch(
+				"requests.get",
+				side_effect=[response(resource("On", ("GracefulShutdown",))), response(status=500)],
+			) as read,
+			patch("requests.post", return_value=response(status=204)) as post,
+			patch(f"{MODULE}.monotonic", side_effect=[0, 0, 121, 121]),
+			patch(f"{MODULE}.sleep"),
+		):
+			with self.assertRaisesRegex(RedfishError, "last power read failed:.*HTTP 500.*refresh") as raised:
+				RedfishClient(SYSTEM_URL).power_off()
+		self.assertEqual(read.call_count, 2)
+		post.assert_called_once()
+		self.assertFalse(raised.exception.is_retryable)
+
+	def test_a_later_valid_read_clears_the_transient_error_from_the_timeout(self) -> None:
+		with (
+			patch(
+				"requests.get",
+				side_effect=[
+					response(resource("On", ("GracefulShutdown",))),
+					response(status=500),
+					response(resource("On")),
+				],
+			),
+			patch("requests.post", return_value=response(status=204)) as post,
+			patch(f"{MODULE}.monotonic", side_effect=[0, 0, 1, 2, 121, 121]),
+			patch(f"{MODULE}.sleep"),
+		):
+			with self.assertRaisesRegex(RedfishError, "did not report Off") as raised:
+				RedfishClient(SYSTEM_URL).power_off()
+		self.assertNotIn("HTTP 500", str(raised.exception))
+		post.assert_called_once()
+
+	def test_permanent_read_failures_are_not_retried_after_reset(self) -> None:
+		for failure in (
+			response(status=302),
+			response(status=401),
+			response(status=403),
+			response(status=404),
+			requests.exceptions.SSLError("test-password"),
+			response([]),
+			response({}),
+			response({**resource("Off"), "@odata.id": SYSTEM_URL + "-other"}),
+		):
+			with (
+				self.subTest(failure=failure),
+				patch(
+					"requests.get",
+					side_effect=[response(resource("On", ("GracefulShutdown",))), failure],
+				) as read,
+				patch("requests.post", return_value=response(status=204)) as post,
+				patch(f"{MODULE}.sleep") as sleep,
+			):
+				with self.assertRaises(RedfishError) as raised:
+					RedfishClient(SYSTEM_URL).power_off()
+				self.assertNotIn("test-password", str(raised.exception))
+				self.assertEqual(read.call_count, 2)
+				sleep.assert_not_called()
+				post.assert_called_once()
+
+	def test_an_initial_read_failure_prevents_reset_without_retrying(self) -> None:
+		with (
+			patch("requests.get", return_value=response(status=500)) as read,
+			patch("requests.post") as post,
+			patch(f"{MODULE}.sleep") as sleep,
+		):
+			with self.assertRaisesRegex(RedfishError, "HTTP 500") as raised:
+				RedfishClient(SYSTEM_URL).power_off()
+		read.assert_called_once()
+		post.assert_not_called()
+		sleep.assert_not_called()
+		self.assertFalse(raised.exception.is_retryable)
+
+	def test_standalone_power_refresh_does_not_use_the_reset_polling_retry(self) -> None:
+		with patch("requests.get", return_value=response(status=500)) as read:
+			with self.assertRaisesRegex(RedfishError, "HTTP 500"):
+				RedfishClient(SYSTEM_URL).read_power_status()
+		read.assert_called_once()
