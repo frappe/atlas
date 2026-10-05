@@ -160,20 +160,23 @@
   {
    "fieldname": "redfish_power_state",
    "fieldtype": "Select",
+   "is_virtual": 1,
    "label": "Redfish Power State",
    "options": "\nOn\nOff\nPoweringOn\nPoweringOff\nPaused\nSleeping\nHibernating",
    "read_only": 1,
-   "description": "Last observed BMC power state. This does not confirm Metal readiness."
+   "description": "BMC power state read on demand. This does not confirm Metal readiness."
   },
   {
    "fieldname": "redfish_health",
    "fieldtype": "Data",
+   "is_virtual": 1,
    "label": "Redfish Health",
    "read_only": 1
   },
   {
    "fieldname": "redfish_power_updated_on",
    "fieldtype": "Datetime",
+   "is_virtual": 1,
    "label": "Power State Checked On",
    "read_only": 1
   },
@@ -338,7 +341,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-02 12:00:00.000000",
+ "modified": "2026-10-05 08:00:28.977114",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

@@ -4,7 +4,6 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 
 import frappe
-from frappe.utils import now_datetime
 
 from atlas.atlas.core.server_providers.base import ServerPowerAction
 from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishPowerStatus
@@ -15,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class RedfishPower:
-	"""Serialize BMC observations and store them on the owning Metal Server."""
+	"""Serialize BMC power operations and reconcile the Metal Server lifecycle."""
 
 	def __init__(self, server: MetalServer) -> None:
 		self.server = server
@@ -28,7 +27,7 @@ class RedfishPower:
 		self._run()
 
 	def set_power_state(self, action: ServerPowerAction) -> None:
-		"""Apply one power action and store the resulting observation."""
+		"""Apply one power action and reconcile lifecycle after an observed result."""
 		self._run(action)
 
 	def _run(self, action: ServerPowerAction | None = None) -> None:
@@ -56,11 +55,4 @@ class RedfishPower:
 			and (status.power_state != "On" or action == ServerPowerAction.REBOOT)
 		):
 			lifecycle_status = "Pending"
-		self.server.db_set(
-			{
-				"redfish_power_state": status.power_state,
-				"redfish_health": status.health,
-				"redfish_power_updated_on": now_datetime(),
-				"status": lifecycle_status,
-			}
-		)
+		self.server.db_set({"status": lifecycle_status})

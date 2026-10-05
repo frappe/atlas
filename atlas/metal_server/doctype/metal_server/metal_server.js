@@ -57,6 +57,9 @@ frappe.ui.form.on("Metal Server", {
 		}
 		configure_provider(frm.doc.__onload?.server_provider);
 		if (frm.doc.__onload?.server_provider === "Redfish") {
+			if (frm.doc.__onload.redfish_power_error) {
+				frappe.show_alert({ message: frm.doc.__onload.redfish_power_error, indicator: "red" });
+			}
 			if (frm.doc.status !== "Deleted") {
 				[
 					[__("Refresh Power State"), "refresh_redfish_power_state", true, __("Reading BMC power state...")],
@@ -66,13 +69,17 @@ frappe.ui.form.on("Metal Server", {
 				].forEach(([label, method, enabled, freeze_message, confirm_message]) => {
 					if (!enabled) return;
 					frm.add_custom_button(label, () => {
-						const call = () => frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => {
+						const call = () => {
 							if (method === "poweroff_server") {
-								frappe.show_alert({ message: __("Shutdown request accepted."), indicator: "green" });
-								return;
+								return frappe.call({
+									method: "atlas.metal_server.doctype.metal_server.metal_server.poweroff_redfish_server",
+									args: { name: frm.doc.name },
+									freeze: true,
+									freeze_message,
+								}).then(() => frappe.show_alert({ message: __("Shutdown request accepted."), indicator: "green" }));
 							}
-							frm.reload_doc();
-						});
+							return frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => frm.reload_doc());
+						};
 						if (confirm_message) {
 							frappe.confirm(confirm_message, call);
 						} else {
