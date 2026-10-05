@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
 from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -13,8 +12,7 @@ from atlas.atlas.core.server_providers.redfish.client import RedfishError, Redfi
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer, poweroff_redfish_server
 
-FIELDS = ("redfish_power_state", "redfish_health", "redfish_power_updated_on")
-MODULE = "atlas.metal_server.doctype.metal_server.metal_server"
+FIELDS = ("redfish_power_state", "redfish_health")
 
 
 class TestRedfishVirtualFields(UnitTestCase):
@@ -33,7 +31,6 @@ class TestRedfishVirtualFields(UnitTestCase):
 				"provider_server_id": "redfish-" + sha256(url.encode()).hexdigest()[:32],
 				"redfish_power_state": "Off",
 				"redfish_health": "Critical",
-				"redfish_power_updated_on": datetime(2000, 1, 1),
 			}
 		)
 		self.server._settings = SimpleNamespace(server_provider_controller=self.provider)
@@ -43,12 +40,10 @@ class TestRedfishVirtualFields(UnitTestCase):
 		super().tearDown()
 
 	def test_serialization_shares_one_live_observation_and_does_not_write(self) -> None:
-		checked_on = datetime(2026, 10, 5, 8, 0)
 		with (
 			patch.object(
 				self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")
 			) as read,
-			patch(f"{MODULE}.now_datetime", return_value=checked_on),
 			patch.object(self.server, "db_set") as save,
 			patch("frappe.db.commit") as commit,
 			patch("requests.post") as write,
@@ -56,10 +51,8 @@ class TestRedfishVirtualFields(UnitTestCase):
 			values = self.server.as_dict()
 			self.assertEqual(values["redfish_power_state"], "On")
 			self.assertEqual(values["redfish_health"], "OK")
-			self.assertEqual(values["redfish_power_updated_on"], checked_on)
 			self.assertEqual(self.server.redfish_power_state, "On")
 			self.assertEqual(self.server.redfish_health, "OK")
-			self.assertEqual(self.server.redfish_power_updated_on, checked_on)
 		read.assert_called_once_with(self.server.provider_server_id)
 		self.assertEqual(self.server.status, "Running")
 		save.assert_not_called()
@@ -78,7 +71,6 @@ class TestRedfishVirtualFields(UnitTestCase):
 		self.assertEqual(read.call_count, 2)
 		self.assertEqual((first["redfish_power_state"], second["redfish_power_state"]), ("On", "Off"))
 		self.assertIsNone(second["redfish_health"])
-		self.assertGreaterEqual(second["redfish_power_updated_on"], first["redfish_power_updated_on"])
 		self.assertEqual(self.server.status, "Running")
 
 	def test_failure_returns_blank_fields_with_one_error_and_recovers_on_the_next_request(self) -> None:
