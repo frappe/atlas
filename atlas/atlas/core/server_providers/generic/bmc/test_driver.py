@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.server_providers.base import UnsupportedProviderOperation
 from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver, RedfishError
 from atlas.atlas.core.server_providers.generic.bmc.test_client import COLLECTION, ROOT, SYSTEM, response
 from atlas.atlas.core.server_providers.generic.provider import GenericError
@@ -50,7 +51,20 @@ class TestBMCDriver(UnitTestCase):
 	def test_registry_selects_bmc_as_a_generic_driver(self) -> None:
 		settings = SimpleNamespace(auto_spawn_metal_server=0, generic_provider_driver="BMC")
 
-		self.assertIsInstance(get_server_provider("Generic", settings=settings), BMCDriver)
+		provider = get_server_provider("Generic", settings=settings)
+		self.assertIsInstance(provider, BMCDriver)
+		self.assertEqual(provider.provider_type, "Generic")
+		self.assertTrue(provider.is_registration_only)
+
+	def test_bmc_does_not_inherit_manual_public_ip_routing(self) -> None:
+		provider = get_server_provider("Generic", settings=SimpleNamespace(generic_provider_driver="BMC"))
+		for operation, arguments in (
+			(provider.delete_public_ip_address, ("203.0.113.9",)),
+			(provider.attach_public_ip_address, ("203.0.113.9", "203.0.113.9", SimpleNamespace())),
+			(provider.detach_public_ip_address, ("203.0.113.9", "203.0.113.9", SimpleNamespace())),
+		):
+			with self.subTest(operation=operation.__name__), self.assertRaises(UnsupportedProviderOperation):
+				operation(*arguments)
 
 	def test_settings_accept_manual_host_management(self) -> None:
 		provider = BMCDriver(SimpleNamespace(auto_spawn_metal_server=0))

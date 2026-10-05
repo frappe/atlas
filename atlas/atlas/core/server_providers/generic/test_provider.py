@@ -3,16 +3,57 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerPowerAction, UnsupportedProviderOperation
 from atlas.atlas.core.server_providers.generic import GenericError, GenericProvider
 from atlas.atlas.core.server_providers.registry import get_server_provider
+from atlas.patches.move_redfish_to_generic_bmc import execute
 
 
 class TestGenericProvider(UnitTestCase):
 	def test_registry_returns_the_generic_provider(self) -> None:
-		self.assertIsInstance(get_server_provider("Generic", settings=self.settings()), GenericProvider)
+		for driver in (None, "SSH"):
+			with self.subTest(driver=driver):
+				provider = get_server_provider(
+					"Generic", settings=self.settings(generic_provider_driver=driver)
+				)
+				self.assertIs(type(provider), GenericProvider)
+				self.assertFalse(provider.is_registration_only)
+
+	def test_unknown_driver_is_rejected(self) -> None:
+		with self.assertRaisesRegex(GenericError, "Unknown Generic provider driver"):
+			get_server_provider("Generic", settings=self.settings(generic_provider_driver="IPMI"))
+
+	def test_provider_migration_is_scoped_and_repeatable(self) -> None:
+		for provider, driver, expected in (
+			("Redfish", "SSH", ("Generic", "BMC")),
+			("Generic", None, ("Generic", "SSH")),
+			("Generic", "BMC", ("Generic", "BMC")),
+			("AWS", "BMC", ("AWS", "BMC")),
+		):
+			with self.subTest(provider=provider, driver=driver):
+				frappe.db.savepoint("generic_driver_migration")
+				try:
+					frappe.db.set_single_value(
+						"Atlas Settings", {"server_provider": provider, "generic_provider_driver": driver}
+					)
+					before = frappe.db.get_singles_dict("Atlas Settings")
+					for _ in range(2):
+						execute()
+						after = frappe.db.get_singles_dict("Atlas Settings")
+						self.assertEqual((after.server_provider, after.generic_provider_driver), expected)
+						for field in before.keys() - {
+							"server_provider",
+							"generic_provider_driver",
+							"modified",
+							"modified_by",
+						}:
+							self.assertEqual(after[field], before[field])
+				finally:
+					frappe.db.rollback(save_point="generic_driver_migration")
+					frappe.db.value_cache.clear()
 
 	def test_settings_reject_automatic_host_creation(self) -> None:
 		with self.assertRaisesRegex(GenericError, "automatically"):

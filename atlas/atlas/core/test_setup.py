@@ -97,10 +97,28 @@ class TestAtlasSetupConfiguration(UnitTestCase):
 
 	def test_a_provider_cannot_carry_the_fields_of_another_provider(self) -> None:
 		values = aws_configuration().settings_values()
-		values["scaleway_zone"] = "fr-par-1"
+		for field, value in (("scaleway_zone", "fr-par-1"), ("generic_provider_driver", "BMC")):
+			with self.subTest(field=field):
+				with self.assertRaisesRegex(ValueError, f"unknown fields: {field}"):
+					AtlasSetupConfiguration.from_dict({**values, field: value})
 
-		with self.assertRaisesRegex(ValueError, "unknown fields: scaleway_zone"):
-			AtlasSetupConfiguration.from_dict(values)
+	def test_generic_driver_input_and_legacy_redfish_input(self) -> None:
+		values = configuration().settings_values()
+		values = {field: value for field, value in values.items() if not field.startswith("scaleway_")}
+		values["server_provider"] = "Generic"
+		self.assertEqual(AtlasSetupConfiguration.from_dict(values).generic_provider_driver, "SSH")
+		for driver in ("SSH", "BMC"):
+			with self.subTest(driver=driver):
+				parsed = AtlasSetupConfiguration.from_dict({**values, "generic_provider_driver": driver})
+				self.assertEqual(parsed.settings_values()["generic_provider_driver"], driver)
+		with self.assertRaisesRegex(ValueError, "must be SSH or BMC"):
+			AtlasSetupConfiguration.from_dict({**values, "generic_provider_driver": "IPMI"})
+
+		values["server_provider"] = "Redfish"
+		parsed = AtlasSetupConfiguration.from_dict(values)
+		self.assertEqual((parsed.server_provider, parsed.generic_provider_driver), ("Generic", "BMC"))
+		self.assertEqual(values["server_provider"], "Redfish")
+		self.assertNotIn("generic_provider_driver", values)
 
 	def test_an_unknown_server_provider_is_rejected(self) -> None:
 		values = configuration().settings_values()

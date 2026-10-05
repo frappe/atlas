@@ -5,6 +5,8 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 function form({
+  provider = "Generic",
+  driver = "BMC",
   isNew = false,
   status = "Pending",
   powerState = "On",
@@ -15,11 +17,12 @@ function form({
   const buttons = new Map();
   const calls = [];
   const alerts = [];
+  const displays = new Map();
   const frappe = {
     ui: { form: { on: (_name, value) => (handlers = value) } },
     db: {
       get_single_value: async (_doctype, field) =>
-        field === "server_provider" ? "Generic" : "BMC",
+        field === "server_provider" ? provider : driver,
     },
     confirm: (_message, action) => confirm && action(),
     show_alert: (message) => alerts.push(message),
@@ -38,25 +41,27 @@ function form({
       status,
       redfish_power_state: powerState,
       __onload: {
-        server_provider: "Generic",
-        generic_provider_driver: "BMC",
+        server_provider: provider,
+        generic_provider_driver: driver,
         redfish_power_error: powerError,
       },
     },
     is_new: () => isNew,
-    toggle_display: () => {},
+    toggle_display: (field, visible) => displays.set(field, visible),
     toggle_reqd: () => {},
     disable_save: () => {},
     page: { set_primary_action: (label, action) => buttons.set(label, action) },
     add_custom_button: (label, action, group) => {
-      assert.equal(group, "Actions");
+      if (provider === "Generic" && driver === "BMC") {
+        assert.equal(group, "Actions");
+      }
       buttons.set(label, action);
     },
     call: async (request) => calls.push(request),
     reload_doc: () => calls.push("reload"),
   };
   handlers.refresh(frm);
-  return { buttons, calls, alerts };
+  return { buttons, calls, alerts, displays };
 }
 
 test("saved Generic BMC forms refresh BMC state without offering host preparation", async () => {
@@ -79,6 +84,26 @@ test("new forms keep the single Register action", async () => {
   await new Promise(setImmediate);
   assert.ok(buttons.has("Register"));
   assert.ok(!buttons.has("Refresh Power State"));
+});
+
+test("registration fields and actions require Generic with the BMC driver", async () => {
+  for (const provider of ["Generic", "AWS", "Scaleway"]) {
+    for (const driver of [undefined, "SSH", "BMC"]) {
+      for (const isNew of [true, false]) {
+        const { buttons, displays } = form({
+          provider,
+          driver: driver || "",
+          isNew,
+        });
+        await new Promise(setImmediate);
+        const isBMC = provider === "Generic" && driver === "BMC";
+        assert.equal(displays.get("redfish_section"), isBMC);
+        assert.equal(buttons.has("Register"), isNew && isBMC);
+        assert.equal(buttons.has("Refresh Power State"), !isNew && isBMC);
+        if (!isNew) assert.equal(buttons.has("Retry Provisioning"), !isBMC);
+      }
+    }
+  }
 });
 
 test("Power On is available for an Off BMC and uses the saved-document method", async () => {

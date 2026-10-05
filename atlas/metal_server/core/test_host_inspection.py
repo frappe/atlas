@@ -318,6 +318,19 @@ class TestHostInspection(UnitTestCase):
 
 
 class TestHostRegistrationChecks(UnitTestCase):
+	def test_bmc_driver_is_refused_before_host_address_checks(self) -> None:
+		from atlas.atlas.core.server_providers.registry import get_server_provider
+
+		settings = SimpleNamespace(generic_provider_driver="BMC")
+		settings.server_provider_controller = get_server_provider("Generic", settings=settings)
+		with (
+			patch(f"{MODULE}.frappe.get_single", return_value=settings),
+			patch(f"{MODULE}.frappe.db.exists") as lookup,
+			self.assertRaisesRegex(frappe.ValidationError, "Generic SSH driver"),
+		):
+			validate_addresses(PUBLIC_ADDRESS, PRIVATE_ADDRESS)
+		lookup.assert_not_called()
+
 	def test_private_address_must_be_inside_the_private_network(self) -> None:
 		with self.generic_settings(), self.assertRaisesRegex(frappe.ValidationError, "inside"):
 			validate_addresses(PUBLIC_ADDRESS, "192.168.1.5")
