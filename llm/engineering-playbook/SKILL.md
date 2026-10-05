@@ -39,6 +39,8 @@ Read only the references relevant to the task, fully on first use. Before a host
 13. **Design for concurrency.** Prevent stale saves, version conflicts, lock timeouts, deadlocks, and duplicate allocations.
 14. **Approve doctype layout first.** Show a mockup. Keep forms balanced and grouped, with short descriptions shown on click.
 15. **Respect environment tiers.** Development actions are delegated; ask before each staging write; never act on production or undeclared resources. Run Frappe tests only on `test.local`; run focused Go tests on touched packages and the full suite on request.
+16. **Don't repeat yourself.** Mandatory: working code is not enough; a new engineer must read, understand and change it easily. Integrations of one kind (server, BMC provider) extend one base class with one method set. Name files and classes meaningfully. See [code.md](references/code.md#structure).
+17. **Test what matters.** Test only what can catch a real regression. Atlas has little business logic and much needs real infrastructure. No coverage-only tests; no fully mocked API or task tests. See [workflow.md](references/workflow.md#tests).
 
 ## Pre-handover checklist
 
