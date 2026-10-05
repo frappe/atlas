@@ -1,16 +1,19 @@
 const HOST_REGISTRATION_METHOD = "atlas.metal_server.doctype.metal_server.metal_server";
 const HOST_INSPECTION_POLL_MILLISECONDS = 2_000;
 const HOST_INSPECTION_TIMEOUT_MILLISECONDS = 300_000;
+const REDFISH_FIELDS = ["redfish_url", "redfish_username", "redfish_password"];
+const OPTIONAL_HOST_REGISTRATION_FIELDS = ["provider_server_id", ...REDFISH_FIELDS];
 const HOST_REGISTRATION_FIELDS = [
 	"public_ipv4_address",
 	"private_ipv4_address",
 	"storage_pool_device",
 	"disk_image_size_gib",
-	"provider_server_id",
+	...OPTIONAL_HOST_REGISTRATION_FIELDS,
 ];
 
 class HostRegistrationDialog {
-	constructor() {
+	constructor(is_bmc_access_enabled) {
+		this.is_bmc_access_enabled = is_bmc_access_enabled;
 		this.dialog = new frappe.ui.Dialog({
 			title: __("Add Server"),
 			fields: [
@@ -44,6 +47,21 @@ class HostRegistrationDialog {
 					fieldtype: "Data",
 					label: __("Provider Server ID"),
 					description: __("The ID of this host at your provider. Atlas suggests one."),
+				},
+				{
+					fieldname: "redfish_url",
+					fieldtype: "Data",
+					options: "URL",
+					label: __("BMC Redfish URL"),
+					description: __(
+						"Optional. The ComputerSystem URL, such as https://10.0.0.5/redfish/v1/Systems/1. Enter the URL, username, and password together."
+					),
+				},
+				{ fieldname: "redfish_username", fieldtype: "Data", label: __("BMC Username") },
+				{
+					fieldname: "redfish_password",
+					fieldtype: "Password",
+					label: __("BMC Password"),
 				},
 			],
 		});
@@ -201,7 +219,12 @@ class HostRegistrationDialog {
 
 	show_review_step() {
 		const storage_pool_device = this.dialog.get_value("storage_pool_device");
-		this.set_step(["provider_server_id"], __("Step 4 of 4: Review the host"), "");
+		const redfish_fields = this.is_bmc_access_enabled ? REDFISH_FIELDS : [];
+		this.set_step(
+			["provider_server_id", ...redfish_fields],
+			__("Step 4 of 4: Review the host"),
+			""
+		);
 		this.set_result(
 			`<div class="alert alert-danger">${__(
 				"Atlas destroys all data on {0} when it creates the storage pool.",
@@ -233,6 +256,9 @@ class HostRegistrationDialog {
 					inspection_id: this.inspection_id,
 					storage_pool_device,
 					provider_server_id: this.dialog.get_value("provider_server_id"),
+					redfish_url: this.dialog.get_value("redfish_url"),
+					redfish_username: this.dialog.get_value("redfish_username"),
+					redfish_password: this.dialog.get_value("redfish_password"),
 				},
 				freeze: true,
 				freeze_message: __("Creating Metal Server..."),
@@ -339,7 +365,7 @@ class HostRegistrationDialog {
 			this.dialog.set_df_property(
 				field,
 				"reqd",
-				is_visible && field !== "provider_server_id"
+				is_visible && !OPTIONAL_HOST_REGISTRATION_FIELDS.includes(field)
 			);
 		});
 		this.dialog.fields_dict.guide.$wrapper.html(`<h5>${title}</h5>${guide}`);
@@ -448,13 +474,16 @@ frappe.listview_settings["Metal Server"] = {
 			)
 		);
 	},
-	primary_action() {
-		frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
-			if (provider === "Generic") {
-				new HostRegistrationDialog();
-				return;
-			}
+	async primary_action() {
+		const provider = await frappe.db.get_single_value("Atlas Settings", "server_provider");
+		if (provider !== "Generic") {
 			frappe.new_doc("Metal Server");
-		});
+			return;
+		}
+		const is_bmc_access_enabled = await frappe.db.get_single_value(
+			"Atlas Settings",
+			"is_bmc_access_enabled"
+		);
+		new HostRegistrationDialog(Boolean(is_bmc_access_enabled));
 	},
 };

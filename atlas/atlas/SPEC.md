@@ -34,6 +34,7 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
+- `generic/redfish.py` holds `RedfishClient` for the BMC of a Generic host. It reads the power state and sends the `ComputerSystem.Reset` action for a `ServerPowerAction`. It does not wait for the new power state. It sends credentials only to the host of its URL and marks only failed reads as retryable. `GenericProvider.set_power_state` uses it through `MetalServer.redfish_client` when BMC access is on, and finds the server by its provider server ID.
 
 ## TLS
 

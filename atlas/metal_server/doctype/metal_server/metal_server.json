@@ -29,6 +29,12 @@
   "column_break_lnik",
   "public_ipv4_address",
   "public_network_interface",
+  "bmc_section",
+  "redfish_url",
+  "redfish_power_state",
+  "column_break_bmc",
+  "redfish_username",
+  "redfish_password",
   "wireguard_section",
   "wireguard_ip_address",
   "column_break_ffpx",
@@ -186,6 +192,42 @@
    "fieldtype": "Column Break"
   },
   {
+   "collapsible": 1,
+   "depends_on": "eval: doc.__onload && doc.__onload.is_bmc_access_enabled",
+   "fieldname": "bmc_section",
+   "fieldtype": "Section Break",
+   "label": "BMC"
+  },
+  {
+   "description": "The ComputerSystem URL, such as https://10.0.0.5/redfish/v1/Systems/1.",
+   "fieldname": "redfish_url",
+   "fieldtype": "Data",
+   "label": "Redfish URL",
+   "options": "URL",
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "column_break_bmc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "redfish_username",
+   "fieldtype": "Data",
+   "label": "Username"
+  },
+  {
+   "fieldname": "redfish_password",
+   "fieldtype": "Password",
+   "label": "Password"
+  },
+  {
+   "fieldname": "redfish_power_state",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Power State",
+   "read_only": 1
+  },
+  {
    "fieldname": "wireguard_section",
    "fieldtype": "Section Break",
    "label": "Wireguard"
@@ -289,7 +331,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-02 12:00:00.000000",
+ "modified": "2026-10-05 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

@@ -74,6 +74,7 @@ class AtlasSettings(Document):
 		http_proxy_package_hash: DF.Data | None
 		ipv6_router_package_file: DF.Link | None
 		ipv6_router_package_hash: DF.Data | None
+		is_bmc_access_enabled: DF.Check
 		is_dns_setup_completed: DF.Check
 		is_letsencrypt_staging: DF.Check
 		is_server_provider_setup_completed: DF.Check

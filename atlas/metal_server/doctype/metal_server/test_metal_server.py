@@ -10,6 +10,7 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ProviderServer, ServerPowerAction, ServerProvider
+from atlas.atlas.core.server_providers.generic import RedfishError
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS
 from atlas.metal_server.doctype.metal_server.metal_server import (
 	MetalServer,
@@ -120,7 +121,10 @@ class TestServer(UnitTestCase):
 	def test_validate_trims_the_tags_and_fills_the_mesh_address(self) -> None:
 		tags = [SimpleNamespace(key=" env ", value=" local ")]
 		server = SimpleNamespace(
-			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+			get=lambda fieldname: tags,
+			_validate_title=Mock(),
+			_validate_redfish=Mock(),
+			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
 		MetalServer.validate(server)
@@ -131,13 +135,56 @@ class TestServer(UnitTestCase):
 	def test_validate_rejects_a_repeated_tag_key(self) -> None:
 		tags = [SimpleNamespace(key="env", value="local"), SimpleNamespace(key="env", value="dev")]
 		server = SimpleNamespace(
-			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+			get=lambda fieldname: tags,
+			_validate_title=Mock(),
+			_validate_redfish=Mock(),
+			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
 		with self.assertRaises(frappe.ValidationError):
 			MetalServer.validate(server)
 
 		server._set_wireguard_ip_address_if_not_set.assert_not_called()
+
+	def test_validate_redfish_requires_the_url_username_and_password_together(self) -> None:
+		MetalServer._validate_redfish(
+			SimpleNamespace(redfish_url=None, redfish_username=None, redfish_password=None)
+		)
+		MetalServer._validate_redfish(
+			SimpleNamespace(
+				redfish_url="https://bmc.local", redfish_username="admin", redfish_password="secret"
+			)
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			MetalServer._validate_redfish(
+				SimpleNamespace(
+					redfish_url="https://bmc.local", redfish_username="admin", redfish_password=None
+				)
+			)
+
+	def test_redfish_power_state_skips_the_bmc_when_access_is_off(self) -> None:
+		client = Mock()
+		server = SimpleNamespace(
+			is_bmc_access_enabled=False, redfish_url="https://bmc.local", redfish_client=client
+		)
+
+		self.assertIsNone(MetalServer.redfish_power_state.fget(server))
+		client.read_power_state.assert_not_called()
+
+	def test_redfish_power_state_shows_a_failed_read_in_the_form(self) -> None:
+		client = Mock()
+		client.read_power_state.side_effect = RedfishError("status 401")
+		server = SimpleNamespace(
+			is_bmc_access_enabled=True,
+			redfish_url="https://bmc.local",
+			redfish_client=client,
+			set_onload=Mock(),
+		)
+
+		self.assertIsNone(MetalServer.redfish_power_state.fget(server))
+
+		server.set_onload.assert_called_once_with("redfish_power_error", "status 401")
 
 	def test_ensure_provider_server_identifies_the_host_by_name(self) -> None:
 		provider = SimpleNamespace(

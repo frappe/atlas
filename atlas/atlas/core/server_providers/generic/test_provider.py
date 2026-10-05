@@ -9,6 +9,8 @@ from atlas.atlas.core.server_providers.base import ServerPowerAction, Unsupporte
 from atlas.atlas.core.server_providers.generic import GenericError, GenericProvider
 from atlas.atlas.core.server_providers.registry import get_server_provider
 
+MODULE = "atlas.atlas.core.server_providers.generic.provider"
+
 
 class TestGenericProvider(UnitTestCase):
 	def test_registry_returns_the_generic_provider(self) -> None:
@@ -26,9 +28,33 @@ class TestGenericProvider(UnitTestCase):
 		with self.assertRaises(UnsupportedProviderOperation):
 			GenericProvider(self.settings()).ensure_server(Mock())
 
-	def test_power_action_is_refused(self) -> None:
+	def test_power_action_is_refused_without_bmc_access(self) -> None:
 		with self.assertRaises(UnsupportedProviderOperation):
 			GenericProvider(self.settings()).set_power_state("host-1", ServerPowerAction.REBOOT)
+
+	def test_power_action_uses_the_bmc_of_the_server(self) -> None:
+		server = self.server(redfish_url="https://bmc.local/redfish/v1/Systems/1", redfish_client=Mock())
+
+		with (
+			patch(f"{MODULE}.frappe.get_all", return_value=["host-1"]) as get_all,
+			patch(f"{MODULE}.frappe.get_doc", return_value=server),
+		):
+			GenericProvider(self.settings(is_bmc_access_enabled=1)).set_power_state(
+				"generic-1", ServerPowerAction.STOP
+			)
+
+		self.assertEqual(get_all.call_args.kwargs["filters"]["provider_server_id"], "generic-1")
+		server.redfish_client.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
+
+	def test_power_action_needs_bmc_details(self) -> None:
+		with (
+			patch(f"{MODULE}.frappe.get_all", return_value=["host-1"]),
+			patch(f"{MODULE}.frappe.get_doc", return_value=self.server(redfish_url=None)),
+			self.assertRaisesRegex(GenericError, "no BMC Redfish details"),
+		):
+			GenericProvider(self.settings(is_bmc_access_enabled=1)).set_power_state(
+				"generic-1", ServerPowerAction.START
+			)
 
 	def test_network_setup_only_checks_the_private_address(self) -> None:
 		provider = GenericProvider(self.settings())
@@ -67,7 +93,7 @@ class TestGenericProvider(UnitTestCase):
 
 	@staticmethod
 	def settings(**values: object) -> SimpleNamespace:
-		return SimpleNamespace(**{"auto_spawn_metal_server": 0, **values})
+		return SimpleNamespace(**{"auto_spawn_metal_server": 0, "is_bmc_access_enabled": 0, **values})
 
 	@staticmethod
 	def server(**values: object) -> SimpleNamespace:

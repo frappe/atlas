@@ -35,6 +35,8 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - Certificate renewal restarts `metal.service` and shares the metald job lock with install and upgrade.
 - Placement reads Metal Server Usage rows that `usage` writes after each `POST /v1/sync`.
 - Atlas WG Mesh identifies a peer by `private_network_mac_address`. Sync writes it only when it changes.
+- `redfish_url`, `redfish_username`, and `redfish_password` are set together or not at all. The form and the registration dialog show them only when Atlas Settings enables BMC access for the Generic provider.
+- `redfish_power_state` is a virtual field. It reads the BMC at most once per request, and only when BMC access is on and `redfish_url` is set. A failed read sets `__onload.redfish_power_error` and does not fail the form load.
 
 ## Related
 

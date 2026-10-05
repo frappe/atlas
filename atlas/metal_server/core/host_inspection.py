@@ -342,7 +342,15 @@ class HostInspection:
 
 		self.run()
 
-	def register(self, storage_pool_device: str, provider_server_id: str | None) -> "MetalServer":
+	def register(
+		self,
+		storage_pool_device: str,
+		provider_server_id: str | None,
+		*,
+		redfish_url: str | None = None,
+		redfish_username: str | None = None,
+		redfish_password: str | None = None,
+	) -> "MetalServer":
 		"""Create the Metal Server for a passed inspection and start its provisioning."""
 		state = self.state
 		if state["status"] != "Completed" or state["failures"]:
@@ -354,7 +362,15 @@ class HostInspection:
 
 		with frappe.db.advisory_lock(f"{frappe.db.cur_db_name}:host-registration"):
 			validate_addresses(state["public_ipv4_address"], state["private_ipv4_address"])
-			server = self.insert_server(state, report, storage_pool_device, provider_server_id)
+			server = self.insert_server(
+				state,
+				report,
+				storage_pool_device,
+				provider_server_id,
+				redfish_url=redfish_url,
+				redfish_username=redfish_username,
+				redfish_password=redfish_password,
+			)
 			frappe.cache.delete_value(self.cache_key)
 		return server
 
@@ -364,6 +380,10 @@ class HostInspection:
 		report: HostReport,
 		storage_pool_device: str,
 		provider_server_id: str | None,
+		*,
+		redfish_url: str | None = None,
+		redfish_username: str | None = None,
+		redfish_password: str | None = None,
 	) -> "MetalServer":
 		"""Insert the Pending Metal Server with the inspected host facts."""
 		disk = next(disk for disk in report.disks if disk.device == storage_pool_device)
@@ -393,6 +413,9 @@ class HostInspection:
 					}
 				),
 				"status": "Pending",
+				"redfish_url": redfish_url,
+				"redfish_username": redfish_username,
+				"redfish_password": redfish_password,
 			}
 		)
 		server.insert(ignore_permissions=True)
