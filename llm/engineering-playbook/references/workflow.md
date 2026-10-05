@@ -80,7 +80,7 @@ Messages:
 
 ## Tests
 
-- Test behavior that can regress. No constant-echo tests, no mock-heavy tests that catch nothing, no tests for guest scripts, ops scripts (`atlas-vm`), simulators or one-line SSH actions. Delete tests with their feature. Merge scattered test files.
+- Test behavior that can regress. Atlas has little business logic and much needs real infrastructure, so do not chase coverage. No constant-echo tests, no tests that fully mock an API or task and check only its request and response, no tests for guest scripts, ops scripts (`atlas-vm`), simulators or one-line SSH actions. Delete tests with their feature. Merge scattered test files.
 - "No tests for now": skip, and do not mention it again.
 - Run `pilot --site test.local run-tests --app atlas`. Never on `atlas.localhost` or Central's site. Use `pilot`, not `bench`.
 - Go: `gofmt`, `go vet`, focused tests on touched packages, race detector when concurrency changed. Full suite on request.

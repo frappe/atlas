@@ -2,20 +2,15 @@
 
 ## Session continuity
 
-- Treat this file as the primary instruction source for every task.
-- After context compaction, summarization, restart, or loss of working context, read this file again before you continue.
-- Preserve a reference to `CLAUDE.md` in a handover or context summary so the next context reloads it.
-- Do not rely on remembered repository rules when this file is available.
-- Mandatory: Follow the [engineering playbook](llm/engineering-playbook/SKILL.md) for every task. Read `SKILL.md` at the start of a session and the references that the task needs. This file wins on conflict.
-- Mandatory: After context compaction, summarization, restart, or a resumed session, read `SKILL.md` again, together with this file, before you continue. Keep a reference to both in a handover or context summary.
+- [MANDATORY] Follow this file and the [engineering playbook](llm/engineering-playbook/SKILL.md) for every task. This file wins on conflict.
+- [MANDATORY] Read this file and `SKILL.md` at the start of every session, and again after context compaction, summarization, restart, or a resumed session, before you continue. Then read the playbook references that the task needs.
+- [MANDATORY] Keep a reference to this file and `SKILL.md` in every handover or context summary, so the next context reloads both. Do not rely on remembered rules.
 
 Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe app, Go services, an OpenResty proxy, and eBPF programs.
 
 ## Start here
 
 Read the [root specification](SPEC.md) for the project layout and component map. Read the matching component `SPEC.md`, and the handbook page it links, before you make a structural change. The [code map](docs/develop/code-map.md) links each topic to its page, specification, code, and tests.
-
-Re-read `CLAUDE.md` after context compaction or a resumed session before you continue work.
 
 Read the [incident reports](docs/incidents/README.md) before you change a component. Do not repeat a past root cause. A person files an incident report. You can suggest a report, but do not add one unless a person asks. A filed report is immutable. Never edit it.
 
@@ -36,6 +31,8 @@ Read the [incident reports](docs/incidents/README.md) before you change a compon
 - Store mutable and temporary state in the object, task, or goroutine that owns its lifecycle. Do not duplicate mutable state across owners.
 - Fail near the cause. Retry only operations that are safe to repeat.
 - Make code safe for concurrent requests, jobs and Desk users. Before handover, check for stale document saves (`TimestampMismatchError`), version conflicts, lock wait timeouts, deadlocks and duplicate allocation. Do not call a remote service while you hold a database lock.
+- Mandatory: Working code is not enough. Write code that a new engineer can read, understand and change easily.
+- Don't repeat yourself. Integrations of one kind, such as server or BMC providers, extend one base class and implement its methods. Give files and classes meaningful names.
 - Follow the existing pattern in the codebase for the same job. Do not add a second way. If a better way exists, change every existing use, or propose that change first.
 - Get user approval before you add a doctype or change a doctype or dialog layout. Keep forms balanced and grouped. Keep field descriptions short and show them on click.
 - Do not add a dependency when the standard library or an existing repository dependency is sufficient.
@@ -68,6 +65,7 @@ Act freely in development. Ask the user before each write in staging. Never act 
 - Do not add generic `utils`, `helpers`, `common`, or similar folders.
 - Do not add comments that repeat the code. Explain a business rule, invariant, external quirk, or concurrency rule only when needed.
 - Add focused tests for meaningful behavior and failure cases. Do not add tests only to increase coverage.
+- Atlas has little business logic, and much of it needs real infrastructure to test. Do not try to cover everything. Do not add a test that fully mocks an API or task and checks only its request and response.
 - Keep tests deterministic and independent.
 
 ### Python
