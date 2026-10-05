@@ -56,7 +56,19 @@ frappe.ui.form.on("Metal Server", {
 			return;
 		}
 		configure_provider(frm.doc.__onload?.server_provider);
-		if (frm.doc.__onload?.server_provider === "Redfish") return;
+		if (frm.doc.__onload?.server_provider === "Redfish") {
+			if (frm.doc.status !== "Deleted") {
+				frm.add_custom_button(__("Refresh Power State"), () => {
+					frm.call({
+						method: "refresh_redfish_power_state",
+						doc: frm.doc,
+						freeze: true,
+						freeze_message: __("Reading BMC power state..."),
+					}).then(() => frm.reload_doc());
+				});
+			}
+			return;
+		}
 
 		const is_deleted = frm.doc.status === "Deleted";
 		const is_running = frm.doc.status === "Running";

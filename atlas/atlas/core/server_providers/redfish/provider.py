@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from hashlib import sha256
 from typing import TYPE_CHECKING, override
+
+import frappe
 
 from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.base import (
@@ -13,7 +16,7 @@ from atlas.atlas.core.server_providers.base import (
 	ServerSizeData,
 	UnsupportedProviderOperation,
 )
-from atlas.atlas.core.server_providers.redfish.client import RedfishError
+from atlas.atlas.core.server_providers.redfish.client import RedfishClient, RedfishError, RedfishPowerStatus
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -21,7 +24,7 @@ if TYPE_CHECKING:
 
 @register
 class RedfishProvider(ServerProvider):
-	"""Define the Redfish provider without remote operations."""
+	"""Manage the BMC of a registered Redfish system."""
 
 	provider_type = "Redfish"
 	credential_fields = ()
@@ -32,6 +35,28 @@ class RedfishProvider(ServerProvider):
 		"""Reject automatic host creation for existing Redfish machines."""
 		if self.settings.auto_spawn_metal_server:
 			raise RedfishError("The Redfish provider cannot create a Metal Server automatically")
+
+	def read_power_status(self, provider_server_id: str) -> RedfishPowerStatus:
+		"""Read the registered system with its saved per-server credentials."""
+		return self._client(provider_server_id).read_power_status()
+
+	def _client(self, provider_server_id: str) -> RedfishClient:
+		name = frappe.db.get_value(
+			"Metal Server", {"provider_server_id": provider_server_id, "status": ["!=", "Deleted"]}
+		)
+		if not name:
+			raise RedfishError("No active Metal Server has this Redfish provider ID")
+		server: MetalServer = frappe.get_doc("Metal Server", name)
+		if not server.redfish_url:
+			raise RedfishError("The Metal Server has no registered Redfish URL")
+		client = RedfishClient(
+			server.redfish_url,
+			server.redfish_username or "",
+			server.get_password("redfish_password", raise_exception=False) or "",
+		)
+		if provider_server_id != "redfish-" + sha256(client.url.encode()).hexdigest()[:32]:
+			raise RedfishError("The Redfish URL does not match the registered provider ID")
+		return client
 
 	@override
 	def setup_infrastructure(self) -> None:

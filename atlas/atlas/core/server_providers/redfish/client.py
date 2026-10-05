@@ -22,6 +22,14 @@ class RedfishSystem:
 	uuid: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class RedfishPowerStatus:
+	"""Store observed BMC power and health independently of Metal readiness."""
+
+	power_state: str
+	health: str | None
+
+
 class RedfishClient:
 	"""Read system identities from one Redfish service."""
 
@@ -123,3 +131,29 @@ class RedfishClient:
 		if uuid is not None and not isinstance(uuid, str):
 			raise RedfishError("The Redfish system UUID must be a string")
 		return RedfishSystem(self._resolve_link(resource, "@odata.id"), system_id, name, uuid)
+
+	def read_power_status(self) -> RedfishPowerStatus:
+		"""Read the power status of the registered system."""
+		return self._power_status(self._read_system())
+
+	def _read_system(self) -> dict:
+		resource = self._read(self.url)
+		resource_type = resource.get("@odata.type", "")
+		if not isinstance(resource_type, str) or not resource_type.startswith("#ComputerSystem."):
+			raise RedfishError("Use the registered ComputerSystem URL for power operations")
+		if self._resolve_link(resource, "@odata.id") != self.url:
+			raise RedfishError("Redfish returned a different system from the registered URL")
+		return resource
+
+	@staticmethod
+	def _power_status(resource: dict) -> RedfishPowerStatus:
+		power_state = resource.get("PowerState")
+		if power_state not in ("On", "Off", "PoweringOn", "PoweringOff", "Paused", "Sleeping", "Hibernating"):
+			raise RedfishError("Redfish returned an unsupported or missing PowerState")
+		status = resource.get("Status", {})
+		if not isinstance(status, dict):
+			raise RedfishError("Redfish returned invalid system Status")
+		health = status.get("Health")
+		if health is not None and not isinstance(health, str):
+			raise RedfishError("Redfish returned invalid system health")
+		return RedfishPowerStatus(power_state, health)

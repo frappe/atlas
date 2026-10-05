@@ -29,6 +29,7 @@ from atlas.metal_server.core.host_installation import (
 	HostInstallation,
 )
 from atlas.metal_server.core.provisioning import ServerProvisioner
+from atlas.metal_server.core.redfish_power import RedfishPower
 from atlas.metal_server.core.redfish_registration import register_server as register_redfish
 from atlas.metal_server.usage import enqueue_server_sync
 
@@ -70,6 +71,11 @@ class MetalServer(Document):
 		public_ipv4_address: DF.Data | None
 		public_network_interface: DF.Data | None
 		redfish_password: DF.Password | None
+		redfish_health: DF.Data | None
+		redfish_power_state: DF.Literal[
+			"", "On", "Off", "PoweringOn", "PoweringOff", "Paused", "Sleeping", "Hibernating"
+		]
+		redfish_power_updated_on: DF.Datetime | None
 		redfish_url: DF.Data | None
 		redfish_username: DF.Data | None
 		server_image: DF.Link | None
@@ -217,6 +223,12 @@ class MetalServer(Document):
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)
+
+	@frappe.whitelist(methods=["POST"])
+	def refresh_redfish_power_state(self) -> None:
+		"""Read the BMC power status without changing remote state."""
+		self._validate_power_action()
+		RedfishPower(self).refresh()
 
 	@frappe.whitelist(methods=["POST"])
 	def reboot_server(self) -> None:

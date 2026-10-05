@@ -23,6 +23,9 @@
   "redfish_url",
   "redfish_username",
   "redfish_password",
+  "redfish_power_state",
+  "redfish_health",
+  "redfish_power_updated_on",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -153,6 +156,26 @@
    "fieldtype": "Password",
    "label": "Redfish Password",
    "no_copy": 1
+  },
+  {
+   "fieldname": "redfish_power_state",
+   "fieldtype": "Select",
+   "label": "Redfish Power State",
+   "options": "\nOn\nOff\nPoweringOn\nPoweringOff\nPaused\nSleeping\nHibernating",
+   "read_only": 1,
+   "description": "Last observed BMC power state. This does not confirm Metal readiness."
+  },
+  {
+   "fieldname": "redfish_health",
+   "fieldtype": "Data",
+   "label": "Redfish Health",
+   "read_only": 1
+  },
+  {
+   "fieldname": "redfish_power_updated_on",
+   "fieldtype": "Datetime",
+   "label": "Power State Checked On",
+   "read_only": 1
   },
   {
    "fieldname": "section_break_public_network",
