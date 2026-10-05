@@ -181,7 +181,9 @@ An unavailable or unauthorized BMC leaves both fields blank and shows the read e
 
 Select **Actions > Refresh Power State** to read the BMC and reconcile the lifecycle. Off marks the record Stopped. An On observation changes a Stopped lifecycle to Pending. Refresh never promotes a host to Running. A failed refresh does not change lifecycle status.
 
-Virtual reads require the System Manager role and document read permission. Atlas checks the saved system URL against the provider ID before contacting the BMC. Explicit refresh and power actions reject Deleted records and active provisioning jobs. A per-server database lock covers their saved-record reload, observation, and committed lifecycle update.
+Virtual reads require the System Manager role and document read permission. Atlas checks the saved system URL against the provider ID before contacting the BMC. Explicit refresh and power actions reject Deleted records and active provisioning jobs.
+
+A per-server Redis lock serializes explicit refresh and power actions. Provider requests run without a database lock. Reconciliation then locks the saved row, reloads it, and rechecks the document guard before it writes lifecycle status. Lock identities include the site database name.
 
 ### Power on
 
@@ -213,7 +215,7 @@ After reboot acceptance and an On observation, Atlas changes a previously Runnin
 
 ### Power request completion and recovery
 
-Power requests use the same per-server lock as power reads. A request reloads the saved record and checks permissions and lifecycle state while it holds the lock. The provider reads credentials from the saved record.
+Explicit refresh and power requests use the same per-server Redis lock. A request reloads the saved record and checks permissions and lifecycle state while it holds the lock. The provider reads credentials from the saved record.
 
 For Power On and Reboot, HTTP 200 or 204 accepts a synchronous reset. HTTP 202 requires a same-service Location task monitor. Atlas polls that monitor before checking power. A failed or cancelled task fails the action.
 
@@ -227,9 +229,11 @@ Power actions require a stable On or Off state. During a transition, refresh the
 
 ### Implementation and validation
 
-The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport, system identity discovery, and power observations. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection.
+The [Redfish provider](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the shared `ServerProvider` contract. It owns discovery through `import_server`, registration validation through `validate_server`, and power observations through `read_power_status`. Its [client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport and Redfish resource validation.
 
-[Metal Server](../../atlas/metal_server/doctype/metal_server/metal_server.py) owns the virtual fields and their observation cache for the current request. [Redfish power](../../atlas/metal_server/core/redfish_power.py) owns explicit lifecycle reconciliation and its per-server lock.
+[Provider registration](../../atlas/metal_server/core/provider_registration.py) owns local insertion and duplicate detection after provider discovery completes. It uses the provider server ID to identify and lock a registration.
+
+[Metal Server](../../atlas/metal_server/doctype/metal_server/metal_server.py) owns the virtual fields and their observation cache for the current request. [Server power](../../atlas/metal_server/core/server_power.py) owns power orchestration and lifecycle reconciliation. Both use the shared provider interface.
 
 The form uses the POST API `atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server`. It requires the System Manager role and accepts `redfish_url`, `redfish_username`, and `redfish_password`. Direct insertion of a new Redfish Metal Server through the standard Save API is refused.
 
@@ -379,11 +383,17 @@ Low-level provider components return values. They do not save Frappe documents o
 | Host lifecycle | Create or reuse a host by Atlas name. Apply power actions. Delete safely. |
 | Host preparation | Prepare resources before SSH. Configure networking after SSH. |
 | Runtime inputs | Return the Metal bind address and storage pool device. |
+| Optional host import | Fill an unsaved Metal Server from an existing provider host. |
+| Optional power observations | Return typed power state and health. |
 | Optional public IPs | Reserve, attach, detach, and delete provider resources. |
 
-Optional address operations raise `UnsupportedProviderOperation` when the provider does not support them.
+Optional operations raise `UnsupportedProviderOperation` when the provider does not support them.
 
 `validate_server` checks the Metal Server values that a provider needs. The default accepts every Metal Server.
+
+Set `is_registration_only = True` when the provider manages existing hosts without Atlas provisioning. Registration calls `import_server` before it locks and inserts the local record. These hosts do not require size or image catalogs and do not enqueue provisioning.
+
+`read_power_status` returns `ServerPowerStatus` with `power_state` and `health`. An observation does not prove Metal readiness. The Metal Server owner decides when to reconcile lifecycle status.
 
 Creation uses `ServerCreateRequest` and returns `ProviderServer`. Catalog operations return `ServerSizeData` and `ServerImageData`.
 

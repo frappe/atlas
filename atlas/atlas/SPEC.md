@@ -30,9 +30,11 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 
 ## Provider boundary
 
-Host lifecycle code reaches a provider through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. Redfish registration reads an existing system through `RedfishClient`; remote host creation and provisioning remain unsupported. See the [Redfish provider guide](../../docs/region/provider-guide.md#redfish).
+Host lifecycle code reaches a provider through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. See the [provider contract](../../docs/region/provider-guide.md#contract).
 
-`redfish/client.py` returns typed `RedfishSystem` identities and `RedfishPowerStatus` observations. It validates HTTP resources and keeps links on one service.
+`ServerProvider.is_registration_only` selects registration without provisioning. `import_server` fills an unsaved Metal Server. `validate_server` checks provider requirements. Optional `read_power_status` returns `ServerPowerStatus` or raises `UnsupportedProviderOperation`.
+
+The Redfish provider owns system discovery, canonical identities, and registration validation. Its client returns internal `RedfishSystem` identities and shared `ServerPowerStatus` observations. Metal Server consumers do not import Redfish client or provider classes.
 
 The provider resolves an active Metal Server by its canonical URL-derived identity and reads its per-server credentials. Neither the client nor provider saves documents or commits transactions.
 
