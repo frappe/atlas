@@ -19,6 +19,8 @@ Set `atlas_base_url` to the public Atlas address when the site URL is not public
 
 Save validates the provider and placement settings.
 
+When **Server Provider** is **Generic**, **Generic Provider Driver** selects SSH or BMC for the region. See [Generic provider](provider-guide.md#generic-provider) for registration and driver behavior.
+
 | Change | Effect |
 | --- | --- |
 | Region ID | Refused while VMs or non-archived proxy records exist. |

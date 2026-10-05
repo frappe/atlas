@@ -30,22 +30,30 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 
 ## Provider boundary
 
-Host lifecycle code reaches a provider through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. See the [provider contract](../../docs/region/provider-guide.md#contract).
+Host lifecycle code reaches a provider through `ServerProvider`. Registered implementations are Generic, Scaleway, and AWS.
+
+The registry calls `ServerProvider.from_settings()` to select a provider driver. See the [provider contract](../../docs/region/provider-guide.md#contract).
 
 `ServerProvider.is_registration_only` selects registration without provisioning. `import_server` fills an unsaved Metal Server. `validate_server` checks provider requirements. Optional `read_power_status` returns `ServerPowerStatus` or raises `UnsupportedProviderOperation`.
 
-The Redfish provider owns system discovery, canonical identities, and registration validation. Its client returns internal `RedfishSystem` identities and shared `ServerPowerStatus` observations. Metal Server consumers do not import Redfish client or provider classes.
+Generic selects SSH by default or `BMCDriver` when `generic_provider_driver` is `BMC`. The driver field belongs only to Generic.
+
+The BMC driver owns system discovery, canonical identities, and registration validation. Its client returns internal `RedfishSystem` identities and shared `ServerPowerStatus` observations. Metal Server consumers do not import BMC driver or Redfish client classes.
 
 The provider resolves an active Metal Server by its canonical URL-derived identity and reads its per-server credentials. Neither the client nor provider saves documents or commits transactions.
 
-`redfish/test_client.py` covers discovery, observations, and error boundaries. `redfish/test_power.py` covers reset actions and task monitors.
+`generic/bmc/test_client.py` covers discovery, observations, and error boundaries. `generic/bmc/test_power.py` covers reset actions and task monitors.
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
-- Redfish credential validation checks every active Redfish registration with saved per-server credentials and GET requests. It fails on an empty registration set or the first inaccessible or mismatched system. It does not save observations or change power.
-- Redfish power on, graceful shutdown, and graceful reboot use advertised reset values and targets. Shutdown and reboot have no forced fallback. Reboot requires On and always sends a reset.
-- Redfish shutdown returns after HTTP 200, 202, or 204 acceptance without polling power state or a task monitor.
+- BMC credential validation checks every active Redfish registration with saved per-server credentials and GET requests. It fails on an empty registration set or the first inaccessible or mismatched system. It does not save observations or change power.
+- BMC power on, graceful shutdown, and graceful reboot use advertised reset values and targets. Shutdown and reboot have no forced fallback. Reboot requires On and always sends a reset.
+- BMC shutdown returns after HTTP 200, 202, or 204 acceptance without polling power state or a task monitor.
 - Power On and Reboot follow a same-service task monitor for HTTP 202 and wait for observed power before returning. The client never retries a reset POST.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
+
+The migration patch `move_redfish_to_generic_bmc` selects Generic+BMC for saved Redfish settings and SSH for Generic settings without a driver. It does not alter Metal Server records or credentials.
+
+`generic/test_provider.py` checks selection and migration. `generic/bmc/test_driver.py` checks registration, credentials, and driver boundaries.
 
 ## TLS
 

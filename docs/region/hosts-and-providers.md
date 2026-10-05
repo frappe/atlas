@@ -6,6 +6,8 @@ A Metal Server is the Atlas app's record for a physical host running Metal. Oper
 
 Atlas Settings selects one provider per region. Its adapter validates credentials, supplies the host catalog, and performs remote actions. Adapters can create a host or register one prepared manually.
 
+Generic selects an SSH or BMC driver. See the [Generic provider guide](provider-guide.md#generic-provider) for registration.
+
 | Record | Purpose |
 | --- | --- |
 | Metal Server | Provider identity, addresses, setup progress, and status. |
@@ -13,7 +15,7 @@ Atlas Settings selects one provider per region. Its adapter validates credential
 | Metal Server Usage | Capacity reports for placement. |
 | SSH Task | Host command and result. |
 
-Atlas commits a `Pending` record before contacting the provider. The stable record name lets retries find the same remote host.
+For host creation, Atlas commits a `Pending` record before contacting the provider. The stable record name lets retries find the same remote host.
 
 Setup prepares provider resources, SSH, networking, WireGuard, and Metal. It saves completed phases in MariaDB and marks the host `Running` only after completion. See the [provisioning sequence](index.md).
 
@@ -25,7 +27,7 @@ The Atlas SSH key must allow login as a user that the provider supports. A non-r
 
 Atlas uses the Scaleway `/dev/md2` array or the AWS storage volume mapped as `/dev/sdb`. If an imported AWS server has no volume mapped as `/dev/sdb`, enter a **Storage Pool Device** that exists on the host. You can also name a disk image file that you created. A new pool needs an empty device. Setup reuses an existing `metal` pool.
 
-Importing the same server again continues setup if it is incomplete. The command line equivalent is `pilot --site SITE import-metal-server <id> [--storage-pool-device PATH]`. Generic hosts use **Add Server** instead.
+Importing the same server again continues setup if it is incomplete. The command line equivalent is `pilot --site SITE import-metal-server <id> [--storage-pool-device PATH]`. Generic SSH hosts use **Add Server**. Generic BMC hosts use **Register Server**.
 
 ### Retry setup
 
