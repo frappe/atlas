@@ -116,10 +116,11 @@ class TestAtlasSetupConfiguration(UnitTestCase):
 
 	def test_an_unknown_server_provider_is_rejected(self) -> None:
 		values = configuration().settings_values()
-		values["server_provider"] = "GCP"
-
-		with self.assertRaisesRegex(ValueError, "server_provider must be one of"):
-			AtlasSetupConfiguration.from_dict(values)
+		for provider in ("GCP", "Redfish"):
+			with self.subTest(provider=provider):
+				values["server_provider"] = provider
+				with self.assertRaisesRegex(ValueError, "server_provider must be one of"):
+					AtlasSetupConfiguration.from_dict(values)
 
 
 class TestAtlasSetup(UnitTestCase):

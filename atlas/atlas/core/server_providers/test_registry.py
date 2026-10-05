@@ -19,12 +19,9 @@ class TestServerProviderRegistry(UnitTestCase):
 				register(second_provider)
 
 	def test_unknown_provider_raises_a_plain_domain_error(self) -> None:
-		with (
-			patch("atlas.atlas.core.server_providers.registry._REGISTRY", {}),
-			patch("atlas.atlas.core.server_providers.registry.load_implementations"),
-			self.assertRaises(ValueError),
-		):
-			get_server_provider("Unknown")
+		for provider in ("Unknown", "Redfish"):
+			with self.subTest(provider=provider), self.assertRaisesRegex(ValueError, "No implementation"):
+				get_server_provider(provider)
 
 	def test_optional_ip_address_operation_has_a_distinct_error(self) -> None:
 		with self.assertRaises(UnsupportedProviderOperation) as raised:
