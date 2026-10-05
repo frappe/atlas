@@ -234,22 +234,27 @@ class TestRedfishPowerOn(UnitTestCase):
 
 
 class TestRedfishPowerOff(UnitTestCase):
-	def test_shutdown_uses_the_advertised_graceful_reset(self) -> None:
-		with (
-			patch(
-				"requests.get",
-				side_effect=[
-					response(resource("On", ("GracefulShutdown", "ForceOff"))),
-					response(resource("PoweringOff")),
-					response(resource("Off")),
-				],
-			),
-			patch("requests.post", return_value=response(status=204)) as post,
-			patch(f"{MODULE}.sleep"),
-		):
-			RedfishClient(SYSTEM_URL).power_off()
-		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
-		post.assert_called_once()
+	def test_shutdown_returns_after_acceptance_without_power_or_task_polling(self) -> None:
+		for status in (200, 202, 204):
+			with (
+				self.subTest(status=status),
+				patch(
+					"requests.get",
+					return_value=response(resource("On", ("GracefulShutdown", "ForceOff"))),
+				) as read,
+				patch(
+					"requests.post",
+					return_value=response(
+						{"TaskState": "Running"}, status=status, headers={"Location": TASK_URL}
+					),
+				) as post,
+				patch(f"{MODULE}.sleep") as sleep,
+			):
+				RedfishClient(SYSTEM_URL).power_off()
+			read.assert_called_once()
+			post.assert_called_once()
+			sleep.assert_not_called()
+			self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
 
 	def test_already_off_does_not_send_a_reset(self) -> None:
 		with patch("requests.get", return_value=response(resource("Off"))), patch("requests.post") as post:
@@ -274,6 +279,19 @@ class TestRedfishPowerOff(UnitTestCase):
 				RedfishClient(SYSTEM_URL).power_off()
 		post.assert_called_once()
 		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
+
+	def test_unknown_shutdown_outcome_does_not_repeat_the_post(self) -> None:
+		with (
+			patch("requests.get", return_value=response(resource("On", ("GracefulShutdown",)))) as read,
+			patch("requests.post", side_effect=requests.ReadTimeout) as post,
+			patch(f"{MODULE}.sleep") as sleep,
+		):
+			with self.assertRaisesRegex(RedfishError, "outcome is unknown") as raised:
+				RedfishClient(SYSTEM_URL).power_off()
+		read.assert_called_once()
+		post.assert_called_once()
+		sleep.assert_not_called()
+		self.assertFalse(raised.exception.is_retryable)
 
 
 class TestRedfishReboot(UnitTestCase):

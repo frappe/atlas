@@ -128,16 +128,19 @@ class TestRedfishPower(UnitTestCase):
 		power.assert_called_once_with(self.server)
 		power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.START)
 
-	def test_shutdown_delegates_the_saved_provider_identity(self) -> None:
+	def test_shutdown_submits_without_reading_or_saving_an_observation(self) -> None:
 		with (
 			patch.object(self.provider, "set_power_state") as change,
-			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("Off", "OK")),
+			patch.object(self.provider, "read_power_status") as read,
 			patch("frappe.db.advisory_lock", return_value=nullcontext()),
 			patch("frappe.db.rollback"),
-			patch("frappe.db.commit"),
+			patch("frappe.db.commit") as commit,
 		):
 			RedfishPower(self.server).set_power_state(ServerPowerAction.STOP)
 		change.assert_called_once_with("provider-id", ServerPowerAction.STOP)
+		read.assert_not_called()
+		self.server.db_set.assert_not_called()
+		commit.assert_not_called()
 
 	def test_shutdown_route_checks_permission_and_delegates_to_the_power_owner(self) -> None:
 		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:

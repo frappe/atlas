@@ -71,11 +71,16 @@ test("Power On is available for an Off BMC and uses the saved-document method", 
 	}
 });
 
-test("Power Off confirms graceful shutdown and is offered only for On", async () => {
-	const { buttons, calls } = form();
+test("Power Off reports acceptance without reloading the observation", async () => {
+	const { buttons, calls, alerts } = form();
 	buttons.get("Power Off")();
 	await Promise.resolve();
 	assert.equal(calls[0].method, "poweroff_server");
+	assert.equal(calls[0].freeze_message, "Sending shutdown request...");
+	assert.equal(calls.length, 1);
+	assert.equal(alerts.length, 1);
+	assert.equal(alerts[0].message, "Shutdown request accepted.");
+	assert.equal(alerts[0].indicator, "green");
 	const cancelled = form({ confirm: false });
 	cancelled.buttons.get("Power Off")();
 	assert.deepEqual(cancelled.calls, []);
