@@ -79,3 +79,17 @@ test("Power Off confirms graceful shutdown and is offered only for On", async ()
 		assert.ok(!form({ powerState }).buttons.has("Power Off"));
 	}
 });
+
+test("Reboot confirms a graceful restart and is offered only for On", async () => {
+	const { buttons, calls } = form();
+	buttons.get("Reboot")();
+	await Promise.resolve();
+	assert.equal(calls[0].method, "reboot_server");
+	assert.equal(calls[1], "reload");
+	const cancelled = form({ confirm: false });
+	cancelled.buttons.get("Reboot")();
+	assert.deepEqual(cancelled.calls, []);
+	for (const powerState of ["Off", "PoweringOn", "PoweringOff", ""]) {
+		assert.ok(!form({ powerState }).buttons.has("Reboot"));
+	}
+});

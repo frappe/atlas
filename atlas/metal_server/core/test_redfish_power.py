@@ -149,3 +149,56 @@ class TestRedfishPower(UnitTestCase):
 			with self.assertRaises(frappe.PermissionError):
 				MetalServer.poweroff_server(self.server)
 			power.assert_not_called()
+
+	def test_reboot_invalidates_running_readiness(self) -> None:
+		self.server.status = "Running"
+		with (
+			patch.object(self.provider, "set_power_state") as change,
+			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")),
+			patch("frappe.db.advisory_lock", return_value=nullcontext()),
+			patch("frappe.db.rollback"),
+			patch("frappe.db.commit"),
+		):
+			RedfishPower(self.server).set_power_state(ServerPowerAction.REBOOT)
+		change.assert_called_once_with("provider-id", ServerPowerAction.REBOOT)
+		self.assertEqual(self.server.db_set.call_args.args[0]["status"], "Pending")
+
+	def test_reboot_route_checks_permission_and_uses_the_power_owner(self) -> None:
+		with patch("atlas.metal_server.doctype.metal_server.metal_server.RedfishPower") as power:
+			MetalServer.reboot_server(self.server)
+			power.return_value.set_power_state.assert_called_once_with(ServerPowerAction.REBOOT)
+			power.reset_mock()
+			self.server._validate_power_action.side_effect = frappe.PermissionError
+			with self.assertRaises(frappe.PermissionError):
+				MetalServer.reboot_server(self.server)
+			power.assert_not_called()
+
+	def test_failed_observation_after_reboot_does_not_save_a_result(self) -> None:
+		with (
+			patch.object(self.provider, "set_power_state") as change,
+			patch.object(self.provider, "read_power_status", side_effect=RedfishError("unreachable")),
+			patch("frappe.db.advisory_lock", return_value=nullcontext()),
+			patch("frappe.db.rollback"),
+			patch("frappe.db.commit") as commit,
+		):
+			with self.assertRaises(RedfishError):
+				RedfishPower(self.server).set_power_state(ServerPowerAction.REBOOT)
+		change.assert_called_once()
+		self.server.db_set.assert_not_called()
+		commit.assert_not_called()
+
+	def test_power_result_commits_before_releasing_the_server_lock(self) -> None:
+		events = []
+		lock = Mock()
+		lock.__enter__ = Mock(side_effect=lambda: events.append("lock"))
+		lock.__exit__ = Mock(side_effect=lambda *_: events.append("unlock"))
+		self.server.reload.side_effect = lambda: events.append("reload")
+		with (
+			patch.object(self.provider, "set_power_state", side_effect=lambda *_: events.append("reset")),
+			patch.object(self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")),
+			patch("frappe.db.advisory_lock", return_value=lock),
+			patch("frappe.db.rollback", side_effect=lambda: events.append("rollback")),
+			patch("frappe.db.commit", side_effect=lambda: events.append("commit")),
+		):
+			RedfishPower(self.server).set_power_state(ServerPowerAction.REBOOT)
+		self.assertEqual(events, ["lock", "rollback", "reload", "reset", "commit", "unlock"])

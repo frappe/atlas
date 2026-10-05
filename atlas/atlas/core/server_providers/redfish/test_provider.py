@@ -97,3 +97,10 @@ class TestRedfishProvider(UnitTestCase):
 			provider.set_power_state("provider-id", ServerPowerAction.STOP)
 		client.assert_called_once_with("provider-id")
 		client.return_value.power_off.assert_called_once_with()
+
+	def test_reboot_uses_the_registered_client_graceful_restart(self) -> None:
+		provider = RedfishProvider(SimpleNamespace())
+		with patch.object(provider, "_client") as client:
+			provider.set_power_state("provider-id", ServerPowerAction.REBOOT)
+		client.assert_called_once_with("provider-id")
+		client.return_value.reboot.assert_called_once_with()

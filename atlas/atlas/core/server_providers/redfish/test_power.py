@@ -276,3 +276,68 @@ class TestRedfishPowerOff(UnitTestCase):
 				RedfishClient(SYSTEM_URL).power_off()
 		post.assert_called_once()
 		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulShutdown"})
+
+
+class TestRedfishReboot(UnitTestCase):
+	def test_reboot_posts_even_when_already_on_and_observes_on(self) -> None:
+		with (
+			patch(
+				"requests.get",
+				side_effect=[
+					response(resource("On", ("GracefulRestart", "ForceRestart"))),
+					response(resource("PoweringOff")),
+					response(resource("On")),
+				],
+			),
+			patch("requests.post", return_value=response(status=204)) as post,
+			patch(f"{MODULE}.sleep"),
+		):
+			RedfishClient(SYSTEM_URL).reboot()
+		post.assert_called_once()
+		self.assertEqual(post.call_args.kwargs["json"], {"ResetType": "GracefulRestart"})
+
+	def test_off_and_transitional_states_refuse_reboot(self) -> None:
+		for state in ("Off", "PoweringOn", "PoweringOff"):
+			with (
+				self.subTest(state=state),
+				patch("requests.get", return_value=response(resource(state, ("GracefulRestart",)))),
+				patch("requests.post") as post,
+			):
+				with self.assertRaisesRegex(RedfishError, "reboot requires On"):
+					RedfishClient(SYSTEM_URL).reboot()
+				post.assert_not_called()
+
+	def test_force_restart_only_is_refused(self) -> None:
+		with (
+			patch("requests.get", return_value=response(resource("On", ("ForceRestart",)))),
+			patch("requests.post") as post,
+		):
+			with self.assertRaisesRegex(RedfishError, "GracefulRestart"):
+				RedfishClient(SYSTEM_URL).reboot()
+		post.assert_not_called()
+
+	def test_unknown_reboot_outcome_does_not_repeat_a_disruptive_post(self) -> None:
+		with (
+			patch("requests.get", return_value=response(resource("On", ("GracefulRestart",)))),
+			patch("requests.post", side_effect=requests.ReadTimeout) as post,
+		):
+			with self.assertRaisesRegex(RedfishError, "outcome is unknown"):
+				RedfishClient(SYSTEM_URL).reboot()
+		post.assert_called_once()
+
+	def test_async_reboot_waits_for_completion_even_if_power_stays_on(self) -> None:
+		with (
+			patch(
+				"requests.get",
+				side_effect=[
+					response(resource("On", ("GracefulRestart",))),
+					response({"TaskState": "Completed"}),
+					response(resource("On")),
+				],
+			) as read,
+			patch("requests.post", return_value=response(status=202, headers={"Location": TASK_URL})) as post,
+			patch(f"{MODULE}.sleep"),
+		):
+			RedfishClient(SYSTEM_URL).reboot()
+		self.assertEqual([call.args[0] for call in read.call_args_list], [SYSTEM_URL, TASK_URL, SYSTEM_URL])
+		post.assert_called_once()
