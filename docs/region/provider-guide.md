@@ -119,6 +119,28 @@ Redfish is registered as a server provider and appears in Atlas Settings. The au
 
 Redfish manages existing machines. Atlas Settings refuses **Metal Auto-spawn Config > Enabled**. Settings validation does not contact a baseboard management controller (BMC) or check the per-server credentials.
 
+### Validate credentials
+
+`RedfishProvider.validate_credentials()` checks every active Metal Server with a Redfish provider ID. It uses the saved URL, username, and decrypted password to read the registered ComputerSystem. Deleted records and other providers are excluded.
+
+The method returns `True` only when every system is accessible and its response identifies the registered URL. It raises `RedfishError` on the first failed check or when no Redfish server is registered. Blank credentials are accepted only when the system endpoint allows anonymous access.
+
+Validation sends GET requests only. It does not poll, change power, update observations, or save documents. Successful validation proves read access to the system. It does not prove permission to send power requests. Saving Atlas Settings does not run this check because Redfish credentials belong to Metal Servers.
+
+To check the local registration, open a console from the Pilot bench:
+
+```sh
+pilot --site atlas-bare.localhost console
+```
+
+Then run:
+
+```python
+frappe.get_single("Atlas Settings").server_provider_controller.validate_credentials()
+```
+
+The sample on port 18000 accepts anonymous requests. It cannot reject a wrong password while authentication is disabled. A local check with a temporary authenticated Sushy instance accepted the saved valid credentials and rejected wrong or missing credentials with HTTP 401. The check rolled back its temporary credentials and left the original registration unchanged.
+
 ### Register a machine
 
 Select **Redfish** as **Server Provider** in Atlas Settings. Keep **Metal Auto-spawn Config > Enabled** off. Sign in with the **System Manager** role.
@@ -221,7 +243,7 @@ Reboot tests cover On requests, Off and transitional-state refusal, ForceRestart
 
 A live check sent one GracefulRestart request through the Atlas document method. The sample remained On and Pending. A read-only libvirt event listener observed the guest reboot. This confirms the sample handled the request. It does not validate Metal readiness or every BMC implementation.
 
-Infrastructure setup, standalone credential validation, catalog discovery, and host preparation still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
+Infrastructure setup, catalog discovery, and host preparation still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
 
 The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 

@@ -39,6 +39,7 @@ The provider resolves an active Metal Server by its canonical URL-derived identi
 `redfish/test_client.py` covers discovery, observations, and error boundaries. `redfish/test_power.py` covers reset actions and task monitors.
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
+- Redfish credential validation checks every active Redfish registration with saved per-server credentials and GET requests. It fails on an empty registration set or the first inaccessible or mismatched system. It does not save observations or change power.
 - Redfish power on, graceful shutdown, and graceful reboot use advertised reset values and targets. Shutdown and reboot have no forced fallback. Reboot requires On and always sends a reset.
 - Redfish shutdown returns after HTTP 200, 202, or 204 acceptance without polling power state or a task monitor.
 - Power On and Reboot follow a same-service task monitor for HTTP 202 and wait for observed power before returning. The client never retries a reset POST.
