@@ -147,7 +147,7 @@ Size and image are optional for Redfish and remain required for the other provid
 
 ### Read power state
 
-On a saved Metal Server, select **Refresh Power State**. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On**.
+On a saved Metal Server, select **Actions > Refresh Power State**. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On**.
 
 Refresh after registration to load the first observation and enable the matching power buttons.
 
@@ -159,7 +159,7 @@ Power reads require the System Manager role. Atlas rejects Deleted records and a
 
 ### Power on
 
-Select **Power On** when the last observed power state is Off. Atlas reads the current state before it sends a request. If the machine is already On, Atlas updates its observation without sending a reset.
+Select **Actions > Power On** when the last observed power state is Off. Atlas reads the current state before it sends a request. If the machine is already On, Atlas updates its observation without sending a reset.
 
 Atlas sends `ResetType: On` to the advertised ComputerSystem.Reset target. It uses `ForceOn` only when On is absent and ForceOn is advertised. Supported values come from the inline allowable-values annotation or the advertised ActionInfo resource.
 
@@ -167,7 +167,7 @@ After the request, Atlas waits for the BMC to report On. An unprovisioned host s
 
 ### Power off
 
-Select **Power Off** when the last observed power state is On, then confirm graceful shutdown. Atlas reads the current state first. If the machine is already Off, it updates its observation without sending a reset.
+Select **Actions > Power Off** when the last observed power state is On, then confirm graceful shutdown. Atlas reads the current state first. If the machine is already Off, it updates its observation without sending a reset.
 
 Atlas requires the advertised `GracefulShutdown` reset value. It waits for the BMC to report Off, then marks the Metal Server Stopped. It refuses a controller that advertises only ForceOff. A timeout does not trigger a forced shutdown.
 
@@ -175,7 +175,7 @@ The operating system must handle the graceful request. A machine can remain On a
 
 ### Reboot
 
-Select **Reboot** when the last observed power state is On, then confirm the request. Atlas reads the current state and requires On. It sends the advertised `GracefulRestart` value. It refuses ForceRestart-only controllers and does not reboot an Off or transitioning machine.
+Select **Actions > Reboot** when the last observed power state is On, then confirm the request. Atlas reads the current state and requires On. It sends the advertised `GracefulRestart` value. It refuses ForceRestart-only controllers and does not reboot an Off or transitioning machine.
 
 Reboot always sends a new request, even when the BMC reports On. It is not idempotent. Do not repeat a request after an unknown outcome without checking the machine first.
 
@@ -189,7 +189,7 @@ Power requests use the same per-server lock as power reads. A request reloads th
 
 HTTP 200 or 204 accepts a synchronous reset. HTTP 202 requires a same-service Location task monitor. Atlas polls that monitor before checking power. A failed or cancelled task fails the action. Reset targets, ActionInfo links, and task monitors cannot move to another service. Redirects are refused.
 
-HTTP requests have a 10-second timeout. Task and power polling share a 120-second budget. If a request times out, the action outcome can be unknown. Atlas does not repeat the POST automatically. Select **Refresh Power State** before deciding whether to send another action.
+HTTP requests have a 10-second timeout. Task and power polling share a 120-second budget. If a request times out, the action outcome can be unknown. Atlas does not repeat the POST automatically. Select **Actions > Refresh Power State** before deciding whether to send another action.
 
 Power actions require a stable On or Off state. During a transition, refresh the observed state and wait for it to settle. A failed action does not save an assumed power state or promote the lifecycle to Running.
 
