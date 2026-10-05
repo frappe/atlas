@@ -2,6 +2,7 @@
 
 ## Taste
 
+- Mandatory: working code is not enough. A new joiner must follow it quickly and make the next change easily.
 - Readable by a new joiner during an outage. Simple, not clever ("simple code is much better than clever code").
 - Least code: fewer lines, less complexity. Net negative is good.
 - Not dense: blank lines between logical blocks; multi-line over packed one-liners ("dont make go codes dense to save loc").
@@ -26,6 +27,7 @@ Naming draws the most corrections. Review every new name.
 - Object-oriented: behavior on its owner (doctype methods, provider classes, a `Tracker` struct). Static constructors on doctypes (`Server.provision(...)`). Static methods are fine; loose module functions are not.
 - Thin controllers and API routes: transport and permission only; core behavior works from Desk. `validate` calls focused methods. A `service.py` in the doctype folder is fine when the controller grows.
 - Class order: properties, abstract, public, static and class methods, private last. Globals and constants at file top.
+- Don't repeat yourself: integrations of one kind (server, BMC, object storage provider) extend one base class that defines the methods and shared steps; each overrides only what differs. Names say what they are (`providers/bmc/redfish.py`, `RedfishBMCProvider`).
 - `@override` on implemented abstract methods. `@register` registry for pluggable strategies and providers.
 - Cyclomatic complexity 8 or less. Functions around 25 lines when a split keeps readability; never split into single-use helpers.
 - Fewer, well-named files of about 100 to 500 lines. Merge tiny single-use files and packages (`idalloc`); leaf utilities in one place (`internal/platform`). Check import cycles. Only entrypoints under `cmd/`.
