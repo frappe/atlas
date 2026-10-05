@@ -102,7 +102,7 @@ class TestAtlasSetupConfiguration(UnitTestCase):
 				with self.assertRaisesRegex(ValueError, f"unknown fields: {field}"):
 					AtlasSetupConfiguration.from_dict({**values, field: value})
 
-	def test_generic_driver_input_and_legacy_redfish_input(self) -> None:
+	def test_generic_driver_input(self) -> None:
 		values = configuration().settings_values()
 		values = {field: value for field, value in values.items() if not field.startswith("scaleway_")}
 		values["server_provider"] = "Generic"
@@ -113,12 +113,6 @@ class TestAtlasSetupConfiguration(UnitTestCase):
 				self.assertEqual(parsed.settings_values()["generic_provider_driver"], driver)
 		with self.assertRaisesRegex(ValueError, "must be SSH or BMC"):
 			AtlasSetupConfiguration.from_dict({**values, "generic_provider_driver": "IPMI"})
-
-		values["server_provider"] = "Redfish"
-		parsed = AtlasSetupConfiguration.from_dict(values)
-		self.assertEqual((parsed.server_provider, parsed.generic_provider_driver), ("Generic", "BMC"))
-		self.assertEqual(values["server_provider"], "Redfish")
-		self.assertNotIn("generic_provider_driver", values)
 
 	def test_an_unknown_server_provider_is_rejected(self) -> None:
 		values = configuration().settings_values()

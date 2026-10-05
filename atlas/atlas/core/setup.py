@@ -104,9 +104,6 @@ class AtlasSetupConfiguration:
 
 		values = dict(values)
 		provider = values.get("server_provider")
-		if provider == "Redfish":
-			provider = values["server_provider"] = "Generic"
-			values["generic_provider_driver"] = "BMC"
 		if provider == "Generic":
 			values.setdefault("generic_provider_driver", "SSH")
 		if provider not in PROVIDER_FIELDS:
