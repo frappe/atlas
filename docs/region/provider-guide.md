@@ -167,11 +167,11 @@ After the request, Atlas waits for the BMC to report On. An unprovisioned host s
 
 ### Power off
 
-Select **Actions > Power Off** when the last observed power state is On, then confirm graceful shutdown. Atlas reads the current state first. If the machine is already Off, it updates its observation without sending a reset.
+Select **Actions > Power Off** when the last observed power state is On, then confirm graceful shutdown. Atlas reads the current state and advertised reset capability first. If the machine is already Off, it returns without sending a reset.
 
-Atlas requires the advertised `GracefulShutdown` reset value. It waits for the BMC to report Off, then marks the Metal Server Stopped. It refuses a controller that advertises only ForceOff. A timeout does not trigger a forced shutdown.
+Atlas sends one `GracefulShutdown` request to the advertised reset target. It returns when the BMC accepts the request with HTTP 200, 202, or 204. It does not poll power state or a task monitor. It refuses a controller that advertises only ForceOff and never falls back to forced shutdown.
 
-The operating system must handle the graceful request. A machine can remain On after the BMC accepts it. Allow a newly powered machine to boot before testing shutdown. Refresh after a timeout because the machine can turn off later.
+The form shows **Shutdown request accepted.** Acceptance does not confirm that shutdown has finished. The saved power state, health, timestamp, and lifecycle remain unchanged. Select **Actions > Refresh Power State** to check the machine later. An Off observation marks the record Stopped.
 
 ### Reboot
 
@@ -187,9 +187,13 @@ After reboot acceptance and an On observation, Atlas changes a previously Runnin
 
 Power requests use the same per-server lock as power reads. A request reloads the saved record and checks permissions and lifecycle state while it holds the lock. The provider reads credentials from the saved record.
 
-HTTP 200 or 204 accepts a synchronous reset. HTTP 202 requires a same-service Location task monitor. Atlas polls that monitor before checking power. A failed or cancelled task fails the action. Reset targets, ActionInfo links, and task monitors cannot move to another service. Redirects are refused.
+For Power On and Reboot, HTTP 200 or 204 accepts a synchronous reset. HTTP 202 requires a same-service Location task monitor. Atlas polls that monitor before checking power. A failed or cancelled task fails the action.
 
-HTTP requests have a 10-second timeout. Task and power polling share a 120-second budget. If a request times out, the action outcome can be unknown. Atlas does not repeat the POST automatically. Select **Actions > Refresh Power State** before deciding whether to send another action.
+Reset targets, ActionInfo links, and task monitors cannot move to another service. Redirects are refused.
+
+HTTP requests have a 10-second timeout. Power On and Reboot share a 120-second budget for task and power polling. Power Off returns after request acceptance without polling.
+
+If a reset request times out, the action outcome can be unknown. Atlas does not repeat the POST automatically. Select **Actions > Refresh Power State** before deciding whether to send another action.
 
 Power actions require a stable On or Off state. During a transition, refresh the observed state and wait for it to settle. A failed action does not save an assumed power state or promote the lifecycle to Running.
 
@@ -209,11 +213,9 @@ A live check powered the sample from Off to On through the Atlas document method
 
 The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is covered with mocks.
 
-Power-off tests cover graceful shutdown, already-Off requests, ForceOff-only controllers, shutdown timeouts, observed Stopped state, and Desk confirmation. A live check sent one GracefulShutdown request, observed Off through Redfish, and confirmed libvirt reported shut off. Repeating Power Off sent no POST.
+Power-off tests cover HTTP 200, 202, and 204 acceptance without power or task polling, already-Off requests, ForceOff-only controllers, unknown POST outcomes, and unchanged saved observations. Form tests cover confirmation, the acceptance message, and no automatic reload.
 
-The check restored the sample to On and Pending.
-
-An earlier live request was accepted while the CirrOS guest was still booting. It stayed On past the 120-second deadline and shut down later. Atlas reported the timeout without a forced fallback. The successful check allowed the guest to boot first.
+A live check submitted one GracefulShutdown request through the Atlas document method in 0.09 seconds. It made one preflight GET and one reset POST, with no later reads or task polling. The saved observation and lifecycle did not change.
 
 Reboot tests cover On requests, Off and transitional-state refusal, ForceRestart-only controllers, unknown outcomes, asynchronous completion, readiness invalidation, and lock commit order. The form tests cover confirmation and action visibility.
 

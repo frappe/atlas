@@ -40,7 +40,8 @@ The provider resolves an active Metal Server by its canonical URL-derived identi
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
 - Redfish power on, graceful shutdown, and graceful reboot use advertised reset values and targets. Shutdown and reboot have no forced fallback. Reboot requires On and always sends a reset.
-- HTTP 202 follows a same-service task monitor. The client never retries a reset POST and waits for observed power before it returns.
+- Redfish shutdown returns after HTTP 200, 202, or 204 acceptance without polling power state or a task monitor.
+- Power On and Reboot follow a same-service task monitor for HTTP 202 and wait for observed power before returning. The client never retries a reset POST.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
 
 ## TLS

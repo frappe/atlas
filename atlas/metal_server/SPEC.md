@@ -34,6 +34,7 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - A new Redfish record must use the registration API. It stays Pending, has optional size and image, and does not enqueue provisioning. Other providers require both catalog fields.
 - Redfish power observations are stored in `redfish_power_state`, `redfish_health`, and `redfish_power_updated_on`. Failed reads preserve these fields. A power observation never promotes a host to Running.
 - Redfish power actions share the observation lock. They reload saved state and recheck the document guard before invoking the provider. A successful power-on observation changes Stopped to Pending. A successful Off observation marks the record Stopped. Reboot changes Running to Pending.
+- Redfish shutdown submits the request without a subsequent power read or field update. The form reports acceptance without reloading. Observations and lifecycle remain unchanged until an explicit refresh.
 - Redfish shutdown and reboot require confirmation in Desk.
 - `metald` listens only on the host WireGuard address. The provider returns the storage pool device. Host installation never searches for a disk.
 - `ssh_host` is the host WireGuard address once the host has a WireGuard key. Only setup before that uses the public address.
