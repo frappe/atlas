@@ -94,7 +94,9 @@ SERVER_MESH_ADDRESS = "fdab:1:e209:70ad:a183:dda2:a727:cd8b"
 
 class TestServer(UnitTestCase):
 	def test_before_validate_takes_the_architecture_without_provider_creation(self) -> None:
-		provider = SimpleNamespace(validate_settings=Mock(), validate_server=Mock(), ensure_server=Mock())
+		provider = SimpleNamespace(
+			is_registration_only=False, validate_settings=Mock(), validate_server=Mock(), ensure_server=Mock()
+		)
 		server = SimpleNamespace(
 			name=SERVER_NAME,
 			provider_server_id=None,
@@ -1180,6 +1182,7 @@ class TestServer(UnitTestCase):
 			port=51820,
 			settings=SimpleNamespace(
 				server_provider_controller=SimpleNamespace(
+					is_registration_only=False,
 					delete_server=Mock(),
 					set_power_state=Mock(),
 					storage_pool_device=Mock(return_value="/dev/md2"),

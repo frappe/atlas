@@ -12,11 +12,12 @@ from atlas.atlas.core.server_providers.base import (
 	ServerCreateRequest,
 	ServerImageData,
 	ServerPowerAction,
+	ServerPowerStatus,
 	ServerProvider,
 	ServerSizeData,
 	UnsupportedProviderOperation,
 )
-from atlas.atlas.core.server_providers.redfish.client import RedfishClient, RedfishError, RedfishPowerStatus
+from atlas.atlas.core.server_providers.redfish.client import RedfishClient, RedfishError, RedfishSystem
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -29,6 +30,7 @@ class RedfishProvider(ServerProvider):
 	provider_type = "Redfish"
 	credential_fields = ()
 	error_class = RedfishError
+	is_registration_only = True
 
 	@override
 	def validate_settings(self) -> None:
@@ -36,7 +38,34 @@ class RedfishProvider(ServerProvider):
 		if self.settings.auto_spawn_metal_server:
 			raise RedfishError("The Redfish provider cannot create a Metal Server automatically")
 
-	def read_power_status(self, provider_server_id: str) -> RedfishPowerStatus:
+	@override
+	def validate_server(self, server: "MetalServer") -> None:
+		"""Require discovery through the registration flow for a new record."""
+		if server.is_new() and not isinstance(getattr(server, "_redfish_registration", None), RedfishSystem):
+			frappe.throw(frappe._("Use Register on the Metal Server form to register a Redfish system."))
+
+	@override
+	def import_server(self, server: "MetalServer") -> None:
+		"""Discover an existing system and fill its registration values."""
+		system = RedfishClient(
+			server.redfish_url or "",
+			server.redfish_username or "",
+			server.get_password("redfish_password", raise_exception=False) or "",
+		).discover_system()
+		server.redfish_url = system.url
+		server._redfish_registration = system
+		self.apply_provider_server(
+			server,
+			ProviderServer(
+				provider_server_id="redfish-" + sha256(system.url.encode()).hexdigest()[:32],
+				status="Pending",
+				public_ipv4_address=None,
+				provider_metadata={"id": system.id, "name": system.name, "uuid": system.uuid},
+			),
+		)
+
+	@override
+	def read_power_status(self, provider_server_id: str) -> ServerPowerStatus:
 		"""Read the registered system with its saved per-server credentials."""
 		return self._client(provider_server_id).read_power_status()
 

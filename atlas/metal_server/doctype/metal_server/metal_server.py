@@ -14,9 +14,13 @@ from frappe.utils import add_days, cint, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
-from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
-from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishPowerStatus, RedfishSystem
-from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
+from atlas.atlas.core.server_providers.base import (
+	ProviderOperationError,
+	ServerCreateRequest,
+	ServerPowerAction,
+	ServerPowerStatus,
+	UnsupportedProviderOperation,
+)
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
@@ -28,9 +32,9 @@ from atlas.metal_server.core.host_installation import (
 	WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
 	HostInstallation,
 )
+from atlas.metal_server.core.provider_registration import register_server
 from atlas.metal_server.core.provisioning import ServerProvisioner
-from atlas.metal_server.core.redfish_power import RedfishPower
-from atlas.metal_server.core.redfish_registration import register_server as register_redfish
+from atlas.metal_server.core.server_power import ServerPower
 from atlas.metal_server.usage import enqueue_server_sync
 
 if TYPE_CHECKING:
@@ -86,31 +90,31 @@ class MetalServer(Document):
 	# end: auto-generated types
 
 	@request_cache
-	def read_redfish_power_status(self) -> RedfishPowerStatus | None:
+	def read_provider_power_status(self) -> ServerPowerStatus | None:
 		"""Share one live BMC observation across virtual fields in this request."""
 		if self.is_new() or self.status == "Deleted" or not self.redfish_url or not self.provider_server_id:
 			return None
 		provider = self.settings.server_provider_controller
-		if not isinstance(provider, RedfishProvider):
+		if not provider.is_registration_only:
 			return None
 		frappe.only_for("System Manager")
 		self.check_permission("read")
 		self.set_onload("redfish_power_error", None)
 		try:
 			status = provider.read_power_status(self._provider_server_id())
-		except RedfishError as error:
+		except ProviderOperationError as error:
 			self.set_onload("redfish_power_error", str(error))
 			return None
 		return status
 
 	@property
 	def redfish_power_state(self) -> str | None:
-		status = self.read_redfish_power_status()
+		status = self.read_provider_power_status()
 		return status.power_state if status else None
 
 	@property
 	def redfish_health(self) -> str | None:
-		status = self.read_redfish_power_status()
+		status = self.read_provider_power_status()
 		return status.health if status else None
 
 	@property
@@ -141,9 +145,7 @@ class MetalServer(Document):
 		provider = self.settings.server_provider_controller
 		provider.validate_settings()
 		provider.validate_server(self)
-		if isinstance(provider, RedfishProvider):
-			if self.is_new() and not isinstance(getattr(self, "_redfish_registration", None), RedfishSystem):
-				frappe.throw(_("Use Register on the Metal Server form to register a Redfish system."))
+		if provider.is_registration_only:
 			return
 
 		if not self.server_size or not self.server_image:
@@ -193,7 +195,7 @@ class MetalServer(Document):
 
 	def after_insert(self) -> None:
 		"""Start provisioning for providers that create or prepare hosts."""
-		if not isinstance(self.settings.server_provider_controller, RedfishProvider):
+		if not self.settings.server_provider_controller.is_registration_only:
 			self._enqueue_setup_server()
 
 	@property
@@ -254,43 +256,25 @@ class MetalServer(Document):
 	def refresh_redfish_power_state(self) -> None:
 		"""Read the BMC power status without changing remote state."""
 		self._validate_power_action()
-		RedfishPower(self).refresh()
+		ServerPower(self).refresh()
 
 	@frappe.whitelist(methods=["POST"])
 	def reboot_server(self) -> None:
 		"""Reboot the provider server."""
 		self._validate_power_action()
-		if isinstance(self.settings.server_provider_controller, RedfishProvider):
-			RedfishPower(self).set_power_state(ServerPowerAction.REBOOT)
-			return
-		self.settings.server_provider_controller.set_power_state(
-			self._provider_server_id(), ServerPowerAction.REBOOT
-		)
+		ServerPower(self).set_power_state(ServerPowerAction.REBOOT)
 
 	@frappe.whitelist(methods=["POST"])
 	def poweroff_server(self) -> None:
 		"""Stop the provider server."""
 		self._validate_power_action()
-		if isinstance(self.settings.server_provider_controller, RedfishProvider):
-			RedfishPower(self).set_power_state(ServerPowerAction.STOP)
-			return
-		self.settings.server_provider_controller.set_power_state(
-			self._provider_server_id(), ServerPowerAction.STOP
-		)
-		self.db_set("status", "Stopped")
+		ServerPower(self).set_power_state(ServerPowerAction.STOP)
 
 	@frappe.whitelist(methods=["POST"])
 	def poweron_server(self) -> None:
 		"""Start the provider server."""
 		self._validate_power_action()
-		if isinstance(self.settings.server_provider_controller, RedfishProvider):
-			RedfishPower(self).set_power_state(ServerPowerAction.START)
-			return
-		self.settings.server_provider_controller.set_power_state(
-			self._provider_server_id(), ServerPowerAction.START
-		)
-		if self.is_provisioning_completed:
-			self.db_set("status", "Running")
+		ServerPower(self).set_power_state(ServerPowerAction.START)
 
 	@frappe.whitelist(methods=["POST"])
 	def archive_server(self) -> None:
@@ -604,7 +588,11 @@ def renew_expiring_tls_certificates() -> None:
 def register_redfish_server(redfish_url: str, redfish_username: str = "", redfish_password: str = "") -> str:
 	"""Register an existing Redfish system and return its Metal Server name."""
 	frappe.only_for("System Manager")
-	return register_redfish(redfish_url, redfish_username, redfish_password).name
+	server: MetalServer = frappe.new_doc("Metal Server")
+	server.redfish_url = redfish_url
+	server.redfish_username = redfish_username
+	server.redfish_password = redfish_password
+	return register_server(server).name
 
 
 @frappe.whitelist(methods=["POST"])
@@ -613,8 +601,8 @@ def poweroff_redfish_server(name: str) -> None:
 	frappe.only_for("System Manager")
 	server: MetalServer = frappe.get_doc("Metal Server", name)
 	server.check_permission("write")
-	if not isinstance(server.settings.server_provider_controller, RedfishProvider):
-		raise RedfishError("Select the Redfish server provider to use BMC power operations")
+	if not server.settings.server_provider_controller.is_registration_only:
+		raise UnsupportedProviderOperation("registration-only power operations")
 	server.poweroff_server()
 
 

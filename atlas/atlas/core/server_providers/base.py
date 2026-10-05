@@ -76,6 +76,14 @@ class ReservedIPAddress:
 	provider_resource_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class ServerPowerStatus:
+	"""Store observed power and health independently of Metal readiness."""
+
+	power_state: str
+	health: str | None
+
+
 class ServerPowerAction(StrEnum):
 	"""List the provider power operations that Atlas can request."""
 
@@ -118,6 +126,7 @@ class ServerProvider(ABC):
 	credential_fields: ClassVar[tuple[str, ...]]
 	ssh_users: ClassVar[tuple[str, ...]] = ("root", "ubuntu")
 	error_class: ClassVar[type[ProviderOperationError]] = ProviderOperationError
+	is_registration_only: ClassVar[bool] = False
 	setup_poll_interval_seconds: ClassVar[int] = 5
 	setup_poll_timeout_seconds: ClassVar[int] = 7_200
 	private_address_attempts: ClassVar[int] = 60
@@ -186,6 +195,10 @@ class ServerProvider(ABC):
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
 		"""Apply one power action to a provider server."""
 		...
+
+	def read_power_status(self, provider_server_id: str) -> ServerPowerStatus:
+		"""Read power and health without changing the provider server."""
+		raise UnsupportedProviderOperation("power status observation")
 
 	@abstractmethod
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, Any]) -> None:

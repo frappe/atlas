@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.redfish.client import RedfishError, RedfishPowerStatus
+from atlas.atlas.core.server_providers.base import ServerPowerStatus, UnsupportedProviderOperation
+from atlas.atlas.core.server_providers.redfish.client import RedfishError
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer, poweroff_redfish_server
 
@@ -42,7 +43,7 @@ class TestRedfishVirtualFields(UnitTestCase):
 	def test_serialization_shares_one_live_observation_and_does_not_write(self) -> None:
 		with (
 			patch.object(
-				self.provider, "read_power_status", return_value=RedfishPowerStatus("On", "OK")
+				self.provider, "read_power_status", return_value=ServerPowerStatus("On", "OK")
 			) as read,
 			patch.object(self.server, "db_set") as save,
 			patch("frappe.db.commit") as commit,
@@ -63,7 +64,7 @@ class TestRedfishVirtualFields(UnitTestCase):
 		with patch.object(
 			self.provider,
 			"read_power_status",
-			side_effect=[RedfishPowerStatus("On", "OK"), RedfishPowerStatus("Off", None)],
+			side_effect=[ServerPowerStatus("On", "OK"), ServerPowerStatus("Off", None)],
 		) as read:
 			first = self.server.as_dict()
 			frappe.local.request_cache = defaultdict(dict)
@@ -77,7 +78,7 @@ class TestRedfishVirtualFields(UnitTestCase):
 		with patch.object(
 			self.provider,
 			"read_power_status",
-			side_effect=[RedfishError("Redfish returned HTTP 401"), RedfishPowerStatus("On", "OK")],
+			side_effect=[RedfishError("Redfish returned HTTP 401"), ServerPowerStatus("On", "OK")],
 		) as read:
 			failed = self.server.as_dict()
 			for field in FIELDS:
@@ -102,7 +103,9 @@ class TestRedfishVirtualFields(UnitTestCase):
 				frappe.local.request_cache = defaultdict(dict)
 				server = MetalServer(self.server.__dict__ | values)
 				server._settings = SimpleNamespace(
-					server_provider_controller=self.provider if values else object()
+					server_provider_controller=self.provider
+					if values
+					else SimpleNamespace(is_registration_only=False)
 				)
 				for field in FIELDS:
 					self.assertIsNone(getattr(server, field))
@@ -121,7 +124,7 @@ class TestRedfishVirtualFields(UnitTestCase):
 				patch.object(self.provider, "read_power_status") as read,
 			):
 				with self.assertRaises(frappe.PermissionError):
-					self.server.read_redfish_power_status()
+					self.server.read_provider_power_status()
 				read.assert_not_called()
 
 	def test_virtual_fields_are_excluded_from_database_values(self) -> None:
@@ -153,7 +156,11 @@ class TestRedfishVirtualFields(UnitTestCase):
 				patch("frappe.only_for", side_effect=frappe.PermissionError if denied == "role" else None),
 			):
 				server.check_permission.side_effect = frappe.PermissionError if denied == "document" else None
-				server.settings = SimpleNamespace(server_provider_controller=object())
-				with self.assertRaises(RedfishError if denied == "provider" else frappe.PermissionError):
+				server.settings = SimpleNamespace(
+					server_provider_controller=SimpleNamespace(is_registration_only=False)
+				)
+				with self.assertRaises(
+					UnsupportedProviderOperation if denied == "provider" else frappe.PermissionError
+				):
 					poweroff_redfish_server("record")
 				server.poweroff_server.assert_not_called()

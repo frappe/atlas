@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 
-from atlas.atlas.core.server_providers.base import ProviderOperationError
+from atlas.atlas.core.server_providers.base import ProviderOperationError, ServerPowerStatus
 
 POWER_TIMEOUT_SECONDS = 120
 POWER_POLL_SECONDS = 2
@@ -28,14 +28,6 @@ class RedfishSystem:
 	id: str
 	name: str
 	uuid: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class RedfishPowerStatus:
-	"""Store observed BMC power and health independently of Metal readiness."""
-
-	power_state: str
-	health: str | None
 
 
 class RedfishClient:
@@ -146,7 +138,7 @@ class RedfishClient:
 			raise RedfishError("The Redfish system UUID must be a string")
 		return RedfishSystem(self._resolve_link(resource, "@odata.id"), system_id, name, uuid)
 
-	def read_power_status(self) -> RedfishPowerStatus:
+	def read_power_status(self) -> ServerPowerStatus:
 		"""Read the power status of the registered system."""
 		return self._power_status(self._read_system())
 
@@ -294,7 +286,7 @@ class RedfishClient:
 		return resource
 
 	@staticmethod
-	def _power_status(resource: dict) -> RedfishPowerStatus:
+	def _power_status(resource: dict) -> ServerPowerStatus:
 		power_state = resource.get("PowerState")
 		if power_state not in ("On", "Off", "PoweringOn", "PoweringOff", "Paused", "Sleeping", "Hibernating"):
 			raise RedfishError("Redfish returned an unsupported or missing PowerState")
@@ -304,4 +296,4 @@ class RedfishClient:
 		health = status.get("Health")
 		if health is not None and not isinstance(health, str):
 			raise RedfishError("Redfish returned invalid system health")
-		return RedfishPowerStatus(power_state, health)
+		return ServerPowerStatus(power_state, health)
