@@ -42,14 +42,17 @@ class RedfishPower:
 			if action is not None:
 				self.provider.set_power_state(self.server._provider_server_id(), action)
 			status = self.provider.read_power_status(self.server._provider_server_id())
-			self._apply_status(status)
+			self._apply_status(status, action)
 			frappe.db.commit()  # nosemgrep
 
-	def _apply_status(self, status: RedfishPowerStatus) -> None:
+	def _apply_status(self, status: RedfishPowerStatus, action: ServerPowerAction | None) -> None:
 		lifecycle_status = self.server.status
 		if status.power_state == "Off":
 			lifecycle_status = "Stopped"
-		elif lifecycle_status == "Stopped" or (status.power_state != "On" and lifecycle_status == "Running"):
+		elif lifecycle_status == "Stopped" or (
+			lifecycle_status == "Running"
+			and (status.power_state != "On" or action == ServerPowerAction.REBOOT)
+		):
 			lifecycle_status = "Pending"
 		self.server.db_set(
 			{

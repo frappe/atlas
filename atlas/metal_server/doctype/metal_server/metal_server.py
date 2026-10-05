@@ -234,6 +234,9 @@ class MetalServer(Document):
 	def reboot_server(self) -> None:
 		"""Reboot the provider server."""
 		self._validate_power_action()
+		if isinstance(self.settings.server_provider_controller, RedfishProvider):
+			RedfishPower(self).set_power_state(ServerPowerAction.REBOOT)
+			return
 		self.settings.server_provider_controller.set_power_state(
 			self._provider_server_id(), ServerPowerAction.REBOOT
 		)

@@ -96,6 +96,8 @@ class RedfishProvider(ServerProvider):
 			self._client(provider_server_id).power_on()
 		elif action == ServerPowerAction.STOP:
 			self._client(provider_server_id).power_off()
+		elif action == ServerPowerAction.REBOOT:
+			self._client(provider_server_id).reboot()
 		else:
 			raise UnsupportedProviderOperation(f"the Redfish {action} power action")
 

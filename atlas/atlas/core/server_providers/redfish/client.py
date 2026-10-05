@@ -148,6 +148,10 @@ class RedfishClient:
 		"""Request graceful shutdown and observe Off without a forced fallback."""
 		self._reset(("GracefulShutdown",), "Off")
 
+	def reboot(self) -> None:
+		"""Request an advertised graceful restart of an On system."""
+		self._reset(("GracefulRestart",), "On", reboot=True)
+
 	def _reset(self, reset_types: tuple[str, ...], expected_state: str, *, reboot: bool = False) -> None:
 		resource = self._read_system()
 		current = self._power_status(resource).power_state
