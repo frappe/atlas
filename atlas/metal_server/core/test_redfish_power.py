@@ -38,6 +38,7 @@ class TestRedfishPower(UnitTestCase):
 			RedfishPower(self.server).refresh()
 		fields = self.server.db_set.call_args.args[0]
 		self.assertEqual(fields["status"], "Pending")
+		self.assertEqual(set(fields), {"status"})
 		self.server.reload.assert_called_once_with()
 		self.server._validate_power_action.assert_called_once_with()
 		commit.assert_called_once_with()

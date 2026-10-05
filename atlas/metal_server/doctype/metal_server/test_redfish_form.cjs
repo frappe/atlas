@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function form({ isNew = false, status = "Pending", powerState = "On", confirm = true } = {}) {
+function form({ isNew = false, status = "Pending", powerState = "On", confirm = true, powerError } = {}) {
 	let handlers;
 	const buttons = new Map();
 	const calls = [];
@@ -21,7 +21,7 @@ function form({ isNew = false, status = "Pending", powerState = "On", confirm = 
 		__: (value) => value,
 	});
 	const frm = {
-		doc: { name: "record", status, redfish_power_state: powerState, __onload: { server_provider: "Redfish" } },
+		doc: { name: "record", status, redfish_power_state: powerState, __onload: { server_provider: "Redfish", redfish_power_error: powerError } },
 		is_new: () => isNew,
 		toggle_display: () => {},
 		toggle_reqd: () => {},
@@ -76,6 +76,9 @@ test("Power Off reports acceptance without reloading the observation", async () 
 	const { buttons, calls, alerts } = form();
 	buttons.get("Power Off")();
 	await Promise.resolve();
+	assert.equal(calls[0].method, "atlas.metal_server.doctype.metal_server.metal_server.poweroff_redfish_server");
+	assert.equal(calls[0].args.name, "record");
+	assert.equal(calls[0].doc, undefined);
 	assert.equal(calls[0].freeze_message, "Sending shutdown request...");
 	assert.equal(calls.length, 1);
 	assert.equal(alerts.length, 1);
@@ -86,6 +89,17 @@ test("Power Off reports acceptance without reloading the observation", async () 
 	assert.deepEqual(cancelled.calls, []);
 	for (const powerState of ["Off", "PoweringOn", "PoweringOff", ""]) {
 		assert.ok(!form({ powerState }).buttons.has("Power Off"));
+	}
+});
+
+test("failed virtual observations show an error and retain the refresh action", () => {
+	const { buttons, alerts } = form({ powerState: null, powerError: "Redfish returned HTTP 401" });
+	assert.equal(alerts.length, 1);
+	assert.equal(alerts[0].message, "Redfish returned HTTP 401");
+	assert.equal(alerts[0].indicator, "red");
+	assert.ok(buttons.has("Refresh Power State"));
+	for (const label of ["Power On", "Power Off", "Reboot"]) {
+		assert.ok(!buttons.has(label));
 	}
 });
 
