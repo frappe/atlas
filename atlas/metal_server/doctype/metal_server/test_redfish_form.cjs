@@ -24,7 +24,10 @@ function form({ isNew = false, status = "Pending", powerState = "On", confirm = 
 		toggle_reqd: () => {},
 		disable_save: () => {},
 		page: { set_primary_action: (label, action) => buttons.set(label, action) },
-		add_custom_button: (label, action) => buttons.set(label, action),
+		add_custom_button: (label, action, group) => {
+			assert.equal(group, "Actions");
+			buttons.set(label, action);
+		},
 		call: async (request) => calls.push(request),
 		reload_doc: () => calls.push("reload"),
 	};
