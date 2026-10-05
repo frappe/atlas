@@ -139,7 +139,7 @@ Then run:
 frappe.get_single("Atlas Settings").server_provider_controller.validate_credentials()
 ```
 
-The sample on port 18000 accepts anonymous requests. It cannot reject a wrong password while authentication is disabled. A local check with a temporary authenticated Sushy instance accepted the saved valid credentials and rejected wrong or missing credentials with HTTP 401. The check rolled back its temporary credentials and left the original registration unchanged.
+The local sample can run with authentication disabled. In that mode, it cannot reject a wrong password. A local check with a temporary authenticated Sushy instance accepted the saved valid credentials and rejected wrong or missing credentials with HTTP 401. The check rolled back its temporary credentials and left the original registration unchanged.
 
 ### Register a machine
 
@@ -153,7 +153,9 @@ Open the Metal Server list and select **Register Server**. Registration uses one
 | Redfish Username | BMC account name. Leave empty for an endpoint that accepts requests without authentication. |
 | Redfish Password | BMC account password. Leave empty only when the username is also empty. |
 
-For the local sample endpoint, set **Redfish URL** to `http://127.0.0.1:18000/redfish/v1/Systems` and leave both credential fields empty. The endpoint must be reachable from the Atlas process. `127.0.0.1` refers to the host where Atlas runs.
+For the local sample endpoint, set **Redfish URL** to `http://127.0.0.1:18000/redfish/v1/Systems`. Supply the configured credentials when authentication is enabled. Leave both credential fields empty only for anonymous access.
+
+The endpoint must be reachable from the Atlas process. `127.0.0.1` refers to the host where Atlas runs.
 
 The local sample identifies the same system at `http://127.0.0.1:18000/redfish/v1/Systems/5b5fbab3-d07c-4b27-b551-fbdb78c77912`. Use an individual system URL when the collection has zero or multiple members.
 
@@ -169,19 +171,21 @@ Size and image are optional for Redfish and remain required for the other provid
 
 ### Read power state
 
-On a saved Metal Server, select **Actions > Refresh Power State**. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On**.
+Open or reload a saved Redfish Metal Server. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On** as virtual fields.
 
-Refresh after registration to load the first observation and enable the matching power buttons.
+The three fields share one GET response for that document in the current request. A new request reads the BMC again. Atlas does not store these values in the database or poll in the background. The timestamp records the successful read for the displayed values.
 
-These fields record the last successful BMC observation. Refresh does not send a remote write. A failed refresh preserves the previous observation and its timestamp.
+An unavailable or unauthorized BMC leaves all three fields blank and shows the read error. Atlas does not display a stale database observation. New, Deleted, unregistered, and other-provider records do not trigger a Redfish read.
 
-`On` means that the BMC reports power on. It does not confirm that the operating system has booted or that Metal is available. Refresh never promotes a Pending or Stopped record to Running. `Off` marks the lifecycle Stopped. An On observation changes a Stopped lifecycle to Pending.
+`On` means that the BMC reports power on. It does not confirm that the operating system has booted or that Metal is available. Loading virtual fields does not change the Metal Server lifecycle.
 
-Power reads require the System Manager role. Atlas rejects Deleted records and a host with an active provisioning job. It checks the saved system URL against the provider ID before contacting the BMC. A per-server database lock covers the saved-record reload, observation, and committed field update.
+Select **Actions > Refresh Power State** to read the BMC and reconcile the lifecycle. Off marks the record Stopped. An On observation changes a Stopped lifecycle to Pending. Refresh never promotes a host to Running. A failed refresh does not change lifecycle status.
+
+Virtual reads require the System Manager role and document read permission. Atlas checks the saved system URL against the provider ID before contacting the BMC. Explicit refresh and power actions reject Deleted records and active provisioning jobs. A per-server database lock covers their saved-record reload, observation, and committed lifecycle update.
 
 ### Power on
 
-Select **Actions > Power On** when the last observed power state is Off. Atlas reads the current state before it sends a request. If the machine is already On, Atlas updates its observation without sending a reset.
+Select **Actions > Power On** when the displayed power state is Off. Atlas reads the current state before it sends a request. If the machine is already On, Atlas reconciles the lifecycle without sending a reset.
 
 Atlas sends `ResetType: On` to the advertised ComputerSystem.Reset target. It uses `ForceOn` only when On is absent and ForceOn is advertised. Supported values come from the inline allowable-values annotation or the advertised ActionInfo resource.
 
@@ -189,15 +193,17 @@ After the request, Atlas waits for the BMC to report On. An unprovisioned host s
 
 ### Power off
 
-Select **Actions > Power Off** when the last observed power state is On, then confirm graceful shutdown. Atlas reads the current state and advertised reset capability first. If the machine is already Off, it returns without sending a reset.
+Select **Actions > Power Off** when the displayed power state is On, then confirm graceful shutdown. Atlas reads the current state and advertised reset capability first. If the machine is already Off, it returns without sending a reset.
 
 Atlas sends one `GracefulShutdown` request to the advertised reset target. It returns when the BMC accepts the request with HTTP 200, 202, or 204. It does not poll power state or a task monitor. It refuses a controller that advertises only ForceOff and never falls back to forced shutdown.
 
-The form shows **Shutdown request accepted.** Acceptance does not confirm that shutdown has finished. The saved power state, health, timestamp, and lifecycle remain unchanged. Select **Actions > Refresh Power State** to check the machine later. An Off observation marks the record Stopped.
+The form shows **Shutdown request accepted.** Acceptance does not confirm that shutdown has finished. The displayed fields and lifecycle remain unchanged. Reload the form to read the current virtual fields, or select **Actions > Refresh Power State** to read and reconcile lifecycle status. Only explicit reconciliation marks an Off record Stopped.
+
+The shutdown button calls `atlas.metal_server.doctype.metal_server.metal_server.poweroff_redfish_server` with the saved record name. The response does not serialize the document or evaluate its virtual fields. It requires document write permission and the same power-action guards.
 
 ### Reboot
 
-Select **Actions > Reboot** when the last observed power state is On, then confirm the request. Atlas reads the current state and requires On. It sends the advertised `GracefulRestart` value. It refuses ForceRestart-only controllers and does not reboot an Off or transitioning machine.
+Select **Actions > Reboot** when the displayed power state is On, then confirm the request. Atlas reads the current state and requires On. It sends the advertised `GracefulRestart` value. It refuses ForceRestart-only controllers and does not reboot an Off or transitioning machine.
 
 Reboot always sends a new request, even when the BMC reports On. It is not idempotent. Do not repeat a request after an unknown outcome without checking the machine first.
 
@@ -221,13 +227,17 @@ Power actions require a stable On or Off state. During a transition, refresh the
 
 ### Implementation and validation
 
-The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport, system identity discovery, and power observations. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection. [Redfish power](../../atlas/metal_server/core/redfish_power.py) owns stored observations and their per-server lock.
+The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport, system identity discovery, and power observations. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection.
+
+[Metal Server](../../atlas/metal_server/doctype/metal_server/metal_server.py) owns the virtual fields and their observation cache for the current request. [Redfish power](../../atlas/metal_server/core/redfish_power.py) owns explicit lifecycle reconciliation and its per-server lock.
 
 The form uses the POST API `atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server`. It requires the System Manager role and accepts `redfish_url`, `redfish_username`, and `redfish_password`. Direct insertion of a new Redfish Metal Server through the standard Save API is refused.
 
 Deterministic tests cover discovery, credentials, malformed responses, unsafe links, duplicate registration, permissions, and provisioning suppression. Live checks against the local sample cover root, collection, and individual system URLs, existing-record reuse, and a fresh insert rolled back after password encryption checks. The checks compare BMC responses before and after registration.
 
-Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. The Node form tests cover Refresh Power State, the single Register form, and Deleted records. A live check on `atlas-bare.localhost` matched the observed `On` and `OK` values to the sample endpoint and confirmed that the BMC response did not change.
+Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. Virtual-field tests cover one shared read, fresh values on a new request, blank fields on failure, permission checks, and exclusion from database writes.
+
+The Node form tests cover Refresh Power State, the single Register form, read errors, and Deleted records. Live checks matched all three virtual fields to Redfish with one GET and confirmed that the database fields and lifecycle did not change. An authenticated local instance also verified the saved credential path.
 
 Power-on tests cover idempotent On requests, ForceOn selection, ActionInfo, task monitors, failed tasks, state timeouts, and unknown POST outcomes.
 
@@ -235,9 +245,9 @@ A live check powered the sample from Off to On through the Atlas document method
 
 The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is covered with mocks.
 
-Power-off tests cover HTTP 200, 202, and 204 acceptance without power or task polling, already-Off requests, ForceOff-only controllers, unknown POST outcomes, and unchanged saved observations. Form tests cover confirmation, the acceptance message, and no automatic reload.
+Power-off tests cover HTTP 200, 202, and 204 acceptance without power or task polling, already-Off requests, ForceOff-only controllers, unknown POST outcomes, and no field writes. Form tests cover confirmation, the acceptance message, and a shutdown response without a document reload.
 
-A live check submitted one GracefulShutdown request through the Atlas document method in 0.09 seconds. It made one preflight GET and one reset POST, with no later reads or task polling. The saved observation and lifecycle did not change.
+A live check submitted one GracefulShutdown request through the shutdown endpoint. It made one preflight GET and one reset POST, with no document serialization, later reads, or task polling. Lifecycle status did not change.
 
 Reboot tests cover On requests, Off and transitional-state refusal, ForceRestart-only controllers, unknown outcomes, asynchronous completion, readiness invalidation, and lock commit order. The form tests cover confirmation and action visibility.
 

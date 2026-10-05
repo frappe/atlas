@@ -18,7 +18,7 @@ Behavior: [provisioning](../../docs/region/index.md), [hosts](../../docs/region/
 | `catalog_sync` | Size and Image catalogs from the provider |
 | `host_inspection` | Generic host registration. See [providers](../../docs/region/provider-guide.md#generic-provider). |
 | `redfish_registration` | Inserts or reuses an existing Redfish system without provisioning. See [Redfish registration](../../docs/region/provider-guide.md#register-a-machine). |
-| `RedfishPower` | Serializes BMC power actions and observations. Stores observations separately from Metal readiness. See [power state](../../docs/region/provider-guide.md#read-power-state). |
+| `RedfishPower` | Serializes explicit BMC power operations and reconciles lifecycle status. See [power state](../../docs/region/provider-guide.md#read-power-state). |
 | `PublicIPPool` (DocType) | One address range and its attachment |
 | `PublicIPAllocation` (DocType) | One tenant prefix and its requested VM attachment |
 | `PublicIPService` | Allocation, attachment, and reconciliation |
@@ -32,9 +32,10 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - Creation reuses the stored identity key, so a lost provider response cannot create a second host.
 - Redfish registration identifies a ComputerSystem with GET requests. Its canonical URL determines the provider server ID. An advisory lock covers the active-record lookup and committed insert.
 - A new Redfish record must use the registration API. It stays Pending, has optional size and image, and does not enqueue provisioning. Other providers require both catalog fields.
-- Redfish power observations are stored in `redfish_power_state`, `redfish_health`, and `redfish_power_updated_on`. Failed reads preserve these fields. A power observation never promotes a host to Running.
-- Redfish power actions share the observation lock. They reload saved state and recheck the document guard before invoking the provider. A successful power-on observation changes Stopped to Pending. A successful Off observation marks the record Stopped. Reboot changes Running to Pending.
-- Redfish shutdown submits the request without a subsequent power read or field update. The form reports acceptance without reloading. Observations and lifecycle remain unchanged until an explicit refresh.
+- `redfish_power_state`, `redfish_health`, and `redfish_power_updated_on` are virtual fields. `read_redfish_power_status` shares one read for the document in the current request. These fields are excluded from database writes. A failed read returns blank fields and an onload error.
+- Virtual reads require the System Manager role and document read permission. They do not reconcile lifecycle status. New, Deleted, unregistered, and other-provider records do not contact Redfish.
+- Explicit refresh and Redfish power actions share a per-server lock. They reload saved state and recheck the document guard before invoking the provider. Reconciliation writes only lifecycle status. An Off observation marks the record Stopped. Power On changes Stopped to Pending. Reboot changes Running to Pending. No power observation promotes a host to Running.
+- The Desk shutdown endpoint checks document write permission and submits the request without serializing virtual fields. The form reports acceptance without reloading or reading power again. Lifecycle status changes only after explicit reconciliation.
 - Redfish shutdown and reboot require confirmation in Desk.
 - `metald` listens only on the host WireGuard address. The provider returns the storage pool device. Host installation never searches for a disk.
 - `ssh_host` is the host WireGuard address once the host has a WireGuard key. Only setup before that uses the public address.
@@ -51,4 +52,6 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 
 ## Validation
 
-`core/test_redfish_registration.py` covers registration. `core/test_redfish_power.py` covers power observations and lifecycle reconciliation. `doctype/metal_server/test_redfish_form.cjs` covers the Desk actions with Node's test runner. `doctype/metal_server/test_metal_server.py` covers the existing host lifecycle. Live checks are described in the [provider guide](../../docs/region/provider-guide.md#implementation-and-validation).
+`core/test_redfish_registration.py` covers registration. `core/test_redfish_power.py` covers power operations and lifecycle reconciliation. `doctype/metal_server/test_redfish_virtual_fields.py` covers virtual serialization, request caching, failures, permissions, and the shutdown endpoint.
+
+`doctype/metal_server/test_redfish_form.cjs` covers the Desk actions with Node's test runner. `doctype/metal_server/test_metal_server.py` covers the existing host lifecycle. Live checks are described in the [provider guide](../../docs/region/provider-guide.md#implementation-and-validation).
