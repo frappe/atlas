@@ -16,6 +16,7 @@ frappe.ui.form.on("Metal Server", {
 		const is_deleted = frm.doc.status === "Deleted";
 		const is_running = frm.doc.status === "Running";
 		const is_stopped = frm.doc.status === "Stopped";
+		const is_bmc_power_off = frm.doc.redfish_power_state === "Off";
 
 		[
 			[
@@ -82,7 +83,12 @@ frappe.ui.form.on("Metal Server", {
 				__("Power off {0}?", [frm.doc.name.bold()]),
 				true,
 			],
-			[__("Power On"), "poweron_server", is_stopped, __("Powering on server...")],
+			[
+				__("Power On"),
+				"poweron_server",
+				!is_deleted && (is_stopped || is_bmc_power_off),
+				__("Powering on server..."),
+			],
 			[
 				__("Archive Server"),
 				"archive_server",
