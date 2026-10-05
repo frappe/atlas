@@ -163,6 +163,14 @@ Atlas sends `ResetType: On` to the advertised ComputerSystem.Reset target. It us
 
 After the request, Atlas waits for the BMC to report On. An unprovisioned host stays Pending. Power on does not install Metal or prove operating system readiness.
 
+### Power off
+
+Select **Power Off** when the last observed power state is On, then confirm graceful shutdown. Atlas reads the current state first. If the machine is already Off, it updates its observation without sending a reset.
+
+Atlas requires the advertised `GracefulShutdown` reset value. It waits for the BMC to report Off, then marks the Metal Server Stopped. It refuses a controller that advertises only ForceOff. A timeout does not trigger a forced shutdown.
+
+The operating system must handle the graceful request. A machine can remain On after the BMC accepts it. Allow a newly powered machine to boot before testing shutdown. Refresh after a timeout because the machine can turn off later.
+
 ### Power request completion and recovery
 
 Power requests use the same per-server lock as power reads. A request reloads the saved record and checks permissions and lifecycle state while it holds the lock. The provider reads credentials from the saved record.
@@ -183,9 +191,19 @@ Deterministic tests cover discovery, credentials, malformed responses, unsafe li
 
 Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. The Node form tests cover Refresh Power State, the single Register form, and Deleted records. A live check on `atlas-bare.localhost` matched the observed `On` and `OK` values to the sample endpoint and confirmed that the BMC response did not change.
 
-Power-on tests cover idempotent On requests, ForceOn selection, ActionInfo, task monitors, failed tasks, state timeouts, and unknown POST outcomes. A live check powered the sample from Off to On through the Atlas document method, confirmed its state with Redfish and a read-only libvirt query, and verified that a repeated Power On sent no POST. The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is covered with mocks.
+Power-on tests cover idempotent On requests, ForceOn selection, ActionInfo, task monitors, failed tasks, state timeouts, and unknown POST outcomes.
 
-Infrastructure setup, standalone credential validation, catalog discovery, host preparation, power off, and reboot still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
+A live check powered the sample from Off to On through the Atlas document method, confirmed its state with Redfish and a read-only libvirt query, and verified that a repeated Power On sent no POST.
+
+The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is covered with mocks.
+
+Power-off tests cover graceful shutdown, already-Off requests, ForceOff-only controllers, shutdown timeouts, observed Stopped state, and Desk confirmation. A live check sent one GracefulShutdown request, observed Off through Redfish, and confirmed libvirt reported shut off. Repeating Power Off sent no POST.
+
+The check restored the sample to On and Pending.
+
+An earlier live request was accepted while the CirrOS guest was still booting. It stayed On past the 120-second deadline and shut down later. Atlas reported the timeout without a forced fallback. The successful check allowed the guest to boot first.
+
+Infrastructure setup, standalone credential validation, catalog discovery, host preparation, and reboot still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
 
 The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 

@@ -32,10 +32,12 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 
 Host lifecycle code reaches a provider through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. Redfish registration reads an existing system through `RedfishClient`; remote host creation and provisioning remain unsupported. See the [Redfish provider guide](../../docs/region/provider-guide.md#redfish).
 
-`redfish/client.py` returns typed `RedfishSystem` identities and `RedfishPowerStatus` observations. It validates HTTP resources and keeps links on one service. The provider resolves an active Metal Server by its canonical URL-derived identity and reads its per-server credentials. Neither the client nor provider saves documents or commits transactions. `redfish/test_client.py` covers discovery, observations, and error boundaries.
+`redfish/client.py` returns typed `RedfishSystem` identities and `RedfishPowerStatus` observations. It validates HTTP resources and keeps links on one service.
+
+The provider resolves an active Metal Server by its canonical URL-derived identity and reads its per-server credentials. Neither the client nor provider saves documents or commits transactions. `redfish/test_client.py` covers discovery, observations, and error boundaries.
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
-- Redfish power on uses advertised reset values and targets. HTTP 202 follows a same-service task monitor. The client never retries a reset POST and waits for observed power before it returns.
+- Redfish power on and graceful shutdown use advertised reset values and targets. Shutdown has no ForceOff fallback. HTTP 202 follows a same-service task monitor. The client never retries a reset POST and waits for observed power before it returns.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
 
 ## TLS
