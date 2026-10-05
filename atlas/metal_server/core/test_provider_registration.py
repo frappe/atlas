@@ -11,6 +11,7 @@ from atlas.atlas.core.server_providers.base import ProviderOperationError, Unsup
 from atlas.atlas.core.server_providers.generic.bmc.client import RedfishSystem
 from atlas.atlas.core.server_providers.generic.bmc.driver import BMCDriver
 from atlas.metal_server.core.provider_registration import register_server
+from atlas.metal_server.core.provisioning import ServerProvisioner
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
 MODULE = "atlas.metal_server.core.provider_registration"
@@ -74,6 +75,22 @@ class TestProviderRegistration(UnitTestCase):
 		server = SimpleNamespace(settings=self.settings, _enqueue_setup_server=Mock())
 		MetalServer.after_insert(server)
 		server._enqueue_setup_server.assert_not_called()
+
+	def test_setup_requests_and_workers_reject_bmc_before_writes(self) -> None:
+		server = frappe.new_doc("Metal Server")
+		server._settings = self.settings
+		server.status = "Stopped"
+		for operation in (server.setup_server, ServerProvisioner(server).run):
+			with (
+				self.subTest(operation=operation.__name__),
+				patch.object(server, "db_set") as write,
+				patch.object(server, "_enqueue_setup_server") as enqueue,
+			):
+				with self.assertRaisesRegex(UnsupportedProviderOperation, "server provisioning"):
+					operation()
+				self.assertEqual(server.status, "Stopped")
+				write.assert_not_called()
+				enqueue.assert_not_called()
 
 	def test_browser_values_cannot_mark_a_system_as_discovered(self) -> None:
 		for identity in (True, {"url": SYSTEM.url, "id": SYSTEM.id, "name": SYSTEM.name, "uuid": None}):

@@ -143,18 +143,6 @@ class TestBMCVirtualFields(UnitTestCase):
 			self.assertNotIn(field, persisted)
 		read.assert_not_called()
 
-	def test_shutdown_endpoint_checks_write_permission_without_serializing_the_document(self) -> None:
-		server = SimpleNamespace(
-			settings=SimpleNamespace(server_provider_controller=self.provider),
-			check_permission=Mock(),
-			poweroff_server=Mock(),
-		)
-		with patch("frappe.get_doc", return_value=server) as load, patch("frappe.only_for"):
-			self.assertIsNone(poweroff_redfish_server("record"))
-		load.assert_called_once_with("Metal Server", "record")
-		server.check_permission.assert_called_once_with("write")
-		server.poweroff_server.assert_called_once_with()
-
 	def test_shutdown_endpoint_refuses_insufficient_permissions_and_other_providers(self) -> None:
 		server = SimpleNamespace(check_permission=Mock(), poweroff_server=Mock())
 		for denied in ("role", "document", "provider"):

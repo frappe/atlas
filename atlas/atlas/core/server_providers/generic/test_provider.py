@@ -39,18 +39,16 @@ class TestGenericProvider(UnitTestCase):
 					frappe.db.set_single_value(
 						"Atlas Settings", {"server_provider": provider, "generic_provider_driver": driver}
 					)
-					before = frappe.db.get_singles_dict("Atlas Settings")
+					expected_settings = frappe.db.get_singles_dict("Atlas Settings")
+					expected_settings.update(server_provider=expected[0], generic_provider_driver=expected[1])
+					for field in ("modified", "modified_by"):
+						expected_settings.pop(field, None)
 					for _ in range(2):
 						execute()
 						after = frappe.db.get_singles_dict("Atlas Settings")
-						self.assertEqual((after.server_provider, after.generic_provider_driver), expected)
-						for field in before.keys() - {
-							"server_provider",
-							"generic_provider_driver",
-							"modified",
-							"modified_by",
-						}:
-							self.assertEqual(after[field], before[field])
+						for field in ("modified", "modified_by"):
+							after.pop(field, None)
+						self.assertEqual(after, expected_settings)
 				finally:
 					frappe.db.rollback(save_point="generic_driver_migration")
 					frappe.db.value_cache.clear()

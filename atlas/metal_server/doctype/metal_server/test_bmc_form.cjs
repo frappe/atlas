@@ -141,6 +141,18 @@ test("Power Off reports acceptance without reloading the observation", async () 
   }
 });
 
+test("other providers retain document shutdown and reload", async () => {
+  for (const provider of ["Generic", "AWS", "Scaleway"]) {
+    const { buttons, calls, alerts } = form({ provider, driver: "SSH" });
+    buttons.get("Power Off")();
+    await Promise.resolve();
+    assert.equal(calls[0].method, "poweroff_server");
+    assert.equal(calls[0].doc.name, "record");
+    assert.equal(calls[1], "reload");
+    assert.equal(alerts.length, 0);
+  }
+});
+
 test("failed virtual observations show an error and retain the refresh action", () => {
   const { buttons, alerts } = form({
     powerState: null,
