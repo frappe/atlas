@@ -72,7 +72,7 @@ frappe.ui.form.on("Metal Server", {
 						} else {
 							call();
 						}
-					});
+					}, __("Actions"));
 				});
 			}
 			return;
