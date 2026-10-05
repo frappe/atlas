@@ -6,7 +6,7 @@ Install the tools that you need. Start a new agent session after you install a s
 
 Use the [Go code review guide](go-code-review-guide.md) to review and simplify Go changes before handover or commit.
 
-Use the [engineering playbook](engineering-playbook/README.md) for the team workflow, environment access rules, code taste and review checklist. Its README shows how to install the skill and the auto mode rules.
+Use the [engineering playbook](engineering-playbook/README.md) for the team workflow, environment access rules, code taste and review checklist. The skill loads automatically in this repository. Its README shows how to install the auto mode rules.
 
 ## Frappe skills
 
