@@ -94,6 +94,8 @@ class RedfishProvider(ServerProvider):
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
 		if action == ServerPowerAction.START:
 			self._client(provider_server_id).power_on()
+		elif action == ServerPowerAction.STOP:
+			self._client(provider_server_id).power_off()
 		else:
 			raise UnsupportedProviderOperation(f"the Redfish {action} power action")
 

@@ -144,6 +144,10 @@ class RedfishClient:
 		"""Request an advertised power-on action and observe On."""
 		self._reset(("On", "ForceOn"), "On")
 
+	def power_off(self) -> None:
+		"""Request graceful shutdown and observe Off without a forced fallback."""
+		self._reset(("GracefulShutdown",), "Off")
+
 	def _reset(self, reset_types: tuple[str, ...], expected_state: str, *, reboot: bool = False) -> None:
 		resource = self._read_system()
 		current = self._power_status(resource).power_state

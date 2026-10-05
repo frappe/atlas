@@ -242,6 +242,9 @@ class MetalServer(Document):
 	def poweroff_server(self) -> None:
 		"""Stop the provider server."""
 		self._validate_power_action()
+		if isinstance(self.settings.server_provider_controller, RedfishProvider):
+			RedfishPower(self).set_power_state(ServerPowerAction.STOP)
+			return
 		self.settings.server_provider_controller.set_power_state(
 			self._provider_server_id(), ServerPowerAction.STOP
 		)

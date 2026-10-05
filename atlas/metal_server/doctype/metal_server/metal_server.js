@@ -61,10 +61,16 @@ frappe.ui.form.on("Metal Server", {
 				[
 					[__("Refresh Power State"), "refresh_redfish_power_state", true, __("Reading BMC power state...")],
 					[__("Power On"), "poweron_server", frm.doc.redfish_power_state === "Off", __("Powering on server...")],
-				].forEach(([label, method, enabled, freeze_message]) => {
+					[__("Power Off"), "poweroff_server", frm.doc.redfish_power_state === "On", __("Shutting down server..."), __("Shut down {0} gracefully?", [frm.doc.title || frm.doc.name])],
+				].forEach(([label, method, enabled, freeze_message, confirm_message]) => {
 					if (!enabled) return;
 					frm.add_custom_button(label, () => {
-						frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => frm.reload_doc());
+						const call = () => frm.call({ method, doc: frm.doc, freeze: true, freeze_message }).then(() => frm.reload_doc());
+						if (confirm_message) {
+							frappe.confirm(confirm_message, call);
+						} else {
+							call();
+						}
 					});
 				});
 			}
