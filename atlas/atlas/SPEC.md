@@ -34,6 +34,7 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
+- `generic/redfish.py` holds `RedfishClient`, a placeholder for BMC power control of Generic hosts. Its methods raise `NotImplementedError`, and no provider uses it yet.
 
 ## TLS
 
