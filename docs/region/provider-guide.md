@@ -32,7 +32,11 @@ This route makes a VM address available on any Metal Server. A VM can keep its p
 
 You can subclass the Generic provider to add automation for one bare metal provider.
 
-The **Enable BMC Access** option in Atlas Settings shows only for the Generic provider. It is off by default. When it is on, you can store the BMC Redfish URL, username, and password of each host. Enter all three or none. Atlas does not connect to the BMC yet, because the Redfish client is a placeholder.
+The **Enable BMC Access** option in Atlas Settings shows only for the Generic provider. It is off by default.
+
+When it is on, you can store the BMC Redfish details of each host: the ComputerSystem URL, such as `https://10.0.0.5/redfish/v1/Systems/1`, the username, and the password. Enter all three or none.
+
+The **Power State** field in the **BMC** section of the Metal Server form shows the live Redfish `PowerState`, such as `On` or `Off`. Atlas reads it each time you open the form. If the read fails, the form shows the reason at the top. Atlas does not change the host power through the BMC yet.
 
 ### Prepare a host
 
