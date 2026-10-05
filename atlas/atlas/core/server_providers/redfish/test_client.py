@@ -128,3 +128,38 @@ class TestRedfishClient(UnitTestCase):
 		with patch("requests.get", return_value=Mock(status_code=200, json=Mock(side_effect=ValueError))):
 			with self.assertRaisesRegex(RedfishError, "invalid JSON"):
 				RedfishClient(ROOT).discover_system()
+
+	def test_reads_power_and_health_without_writing_to_the_bmc(self) -> None:
+		with (
+			patch(
+				"requests.get",
+				return_value=response({**SYSTEM, "PowerState": "On", "Status": {"Health": "OK"}}),
+			),
+			patch("requests.post") as write,
+		):
+			status = RedfishClient("http://bmc.example" + SYSTEM_PATH).read_power_status()
+		self.assertEqual((status.power_state, status.health), ("On", "OK"))
+		write.assert_not_called()
+
+	def test_reading_power_requires_the_registered_system(self) -> None:
+		for resource in (COLLECTION, {**SYSTEM, "@odata.id": "/redfish/v1/Systems/other"}):
+			with patch("requests.get", return_value=response(resource)), self.assertRaises(RedfishError):
+				RedfishClient("http://bmc.example" + SYSTEM_PATH).read_power_status()
+
+	def test_power_status_validates_fields_and_allows_absent_health(self) -> None:
+		for fields in (
+			{},
+			{"PowerState": "Unknown"},
+			{"PowerState": []},
+			{"PowerState": "On", "Status": []},
+			{"PowerState": "On", "Status": {"Health": 42}},
+		):
+			with (
+				self.subTest(fields=fields),
+				patch("requests.get", return_value=response({**SYSTEM, **fields})),
+				self.assertRaises(RedfishError),
+			):
+				RedfishClient("http://bmc.example" + SYSTEM_PATH).read_power_status()
+		with patch("requests.get", return_value=response({**SYSTEM, "PowerState": "Off"})):
+			status = RedfishClient("http://bmc.example" + SYSTEM_PATH).read_power_status()
+		self.assertIsNone(status.health)

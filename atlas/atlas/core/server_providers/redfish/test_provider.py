@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
@@ -40,3 +41,44 @@ class TestRedfishProvider(UnitTestCase):
 					provider.validate_settings()
 
 		request.assert_not_called()
+
+	def test_power_reads_use_saved_credentials_and_registered_identity(self) -> None:
+		url = "http://bmc.example/redfish/v1/Systems/host-1"
+		provider_id = "redfish-" + sha256(url.encode()).hexdigest()[:32]
+		server = SimpleNamespace(
+			redfish_url=url, redfish_username="operator", get_password=Mock(return_value="test-password")
+		)
+		with (
+			patch("frappe.db.get_value", return_value="record"),
+			patch("frappe.get_doc", return_value=server),
+			patch("requests.get") as read,
+		):
+			read.return_value.status_code = 200
+			read.return_value.json.return_value = {
+				"@odata.type": "#ComputerSystem.v1_20_0.ComputerSystem",
+				"@odata.id": url,
+				"PowerState": "On",
+			}
+			status = RedfishProvider(SimpleNamespace()).read_power_status(provider_id)
+		self.assertEqual(status.power_state, "On")
+		self.assertEqual(read.call_args.kwargs["auth"], ("operator", "test-password"))
+		server.get_password.assert_called_once_with("redfish_password", raise_exception=False)
+
+	def test_power_reads_refuse_unregistered_or_changed_systems_before_network_access(self) -> None:
+		for name, url in (
+			(None, "http://bmc.example/redfish/v1/Systems/host-1"),
+			("record", None),
+			("record", "http://other.example/redfish/v1/Systems/host-1"),
+		):
+			server = SimpleNamespace(
+				redfish_url=url, redfish_username="", get_password=Mock(return_value=None)
+			)
+			with (
+				self.subTest(name=name, url=url),
+				patch("frappe.db.get_value", return_value=name),
+				patch("frappe.get_doc", return_value=server),
+				patch("requests.get") as read,
+			):
+				with self.assertRaises(RedfishError):
+					RedfishProvider(SimpleNamespace()).read_power_status("unverified-id")
+				read.assert_not_called()
