@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 import frappe
@@ -72,30 +71,28 @@ class MetalServer(Document):
 		public_ipv4_address: DF.Data | None
 		public_network_interface: DF.Data | None
 		redfish_password: DF.Password | None
-		redfish_health: DF.Data | None
 		redfish_power_state: DF.Literal[
 			"", "On", "Off", "PoweringOn", "PoweringOff", "Paused", "Sleeping", "Hibernating"
 		]
-		redfish_power_updated_on: DF.Datetime | None
 		redfish_url: DF.Data | None
 		redfish_username: DF.Data | None
 		server_image: DF.Link | None
 		server_size: DF.Link | None
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
 		tags: DF.Table[AtlasTag]
-		title: DF.Data
+		title: DF.Data | None
 		wireguard_ip_address: DF.Data | None
 		wireguard_public_key: DF.Data | None
 	# end: auto-generated types
 
 	@request_cache
-	def read_redfish_power_status(self) -> tuple[RedfishPowerStatus | None, datetime | None]:
+	def read_redfish_power_status(self) -> RedfishPowerStatus | None:
 		"""Share one live BMC observation across virtual fields in this request."""
 		if self.is_new() or self.status == "Deleted" or not self.redfish_url or not self.provider_server_id:
-			return None, None
+			return None
 		provider = self.settings.server_provider_controller
 		if not isinstance(provider, RedfishProvider):
-			return None, None
+			return None
 		frappe.only_for("System Manager")
 		self.check_permission("read")
 		self.set_onload("redfish_power_error", None)
@@ -103,23 +100,18 @@ class MetalServer(Document):
 			status = provider.read_power_status(self._provider_server_id())
 		except RedfishError as error:
 			self.set_onload("redfish_power_error", str(error))
-			return None, None
-		return status, now_datetime()
+			return None
+		return status
 
 	@property
 	def redfish_power_state(self) -> str | None:
-		status, _ = self.read_redfish_power_status()
+		status = self.read_redfish_power_status()
 		return status.power_state if status else None
 
 	@property
 	def redfish_health(self) -> str | None:
-		status, _ = self.read_redfish_power_status()
+		status = self.read_redfish_power_status()
 		return status.health if status else None
-
-	@property
-	def redfish_power_updated_on(self) -> datetime | None:
-		_, checked_on = self.read_redfish_power_status()
-		return checked_on
 
 	@property
 	def ssh_host(self) -> str:

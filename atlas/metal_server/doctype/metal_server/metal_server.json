@@ -25,7 +25,6 @@
   "redfish_password",
   "redfish_power_state",
   "redfish_health",
-  "redfish_power_updated_on",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -172,13 +171,6 @@
    "fieldtype": "Data",
    "is_virtual": 1,
    "label": "Redfish Health",
-   "read_only": 1
-  },
-  {
-   "fieldname": "redfish_power_updated_on",
-   "fieldtype": "Datetime",
-   "is_virtual": 1,
-   "label": "Power State Checked On",
    "read_only": 1
   },
   {
@@ -342,7 +334,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-05 08:07:16.737516",
+ "modified": "2026-10-05 08:08:31.148131",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",
