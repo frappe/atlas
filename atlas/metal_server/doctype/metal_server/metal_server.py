@@ -220,6 +220,8 @@ class MetalServer(Document):
 	def setup_server(self) -> None:
 		"""Queue server setup again after a provisioning failure."""
 		frappe.only_for("System Manager")
+		if self.settings.server_provider_controller.is_registration_only:
+			raise UnsupportedProviderOperation("server provisioning")
 		if self.is_provisioning_completed:
 			return
 

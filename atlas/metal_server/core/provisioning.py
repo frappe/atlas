@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING
 
 import frappe
 
-from atlas.atlas.core.server_providers.base import ProviderOperationError, ServerProvider
+from atlas.atlas.core.server_providers.base import (
+	ProviderOperationError,
+	ServerProvider,
+	UnsupportedProviderOperation,
+)
 from atlas.atlas.core.ssh import wait_for_server
 from atlas.metal_server.core.atlas_peer import AtlasPeer
 from atlas.metal_server.core.host_installation import HostInstallation
@@ -43,6 +47,9 @@ class ServerProvisioner:
 
 	def run(self) -> None:
 		"""Run each server setup step in order."""
+		if self.provider.is_registration_only:
+			raise UnsupportedProviderOperation("server provisioning")
+
 		phase = "start"
 		self.server.status = "Installing"
 		self.save_progress()

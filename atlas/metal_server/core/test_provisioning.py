@@ -12,7 +12,7 @@ from atlas.metal_server.core.provisioning import ServerProvisioner
 class TestServerProvisioner(UnitTestCase):
 	def test_run_uses_the_safe_setup_order(self) -> None:
 		server = self.server()
-		provider = Mock()
+		provider = Mock(is_registration_only=False)
 		provisioner = ServerProvisioner(server, provider)
 		provisioner.host_installation = Mock()
 		operations = Mock()
@@ -47,7 +47,7 @@ class TestServerProvisioner(UnitTestCase):
 
 	def test_run_keeps_progress_and_reports_the_failed_phase(self) -> None:
 		server = self.server()
-		provider = Mock()
+		provider = Mock(is_registration_only=False)
 		provider.configure_server_network.side_effect = RuntimeError("network failed")
 		provisioner = ServerProvisioner(server, provider)
 		provisioner.wait_for_root_ssh = Mock()
@@ -67,7 +67,7 @@ class TestServerProvisioner(UnitTestCase):
 
 	def test_a_retry_runs_each_idempotent_step_again(self) -> None:
 		server = self.server()
-		provider = Mock()
+		provider = Mock(is_registration_only=False)
 		provisioner = ServerProvisioner(server, provider)
 		provisioner.wait_for_root_ssh = Mock()
 		provisioner.wait_for_wireguard_ssh = Mock()
@@ -87,7 +87,7 @@ class TestServerProvisioner(UnitTestCase):
 		server = self.server()
 		server.provider_server_id = None
 		server.ensure_provider_server.side_effect = RuntimeError("provider failed")
-		provisioner = ServerProvisioner(server, Mock())
+		provisioner = ServerProvisioner(server, Mock(is_registration_only=False))
 
 		with (
 			patch("atlas.metal_server.core.provisioning.frappe.db", SimpleNamespace(commit=Mock())),
