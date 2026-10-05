@@ -19,12 +19,13 @@
   "server_size",
   "column_break_iiyh",
   "architecture",
-  "redfish_section",
-  "redfish_url",
-  "redfish_username",
-  "redfish_password",
-  "redfish_power_state",
-  "redfish_health",
+  "bmc_section",
+  "bmc_url",
+  "bmc_username",
+  "bmc_password",
+  "column_break_bmc",
+  "bmc_power_state",
+  "bmc_health",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -112,6 +113,7 @@
    "in_list_view": 1,
    "label": "Server Size",
    "options": "Metal Server Size",
+   "reqd": 1,
    "set_only_once": 1
   },
   {
@@ -120,6 +122,7 @@
    "in_list_view": 1,
    "label": "Server Image",
    "options": "Metal Server Image",
+   "reqd": 1,
    "set_only_once": 1
   },
   {
@@ -133,44 +136,47 @@
    "set_only_once": 1
   },
   {
-   "fieldname": "redfish_section",
+   "collapsible": 1,
+   "fieldname": "bmc_section",
    "fieldtype": "Section Break",
-   "hidden": 1,
-   "label": "Redfish"
+   "label": "BMC",
+   "depends_on": "eval:doc.__onload && doc.__onload.has_bmc_provider"
   },
   {
-   "fieldname": "redfish_url",
+   "fieldname": "bmc_url",
    "fieldtype": "Data",
-   "label": "Redfish URL",
-   "options": "URL",
-   "description": "Service root, single-machine Systems collection, or individual system URL."
+   "label": "BMC URL",
+   "options": "URL"
   },
   {
-   "fieldname": "redfish_username",
+   "fieldname": "bmc_username",
    "fieldtype": "Data",
-   "label": "Redfish Username"
+   "label": "BMC Username"
   },
   {
-   "fieldname": "redfish_password",
+   "fieldname": "bmc_password",
    "fieldtype": "Password",
-   "label": "Redfish Password",
+   "label": "BMC Password",
    "no_copy": 1
   },
   {
-   "fieldname": "redfish_power_state",
-   "fieldtype": "Select",
-   "is_virtual": 1,
-   "label": "Redfish Power State",
-   "options": "\nOn\nOff\nPoweringOn\nPoweringOff\nPaused\nSleeping\nHibernating",
-   "read_only": 1,
-   "description": "BMC power state read on demand. This does not confirm Metal readiness.",
-   "show_description_on_click": 1
+   "fieldname": "column_break_bmc",
+   "fieldtype": "Column Break"
   },
   {
-   "fieldname": "redfish_health",
+   "depends_on": "bmc_url",
+   "fieldname": "bmc_power_state",
    "fieldtype": "Data",
    "is_virtual": 1,
-   "label": "Redfish Health",
+   "label": "BMC Power State",
+   "read_only": 1
+  },
+  {
+   "depends_on": "bmc_url",
+   "fieldname": "bmc_health",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "BMC Health",
    "read_only": 1
   },
   {
@@ -334,7 +340,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-05 08:08:31.148131",
+ "modified": "2026-10-05 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

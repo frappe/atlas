@@ -30,19 +30,11 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 
 ## Provider boundary
 
-Host lifecycle code reaches a provider through `ServerProvider`. Implementations are Generic, Scaleway, AWS, and Redfish. Redfish registration reads an existing system through `RedfishClient`; remote host creation and provisioning remain unsupported. See the [Redfish provider guide](../../docs/region/provider-guide.md#redfish).
+Domain code reaches a provider only through `ServerProvider`. Implementations are Generic, Scaleway, and AWS.
 
-`redfish/client.py` returns typed `RedfishSystem` identities and `RedfishPowerStatus` observations. It validates HTTP resources and keeps links on one service.
-
-The provider resolves an active Metal Server by its canonical URL-derived identity and reads its per-server credentials. Neither the client nor provider saves documents or commits transactions.
-
-`redfish/test_client.py` covers discovery, observations, and error boundaries. `redfish/test_power.py` covers reset actions and task monitors.
+A provider without a power API sets `ServerProvider.bmc_provider` to a `BMCProvider` class from `core/bmc_providers`. Generic uses `RedfishBMCProvider`. Metal Server sends power actions to the BMC when `bmc_url` is set. See [BMC power](../../docs/region/provider-guide.md#control-power-through-a-bmc).
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
-- Redfish credential validation checks every active Redfish registration with saved per-server credentials and GET requests. It fails on an empty registration set or the first inaccessible or mismatched system. It does not save observations or change power.
-- Redfish power on, graceful shutdown, and graceful reboot use advertised reset values and targets. Shutdown and reboot have no forced fallback. Reboot requires On and always sends a reset.
-- Redfish shutdown returns after HTTP 200, 202, or 204 acceptance without polling power state or a task monitor.
-- Power On and Reboot follow a same-service task monitor for HTTP 202 and wait for observed power before returning. The client never retries a reset POST.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
 
 ## TLS

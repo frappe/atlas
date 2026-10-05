@@ -1,52 +1,45 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from time import monotonic, sleep
+from typing import override
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
+import frappe
 import requests
 
-from atlas.atlas.core.server_providers.base import ProviderOperationError
+from atlas.atlas.core.bmc_providers.base import BMCError, BMCPowerStatus, BMCProvider
+from atlas.atlas.core.server_providers.base import ServerPowerAction
 
 POWER_TIMEOUT_SECONDS = 120
 POWER_POLL_SECONDS = 2
 
 
-class RedfishError(ProviderOperationError):
-	"""Report a Redfish provider failure."""
-
-
-class RedfishTransientReadError(RedfishError):
+class RedfishTransientReadError(BMCError):
 	"""Identify a temporary GET failure that power polling can retry."""
 
 
-@dataclass(frozen=True, slots=True)
-class RedfishSystem:
-	"""Identify one existing ComputerSystem."""
-
-	url: str
-	id: str
-	name: str
-	uuid: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class RedfishPowerStatus:
-	"""Store observed BMC power and health independently of Metal readiness."""
-
-	power_state: str
-	health: str | None
-
-
-class RedfishClient:
-	"""Read system identities from one Redfish service."""
+class RedfishBMCProvider(BMCProvider):
+	"""Control one ComputerSystem through a Redfish service."""
 
 	def __init__(self, url: str, username: str = "", password: str = "") -> None:
-		self.url = self._normalize_url(url.strip())
+		super().__init__(self._normalize_url(url.strip()), username, password)
 		self.origin = urlsplit(self.url)[:2]
-		if bool(username) != bool(password):
-			raise RedfishError("Provide both the Redfish username and password, or leave both empty")
 		self.auth = (username, password) if username else None
+
+	@override
+	def read_power_status(self) -> BMCPowerStatus:
+		"""Read the power status of the system."""
+		return self._power_status(self._read_system())
+
+	@override
+	def set_power_state(self, action: ServerPowerAction) -> None:
+		"""Power on, gracefully shut down, or gracefully restart the system."""
+		if action == ServerPowerAction.START:
+			self._reset(("On", "ForceOn"), "On")
+		elif action == ServerPowerAction.STOP:
+			self._reset(("GracefulShutdown",), "Off", wait_for_power=False)
+		else:
+			self._reset(("GracefulRestart",), "On", reboot=True)
 
 	@staticmethod
 	def _normalize_url(url: str) -> str:
@@ -54,23 +47,22 @@ class RedfishClient:
 			parts = urlsplit(url)
 			port = parts.port
 		except ValueError:
-			raise RedfishError("The Redfish URL is invalid") from None
+			raise BMCError("The Redfish URL is invalid") from None
 
+		schemes = ("http", "https") if frappe.conf.developer_mode else ("https",)
 		if (
-			parts.scheme not in ("http", "https")
+			parts.scheme not in schemes
 			or not parts.hostname
 			or parts.username is not None
 			or parts.password is not None
 			or parts.query
 			or parts.fragment
 		):
-			raise RedfishError(
-				"Use an HTTP or HTTPS Redfish URL without embedded credentials, query, or fragment"
-			)
+			raise BMCError("Use an HTTPS Redfish URL without embedded credentials, query, or fragment")
 
 		path = parts.path.rstrip("/") or "/redfish/v1"
 		if path != "/redfish/v1" and not path.startswith("/redfish/v1/"):
-			raise RedfishError("The Redfish URL must be under /redfish/v1")
+			raise BMCError("The Redfish URL must be under /redfish/v1")
 
 		host = parts.hostname.lower()
 		if ":" in host:
@@ -83,11 +75,11 @@ class RedfishClient:
 		value = resource.get(field)
 		link = value.get("@odata.id") if isinstance(value, dict) else value
 		if not isinstance(link, str) or not link:
-			raise RedfishError(f"The Redfish response has no {field} link")
+			raise BMCError(f"The Redfish response has no {field} link")
 
 		url = self._normalize_url(urljoin(self.url, link))
 		if urlsplit(url)[:2] != self.origin:
-			raise RedfishError("Redfish links must stay on the configured service")
+			raise BMCError("Redfish links must stay on the configured service")
 		return url
 
 	def _read(self, url: str) -> dict:
@@ -100,67 +92,23 @@ class RedfishClient:
 				allow_redirects=False,
 			)
 		except requests.exceptions.SSLError:
-			raise RedfishError("Could not establish a verified Redfish TLS connection") from None
+			raise BMCError("Could not establish a verified Redfish TLS connection") from None
 		except requests.Timeout, requests.ConnectionError:
 			raise RedfishTransientReadError("Could not connect to the Redfish service") from None
 		except requests.RequestException:
-			raise RedfishError("Could not connect to the Redfish service") from None
+			raise BMCError("Could not connect to the Redfish service") from None
 
 		if response.status_code in (500, 502, 503, 504):
 			raise RedfishTransientReadError(f"Redfish returned HTTP {response.status_code}")
 		if response.status_code != 200:
-			raise RedfishError(f"Redfish returned HTTP {response.status_code}")
+			raise BMCError(f"Redfish returned HTTP {response.status_code}")
 		try:
 			resource = response.json()
 		except ValueError:
-			raise RedfishError("Redfish returned invalid JSON") from None
+			raise BMCError("Redfish returned invalid JSON") from None
 		if not isinstance(resource, dict):
-			raise RedfishError("Redfish must return a JSON object")
+			raise BMCError("Redfish must return a JSON object")
 		return resource
-
-	def discover_system(self) -> RedfishSystem:
-		"""Follow the advertised links to exactly one ComputerSystem."""
-		resource = self._read(self.url)
-		resource_type = resource.get("@odata.type", "")
-		if isinstance(resource_type, str) and resource_type.startswith("#ServiceRoot."):
-			resource = self._read(self._resolve_link(resource, "Systems"))
-
-		resource_type = resource.get("@odata.type", "")
-		if isinstance(resource_type, str) and resource_type.startswith("#ComputerSystemCollection."):
-			members = resource.get("Members")
-			if not isinstance(members, list) or len(members) != 1 or not isinstance(members[0], dict):
-				raise RedfishError(
-					"Use a specific system URL when the Systems collection does not contain one machine"
-				)
-			resource = self._read(self._resolve_link(members[0], "@odata.id"))
-
-		resource_type = resource.get("@odata.type", "")
-		if not isinstance(resource_type, str) or not resource_type.startswith("#ComputerSystem."):
-			raise RedfishError("The Redfish URL does not identify a ComputerSystem")
-		system_id = resource.get("Id")
-		name = resource.get("Name")
-		uuid = resource.get("UUID")
-		if not isinstance(system_id, str) or not system_id or not isinstance(name, str) or not name:
-			raise RedfishError("The Redfish system must have an Id and Name")
-		if uuid is not None and not isinstance(uuid, str):
-			raise RedfishError("The Redfish system UUID must be a string")
-		return RedfishSystem(self._resolve_link(resource, "@odata.id"), system_id, name, uuid)
-
-	def read_power_status(self) -> RedfishPowerStatus:
-		"""Read the power status of the registered system."""
-		return self._power_status(self._read_system())
-
-	def power_on(self) -> None:
-		"""Request an advertised power-on action and observe On."""
-		self._reset(("On", "ForceOn"), "On")
-
-	def power_off(self) -> None:
-		"""Submit graceful shutdown without polling task or power state."""
-		self._reset(("GracefulShutdown",), "Off", wait_for_power=False)
-
-	def reboot(self) -> None:
-		"""Request an advertised graceful restart of an On system."""
-		self._reset(("GracefulRestart",), "On", reboot=True)
 
 	def _reset(
 		self,
@@ -175,16 +123,17 @@ class RedfishClient:
 		if current == expected_state and not reboot:
 			return
 		if current not in ("On", "Off") or (reboot and current != "On"):
-			raise RedfishError("Power actions require a stable On or Off state; reboot requires On")
+			raise BMCError("Power actions require a stable On or Off state; reboot requires On")
+
 		actions = resource.get("Actions")
 		action = actions.get("#ComputerSystem.Reset") if isinstance(actions, dict) else None
 		if not isinstance(action, dict):
-			raise RedfishError("The Redfish system has no Reset action")
+			raise BMCError("The Redfish system has no Reset action")
 		target = self._resolve_link(action, "target")
 		allowed = self._reset_types(action)
 		reset_type = next((value for value in reset_types if value in allowed), None)
 		if reset_type is None:
-			raise RedfishError(f"The Redfish system does not advertise {' or '.join(reset_types)}")
+			raise BMCError(f"The Redfish system does not advertise {' or '.join(reset_types)}")
 
 		deadline = monotonic() + POWER_TIMEOUT_SECONDS
 		try:
@@ -197,13 +146,14 @@ class RedfishClient:
 				allow_redirects=False,
 			)
 		except requests.RequestException:
-			raise RedfishError(
-				"The Redfish reset outcome is unknown; refresh power state before another action"
+			raise BMCError(
+				"The Redfish reset outcome is unknown; reload the server before another action"
 			) from None
 		if response.status_code not in (200, 202, 204):
-			raise RedfishError(f"Redfish reset returned HTTP {response.status_code}")
+			raise BMCError(f"Redfish reset returned HTTP {response.status_code}")
 		if not wait_for_power:
 			return
+
 		if response.status_code == 202:
 			self._wait_for_task(response, deadline)
 		last_read_error: RedfishTransientReadError | None = None
@@ -218,8 +168,8 @@ class RedfishClient:
 				last_read_error = None
 			sleep(min(POWER_POLL_SECONDS, max(0, deadline - monotonic())))
 		detail = f"; last power read failed: {last_read_error}" if last_read_error else ""
-		raise RedfishError(
-			f"Redfish did not report {expected_state} within {POWER_TIMEOUT_SECONDS} seconds{detail}; refresh power state"
+		raise BMCError(
+			f"Redfish did not report {expected_state} within {POWER_TIMEOUT_SECONDS} seconds{detail}"
 		)
 
 	def _reset_types(self, action: dict) -> tuple[str, ...]:
@@ -228,7 +178,7 @@ class RedfishClient:
 			information = self._read(self._resolve_link(action, "@Redfish.ActionInfo"))
 			parameters = information.get("Parameters")
 			if not isinstance(parameters, list):
-				raise RedfishError("Redfish ActionInfo has no parameter list")
+				raise BMCError("Redfish ActionInfo has no parameter list")
 			values = next(
 				(
 					parameter.get("AllowableValues")
@@ -238,31 +188,32 @@ class RedfishClient:
 				None,
 			)
 		if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-			raise RedfishError("Redfish must advertise the allowable ResetType values")
+			raise BMCError("Redfish must advertise the allowable ResetType values")
 		return tuple(values)
 
 	def _wait_for_task(self, response: requests.Response, deadline: float) -> None:
 		monitor = self._resolve_link({"Location": response.headers.get("Location")}, "Location")
 		while monotonic() < deadline:
 			if response.status_code not in (200, 202, 204):
-				raise RedfishError(f"Redfish reset task returned HTTP {response.status_code}")
+				raise BMCError(f"Redfish reset task returned HTTP {response.status_code}")
 			task = {}
 			if response.content and response.status_code != 204:
 				try:
 					task = response.json()
 				except ValueError:
-					raise RedfishError("Redfish reset task returned invalid JSON") from None
+					raise BMCError("Redfish reset task returned invalid JSON") from None
 				if (
 					not isinstance(task, dict)
 					or "error" in task
 					or task.get("TaskState") in ("Exception", "Killed", "Cancelled", "Interrupted")
 					or task.get("TaskStatus") == "Critical"
 				):
-					raise RedfishError("The Redfish reset task failed")
+					raise BMCError("The Redfish reset task failed")
 			if response.status_code == 204 or (
 				response.status_code == 200 and task.get("TaskState") in (None, "Completed")
 			):
 				return
+
 			try:
 				delay = float(response.headers.get("Retry-After", POWER_POLL_SECONDS))
 			except TypeError, ValueError:
@@ -279,29 +230,27 @@ class RedfishClient:
 					allow_redirects=False,
 				)
 			except requests.RequestException:
-				raise RedfishError("Could not read the Redfish reset task; refresh power state") from None
-		raise RedfishError(
-			"The Redfish reset task did not finish within the power timeout; refresh power state"
-		)
+				raise BMCError("Could not read the Redfish reset task") from None
+		raise BMCError("The Redfish reset task did not finish within the power timeout")
 
 	def _read_system(self) -> dict:
 		resource = self._read(self.url)
-		resource_type = resource.get("@odata.type", "")
+		resource_type = resource.get("@odata.type")
 		if not isinstance(resource_type, str) or not resource_type.startswith("#ComputerSystem."):
-			raise RedfishError("Use the registered ComputerSystem URL for power operations")
+			raise BMCError("The Redfish URL does not identify a ComputerSystem")
 		if self._resolve_link(resource, "@odata.id") != self.url:
-			raise RedfishError("Redfish returned a different system from the registered URL")
+			raise BMCError("Redfish returned a different system from the configured URL")
 		return resource
 
 	@staticmethod
-	def _power_status(resource: dict) -> RedfishPowerStatus:
+	def _power_status(resource: dict) -> BMCPowerStatus:
 		power_state = resource.get("PowerState")
 		if power_state not in ("On", "Off", "PoweringOn", "PoweringOff", "Paused", "Sleeping", "Hibernating"):
-			raise RedfishError("Redfish returned an unsupported or missing PowerState")
+			raise BMCError("Redfish returned an unsupported or missing PowerState")
 		status = resource.get("Status", {})
 		if not isinstance(status, dict):
-			raise RedfishError("Redfish returned invalid system Status")
+			raise BMCError("Redfish returned invalid system Status")
 		health = status.get("Health")
 		if health is not None and not isinstance(health, str):
-			raise RedfishError("Redfish returned invalid system health")
-		return RedfishPowerStatus(power_state, health)
+			raise BMCError("Redfish returned invalid system health")
+		return BMCPowerStatus(power_state, health)

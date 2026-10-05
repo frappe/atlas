@@ -280,7 +280,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Server Provider",
-   "options": "Generic\nScaleway\nAWS\nRedfish",
+   "options": "Generic\nScaleway\nAWS",
    "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
    "reqd": 1
   },

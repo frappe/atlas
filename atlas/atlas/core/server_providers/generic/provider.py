@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, override
 
 import frappe
 
+from atlas.atlas.core.bmc_providers import RedfishBMCProvider
 from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.base import (
 	ProviderOperationError,
@@ -37,6 +38,7 @@ class GenericProvider(ServerProvider):
 	credential_fields = ()
 	ssh_users = ("root",)
 	error_class = GenericError
+	bmc_provider = RedfishBMCProvider
 
 	@override
 	def validate_settings(self) -> None:

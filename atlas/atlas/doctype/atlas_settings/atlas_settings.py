@@ -127,7 +127,7 @@ class AtlasSettings(Document):
 			"pl-waw-2",
 			"pl-waw-3",
 		]
-		server_provider: DF.Literal["Generic", "Scaleway", "AWS", "Redfish"]
+		server_provider: DF.Literal["Generic", "Scaleway", "AWS"]
 		sleepy_vm_overcommit_factor: DF.Float
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_ipv6_router_for_auto_assignment: DF.Check

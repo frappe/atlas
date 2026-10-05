@@ -120,7 +120,10 @@ class TestServer(UnitTestCase):
 	def test_validate_trims_the_tags_and_fills_the_mesh_address(self) -> None:
 		tags = [SimpleNamespace(key=" env ", value=" local ")]
 		server = SimpleNamespace(
-			get=lambda fieldname: tags, _validate_title=Mock(), _set_wireguard_ip_address_if_not_set=Mock()
+			get=lambda fieldname: tags,
+			_validate_title=Mock(),
+			_validate_bmc=Mock(),
+			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
 		MetalServer.validate(server)
@@ -1082,6 +1085,20 @@ class TestServer(UnitTestCase):
 		)
 		server.db_set.assert_not_called()
 
+	def test_power_action_uses_the_host_bmc_when_configured(self) -> None:
+		server = self._server(status="Running")
+		server.bmc_url = "https://bmc.example/redfish/v1/Systems/1"
+		server.bmc = Mock()
+
+		with (
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=False),
+		):
+			MetalServer.reboot_server(server)
+
+		server.bmc.set_power_state.assert_called_once_with(ServerPowerAction.REBOOT)
+		server.settings.server_provider_controller.set_power_state.assert_not_called()
+
 	def test_power_action_rejects_a_deleted_server(self) -> None:
 		server = self._server(status="Deleted")
 
@@ -1168,6 +1185,7 @@ class TestServer(UnitTestCase):
 			status=status,
 			provider_server_id="server-id",
 			provider_metadata="{}",
+			bmc_url=None,
 			is_provisioning_completed=False,
 			setup_job_id=f"atlas||server-provision||{SERVER_NAME}",
 			wireguard_job_id=f"atlas||server-wireguard||{SERVER_NAME}",
@@ -1216,6 +1234,7 @@ class TestServer(UnitTestCase):
 		)
 		server._validate_power_action = MethodType(MetalServer._validate_power_action, server)
 		server._provider_server_id = MethodType(MetalServer._provider_server_id, server)
+		server._set_power_state = MethodType(MetalServer._set_power_state, server)
 		return server
 
 

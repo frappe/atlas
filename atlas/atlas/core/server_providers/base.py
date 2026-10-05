@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 import frappe
 
 if TYPE_CHECKING:
+	from atlas.atlas.core.bmc_providers.base import BMCProvider
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
@@ -118,6 +119,7 @@ class ServerProvider(ABC):
 	credential_fields: ClassVar[tuple[str, ...]]
 	ssh_users: ClassVar[tuple[str, ...]] = ("root", "ubuntu")
 	error_class: ClassVar[type[ProviderOperationError]] = ProviderOperationError
+	bmc_provider: ClassVar[type[BMCProvider] | None] = None
 	setup_poll_interval_seconds: ClassVar[int] = 5
 	setup_poll_timeout_seconds: ClassVar[int] = 7_200
 	private_address_attempts: ClassVar[int] = 60

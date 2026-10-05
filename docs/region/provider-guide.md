@@ -7,7 +7,6 @@ Choose the provider configured for your region.
 | [Generic](#generic-provider) | Register hosts you prepare. |
 | [Scaleway](#scaleway) | Provider-managed Elastic Metal hosts. |
 | [AWS](#aws) | EC2 hosts with one network interface and an Elastic IP. |
-| [Redfish](#redfish) | Register an existing machine through its Redfish endpoint. |
 
 To add an adapter, start with [Add a provider](#add-a-provider).
 
@@ -102,160 +101,32 @@ Open **Public IP Pool** and click **Add Public IP Pool**. The complete pool must
 
 Attach and detach change only Metal's VM network. Atlas does not change provider routes for static pools.
 
+### Control power through a BMC
+
+A Generic host can use its baseboard management controller (BMC) for power actions. Atlas uses Redfish, the standard HTTP API of most BMCs.
+
+Open the Metal Server and fill the **BMC** section. Enter the ComputerSystem URL, such as `https://bmc.example/redfish/v1/Systems/1`, and the BMC username and password. Atlas accepts HTTPS only. Developer mode also accepts HTTP.
+
+The form reads **BMC Power State** and **BMC Health** from the BMC on each load. A failed read shows an alert.
+
+| Action | Redfish reset | Result |
+|---|---|---|
+| Power On | `On`, else `ForceOn` | Waits until the BMC reports On, up to 120 seconds. |
+| Power Off | `GracefulShutdown` | Returns when the BMC accepts the request. |
+| Reboot | `GracefulRestart` | Waits until the BMC reports On, up to 120 seconds. |
+
+Atlas never sends a forced shutdown or restart, and never repeats a reset request. Atlas verifies the BMC TLS certificate, so the BMC must have a trusted certificate.
+
 ### Unsupported operations
 
 | Operation | Behavior |
 |---|---|
 | Automatic host creation | Refused. Atlas Settings rejects **Metal Auto-spawn Config > Enabled**. |
-| Power actions | Refused. |
+| Power actions | Refused, unless the host has a BMC. |
 | Archive | Marks the record Deleted. The host keeps running, and the operator reclaims it. |
 | Provider public IP reservation | Refused. Add a Static Public IP Pool. |
 | Public IPv4 attach | Returns the public address. Metal adds the address to the VM port. |
 | Public IPv4 detach and delete | Do nothing. |
-
-## Redfish
-
-Redfish is registered as a server provider and appears in Atlas Settings. The automated setup input accepts `Redfish` with no provider-specific fields.
-
-Redfish manages existing machines. Atlas Settings refuses **Metal Auto-spawn Config > Enabled**. Settings validation does not contact a baseboard management controller (BMC) or check the per-server credentials.
-
-### Validate credentials
-
-`RedfishProvider.validate_credentials()` checks every active Metal Server with a Redfish provider ID. It uses the saved URL, username, and decrypted password to read the registered ComputerSystem. Deleted records and other providers are excluded.
-
-The method returns `True` only when every system is accessible and its response identifies the registered URL. It raises `RedfishError` on the first failed check or when no Redfish server is registered. Blank credentials are accepted only when the system endpoint allows anonymous access.
-
-Validation sends GET requests only. It does not poll, change power, update observations, or save documents. Successful validation proves read access to the system. It does not prove permission to send power requests. Saving Atlas Settings does not run this check because Redfish credentials belong to Metal Servers.
-
-To check the local registration, open a console from the Pilot bench:
-
-```sh
-pilot --site atlas-bare.localhost console
-```
-
-Then run:
-
-```python
-frappe.get_single("Atlas Settings").server_provider_controller.validate_credentials()
-```
-
-The local sample can run with authentication disabled. In that mode, it cannot reject a wrong password. A local check with a temporary authenticated Sushy instance accepted the saved valid credentials and rejected wrong or missing credentials with HTTP 401. The check rolled back its temporary credentials and left the original registration unchanged.
-
-### Register a machine
-
-Select **Redfish** as **Server Provider** in Atlas Settings. Keep **Metal Auto-spawn Config > Enabled** off. Sign in with the **System Manager** role.
-
-Open the Metal Server list and select **Register Server**. Registration uses one Metal Server form. Enter the connection values and select **Register**:
-
-| Field | Value |
-| --- | --- |
-| Redfish URL | Service root, Systems collection with one member, or individual ComputerSystem URL. |
-| Redfish Username | BMC account name. Leave empty for an endpoint that accepts requests without authentication. |
-| Redfish Password | BMC account password. Leave empty only when the username is also empty. |
-
-For the local sample endpoint, set **Redfish URL** to `http://127.0.0.1:18000/redfish/v1/Systems`. Supply the configured credentials when authentication is enabled. Leave both credential fields empty only for anonymous access.
-
-The endpoint must be reachable from the Atlas process. `127.0.0.1` refers to the host where Atlas runs.
-
-The local sample identifies the same system at `http://127.0.0.1:18000/redfish/v1/Systems/5b5fbab3-d07c-4b27-b551-fbdb78c77912`. Use an individual system URL when the collection has zero or multiple members.
-
-Atlas follows the advertised service links with GET requests. It accepts only links on the configured service and refuses redirects. HTTPS uses certificate verification. A connection, authentication, or response error prevents registration.
-
-Registration stores the canonical system URL in `redfish_url`, credentials in `redfish_username` and the encrypted `redfish_password` field, and the system Id, Name, and UUID in `provider_metadata`. Atlas generates `provider_server_id` from the canonical system URL.
-
-An active record with the same provider server ID is reused without changing its credentials. Registration opens that record. A Deleted record does not block a new registration.
-
-The record stays **Pending** with provisioning incomplete. Registration does not create a machine, change BMC state, install software, prepare disks, or enqueue provisioning.
-
-Size and image are optional for Redfish and remain required for the other providers. Registration does not establish hardware inventory or VM capacity.
-
-### Read power state
-
-Open or reload a saved Redfish Metal Server. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State** and **Redfish Health** as virtual fields.
-
-The two fields share one GET response for that document in the current request. A new request reads the BMC again. Atlas does not store these values in the database or poll in the background.
-
-An unavailable or unauthorized BMC leaves both fields blank and shows the read error. Atlas does not display a stale database observation. New, Deleted, unregistered, and other-provider records do not trigger a Redfish read.
-
-`On` means that the BMC reports power on. It does not confirm that the operating system has booted or that Metal is available. Loading virtual fields does not change the Metal Server lifecycle.
-
-Select **Actions > Refresh Power State** to read the BMC and reconcile the lifecycle. Off marks the record Stopped. An On observation changes a Stopped lifecycle to Pending. Refresh never promotes a host to Running. A failed refresh does not change lifecycle status.
-
-Virtual reads require the System Manager role and document read permission. Atlas checks the saved system URL against the provider ID before contacting the BMC. Explicit refresh and power actions reject Deleted records and active provisioning jobs. A per-server database lock covers their saved-record reload, observation, and committed lifecycle update.
-
-### Power on
-
-Select **Actions > Power On** when the displayed power state is Off. Atlas reads the current state before it sends a request. If the machine is already On, Atlas reconciles the lifecycle without sending a reset.
-
-Atlas sends `ResetType: On` to the advertised ComputerSystem.Reset target. It uses `ForceOn` only when On is absent and ForceOn is advertised. Supported values come from the inline allowable-values annotation or the advertised ActionInfo resource.
-
-After the request, Atlas waits for the BMC to report On. An unprovisioned host stays Pending. Power on does not install Metal or prove operating system readiness.
-
-### Power off
-
-Select **Actions > Power Off** when the displayed power state is On, then confirm graceful shutdown. Atlas reads the current state and advertised reset capability first. If the machine is already Off, it returns without sending a reset.
-
-Atlas sends one `GracefulShutdown` request to the advertised reset target. It returns when the BMC accepts the request with HTTP 200, 202, or 204. It does not poll power state or a task monitor. It refuses a controller that advertises only ForceOff and never falls back to forced shutdown.
-
-The form shows **Shutdown request accepted.** Acceptance does not confirm that shutdown has finished. The displayed fields and lifecycle remain unchanged. Reload the form to read the current virtual fields, or select **Actions > Refresh Power State** to read and reconcile lifecycle status. Only explicit reconciliation marks an Off record Stopped.
-
-The shutdown button calls `atlas.metal_server.doctype.metal_server.metal_server.poweroff_redfish_server` with the saved record name. The response does not serialize the document or evaluate its virtual fields. It requires document write permission and the same power-action guards.
-
-### Reboot
-
-Select **Actions > Reboot** when the displayed power state is On, then confirm the request. Atlas reads the current state and requires On. It sends the advertised `GracefulRestart` value. It refuses ForceRestart-only controllers and does not reboot an Off or transitioning machine.
-
-Reboot always sends a new request, even when the BMC reports On. It is not idempotent. Do not repeat a request after an unknown outcome without checking the machine first.
-
-Atlas waits for an asynchronous task to complete, when present, then observes On. A synchronous acceptance followed by On does not prove that the operating system has finished rebooting. The BMC can report On throughout a restart. Check the operating system or Metal separately before using the host.
-
-After reboot acceptance and an On observation, Atlas changes a previously Running lifecycle to Pending because the previous readiness check is no longer valid. An unprovisioned host stays Pending. Power actions never mark a host Running.
-
-### Power request completion and recovery
-
-Power requests use the same per-server lock as power reads. A request reloads the saved record and checks permissions and lifecycle state while it holds the lock. The provider reads credentials from the saved record.
-
-For Power On and Reboot, HTTP 200 or 204 accepts a synchronous reset. HTTP 202 requires a same-service Location task monitor. Atlas polls that monitor before checking power. A failed or cancelled task fails the action.
-
-Reset targets, ActionInfo links, and task monitors cannot move to another service. Redirects are refused.
-
-HTTP requests have a 10-second timeout. Power On and Reboot share a 120-second budget for task and power polling. Power Off returns after request acceptance without polling.
-
-If a reset request times out, the action outcome can be unknown. Atlas does not repeat the POST automatically. Select **Actions > Refresh Power State** before deciding whether to send another action.
-
-Power actions require a stable On or Off state. During a transition, refresh the observed state and wait for it to settle. A failed action does not save an assumed power state or promote the lifecycle to Running.
-
-### Implementation and validation
-
-The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport, system identity discovery, and power observations. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection.
-
-[Metal Server](../../atlas/metal_server/doctype/metal_server/metal_server.py) owns the virtual fields and their observation cache for the current request. [Redfish power](../../atlas/metal_server/core/redfish_power.py) owns explicit lifecycle reconciliation and its per-server lock.
-
-The form uses the POST API `atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server`. It requires the System Manager role and accepts `redfish_url`, `redfish_username`, and `redfish_password`. Direct insertion of a new Redfish Metal Server through the standard Save API is refused.
-
-Deterministic tests cover discovery, credentials, malformed responses, unsafe links, duplicate registration, permissions, and provisioning suppression. Live checks against the local sample cover root, collection, and individual system URLs, existing-record reuse, and a fresh insert rolled back after password encryption checks. The checks compare BMC responses before and after registration.
-
-Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. Virtual-field tests cover one shared read, fresh values on a new request, blank fields on failure, permission checks, and exclusion from database writes.
-
-The Node form tests cover Refresh Power State, the single Register form, read errors, and Deleted records. Live checks matched both virtual fields to Redfish with one GET and confirmed that the database fields and lifecycle did not change. An authenticated local instance also verified the saved credential path.
-
-Power-on tests cover idempotent On requests, ForceOn selection, ActionInfo, task monitors, failed tasks, state timeouts, and unknown POST outcomes.
-
-A live check powered the sample from Off to On through the Atlas document method, confirmed its state with Redfish and a read-only libvirt query, and verified that a repeated Power On sent no POST.
-
-The sample uses synchronous HTTP 204 responses. Asynchronous task behavior is covered with mocks.
-
-Power-off tests cover HTTP 200, 202, and 204 acceptance without power or task polling, already-Off requests, ForceOff-only controllers, unknown POST outcomes, and no field writes. Form tests cover confirmation, the acceptance message, and a shutdown response without a document reload.
-
-A live check submitted one GracefulShutdown request through the shutdown endpoint. It made one preflight GET and one reset POST, with no document serialization, later reads, or task polling. Lifecycle status did not change.
-
-Reboot tests cover On requests, Off and transitional-state refusal, ForceRestart-only controllers, unknown outcomes, asynchronous completion, readiness invalidation, and lock commit order. The form tests cover confirmation and action visibility.
-
-A live check sent one GracefulRestart request through the Atlas document method. The sample remained On and Pending. A read-only libvirt event listener observed the guest reboot. This confirms the sample handled the request. It does not validate Metal readiness or every BMC implementation.
-
-Infrastructure setup, catalog discovery, and host preparation still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide unsupported host preparation actions.
-
-The [provider package](../../atlas/atlas/core/server_providers/redfish/provider.py) implements the `ServerProvider` contract. Optional operations use the unsupported-operation behavior from the base class.
 
 ## Scaleway
 
