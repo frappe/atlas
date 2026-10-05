@@ -16,6 +16,10 @@ class RedfishError(ProviderOperationError):
 	"""Report a Redfish provider failure."""
 
 
+class RedfishTransientReadError(RedfishError):
+	"""Identify a temporary GET failure that power polling can retry."""
+
+
 @dataclass(frozen=True, slots=True)
 class RedfishSystem:
 	"""Identify one existing ComputerSystem."""
@@ -95,9 +99,15 @@ class RedfishClient:
 				timeout=10,
 				allow_redirects=False,
 			)
+		except requests.exceptions.SSLError:
+			raise RedfishError("Could not establish a verified Redfish TLS connection") from None
+		except requests.Timeout, requests.ConnectionError:
+			raise RedfishTransientReadError("Could not connect to the Redfish service") from None
 		except requests.RequestException:
 			raise RedfishError("Could not connect to the Redfish service") from None
 
+		if response.status_code in (500, 502, 503, 504):
+			raise RedfishTransientReadError(f"Redfish returned HTTP {response.status_code}")
 		if response.status_code != 200:
 			raise RedfishError(f"Redfish returned HTTP {response.status_code}")
 		try:
@@ -187,12 +197,20 @@ class RedfishClient:
 			raise RedfishError(f"Redfish reset returned HTTP {response.status_code}")
 		if response.status_code == 202:
 			self._wait_for_task(response, deadline)
+		last_read_error: RedfishTransientReadError | None = None
 		while monotonic() < deadline:
-			if self.read_power_status().power_state == expected_state:
-				return
+			try:
+				status = self.read_power_status()
+			except RedfishTransientReadError as error:
+				last_read_error = error
+			else:
+				if status.power_state == expected_state:
+					return
+				last_read_error = None
 			sleep(min(POWER_POLL_SECONDS, max(0, deadline - monotonic())))
+		detail = f"; last power read failed: {last_read_error}" if last_read_error else ""
 		raise RedfishError(
-			f"Redfish did not report {expected_state} within {POWER_TIMEOUT_SECONDS} seconds; refresh power state"
+			f"Redfish did not report {expected_state} within {POWER_TIMEOUT_SECONDS} seconds{detail}; refresh power state"
 		)
 
 	def _reset_types(self, action: dict) -> tuple[str, ...]:
