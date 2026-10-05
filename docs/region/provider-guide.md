@@ -145,13 +145,25 @@ The record stays **Pending** with provisioning incomplete. Registration does not
 
 Size and image are optional for Redfish and remain required for the other providers. Registration does not establish hardware inventory or VM capacity.
 
+### Read power state
+
+On a saved Metal Server, select **Refresh Power State**. Atlas reads the registered ComputerSystem with its saved credentials. The form shows **Redfish Power State**, **Redfish Health**, and **Power State Checked On**.
+
+These fields record the last successful BMC observation. Refresh does not send a remote write. A failed refresh preserves the previous observation and its timestamp.
+
+`On` means that the BMC reports power on. It does not confirm that the operating system has booted or that Metal is available. Refresh never promotes a Pending or Stopped record to Running. `Off` marks the lifecycle Stopped. An On observation changes a Stopped lifecycle to Pending.
+
+Power reads require the System Manager role. Atlas rejects Deleted records and a host with an active provisioning job. It checks the saved system URL against the provider ID before contacting the BMC. A per-server database lock covers the saved-record reload, observation, and committed field update.
+
 ### Implementation and validation
 
-The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport and system identity discovery. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection. A database lock covers the lookup and committed insert.
+The [Redfish client](../../atlas/atlas/core/server_providers/redfish/client.py) owns HTTP transport, system identity discovery, and power observations. [Redfish registration](../../atlas/metal_server/core/redfish_registration.py) owns local document insertion and duplicate detection. [Redfish power](../../atlas/metal_server/core/redfish_power.py) owns stored observations and their per-server lock.
 
 The form uses the POST API `atlas.metal_server.doctype.metal_server.metal_server.register_redfish_server`. It requires the System Manager role and accepts `redfish_url`, `redfish_username`, and `redfish_password`. Direct insertion of a new Redfish Metal Server through the standard Save API is refused.
 
 Deterministic tests cover discovery, credentials, malformed responses, unsafe links, duplicate registration, permissions, and provisioning suppression. Live checks against the local sample cover root, collection, and individual system URLs, existing-record reuse, and a fresh insert rolled back after password encryption checks. The checks compare BMC responses before and after registration.
+
+Power-read tests cover response validation, saved credentials, changed identities, permission checks, lifecycle reconciliation, and failed reads. The Node form tests cover Refresh Power State, the single Register form, and Deleted records. A live check on `atlas-bare.localhost` matched the observed `On` and `OK` values to the sample endpoint and confirmed that the BMC response did not change.
 
 Infrastructure setup, standalone credential validation, catalog discovery, host preparation, and power operations still raise `UnsupportedProviderOperation`. A Redfish region cannot complete setup. Saved Redfish forms hide these unsupported host actions.
 
