@@ -4,13 +4,48 @@ from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.redfish import RedfishError, RedfishProvider
+from atlas.atlas.core.server_providers.redfish.test_client import COLLECTION, ROOT, SYSTEM, response
 from atlas.atlas.core.server_providers.registry import get_server_provider
 
 
 class TestRedfishProvider(UnitTestCase):
+	def test_import_discovers_a_canonical_identity_without_saving_or_provisioning(self) -> None:
+		provider = RedfishProvider(SimpleNamespace(auto_spawn_metal_server=0))
+		server = frappe.new_doc("Metal Server")
+		server.redfish_url = "HTTP://BMC.EXAMPLE:80/redfish/v1/Systems/"
+		server.redfish_username = "operator"
+		server.redfish_password = "test-password"
+		with (
+			patch("requests.get", side_effect=[response(COLLECTION), response(SYSTEM)]) as read,
+			patch("requests.post") as create,
+			patch.object(server, "save") as save,
+			patch("frappe.db.commit") as commit,
+		):
+			provider.import_server(server)
+			provider.validate_server(server)
+		url = ROOT + "/Systems/machine-1"
+		self.assertEqual(server.redfish_url, url)
+		self.assertEqual(server.provider_server_id, "redfish-" + sha256(url.encode()).hexdigest()[:32])
+		self.assertEqual(
+			frappe.parse_json(server.provider_metadata),
+			{
+				"id": "machine-1",
+				"name": "Rack server",
+				"uuid": "machine-uuid",
+			},
+		)
+		self.assertEqual(server.status, "Pending")
+		self.assertFalse(server.server_size or server.server_image)
+		for call in read.call_args_list:
+			self.assertEqual(call.kwargs["auth"], ("operator", "test-password"))
+		create.assert_not_called()
+		save.assert_not_called()
+		commit.assert_not_called()
+
 	def test_registry_returns_the_redfish_provider(self) -> None:
 		settings = SimpleNamespace(auto_spawn_metal_server=0)
 

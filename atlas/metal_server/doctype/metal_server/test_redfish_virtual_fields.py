@@ -9,6 +9,7 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerPowerStatus, UnsupportedProviderOperation
+from atlas.atlas.core.server_providers.generic.provider import GenericProvider
 from atlas.atlas.core.server_providers.redfish.client import RedfishError
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer, poweroff_redfish_server
@@ -41,24 +42,31 @@ class TestRedfishVirtualFields(UnitTestCase):
 		super().tearDown()
 
 	def test_serialization_shares_one_live_observation_and_does_not_write(self) -> None:
-		with (
-			patch.object(
-				self.provider, "read_power_status", return_value=ServerPowerStatus("On", "OK")
-			) as read,
-			patch.object(self.server, "db_set") as save,
-			patch("frappe.db.commit") as commit,
-			patch("requests.post") as write,
-		):
-			values = self.server.as_dict()
-			self.assertEqual(values["redfish_power_state"], "On")
-			self.assertEqual(values["redfish_health"], "OK")
-			self.assertEqual(self.server.redfish_power_state, "On")
-			self.assertEqual(self.server.redfish_health, "OK")
-		read.assert_called_once_with(self.server.provider_server_id)
-		self.assertEqual(self.server.status, "Running")
-		save.assert_not_called()
-		commit.assert_not_called()
-		write.assert_not_called()
+		class RegisteredProvider(GenericProvider):
+			is_registration_only = True
+
+		for provider in (self.provider, RegisteredProvider(SimpleNamespace())):
+			self.server._settings.server_provider_controller = provider
+			frappe.local.request_cache = defaultdict(dict)
+
+			with (
+				patch.object(
+					provider, "read_power_status", return_value=ServerPowerStatus("On", "OK")
+				) as read,
+				patch.object(self.server, "db_set") as save,
+				patch("frappe.db.commit") as commit,
+				patch("requests.post") as write,
+			):
+				values = self.server.as_dict()
+				self.assertEqual(values["redfish_power_state"], "On")
+				self.assertEqual(values["redfish_health"], "OK")
+				self.assertEqual(self.server.redfish_power_state, "On")
+				self.assertEqual(self.server.redfish_health, "OK")
+			read.assert_called_once_with(self.server.provider_server_id)
+			self.assertEqual(self.server.status, "Running")
+			save.assert_not_called()
+			commit.assert_not_called()
+			write.assert_not_called()
 
 	def test_a_new_request_reads_fresh_values_without_reconciling_lifecycle(self) -> None:
 		with patch.object(

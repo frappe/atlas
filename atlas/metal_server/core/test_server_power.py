@@ -11,6 +11,7 @@ from atlas.atlas.core.server_providers.base import ServerPowerAction, ServerPowe
 from atlas.atlas.core.server_providers.redfish.client import RedfishError
 from atlas.atlas.core.server_providers.redfish.provider import RedfishProvider
 from atlas.metal_server.core.server_power import ServerPower
+from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
 
 class TestServerPower(UnitTestCase):
@@ -127,11 +128,35 @@ class TestServerPower(UnitTestCase):
 			patch.object(self.provider, "set_power_state", side_effect=lambda *_: events.append("reset")),
 			patch.object(self.provider, "read_power_status", return_value=ServerPowerStatus("On", "OK")),
 			patch("frappe.cache.lock", return_value=lock),
-			patch("frappe.db.get_value"),
+			patch("frappe.db.get_value", side_effect=lambda *_args, **_kwargs: events.append("row-lock")),
 			patch("frappe.db.rollback", side_effect=lambda: events.append("rollback")),
 			patch("frappe.db.commit", side_effect=lambda: events.append("commit")),
 		):
 			ServerPower(self.server).set_power_state(ServerPowerAction.REBOOT)
 		self.assertEqual(
-			events, ["lock", "rollback", "reload", "reset", "rollback", "reload", "commit", "unlock"]
+			events,
+			["lock", "rollback", "reload", "reset", "rollback", "row-lock", "reload", "commit", "unlock"],
 		)
+
+	def test_a_server_deleted_during_the_remote_read_is_not_marked_stopped(self) -> None:
+		self.server.status = "Running"
+		self.server.setup_job_id = "setup-record"
+		self.server._validate_power_action = lambda: MetalServer._validate_power_action(self.server)
+
+		def read_status(_provider_server_id: str) -> ServerPowerStatus:
+			self.server.status = "Deleted"
+			return ServerPowerStatus("Off", "OK")
+
+		with (
+			patch.object(self.provider, "read_power_status", side_effect=read_status),
+			patch("frappe.cache.lock", return_value=nullcontext()),
+			patch("frappe.db.rollback"),
+			patch("frappe.db.get_value"),
+			patch("frappe.db.commit") as commit,
+			patch("frappe.only_for"),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=False),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "deleted"):
+				ServerPower(self.server).refresh()
+		self.server.db_set.assert_not_called()
+		commit.assert_not_called()
