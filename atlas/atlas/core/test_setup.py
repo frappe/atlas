@@ -45,6 +45,15 @@ def configuration(**changes: object) -> AtlasSetupConfiguration:
 	return AtlasSetupConfiguration.from_dict(values)
 
 
+def generic_configuration() -> AtlasSetupConfiguration:
+	values = configuration().settings_values()
+	for field in tuple(values):
+		if field.startswith("scaleway_"):
+			values.pop(field)
+	values["server_provider"] = "Generic"
+	return AtlasSetupConfiguration.from_dict(values)
+
+
 def aws_configuration(**changes: object) -> AtlasSetupConfiguration:
 	values = configuration().settings_values()
 	for field in tuple(values):
@@ -149,18 +158,21 @@ class TestAtlasSetup(UnitTestCase):
 			self.assertEqual(settings.use_ipv6_router_for_auto_assignment, 1)
 
 	def test_generic_provider_keeps_direct_automatic_ipv6(self) -> None:
-		values = configuration().settings_values()
-		for field in tuple(values):
-			if field.startswith("scaleway_"):
-				values.pop(field)
-		values["server_provider"] = "Generic"
 		settings = MagicMock(use_ipv6_router_for_auto_assignment=0)
 		with patch("atlas.atlas.core.setup.frappe.get_single", return_value=settings):
-			setup = AtlasSetup(AtlasSetupConfiguration.from_dict(values))
+			setup = AtlasSetup(generic_configuration())
 
 		setup._apply_settings()
 
 		self.assertEqual(settings.use_ipv6_router_for_auto_assignment, 0)
+
+	def test_generic_provider_completes_without_a_catalog(self) -> None:
+		settings = MagicMock(is_setup_completed=1, wildcard_tls_expires_on="2027-01-01")
+		with patch("atlas.atlas.core.setup.frappe.get_single", return_value=settings):
+			setup = AtlasSetup(generic_configuration())
+
+		with patch("atlas.atlas.core.setup.frappe.db.count", return_value=0):
+			setup._validate_result()
 
 	def test_completed_provider_refuses_immutable_drift(self) -> None:
 		settings = MagicMock(is_server_provider_setup_completed=1, is_dns_setup_completed=0)
