@@ -16,7 +16,7 @@ letsencrypt_email = "ops@example.com"
 [atlas]
 repository = "https://github.com/frappe/atlas"
 branch = "develop"
-# Atlas uses the provider table that matches this value.
+# Generic, Scaleway or AWS. Atlas uses the provider table that matches this value.
 server_provider = "Scaleway"
 dns_provider = "Route53"
 region_name = "par-1"

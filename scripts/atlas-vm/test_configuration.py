@@ -86,6 +86,17 @@ class ConfigurationTest(unittest.TestCase):
 		self.assertEqual(values["aws_availability_zone"], "eu-west-1a")
 		self.assertNotIn("scaleway_zone", values)
 
+	def test_generic_needs_no_provider_table(self) -> None:
+		text = self.path.read_text().replace('server_provider = "Scaleway"', 'server_provider = "Generic"')
+		text = text.replace('private_network_cidr = "10.1.0.0/20"', 'private_network_cidr = "10.50.0.0/16"')
+		self.path.write_text(text[: text.index("[atlas.scaleway]")] + text[text.index("[atlas.route53]") :])
+
+		atlas_vm.Settings.read(self.path)
+		with patch.object(setup, "generate_password", return_value="password"):
+			guest = setup.Configuration.read(self.path)
+
+		self.assertNotIn("aws_region", guest.atlas_setup_values)
+
 	def test_unselected_provider_table_is_not_validated(self) -> None:
 		self.path.write_text(
 			self.path.read_text().replace('availability_zone = "eu-west-1a"', "availability_zone = 1")

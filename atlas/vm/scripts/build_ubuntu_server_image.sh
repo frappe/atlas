@@ -57,6 +57,17 @@ case "$version" in
 		fi
 		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
 		;;
+	26.04)
+		if $minimal; then
+			echo "minimal images are available only for Ubuntu 24.04" >&2
+			exit 2
+		fi
+		release_url="https://cloud-images.ubuntu.com/releases/resolute/release-20260927"
+		rootfs_url="$release_url/ubuntu-26.04-server-cloudimg-amd64.squashfs"
+		rootfs_sha256="2de9f91e36dc84b7c32c06dfb6abbe56902453fd177326da3ea462356be7ac89"
+		kernel_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
+		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
+		;;
 	*) echo "unsupported version: $version" >&2; exit 2 ;;
 esac
 
