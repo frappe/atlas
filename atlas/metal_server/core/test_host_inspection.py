@@ -98,6 +98,50 @@ class TestHostReport(UnitTestCase):
 		self.assertIn("partition", parsed.disks[0].busy_reason)
 		self.assertEqual(parsed.disks[2].busy_reason, "is removable")
 
+	def test_empty_partition_on_a_raid_array_is_free(self) -> None:
+		array = {
+			"name": "/dev/md0",
+			"type": "raid1",
+			"size": 7000 * 1024**3,
+			"pttype": "gpt",
+			"children": [
+				{
+					"name": "/dev/md0p1",
+					"type": "part",
+					"size": 100 * 1024**3,
+					"fstype": "ext4",
+					"mountpoint": "/",
+				},
+				{"name": "/dev/md0p2", "type": "part", "size": 6900 * 1024**3},
+			],
+		}
+		devices = [
+			{
+				"name": f"/dev/nvme{index}n1",
+				"type": "disk",
+				"size": 7000 * 1024**3,
+				"pttype": "gpt",
+				"children": [
+					{
+						"name": f"/dev/nvme{index}n1p1",
+						"type": "part",
+						"fstype": "linux_raid_member",
+						"children": [array],
+					},
+				],
+			}
+			for index in range(2)
+		]
+		parsed = HostReport.parse(
+			probe_output(block_devices={"blockdevices": devices}), PUBLIC_ADDRESS, PRIVATE_ADDRESS
+		)
+
+		self.assertEqual(
+			[disk.device for disk in parsed.disks], ["/dev/nvme0n1", "/dev/nvme1n1", "/dev/md0p2"]
+		)
+		self.assertEqual(parsed.free_devices, ["/dev/md0p2"])
+		self.assertFalse(parsed.can_create_disk_image)
+
 	def test_output_without_markers_is_rejected(self) -> None:
 		with self.assertRaisesRegex(HostReportError, "no report"):
 			HostReport.parse("Permission denied", PUBLIC_ADDRESS, PRIVATE_ADDRESS)

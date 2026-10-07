@@ -78,7 +78,7 @@ class HostRegistrationDialog {
 				<li>${__("The host runs Ubuntu or Debian on x86_64 with KVM.")}</li>
 				<li>${__("Atlas can connect as root to the public address with its SSH key.")}</li>
 				<li>${__("Private address on the provider network with MTU ≥ 1340.")}</li>
-				<li>${__("One whole raw disk is empty for the storage pool.")}</li>
+				<li>${__("One empty disk, partition or RAID array for the storage pool.")}</li>
 			</ul>`
 		);
 		if (this.has_bmc_driver) {
