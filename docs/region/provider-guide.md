@@ -50,7 +50,7 @@ Before you register a host, prepare it with these items:
 - Put the private address on a provider network, such as a VXLAN interface. The interface must have an MTU of at least 1340.
 - Configure the provider network to carry IPv6 multicast between hosts, or enable **Use Unicast Networking** in Atlas Settings. WG Mesh uses this network as its uplink.
 - Configure the provider network to route every VM public IPv4 address to every Metal Server.
-- Provide an empty whole disk for the storage pool. Alternatively, provide enough space on the root file system for a disk image.
+- Provide an empty whole disk, partition, or RAID array for the storage pool. Alternatively, provide enough space on the root file system for a disk image.
 
 Atlas does not create or change these network resources. It checks that the private IPv4 address exists before it installs WireGuard.
 
@@ -86,7 +86,7 @@ The host check fails in these conditions:
 - No interface has the private IPv4 address.
 - The private interface MTU is less than 1340.
 
-Atlas accepts a disk only when it has no partitions, holders, partition table, signature, or mount. The disk must not be read-only or removable. A disk image must be a regular file with no signature. Atlas does not use loop devices as storage disks.
+Atlas accepts a disk only when it has no partitions, holders, partition table, signature, or mount. The disk must not be read-only or removable. Atlas also lists an empty partition or RAID array inside a disk, such as `/dev/md0p4` on a mirrored root disk pair. A disk image must be a regular file with no signature. Atlas does not use loop devices as storage disks.
 
 Atlas creates the Metal Server Size and Metal Server Image when they do not exist:
 

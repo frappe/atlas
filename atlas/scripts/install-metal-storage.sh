@@ -35,16 +35,17 @@ is_empty_storage_pool_device() {
 	fi
 
 	[ -b "$STORAGE_POOL_DEVICE" ] || return 1
-	# Scaleway gives a software RAID array, such as /dev/md2.
+	# Scaleway gives a software RAID array, such as /dev/md2. A Generic host can give a partition.
 	case "$(lsblk --raw --noheadings --output TYPE "$STORAGE_POOL_DEVICE")" in
-	disk | raid*) ;;
+	disk | part | raid*) ;;
 	*) return 1 ;;
 	esac
 	[ "$(lsblk --raw --noheadings --output NAME "$STORAGE_POOL_DEVICE" | wc -l)" -eq 1 ] || return 1
 	[ -z "$(lsblk --raw --noheadings --output FSTYPE,PTTYPE,MOUNTPOINT "$STORAGE_POOL_DEVICE" | tr -d '[:space:]')" ] || return 1
 	[ "$(lsblk --raw --noheadings --output RO "$STORAGE_POOL_DEVICE")" = 0 ] || return 1
 	[ "$(lsblk --raw --noheadings --output RM "$STORAGE_POOL_DEVICE")" = 0 ] || return 1
-	! blkid --probe "$STORAGE_POOL_DEVICE" >/dev/null 2>&1
+	# A partition always reports its PART_ENTRY_* tags, so check only for a signature type.
+	[ -z "$(blkid --probe --output value --match-tag TYPE "$STORAGE_POOL_DEVICE" 2>/dev/null)" ]
 }
 
 

@@ -39,7 +39,7 @@ class HostReportError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class InspectedDisk:
-	"""Store one whole disk and the reason it cannot hold the storage pool."""
+	"""Store one disk, partition or RAID array and the reason it cannot hold the storage pool."""
 
 	device: str
 	size_gib: int
@@ -166,15 +166,30 @@ class HostReport:
 
 	@classmethod
 	def _parse_disks(cls, block_devices: list[Mapping[str, Any]]) -> tuple[InspectedDisk, ...]:
-		return tuple(
-			InspectedDisk(
+		candidates = [
+			device
+			for device in block_devices
+			if device.get("type") == "disk" and not str(device["name"]).startswith("/dev/zram")
+		]
+
+		# An operator can leave an empty partition or RAID array, such as /dev/md0p4, for the pool.
+		nested = [child for device in candidates for child in device.get("children") or []]
+		while nested:
+			device = nested.pop(0)
+			nested.extend(device.get("children") or [])
+			is_pool_type = device.get("type") == "part" or str(device.get("type")).startswith("raid")
+			if is_pool_type and not cls._busy_reason(device):
+				candidates.append(device)
+
+		disks = {
+			str(device["name"]): InspectedDisk(
 				device=str(device["name"]),
 				size_gib=int(device.get("size") or 0) // GIB,
 				busy_reason=cls._busy_reason(device),
 			)
-			for device in block_devices
-			if device.get("type") == "disk" and not str(device["name"]).startswith("/dev/zram")
-		)
+			for device in candidates
+		}
+		return tuple(disks.values())
 
 	@staticmethod
 	def _parse_disk_image(image: Mapping[str, Any] | None) -> tuple[InspectedDisk, ...]:
