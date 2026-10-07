@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -80,18 +81,33 @@ func ensurePublicIPv4(ctx context.Context, virtualMachineID string, userID uint3
 	})
 }
 
-// claimPublicIPv4 makes the host answer ARP for the public address on the uplink.
+// defaultRouteInterface returns the IPv4 default route device. WG Mesh uses the same public interface.
+func defaultRouteInterface() (string, error) {
+	contents, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return "", fmt.Errorf("read the IPv4 routes: %w", err)
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 1 && fields[1] == "00000000" {
+			return fields[0], nil
+		}
+	}
+	return "", errors.New("the host has no IPv4 default route")
+}
+
+// claimPublicIPv4 makes the host answer ARP for the public address on the public interface.
 // The kernel answers a proxy entry only when the address routes through another device.
-func claimPublicIPv4(ctx context.Context, userID uint32, uplinkName, publicIPv4 string) error {
+func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, publicIPv4 string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	return runSteps(ctx, [][]string{
 		{"ip", "-4", "route", "replace", publicIPv4 + "/32", "dev", hostVirtualEthernet, "proto", "static"},
-		{"ip", "-4", "neigh", "replace", "proxy", publicIPv4, "dev", uplinkName},
+		{"ip", "-4", "neigh", "replace", "proxy", publicIPv4, "dev", publicInterfaceName},
 	})
 }
 
 // releasePublicIPv4Claims removes every public address claim of the VM except keep.
-func releasePublicIPv4Claims(ctx context.Context, userID uint32, uplinkName, keep string) error {
+func releasePublicIPv4Claims(ctx context.Context, userID uint32, publicInterfaceName, keep string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
 	if err != nil || !exists {
@@ -108,7 +124,7 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, uplinkName, kee
 			continue
 		}
 		// The route marks the claim, so it goes only after the proxy entry.
-		err := removeProxyNeighbour(ctx, "-4", fields[0], uplinkName)
+		err := removeProxyNeighbour(ctx, "-4", fields[0], publicInterfaceName)
 		if err == nil {
 			err = platform.Run(ctx, "ip", "-4", "route", "del", fields[0]+"/32", "dev", hostVirtualEthernet)
 		}
@@ -119,15 +135,17 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, uplinkName, kee
 	return nil
 }
 
-// claimPublicIPv6 makes the host answer NDP for the public address on the uplink.
-// WG Mesh enables proxy_ndp on the uplink.
-func claimPublicIPv6(ctx context.Context, uplinkName, publicIPv6 string) error {
-	return platform.Run(ctx, "ip", "-6", "neigh", "replace", "proxy", strings.TrimSuffix(publicIPv6, "/128"), "dev", uplinkName)
+// claimPublicIPv6 makes the host answer NDP for the public address on the public interface.
+func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string) error {
+	return runSteps(ctx, [][]string{
+		{"sysctl", "-q", "-w", "net.ipv6.conf." + publicInterfaceName + ".proxy_ndp=1"},
+		{"ip", "-6", "neigh", "replace", "proxy", strings.TrimSuffix(publicIPv6, "/128"), "dev", publicInterfaceName},
+	})
 }
 
 // releasePublicIPv6Claims removes every public address claim of the VM except keep.
 // The mesh routes each public /128 through the host veth, so these routes list the claims.
-func releasePublicIPv6Claims(ctx context.Context, userID uint32, uplinkName, keep string) error {
+func releasePublicIPv6Claims(ctx context.Context, userID uint32, publicInterfaceName, keep string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
 	if err != nil || !exists {
@@ -143,7 +161,7 @@ func releasePublicIPv6Claims(ctx context.Context, userID uint32, uplinkName, kee
 		if len(fields) == 0 || strings.Contains(fields[0], "/") || fieldAfter(fields, "via") == "" || fields[0] == strings.TrimSuffix(keep, "/128") {
 			continue
 		}
-		if err := removeProxyNeighbour(ctx, "-6", fields[0], uplinkName); err != nil {
+		if err := removeProxyNeighbour(ctx, "-6", fields[0], publicInterfaceName); err != nil {
 			return fmt.Errorf("release the public IPv6 claim of %s: %w", fields[0], err)
 		}
 	}
@@ -151,12 +169,12 @@ func releasePublicIPv6Claims(ctx context.Context, userID uint32, uplinkName, kee
 }
 
 // removeProxyNeighbour skips an absent entry, so a retried release does not fail.
-func removeProxyNeighbour(ctx context.Context, familyFlag, address, uplinkName string) error {
-	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address, "dev", uplinkName)
+func removeProxyNeighbour(ctx context.Context, familyFlag, address, publicInterfaceName string) error {
+	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address, "dev", publicInterfaceName)
 	if err != nil || strings.TrimSpace(output) == "" {
 		return err
 	}
-	return platform.Run(ctx, "ip", familyFlag, "neigh", "del", "proxy", address, "dev", uplinkName)
+	return platform.Run(ctx, "ip", familyFlag, "neigh", "del", "proxy", address, "dev", publicInterfaceName)
 }
 
 func ensurePublicIPv6(ctx context.Context, virtualMachineID, publicIPv6, meshIPv6 string) error {

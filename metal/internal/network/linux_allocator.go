@@ -43,13 +43,13 @@ type trafficMonitor interface {
 
 // LinuxAllocator creates Linux network resources for virtual machines.
 type LinuxAllocator struct {
-	mesh           meshRegistrar
-	uplinkName     string
-	trafficMonitor trafficMonitor
-	firewallMutex  sync.Mutex
-	firewallAudits map[string]firewallAudit
-	now            func() time.Time
-	logger         *slog.Logger
+	mesh                meshRegistrar
+	publicInterfaceName string
+	trafficMonitor      trafficMonitor
+	firewallMutex       sync.Mutex
+	firewallAudits      map[string]firewallAudit
+	now                 func() time.Time
+	logger              *slog.Logger
 }
 
 // NewLinuxAllocator returns a Linux network allocator.
@@ -63,9 +63,11 @@ func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor, logger *slog.Logger
 		trafficMonitor = monitor
 	}
 	allocator := newLinuxAllocator(registrar, trafficMonitor, logger)
-	if mesh != nil {
-		allocator.uplinkName = mesh.uplinkName
+	publicInterfaceName, err := defaultRouteInterface()
+	if err != nil {
+		allocator.logger.Warn("public address claims are disabled", "error", err)
 	}
+	allocator.publicInterfaceName = publicInterfaceName
 	return allocator
 }
 
@@ -117,10 +119,10 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseReq
 	}
 	meshError := allocator.removeMeshRegistration(ctx, request.UserID, request.WireGuardMeshIPv6)
 	rulesError := errors.Join(removePublicIPv4Rules(ctx, virtualMachineID), removePublicIPv6Rules(ctx, virtualMachineID))
-	if allocator.uplinkName != "" {
+	if allocator.publicInterfaceName != "" {
 		rulesError = errors.Join(rulesError,
-			releasePublicIPv4Claims(ctx, request.UserID, allocator.uplinkName, ""),
-			releasePublicIPv6Claims(ctx, request.UserID, allocator.uplinkName, ""))
+			releasePublicIPv4Claims(ctx, request.UserID, allocator.publicInterfaceName, ""),
+			releasePublicIPv6Claims(ctx, request.UserID, allocator.publicInterfaceName, ""))
 	}
 
 	exists, err := networkNamespaceExists(ctx, virtualMachineID)
@@ -280,11 +282,11 @@ func (allocator *LinuxAllocator) currentTime() time.Time {
 
 // removeUnwanted tears down what this request no longer asks for.
 func (allocator *LinuxAllocator) removeUnwanted(ctx context.Context, request request) error {
-	if allocator.uplinkName != "" {
-		if err := releasePublicIPv4Claims(ctx, request.UserID, allocator.uplinkName, request.PublicIPv4); err != nil {
+	if allocator.publicInterfaceName != "" {
+		if err := releasePublicIPv4Claims(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv4); err != nil {
 			return err
 		}
-		if err := releasePublicIPv6Claims(ctx, request.UserID, allocator.uplinkName, request.PublicIPv6); err != nil {
+		if err := releasePublicIPv6Claims(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv6); err != nil {
 			return err
 		}
 	}
@@ -327,8 +329,8 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 		if err := ensurePublicIPv4(ctx, request.VirtualMachineID, request.UserID, request.PublicIPv4); err != nil {
 			return err
 		}
-		if allocator.uplinkName != "" {
-			if err := claimPublicIPv4(ctx, request.UserID, allocator.uplinkName, request.PublicIPv4); err != nil {
+		if allocator.publicInterfaceName != "" {
+			if err := claimPublicIPv4(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv4); err != nil {
 				return err
 			}
 		}
@@ -337,8 +339,8 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 		if err := ensurePublicIPv6(ctx, request.VirtualMachineID, request.PublicIPv6, request.WireGuardMeshIPv6); err != nil {
 			return err
 		}
-		if allocator.uplinkName != "" {
-			if err := claimPublicIPv6(ctx, allocator.uplinkName, request.PublicIPv6); err != nil {
+		if allocator.publicInterfaceName != "" {
+			if err := claimPublicIPv6(ctx, allocator.publicInterfaceName, request.PublicIPv6); err != nil {
 				return err
 			}
 		}

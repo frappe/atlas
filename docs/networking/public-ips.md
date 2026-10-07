@@ -28,7 +28,7 @@ Atlas checks enabled pools every minute. At **200 or fewer** available allocatio
 
 Atlas changes no external route. The operator must route the pool to every eligible Metal Server.
 
-Metal answers ARP for an attached IPv4 address and NDP for an attached IPv6 `/128` on the WG Mesh uplink. So an on-link pool, such as a provider VXLAN, needs no address on the host.
+Metal answers ARP for an attached IPv4 address and NDP for an attached IPv6 `/128` on the public interface, the device of the IPv4 default route. So an on-link pool, such as a provider VXLAN, needs no address on the host.
 
 ## Provider direct pools
 
