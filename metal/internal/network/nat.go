@@ -107,10 +107,12 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, uplinkName, kee
 		if len(fields) == 0 || fields[0] == keep {
 			continue
 		}
-		if err := runSteps(ctx, [][]string{
-			{"ip", "-4", "neigh", "del", "proxy", fields[0], "dev", uplinkName},
-			{"ip", "-4", "route", "del", fields[0] + "/32", "dev", hostVirtualEthernet},
-		}); err != nil {
+		// The route marks the claim, so it goes only after the proxy entry.
+		err := removeProxyNeighbour(ctx, "-4", fields[0], uplinkName)
+		if err == nil {
+			err = platform.Run(ctx, "ip", "-4", "route", "del", fields[0]+"/32", "dev", hostVirtualEthernet)
+		}
+		if err != nil {
 			return fmt.Errorf("release the public IPv4 claim of %s: %w", fields[0], err)
 		}
 	}
@@ -141,11 +143,20 @@ func releasePublicIPv6Claims(ctx context.Context, userID uint32, uplinkName, kee
 		if len(fields) == 0 || strings.Contains(fields[0], "/") || fieldAfter(fields, "via") == "" || fields[0] == strings.TrimSuffix(keep, "/128") {
 			continue
 		}
-		if err := platform.Run(ctx, "ip", "-6", "neigh", "del", "proxy", fields[0], "dev", uplinkName); err != nil {
+		if err := removeProxyNeighbour(ctx, "-6", fields[0], uplinkName); err != nil {
 			return fmt.Errorf("release the public IPv6 claim of %s: %w", fields[0], err)
 		}
 	}
 	return nil
+}
+
+// removeProxyNeighbour skips an absent entry, so a retried release does not fail.
+func removeProxyNeighbour(ctx context.Context, familyFlag, address, uplinkName string) error {
+	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address, "dev", uplinkName)
+	if err != nil || strings.TrimSpace(output) == "" {
+		return err
+	}
+	return platform.Run(ctx, "ip", familyFlag, "neigh", "del", "proxy", address, "dev", uplinkName)
 }
 
 func ensurePublicIPv6(ctx context.Context, virtualMachineID, publicIPv6, meshIPv6 string) error {
