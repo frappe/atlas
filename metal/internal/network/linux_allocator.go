@@ -44,6 +44,7 @@ type trafficMonitor interface {
 // LinuxAllocator creates Linux network resources for virtual machines.
 type LinuxAllocator struct {
 	mesh           meshRegistrar
+	uplinkName     string
 	trafficMonitor trafficMonitor
 	firewallMutex  sync.Mutex
 	firewallAudits map[string]firewallAudit
@@ -61,7 +62,11 @@ func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor, logger *slog.Logger
 	if monitor != nil {
 		trafficMonitor = monitor
 	}
-	return newLinuxAllocator(registrar, trafficMonitor, logger)
+	allocator := newLinuxAllocator(registrar, trafficMonitor, logger)
+	if mesh != nil {
+		allocator.uplinkName = mesh.uplinkName
+	}
+	return allocator
 }
 
 // newLinuxAllocator returns an allocator with test dependencies.
@@ -112,6 +117,9 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseReq
 	}
 	meshError := allocator.removeMeshRegistration(ctx, request.UserID, request.WireGuardMeshIPv6)
 	rulesError := errors.Join(removePublicIPv4Rules(ctx, virtualMachineID), removePublicIPv6Rules(ctx, virtualMachineID))
+	if allocator.uplinkName != "" {
+		rulesError = errors.Join(rulesError, releasePublicIPv4Claims(ctx, request.UserID, allocator.uplinkName, ""))
+	}
 
 	exists, err := networkNamespaceExists(ctx, virtualMachineID)
 	if err != nil {
@@ -270,6 +278,11 @@ func (allocator *LinuxAllocator) currentTime() time.Time {
 
 // removeUnwanted tears down what this request no longer asks for.
 func (allocator *LinuxAllocator) removeUnwanted(ctx context.Context, request request) error {
+	if allocator.uplinkName != "" {
+		if err := releasePublicIPv4Claims(ctx, request.UserID, allocator.uplinkName, request.PublicIPv4); err != nil {
+			return err
+		}
+	}
 	if request.PublicIPv4 == "" {
 		if err := removePublicIPv4Rules(ctx, request.VirtualMachineID); err != nil {
 			return err
@@ -308,6 +321,11 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 	if request.PublicIPv4 != "" {
 		if err := ensurePublicIPv4(ctx, request.VirtualMachineID, request.UserID, request.PublicIPv4); err != nil {
 			return err
+		}
+		if allocator.uplinkName != "" {
+			if err := claimPublicIPv4(ctx, request.UserID, allocator.uplinkName, request.PublicIPv4); err != nil {
+				return err
+			}
 		}
 	}
 	if request.HasPublicIPv6Address() {
