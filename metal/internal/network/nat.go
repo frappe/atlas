@@ -80,6 +80,43 @@ func ensurePublicIPv4(ctx context.Context, virtualMachineID string, userID uint3
 	})
 }
 
+// claimPublicIPv4 makes the host answer ARP for the public address on the uplink.
+// The kernel answers a proxy entry only when the address routes through another device.
+func claimPublicIPv4(ctx context.Context, userID uint32, uplinkName, publicIPv4 string) error {
+	hostVirtualEthernet, _ := virtualEthernetNames(userID)
+	return runSteps(ctx, [][]string{
+		{"ip", "-4", "route", "replace", publicIPv4 + "/32", "dev", hostVirtualEthernet, "proto", "static"},
+		{"ip", "-4", "neigh", "replace", "proxy", publicIPv4, "dev", uplinkName},
+	})
+}
+
+// releasePublicIPv4Claims removes every public address claim of the VM except keep.
+func releasePublicIPv4Claims(ctx context.Context, userID uint32, uplinkName, keep string) error {
+	hostVirtualEthernet, _ := virtualEthernetNames(userID)
+	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
+	if err != nil || !exists {
+		return err
+	}
+
+	output, err := platform.Output(ctx, "ip", "-4", "route", "show", "dev", hostVirtualEthernet, "proto", "static")
+	if err != nil {
+		return fmt.Errorf("read the public IPv4 claims of %s: %w", hostVirtualEthernet, err)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] == keep {
+			continue
+		}
+		if err := runSteps(ctx, [][]string{
+			{"ip", "-4", "neigh", "del", "proxy", fields[0], "dev", uplinkName},
+			{"ip", "-4", "route", "del", fields[0] + "/32", "dev", hostVirtualEthernet},
+		}); err != nil {
+			return fmt.Errorf("release the public IPv4 claim of %s: %w", fields[0], err)
+		}
+	}
+	return nil
+}
+
 func ensurePublicIPv6(ctx context.Context, virtualMachineID, publicIPv6, meshIPv6 string) error {
 	address := strings.TrimSuffix(publicIPv6, "/128")
 	steps := publicIPv6Steps(virtualMachineID, address, meshIPv6)
