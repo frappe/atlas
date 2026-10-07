@@ -61,9 +61,9 @@ SCALEWAY_ZONES = {
 	"pl-waw-2",
 	"pl-waw-3",
 }
-SERVER_PROVIDERS = ("Scaleway", "AWS")
+SERVER_PROVIDERS = ("Generic", "Scaleway", "AWS")
 # Scaleway private networks accept /20 through /29. An AWS VPC accepts /16 through /28.
-PRIVATE_NETWORK_PREFIXES = {"Scaleway": (20, 29), "AWS": (16, 28)}
+PRIVATE_NETWORK_PREFIXES = {"Generic": (8, 29), "Scaleway": (20, 29), "AWS": (16, 28)}
 PROVIDER_TABLES = {"Scaleway": "scaleway", "AWS": "aws"}
 PRIVATE_IPV4_NETWORKS = tuple(
 	ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
@@ -326,6 +326,9 @@ def _validate_vm_scheduling_configuration(scheduling: dict, path: Path) -> None:
 
 def _validate_provider_configuration(atlas: dict, path: Path, provider: str) -> None:
 	"""Validate the table of the selected provider."""
+	if provider == "Generic":
+		return
+
 	table = PROVIDER_TABLES[provider]
 	values = _required_table(atlas, table, path, "atlas")
 	if provider == "Scaleway":
@@ -446,8 +449,8 @@ def _validate_image(image: object, path: Path) -> None:
 		raise AtlasVmError(f"{path}: image.architecture must be a string")
 	if not isinstance(minimal, bool):
 		raise AtlasVmError(f"{path}: image.minimal must be true or false")
-	if version not in ("22.04", "24.04"):
-		raise AtlasVmError(f"{path} asks for Ubuntu {version}; only 22.04 and 24.04 are supported")
+	if version not in ("22.04", "24.04", "26.04"):
+		raise AtlasVmError(f"{path} asks for Ubuntu {version}; only 22.04, 24.04 and 26.04 are supported")
 	if architecture != "amd64":
 		raise AtlasVmError(f"{path} asks for {architecture}; only amd64 is supported")
 	if minimal and version != "24.04":

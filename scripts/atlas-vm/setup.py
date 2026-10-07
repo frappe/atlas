@@ -154,6 +154,9 @@ def read_atlas_setup_values(atlas: dict) -> dict[str, object]:
 
 def read_provider_values(atlas: dict) -> dict[str, object]:
 	"""Return the values of the selected server provider."""
+	if atlas["server_provider"] == "Generic":
+		return {}
+
 	if atlas["server_provider"] == "Scaleway":
 		scaleway = atlas["scaleway"]
 		return {

@@ -117,7 +117,7 @@ def build_service_packages(context: CliCtxObj) -> None:
 
 
 @click.command("build-ubuntu-base-image")
-@click.option("--version", type=click.Choice(["22.04", "24.04"]), required=True)
+@click.option("--version", type=click.Choice(["22.04", "24.04", "26.04"]), required=True)
 @click.option("--architecture", type=click.Choice(["amd64"]), default="amd64", show_default=True)
 @click.option("--minimal", is_flag=True, help="Build the Ubuntu minimal cloud image.")
 @click.option("--title")

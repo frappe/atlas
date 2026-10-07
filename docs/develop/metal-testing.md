@@ -18,7 +18,7 @@ sudo metal/dist/metald serve --config /tmp/metald/metald.toml
 Run the script again when required. It performs these actions:
 
 - Downloads Firecracker and Jailer.
-- Builds the Atlas guest image with `build_ubuntu_server_image.sh` and imports it with its manifest. The image bakes the sshd `AuthorizedKeysCommand`, the cloud-init datasource, the network, and the metadata service, so a VM reads its per-VM SSH key from MMDS. Set `METALD_IMAGE_VERSION` to pick 22.04 or 24.04.
+- Builds the Atlas guest image with `build_ubuntu_server_image.sh` and imports it with its manifest. The image bakes the sshd `AuthorizedKeysCommand`, the cloud-init datasource, the network, and the metadata service, so a VM reads its per-VM SSH key from MMDS. Set `METALD_IMAGE_VERSION` to pick 22.04, 24.04 or 26.04.
 - Creates the ZFS pool and parent datasets.
 - Creates a Secure Shell key.
 - Installs the systemd template unit.

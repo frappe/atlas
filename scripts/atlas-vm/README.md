@@ -17,7 +17,7 @@ curl -fsSLo atlas-vm.toml https://raw.githubusercontent.com/frappe/atlas/develop
 sudo atlas-vm create
 ```
 
-The configuration must contain the Atlas region, Route53, and Let's Encrypt values. Set `atlas.server_provider` to `Scaleway` or `AWS`. Atlas reads the matching provider table. Route53 must contain an existing public zone for `atlas.wildcard_domain`. Do not add `*.` to the domain.
+The configuration must contain the Atlas region, Route53, and Let's Encrypt values. Set `atlas.server_provider` to `Generic`, `Scaleway` or `AWS`. Atlas reads the matching provider table. `Generic` has no provider table. Route53 must contain an existing public zone for `atlas.wildcard_domain`. Do not add `*.` to the domain.
 
 Atlas uses the `pilot.site` value with HTTPS as its public URL. Set `atlas.base_url` only if the public URL is different.
 
