@@ -42,11 +42,14 @@ type stubMigrationManager struct {
 	startErr          error
 	destroyArgs       []string
 	destroyErr        error
+
+	createMemorySnapshot bool
 }
 
-func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize) (migration.DestinationProgress, error) {
+func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, migrateMemorySnapshot bool) (migration.DestinationProgress, error) {
 	m.createArgs = []string{migrationID, virtualMachineID, source}
 	m.createResize = resize
+	m.createMemorySnapshot = migrateMemorySnapshot
 	return m.record, m.createErr
 }
 
@@ -159,6 +162,30 @@ func TestCreateMigrationDrivesTheDestination(t *testing.T) {
 	}
 	if response.ID != "mig-1" || response.Status != "running" {
 		t.Fatalf("response = %+v", response)
+	}
+	if stub.createMemorySnapshot {
+		t.Fatal("an omitted memory snapshot flag must default to false")
+	}
+}
+
+func TestCreateMigrationDecodesTheMemorySnapshotFlag(t *testing.T) {
+	for _, flag := range []struct {
+		value string
+		want  bool
+	}{{"false", false}, {"true", true}} {
+		stub := &stubMigrationManager{}
+		server := newMigrationTestServer(t, stub)
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","migrate_memory_snapshot":` + flag.value + `}`
+		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusAccepted)
+		if stub.createMemorySnapshot != flag.want {
+			t.Fatalf("memory snapshot flag = %v, want %v", stub.createMemorySnapshot, flag.want)
+		}
+	}
+
+	server := newMigrationTestServer(t, &stubMigrationManager{})
+	for _, flag := range []string{`"true"`, `1`} {
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","migrate_memory_snapshot":` + flag + `}`
+		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusBadRequest)
 	}
 }
 

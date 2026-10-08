@@ -16,9 +16,10 @@ var errInvalidMigrationRequest = errors.New("virtual_machine_id and source are r
 
 // createMigrationRequest is Atlas's destination-pull request.
 type createMigrationRequest struct {
-	VirtualMachineID string                  `json:"virtual_machine_id"`
-	Source           string                  `json:"source"`
-	Resize           *migrationResizeRequest `json:"resize,omitempty"`
+	VirtualMachineID      string                  `json:"virtual_machine_id"`
+	Source                string                  `json:"source"`
+	Resize                *migrationResizeRequest `json:"resize,omitempty"`
+	MigrateMemorySnapshot bool                    `json:"migrate_memory_snapshot,omitempty" default:"false"`
 }
 
 // migrationResizeRequest is the CPU, memory, and disk size the destination gives the VM.
@@ -100,7 +101,7 @@ func (s *Server) createMigration(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize())
+	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize(), request.MigrateMemorySnapshot)
 	if err != nil {
 		return err
 	}

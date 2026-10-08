@@ -195,17 +195,18 @@ type DestinationProgress struct {
 }
 
 type destinationRecord struct {
-	SchemaVersion       int                       `json:"schema_version"`
-	ID                  string                    `json:"id"`
-	VirtualMachineID    string                    `json:"virtual_machine_id"`
-	Source              string                    `json:"source"`
-	Resize              *Resize                   `json:"resize,omitempty"`
-	State               destinationState          `json:"state"`
-	Definition          *VirtualMachineDefinition `json:"config,omitempty"`
-	SourceObservedState vm.State                  `json:"source_observed_state,omitempty"`
-	CopyStartedAt       time.Time                 `json:"copy_started_at,omitempty"`
-	Intervals           []TransferProgress        `json:"intervals,omitempty"`
-	SourceStopped       bool                      `json:"source_stopped,omitempty"`
+	SchemaVersion         int                       `json:"schema_version"`
+	ID                    string                    `json:"id"`
+	VirtualMachineID      string                    `json:"virtual_machine_id"`
+	Source                string                    `json:"source"`
+	Resize                *Resize                   `json:"resize,omitempty"`
+	MigrateMemorySnapshot bool                      `json:"migrate_memory_snapshot,omitempty"`
+	State                 destinationState          `json:"state"`
+	Definition            *VirtualMachineDefinition `json:"config,omitempty"`
+	SourceObservedState   vm.State                  `json:"source_observed_state,omitempty"`
+	CopyStartedAt         time.Time                 `json:"copy_started_at,omitempty"`
+	Intervals             []TransferProgress        `json:"intervals,omitempty"`
+	SourceStopped         bool                      `json:"source_stopped,omitempty"`
 
 	Error      *vm.OperationError `json:"error,omitempty"`
 	CreatedAt  time.Time          `json:"created_at"`
@@ -383,12 +384,13 @@ func (store *migrationStore) readDestination(virtualMachineID string) (destinati
 
 func terminalDestinationRecord(record destinationRecord, state destinationState, finishedAt time.Time) destinationRecord {
 	return destinationRecord{
-		SchemaVersion:    migrationSchemaVersion,
-		ID:               record.ID,
-		VirtualMachineID: record.VirtualMachineID,
-		State:            state,
-		CreatedAt:        record.CreatedAt,
-		FinishedAt:       finishedAt,
+		SchemaVersion:         migrationSchemaVersion,
+		ID:                    record.ID,
+		VirtualMachineID:      record.VirtualMachineID,
+		State:                 state,
+		MigrateMemorySnapshot: record.MigrateMemorySnapshot,
+		CreatedAt:             record.CreatedAt,
+		FinishedAt:            finishedAt,
 	}
 }
 
