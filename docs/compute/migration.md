@@ -6,7 +6,8 @@ Atlas picks the new host. Metal on the new host copies the disk from the old hos
 
 1. Open **Dangerous Actions → Migrate VM** on the Virtual Machine form.
 2. Select a destination Metal Server, or leave it empty for automatic placement.
-3. Follow the new migration record.
+3. Optionally select **Migrate Memory Snapshot**.
+4. Follow the new migration record.
 
 Atlas excludes the source host and checks destination capacity. Desk users cannot create or edit migration records directly.
 
