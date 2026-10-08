@@ -171,8 +171,8 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 }
 
 // CreateDestination reserves a VM ID or returns a matching in-progress record. An
-// optional resize replaces the source shape on the destination.
-func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize) (DestinationProgress, error) {
+// optional resize replaces the source shape. The memory snapshot flag records intent only.
+func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize, migrateMemorySnapshot bool) (DestinationProgress, error) {
 	if !vm.ValidIdentifier(migrationID) || !vm.ValidIdentifier(virtualMachineID) || !validSourceAddress(source) {
 		return DestinationProgress{}, vm.ErrConflict
 	}
@@ -203,7 +203,7 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 			if existing.State.terminal() {
 				return existing.progress(), nil
 			}
-			if existing.Source != source || !existing.Resize.equal(resize) {
+			if existing.Source != source || !existing.Resize.equal(resize) || existing.MigrateMemorySnapshot != migrateMemorySnapshot {
 				return DestinationProgress{}, vm.ErrConflict
 			}
 			return existing.progress(), nil
@@ -228,13 +228,14 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		return DestinationProgress{}, err
 	}
 	record := destinationRecord{
-		ID:               migrationID,
-		VirtualMachineID: virtualMachineID,
-		Source:           source,
-		Resize:           resize,
-		State:            destinationPreparing,
-		CreatedAt:        m.now(),
-		LastControlAt:    m.now(),
+		ID:                    migrationID,
+		VirtualMachineID:      virtualMachineID,
+		Source:                source,
+		Resize:                resize,
+		MigrateMemorySnapshot: migrateMemorySnapshot,
+		State:                 destinationPreparing,
+		CreatedAt:             m.now(),
+		LastControlAt:         m.now(),
 	}
 	if err := m.store.writeDestination(record); err != nil {
 		return DestinationProgress{}, errors.Join(err, m.store.remove(virtualMachineID))

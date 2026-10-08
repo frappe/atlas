@@ -27,6 +27,8 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 
 ## Extension points
 
+`CreateDestination` persists the optional `migrate_memory_snapshot` request flag and rejects changes to it on an active retry. Missing flags in existing records default to false. The flag does not change runtime or transfer behavior. See the [migration handbook](../../../../docs/compute/migration.md).
+
 The daemon supplies concrete `vm.MigrationHost` and `storage.MigrationTransfer` values. Private interfaces are test seams within this package. The `vm` package does not import `migration`. The daemon injects `migration.Manager` as `vm.MigrationGuard` with `(*vm.Manager).SetMigrationGuard`.
 
 When a transfer rule changes, check [destination tests](destination_test.go) and [storage transfer tests](../../storage/migration_transfer_test.go). The [Metal API specification](../../api/SPEC.md) owns route wiring.
