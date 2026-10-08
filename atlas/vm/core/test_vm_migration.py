@@ -24,6 +24,7 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"target_cpu_millicores": 0,
 		"target_memory_mib": 0,
 		"target_disk_mib": 0,
+		"migrate_memory_snapshot": 0,
 		"transfers": [],
 	}
 	values.update(overrides)
@@ -213,10 +214,11 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			"vm-00001",
 			"https://10.0.0.1:9001",
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
+			migrate_memory_snapshot=False,
 		)
 
 	def test_a_plain_migration_sends_no_resize(self) -> None:
-		service = MigrationService(migration_doc())
+		service = MigrationService(migration_doc(migrate_memory_snapshot=1))
 		destination_client = Mock()
 
 		with (
@@ -230,6 +232,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			service.send_request()
 
 		self.assertIsNone(destination_client.put_migration.call_args.args[3])
+		self.assertTrue(destination_client.put_migration.call_args.kwargs["migrate_memory_snapshot"])
 
 	def test_the_commit_stores_the_server_and_the_resized_shape(self) -> None:
 		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())

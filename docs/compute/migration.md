@@ -10,6 +10,10 @@ Atlas picks the new host. Metal on the new host copies the disk from the old hos
 
 Atlas excludes the source host and checks destination capacity. Desk users cannot create or edit migration records directly.
 
+The VM `migrate` method accepts the optional boolean `migrate_memory_snapshot`, which defaults to `false`. Atlas stores this flag and sends it to Metal when true.
+
+The flag records intent only. It does not enable memory transfer or restore, so migrations still use the disk-only sequence below.
+
 A stopped VM also moves when a resize does not fit on its host. The migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`, and commits the new host and shape together. On failure, the VM keeps its old host and shape. The tenant API reports `migrating` during the move.
 
 ## Migration sequence

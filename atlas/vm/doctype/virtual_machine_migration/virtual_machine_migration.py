@@ -31,6 +31,7 @@ class VirtualMachineMigration(Document):
 		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
 		last_destination_metal_server_selection_at: DF.Datetime | None
+		migrate_memory_snapshot: DF.Check
 		progress_percent: DF.Int
 		scheduled_at: DF.Datetime | None
 		source_metal_server: DF.Link

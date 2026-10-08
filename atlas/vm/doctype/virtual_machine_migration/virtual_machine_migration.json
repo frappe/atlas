@@ -12,6 +12,7 @@
   "column_break_overview",
   "source_metal_server",
   "destination_metal_server",
+  "migrate_memory_snapshot",
   "section_break_time",
   "scheduled_at",
   "column_break_timing",
@@ -40,6 +41,15 @@
   "destination_metal_server_selection_message"
  ],
  "fields": [
+  {
+   "default": "0",
+   "fieldname": "migrate_memory_snapshot",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Migrate Memory Snapshot",
+   "read_only": 1,
+   "set_only_once": 1
+  },
   {
    "fieldname": "section_break_overview",
    "fieldtype": "Section Break"

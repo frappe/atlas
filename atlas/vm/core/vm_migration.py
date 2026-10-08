@@ -46,6 +46,7 @@ class MigrationService:
 		virtual_machine: VirtualMachine,
 		destination_metal_server: str | None = None,
 		resize: VirtualMachineShape | None = None,
+		migrate_memory_snapshot: bool = False,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		locked = cast(
@@ -59,6 +60,7 @@ class MigrationService:
 				"virtual_machine": locked.name,
 				"source_metal_server": locked.server,
 				"destination_metal_server": destination_metal_server,
+				"migrate_memory_snapshot": migrate_memory_snapshot,
 			}
 		)
 		if resize:
@@ -289,7 +291,11 @@ class MigrationService:
 			)
 			resize = self.destination_shape(virtual_machine).migration_resize
 		self.destination_client.put_migration(
-			self.migration.name, self.migration.virtual_machine, source_coordination_url, resize
+			self.migration.name,
+			self.migration.virtual_machine,
+			source_coordination_url,
+			resize,
+			migrate_memory_snapshot=bool(self.migration.migrate_memory_snapshot),
 		)
 
 	def poll(self) -> dict[str, Any]:
