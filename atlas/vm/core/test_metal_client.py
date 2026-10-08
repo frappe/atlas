@@ -541,6 +541,23 @@ class TestMetalClientMigrations(UnitTestCase):
 			client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", resize)
 
 		self.assertEqual(request.call_args.kwargs["json"]["resize"], resize)
+		with patch(
+			"atlas.vm.core.metal_client.requests.Session.request",
+			return_value=build_response(202, {"status": "running"}),
+		) as request:
+			client.put_migration(
+				"mig-00001", "vm-00001", "http://10.0.0.3:9000", resize, migrate_memory_snapshot=True
+			)
+
+		self.assertEqual(
+			request.call_args.kwargs["json"],
+			{
+				"virtual_machine_id": "vm-00001",
+				"source": "http://10.0.0.3:9000",
+				"resize": resize,
+				"migrate_memory_snapshot": True,
+			},
+		)
 
 	def test_get_migration_reads_status(self) -> None:
 		client = build_client()
