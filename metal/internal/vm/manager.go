@@ -325,10 +325,6 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 			UpdatedAt: observed.Error.UpdatedAt,
 		}
 	}
-	// A VM with no disk usage yet reports its requested size.
-	if usage.SizeMiB == 0 {
-		usage.SizeMiB = desired.Specification.DiskMiB
-	}
 	return Information{
 		ID:                              desired.ID,
 		State:                           observed.State,
@@ -336,7 +332,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		Error:                           errorDetail,
 		CPUMillicores:                   desired.Specification.CPUMillicores,
 		MemoryMiB:                       desired.Specification.MemoryMiB,
-		DiskMiB:                         usage.SizeMiB,
+		DiskMiB:                         desired.Specification.DiskMiB,
 		DiskUsedMiB:                     usage.UsedMiB,
 		DiskThroughputMiBps:             desired.Specification.Disk.ThroughputMiBps,
 		DiskIOPS:                        desired.Specification.Disk.IOPS,

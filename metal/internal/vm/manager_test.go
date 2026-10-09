@@ -758,3 +758,11 @@ func TestStartLeavesAStoppedVirtualMachineWithoutSavedStateToReconcile(t *testin
 		t.Fatalf("restores = %d, want 0", runtime.restores)
 	}
 }
+
+func TestInformationReportsRequestedDiskSize(t *testing.T) {
+	desired := DesiredRecord{Specification: Specification{DiskMiB: 25600}}
+	information := informationFromRecords(desired, ObservedRecord{}, DiskUsage{SizeMiB: 30720, UsedMiB: 512})
+	if information.DiskMiB != 25600 || information.DiskUsedMiB != 512 {
+		t.Fatalf("disk = %d MiB, used = %d MiB", information.DiskMiB, information.DiskUsedMiB)
+	}
+}
