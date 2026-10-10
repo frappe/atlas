@@ -91,6 +91,40 @@ class TestToken(UnitTestCase):
 
 		self.assertEqual(self.validate(token, key_id)["tenant"], "7")
 
+	def test_a_known_key_id_with_an_untrusted_signature_is_refused(self) -> None:
+		key_id = "central:key-1"
+		token = build_token(
+			Ed25519PrivateKey.generate(),
+			key_id=key_id,
+			issuer="central",
+			subject="central",
+			tenant="*",
+		)
+
+		self.assertIsNone(self.validate(token, key_id))
+
+	def test_each_required_claim_must_be_present(self) -> None:
+		key_id = "central:key-1"
+		token = build_token(
+			self.private_key,
+			key_id=key_id,
+			issuer="central",
+			subject="central",
+			tenant="*",
+		)
+		claims = self.validate(token, key_id)
+		self.assertIsNotNone(claims)
+
+		for claim in ("iss", "sub", "aud", "scope", "tenant", "iat", "exp"):
+			with self.subTest(claim=claim):
+				incomplete_claims = claims.copy()
+				del incomplete_claims[claim]
+				token = jwt.encode(
+					incomplete_claims, self.private_key, algorithm="EdDSA", headers={"kid": key_id}
+				)
+
+				self.assertIsNone(self.validate(token, key_id))
+
 	def test_an_atlas_key_cannot_claim_to_be_central(self) -> None:
 		key_id = "atlas:42:key-1"
 		token = build_token(
