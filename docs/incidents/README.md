@@ -8,6 +8,7 @@ A person files each report. An agent can suggest a report, but it must not add o
 
 | Date | Environment | Incident | Status |
 |---|---|---|---|
+| 2026-10-10 | Production | [Host network loss from allmulticast on Broadcom NICs](2026-10-10-host-nic-receive-stall.md) | Fixed |
 | 2026-09-24 | Staging | [Guest disk corruption after a restart](2026-09-24-guest-disk-corruption.md) | Fixed |
 
 ## Add a report
