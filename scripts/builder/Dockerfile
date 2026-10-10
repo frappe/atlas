@@ -1,6 +1,6 @@
 FROM debian:trixie-slim
 
-ARG GO_VERSION=1.26.2
+ARG GO_VERSION=1.26.9
 ARG TARGETARCH
 
 RUN apt-get update \

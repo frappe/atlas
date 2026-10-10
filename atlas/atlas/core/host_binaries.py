@@ -18,8 +18,8 @@ from frappe import _
 
 from atlas.atlas.core.artifacts import publish_public_file
 
-# metal/go.mod needs 1.26.2 and services/wg-mesh/cli/go.mod needs 1.26.0.
-GO_VERSION = "1.26.2"
+# metal/go.mod and services/wg-mesh/cli/go.mod need 1.26.9.
+GO_VERSION = "1.26.9"
 GO_DOWNLOAD_URL = "https://go.dev/dl/go{version}.linux-{architecture}.tar.gz"
 BUILD_TIMEOUT_SECONDS = 900
 
