@@ -69,6 +69,7 @@ def publish_ubuntu_image(
 	image_path: Path,
 	kernel_path: Path,
 	storage: ArtifactStorage = "Object Storage",
+	minimal: bool = False,
 ) -> None:
 	"""Publish Ubuntu artifacts as a new image record and retire the records it replaces.
 
@@ -109,6 +110,7 @@ def publish_ubuntu_image(
 				{"key": "purpose", "value": "base"},
 				{"key": "os", "value": "Ubuntu"},
 				{"key": "os_version", "value": version},
+				{"key": "minimal", "value": "true" if minimal else "false"},
 			],
 			**location,
 		}

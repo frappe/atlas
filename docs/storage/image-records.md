@@ -13,6 +13,8 @@ An image records its kernel, root filesystem, architecture, sizes, and SHA-256 d
 
 The Ubuntu builder publishes a kernel and root filesystem as a new Available System image. Each build gets a new record and its own artifact paths.
 
+Each build uses the latest Ubuntu cloud image release and the newest kernel that Ubuntu supports for that release. For an LTS release, this is the HWE (hardware enablement) kernel. The build log shows the download URLs.
+
 The builder checks earlier Available images with the same title and architecture. If one has the same digests, the build changes nothing.
 
 After publication, the builder retires the earlier images.

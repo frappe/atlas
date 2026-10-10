@@ -145,7 +145,7 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertNotIn("kernel_object_key", created)
 		self.assertEqual(
 			{tag["key"]: tag["value"] for tag in created["tags"]},
-			{"purpose": "base", "os": "Ubuntu", "os_version": "24.04"},
+			{"purpose": "base", "os": "Ubuntu", "os_version": "24.04", "minimal": "false"},
 		)
 
 

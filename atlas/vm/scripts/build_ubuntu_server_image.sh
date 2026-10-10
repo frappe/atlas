@@ -30,53 +30,23 @@ case "$architecture" in
 	*) echo "unsupported architecture: $architecture" >&2; exit 2 ;;
 esac
 
-# Keep each release URL with its checksums.
+# Boot the newest kernel that Ubuntu supports for the release: the HWE kernel when the release has one.
 case "$version" in
-	22.04)
-		if $minimal; then
-			echo "minimal images are available only for Ubuntu 24.04" >&2
-			exit 2
-		fi
-		release_url="https://cloud-images.ubuntu.com/releases/jammy/release-20260826"
-		rootfs_url="$release_url/ubuntu-22.04-server-cloudimg-amd64.squashfs"
-		rootfs_sha256="a4f612de4736d534a5617531eb7c1771b0b14878549c9d32191fd50e3077eb4f"
-		kernel_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
-		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
-		;;
-	24.04)
-		if $minimal; then
-			release_url="https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260521"
-			rootfs_url="$release_url/ubuntu-24.04-minimal-cloudimg-amd64.squashfs"
-			rootfs_sha256="a288f0bd499e1a747f86fda8ec9822dd99a4e3c0721d89ffd9dd57608ff21072"
-			kernel_url="$release_url/unpacked/ubuntu-24.04-minimal-cloudimg-amd64-vmlinuz-generic"
-		else
-			release_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518"
-			rootfs_url="$release_url/ubuntu-24.04-server-cloudimg-amd64.squashfs"
-			rootfs_sha256="bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
-			kernel_url="$release_url/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
-		fi
-		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
-		;;
-	26.04)
-		if $minimal; then
-			echo "minimal images are available only for Ubuntu 24.04" >&2
-			exit 2
-		fi
-		release_url="https://cloud-images.ubuntu.com/releases/resolute/release-20260927"
-		rootfs_url="$release_url/ubuntu-26.04-server-cloudimg-amd64.squashfs"
-		rootfs_sha256="2de9f91e36dc84b7c32c06dfb6abbe56902453fd177326da3ea462356be7ac89"
-		kernel_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
-		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
-		;;
+	22.04) series=jammy; kernel_package=linux-image-generic-hwe-22.04 ;;
+	24.04) series=noble; kernel_package=linux-image-generic-hwe-24.04 ;;
+	26.04) series=resolute; kernel_package=linux-image-generic ;;
 	*) echo "unsupported version: $version" >&2; exit 2 ;;
 esac
 
-# Docker and BPF need modules that match the pinned kernel, whatever the root file system ships.
-kernel_version="6.8.0-117-generic"
-modules_url="http://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-modules-${kernel_version}_6.8.0-117.117_amd64.deb"
-modules_sha256="0e7483d1b48189ce4c996097f03fbf4305981c64de385911a500bac69b32437f"
+archive_url="https://archive.ubuntu.com/ubuntu"
+series_url="https://cloud-images.ubuntu.com/releases/$series"
+rootfs_name="ubuntu-$version-server-cloudimg-amd64"
+if $minimal; then
+	series_url="https://cloud-images.ubuntu.com/minimal/releases/$series"
+	rootfs_name="ubuntu-$version-minimal-cloudimg-amd64"
+fi
 
-for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd ar depmod; do
+for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd zcat ar depmod; do
 	command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
 
@@ -96,12 +66,42 @@ fetch() {
 	local url=$1
 	local checksum=$2
 	local path=$3
+	[[ -n $checksum ]] || { echo "no checksum for $(basename "$path")" >&2; return 1; }
 	step "download $url"
 	curl -fL --progress-bar --output "$path" "$url"
 	echo "$checksum  $path" | sha256sum --check --status
 	step "verified $(basename "$path")"
 }
 
+# Use the dated folder of the latest release, so a release published during the build cannot mix files.
+fetch_rootfs() {
+	local serial release_url checksum
+	serial=$(curl -fsSL "$series_url/release/unpacked/build-info.txt" | sed -n 's/^serial=//p')
+	release_url="$series_url/release-$serial"
+	checksum=$(curl -fsSL "$release_url/SHA256SUMS" | awk -v file="*$rootfs_name.squashfs" '$2 == file { print $1 }')
+	fetch "$release_url/$rootfs_name.squashfs" "$checksum" "$1"
+}
+
+package_field() {
+	awk -v name="$1" -v field="$2:" '
+		$1 == "Package:" { found = ($2 == name) }
+		found && $1 == field { print $2 }' "$packages_path"
+}
+
+fetch_package() {
+	local filename checksum
+	filename=$(package_field "$1" Filename)
+	checksum=$(package_field "$1" SHA256)
+	fetch "$archive_url/$filename" "$checksum" "$2"
+}
+
+# Kernel image packages compress their data with zstd and modules packages do not. zstd -f passes plain data through.
+extract_package() {
+	local member
+	member=$(ar t "$1" | grep '^data\.tar')
+	mkdir -p "$2"
+	ar p "$1" "$member" | zstd -dcf | tar -x --keep-directory-symlink -C "$2"
+}
 
 extract_vmlinux() {
 	local image=$1 output=$2
@@ -166,12 +166,8 @@ Gateway=fe80::1
 EOF
 }
 
-# Apply the per-VM MMDS values that a shared image cannot hold. Do not order the
-# unit before cloud-init.service: that service uses DefaultDependencies=no and
-# runs before sysinit.target, so the order makes a cycle. systemd breaks the
-# cycle by dropping cloud-init.service, which then never generates SSH host keys.
-# The unit also uses DefaultDependencies=no, so the mesh address does not wait
-# for sysinit.target, which cloud-init holds for several seconds after boot.
+# DefaultDependencies=no lets the mesh address skip sysinit.target, which cloud-init holds for seconds.
+# Never order this unit before cloud-init.service: systemd breaks the cycle by dropping cloud-init, so no SSH host keys.
 install_metadata_service() {
 	install -d -m 0755 "$rootfs_directory/etc/cloud/cloud.cfg.d"
 	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-hostname.cfg" <<'EOF'
@@ -222,24 +218,28 @@ EOF
 
 rootfs_path="$work_path/rootfs.squashfs"
 rootfs_directory="$work_path/rootfs"
-fetch "$rootfs_url" "$rootfs_sha256" "$rootfs_path"
+fetch_rootfs "$rootfs_path"
+step "extract root file system"
+unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
 
-vmlinuz_path="$work_path/vmlinuz"
-fetch "$kernel_url" "$kernel_sha256" "$vmlinuz_path"
+packages_path="$work_path/Packages"
+curl -fsSL "$archive_url/dists/$series-updates/main/binary-amd64/Packages.gz" | zcat > "$packages_path"
+# The kernel metapackage depends first on the versioned image, such as linux-image-7.0.0-38-generic.
+kernel_version=$(package_field "$kernel_package" Depends | sed -E 's/^linux-image-//; s/,$//')
+
+fetch_package "linux-image-$kernel_version" "$work_path/kernel.deb"
+extract_package "$work_path/kernel.deb" "$work_path/kernel"
 step "extract uncompressed vmlinux"
-extract_vmlinux "$vmlinuz_path" "$kernel_path.part" || {
+extract_vmlinux "$work_path/kernel/boot/vmlinuz-$kernel_version" "$kernel_path.part" || {
 	echo "could not extract an ELF vmlinux from the Ubuntu kernel" >&2
 	exit 1
 }
 mv "$kernel_path.part" "$kernel_path"
 step "extracted $(basename "$kernel_path")"
 
-step "extract root file system"
-unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
-
-modules_path="$work_path/modules.deb"
-fetch "$modules_url" "$modules_sha256" "$modules_path"
-ar p "$modules_path" data.tar | tar -x --keep-directory-symlink -C "$rootfs_directory"
+# Docker and BPF need modules that match the kernel, whatever the root file system ships.
+fetch_package "linux-modules-$kernel_version" "$work_path/modules.deb"
+extract_package "$work_path/modules.deb" "$rootfs_directory"
 depmod -b "$rootfs_directory" "$kernel_version"
 
 install_cloud_init_datasource
