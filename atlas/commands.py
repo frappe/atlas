@@ -174,6 +174,7 @@ def build_ubuntu_base_image(
 					image_path,
 					kernel_path,
 					"Site File" if storage == "site-file" else "Object Storage",
+					minimal,
 				)
 			except ObjectStorageError as error:
 				raise click.UsageError(str(error)) from error
