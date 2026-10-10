@@ -45,7 +45,6 @@ type meshOptions struct {
 	binaryPath        string
 	uplinkName        string
 	controllerAddress string
-	unicast           bool
 }
 
 // trafficMonitorOptions configures VM traffic monitoring.
@@ -142,7 +141,6 @@ type wgMeshFile struct {
 	BinaryPath string `toml:"binary_path"`
 	Uplink     string `toml:"uplink"`
 	Controller string `toml:"controller_address"`
-	Unicast    *bool  `toml:"unicast"`
 }
 
 type trafficFile struct {
@@ -189,7 +187,6 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.mesh.binaryPath, fc.WGMesh.BinaryPath)
 	overlay(&resolvedOptions.mesh.uplinkName, fc.WGMesh.Uplink)
 	overlay(&resolvedOptions.mesh.controllerAddress, fc.WGMesh.Controller)
-	overlayBool(&resolvedOptions.mesh.unicast, fc.WGMesh.Unicast)
 	overlayBool(&resolvedOptions.trafficMonitor.enabled, fc.Traffic.Enabled)
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)

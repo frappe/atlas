@@ -532,7 +532,6 @@ class TestServer(UnitTestCase):
 	def test_install_metald_worker_passes_the_pool_device(self) -> None:
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
-		server.settings.is_unicast_network_enabled = 1
 		server.wireguard_ip_address = "fdab:1::7"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
 		tls_result = SimpleNamespace(is_success=True)
@@ -588,7 +587,6 @@ class TestServer(UnitTestCase):
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
 				"PRIVATE_NETWORK_CIDR": "10.0.0.0/20",
 				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
-				"MESH_UNICAST": "true",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(

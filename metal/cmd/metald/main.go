@@ -151,7 +151,6 @@ func connectMesh(options options) (*network.Mesh, error) {
 		ControllerAddress:  options.mesh.controllerAddress,
 		WireGuardName:      options.wireGuardName,
 		WireGuardStatePath: wireGuardStatePath(options),
-		Unicast:            options.mesh.unicast,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("configure Atlas WG Mesh: %w", err)
