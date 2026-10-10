@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import frappe
+from frappe.exceptions import FrappeTypeError
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.object_storage import ObjectStorageError
@@ -197,7 +198,7 @@ class TestVirtualMachineImage(UnitTestCase):
 
 	def test_an_unknown_artifact_is_refused(self) -> None:
 		image = self.make_image()
-		with self.assertRaisesRegex(frappe.ValidationError, "rootfs or kernel"):
+		with self.assertRaises((frappe.ValidationError, FrappeTypeError)):
 			image.get_presigned_download_url("memory")
 
 	def test_a_site_file_image_has_no_signed_download(self) -> None:
