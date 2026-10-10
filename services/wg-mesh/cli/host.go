@@ -156,7 +156,7 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 	return errors.Join(removeOldReleases(), removeObsoleteMaps(candidate.maps))
 }
 
-// prepareHost sets the kernel state the mesh needs. allmulticast receives the solicitations for proxied VM addresses.
+// prepareHost sets the kernel state the mesh needs. peers sync sets the NDP mode.
 func prepareHost(uplinkName string) error {
 	if err := runCommand("mountpoint", "-q", "/sys/fs/bpf"); err != nil {
 		if err := runCommand("mount", "-t", "bpf", "bpf", "/sys/fs/bpf"); err != nil {
@@ -181,7 +181,6 @@ func prepareHost(uplinkName string) error {
 
 	for _, arguments := range [][]string{
 		{"sysctl", "-qw", "net.ipv6.conf.all.forwarding=1"},
-		{"ip", "link", "set", uplinkName, "allmulticast", "on"},
 		{"ip", "-6", "route", "replace", meshRoutePrefix, "dev", uplinkName},
 	} {
 		if err := runCommand(arguments[0], arguments[1:]...); err != nil {

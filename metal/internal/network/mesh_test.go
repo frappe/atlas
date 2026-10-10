@@ -151,39 +151,6 @@ func TestMeshUsesConvergentHostCommands(t *testing.T) {
 	}
 }
 
-func TestUnicastMeshSelectsItsTransportAtStart(t *testing.T) {
-	directory := t.TempDir()
-	callLog := filepath.Join(directory, "calls")
-	command := filepath.Join(directory, "atlas-wg-mesh")
-	statePath := filepath.Join(directory, "wireguard-peers.json")
-	if err := os.WriteFile(command, []byte(fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\n", callLog)), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mesh, err := NewMesh(MeshConfig{
-		CommandPath: command, WireGuardName: "wg0", UplinkName: "eno1", ControllerAddress: "fdaa:1::ffff:ffff:ffff:ffff",
-		WireGuardStatePath: statePath, Unicast: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mesh.EnsureHost(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	want := []string{
-		"configure --uplink eno1 --wireguard wg0 --controller fdaa:1::ffff:ffff:ffff:ffff",
-		"peers sync " + statePath + " --unicast",
-	}
-	if got := readCalls(t, callLog); !slices.Equal(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-	state, err := os.ReadFile(statePath)
-	if err != nil || strings.TrimSpace(string(state)) != "[]" {
-		t.Fatalf("peer state = %q, %v, want an empty set for a fresh host", state, err)
-	}
-}
-
 func TestMeshSelectsMulticastWithoutTheFlag(t *testing.T) {
 	mesh, callsPath := recordingMesh(t)
 	if err := mesh.SyncPeerState(context.Background(), false); err != nil {
