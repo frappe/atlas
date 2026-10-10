@@ -24,7 +24,8 @@ class VirtualMachineComputeUsage:
 
         Attributes:
             cpu_microseconds (int): Cumulative CPU time since the guest's process started.
-            memory_bytes (int): Current memory charged to the Firecracker cgroup, in bytes.
+            memory_bytes (int): Memory in use inside the guest, in bytes. Without a guest report, the memory charged to the
+                Firecracker cgroup.
      """
 
     cpu_microseconds: int

@@ -105,7 +105,10 @@ class TestHostBinaries(UnitTestCase):
 			("go version go1.25.9 linux/amd64", False),
 			("go version weird output", False),
 		):
-			with patch.object(host_binaries.subprocess, "run", return_value=SimpleNamespace(stdout=output)):
+			with (
+				patch.object(host_binaries, "GO_VERSION", "1.26.2"),
+				patch.object(host_binaries.subprocess, "run", return_value=SimpleNamespace(stdout=output)),
+			):
 				self.assertEqual(host_binaries.has_required_go_version("go"), expected, output)
 
 	def test_wg_mesh_needs_clang_and_its_headers(self) -> None:

@@ -10,7 +10,8 @@ import (
 	"sync"
 )
 
-// socketLocks holds one mutex per socket path. Firecracker serves its API from
+// socketLocks holds one one-slot channel per socket path, so a waiter can give up
+// when its context ends. Firecracker serves its API from
 // a single thread and rejects a concurrent request, so every client for one
 // socket shares a lock even when several clients are built for the same VM.
 var socketLocks sync.Map
@@ -18,16 +19,16 @@ var socketLocks sync.Map
 // Client sends requests to one Firecracker API socket.
 type Client struct {
 	httpClient *http.Client
-	lock       *sync.Mutex
+	lock       chan struct{}
 }
 
 // New returns a client for one Firecracker API socket. Keep-alives are disabled,
 // because a VM is replaced by a new process on the same path and a pooled
 // connection would outlive the process that accepted it.
 func New(socketPath string) *Client {
-	lock, _ := socketLocks.LoadOrStore(socketPath, &sync.Mutex{})
+	lock, _ := socketLocks.LoadOrStore(socketPath, make(chan struct{}, 1))
 	return &Client{
-		lock: lock.(*sync.Mutex),
+		lock: lock.(chan struct{}),
 		httpClient: &http.Client{Transport: &http.Transport{
 			DisableKeepAlives: true,
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -74,8 +75,8 @@ func (client *Client) InstanceStart(ctx context.Context) error {
 	return client.send(ctx, http.MethodPut, "/actions", action{ActionType: "InstanceStart"}, nil)
 }
 
-// InstanceInfo returns the Firecracker process state.
-func (client *Client) InstanceInfo(ctx context.Context) (InstanceInfo, error) {
+// GetInstanceInfo returns the Firecracker process state.
+func (client *Client) GetInstanceInfo(ctx context.Context) (InstanceInfo, error) {
 	var information InstanceInfo
 	err := client.send(ctx, http.MethodGet, "/", nil, &information)
 	return information, err
@@ -106,6 +107,18 @@ func (client *Client) LoadSnapshot(ctx context.Context, request LoadSnapshotRequ
 	return client.send(ctx, http.MethodPut, "/snapshot/load", request, nil)
 }
 
+// PutBalloonConfig adds the balloon device.
+func (client *Client) PutBalloonConfig(ctx context.Context, configuration BalloonConfig) error {
+	return client.send(ctx, http.MethodPut, "/balloon", configuration, nil)
+}
+
+// GetBalloonStatistics returns the guest's last memory report.
+func (client *Client) GetBalloonStatistics(ctx context.Context) (BalloonStatistics, error) {
+	var statistics BalloonStatistics
+	err := client.send(ctx, http.MethodGet, "/balloon/statistics", nil, &statistics)
+	return statistics, err
+}
+
 // PutMMDSConfig configures the metadata service.
 func (client *Client) PutMMDSConfig(ctx context.Context, configuration MMDSConfig) error {
 	return client.send(ctx, http.MethodPut, "/mmds/config", configuration, nil)
@@ -124,8 +137,12 @@ func (client *Client) PatchMMDS(ctx context.Context, data any) error {
 // send makes one API request. It holds the socket lock for the whole exchange,
 // so requests to one VM are serialized.
 func (client *Client) send(ctx context.Context, method, path string, body, output any) error {
-	client.lock.Lock()
-	defer client.lock.Unlock()
+	select {
+	case client.lock <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-client.lock }()
 
 	var requestBody bytes.Reader
 	if body != nil {

@@ -59,7 +59,7 @@ func (m *machine) state(ctx context.Context, status platform.Status) (vm.State, 
 		return vm.StateUnknown, nil
 	}
 
-	instance, err := m.api.InstanceInfo(ctx)
+	instance, err := m.api.GetInstanceInfo(ctx)
 	if err != nil {
 		return vm.StateUnknown, fmt.Errorf("inspect Firecracker instance: %w", err)
 	}
