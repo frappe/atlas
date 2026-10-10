@@ -171,8 +171,16 @@ func writePeerArray(peers []peer) error {
 }
 
 func setUnicastMode(uplink string, enabled bool) error {
+	// Unicast NDP arrives as IPv4 unicast, so only multicast mode needs allmulticast.
 	if enabled {
-		return attachHook(uplink, uplinkEgressProgram, "egress")
+		if err := attachHook(uplink, uplinkEgressProgram, "egress"); err != nil {
+			return err
+		}
+		return runCommand("ip", "link", "set", uplink, "allmulticast", "off")
+	}
+
+	if err := runCommand("ip", "link", "set", uplink, "allmulticast", "on"); err != nil {
+		return err
 	}
 	return detachHook(uplink, "egress")
 }
