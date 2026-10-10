@@ -43,13 +43,16 @@ func TestLoadFileOverridesDefault(t *testing.T) {
 }
 
 func TestLoadFeatureSwitches(t *testing.T) {
-	path := writeConfig(t, "[wg_mesh]\nenabled = false\n[traffic_monitor]\nenabled = false\n")
+	path := writeConfig(t, "[wg_mesh]\nenabled = false\nunicast = true\n[traffic_monitor]\nenabled = false\n")
 	options, err := load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.mesh.enabled || options.trafficMonitor.enabled {
 		t.Fatalf("feature switches = mesh %t, traffic monitor %t, want both disabled", options.mesh.enabled, options.trafficMonitor.enabled)
+	}
+	if !options.mesh.unicast || defaultOptions().mesh.unicast {
+		t.Fatalf("mesh unicast = %t, default %t, want true from the file and false by default", options.mesh.unicast, defaultOptions().mesh.unicast)
 	}
 }
 

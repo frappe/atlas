@@ -246,6 +246,14 @@ func loadWireGuardPeers(path string) ([]WireGuardPeer, error) {
 	return peers, nil
 }
 
+// ensureWireGuardPeerState writes an empty peer set when none exists. Atlas WG Mesh reads the file before the first sync writes it.
+func ensureWireGuardPeerState(path string) error {
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return saveWireGuardPeers(path, []WireGuardPeer{})
+}
+
 // saveWireGuardPeers records the applied set, so the next Apply knows what it
 // owns and leaves peers added by other tools alone.
 func saveWireGuardPeers(path string, peers []WireGuardPeer) error {

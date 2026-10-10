@@ -40,6 +40,8 @@ type MeshConfig struct {
 	WireGuardStatePath string
 	// ControllerAddress is the Atlas mesh address on wg0.
 	ControllerAddress string
+	// Unicast selects the unicast NDP transport at start, before Atlas sends its first sync.
+	Unicast bool
 }
 
 // Mesh registers virtual machine addresses with the Atlas WG Mesh CLI.
@@ -49,6 +51,7 @@ type Mesh struct {
 	wireGuardName      string
 	wireGuardStatePath string
 	controllerAddress  string
+	unicast            bool
 
 	// A sync walks the whole route map, so unchanged registrations are cached.
 	registrationMutex sync.Mutex
@@ -79,6 +82,7 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 		wireGuardName:      configuration.WireGuardName,
 		wireGuardStatePath: configuration.WireGuardStatePath,
 		controllerAddress:  configuration.ControllerAddress,
+		unicast:            configuration.Unicast,
 		registrations:      make(map[string]string),
 	}, nil
 }
@@ -110,9 +114,20 @@ func (mesh *Mesh) PrivateNetworkMAC() (string, error) {
 }
 
 // EnsureHost applies the host configuration and refreshes its BPF programs.
+// A unicast host selects its NDP transport before any VM announces itself, because its uplink may not carry multicast.
 func (mesh *Mesh) EnsureHost(ctx context.Context) error {
-	return platform.Run(ctx, mesh.commandPath, "configure",
-		"--uplink", mesh.uplinkName, "--wireguard", mesh.wireGuardName, "--controller", mesh.controllerAddress)
+	if err := platform.Run(ctx, mesh.commandPath, "configure",
+		"--uplink", mesh.uplinkName, "--wireguard", mesh.wireGuardName, "--controller", mesh.controllerAddress); err != nil {
+		return err
+	}
+	if !mesh.unicast {
+		return nil
+	}
+
+	if err := ensureWireGuardPeerState(mesh.wireGuardStatePath); err != nil {
+		return fmt.Errorf("create WireGuard peer state: %w", err)
+	}
+	return mesh.SyncPeerState(ctx, true)
 }
 
 // removeVM unregisters one VM address. An address this host does not own is not an error.
