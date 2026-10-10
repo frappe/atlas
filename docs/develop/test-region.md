@@ -99,7 +99,7 @@ Wait until the host is `Running`. Open its linked **SSH Task** records to see ea
 
 ## 8. Build a VM image
 
-On Linux, the build needs `curl`, `sha256sum`, `unsquashfs`, `mkfs.ext4`, `truncate`, and `zstd`. On macOS, the build runs in the builder Docker image, which has them.
+On Linux, the build needs `curl`, `sha256sum`, `unsquashfs`, `mkfs.ext4`, `truncate`, `zstd`, `ar` (`binutils`), and `depmod` (`kmod`). On macOS, the build runs in the builder Docker image, which has them.
 
 Build and publish the Ubuntu 24.04 guest image:
 

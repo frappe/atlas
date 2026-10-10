@@ -71,7 +71,12 @@ case "$version" in
 	*) echo "unsupported version: $version" >&2; exit 2 ;;
 esac
 
-for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd; do
+# Docker and BPF need modules that match the pinned kernel, whatever the root file system ships.
+kernel_version="6.8.0-117-generic"
+modules_url="http://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-modules-${kernel_version}_6.8.0-117.117_amd64.deb"
+modules_sha256="0e7483d1b48189ce4c996097f03fbf4305981c64de385911a500bac69b32437f"
+
+for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd ar depmod; do
 	command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
 
@@ -231,6 +236,11 @@ step "extracted $(basename "$kernel_path")"
 
 step "extract root file system"
 unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
+
+modules_path="$work_path/modules.deb"
+fetch "$modules_url" "$modules_sha256" "$modules_path"
+ar p "$modules_path" data.tar | tar -x --keep-directory-symlink -C "$rootfs_directory"
+depmod -b "$rootfs_directory" "$kernel_version"
 
 install_cloud_init_datasource
 install_guest_network
