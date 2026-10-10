@@ -1892,7 +1892,7 @@
             "type": "integer"
           },
           "memory_bytes": {
-            "description": "Current memory charged to the Firecracker cgroup, in bytes.",
+            "description": "Memory in use inside the guest, in bytes. Without a guest report, the memory charged to the Firecracker cgroup.",
             "title": "Memory Bytes",
             "type": "integer"
           }

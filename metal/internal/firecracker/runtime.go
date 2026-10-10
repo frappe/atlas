@@ -187,8 +187,8 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	})
 }
 
-// GetUsage reads the machine's current cgroup CPU, memory, and disk use from its
-// systemd unit.
+// GetUsage reads CPU and disk use from the unit cgroup and memory from the
+// guest balloon report. Without a valid report, memory is from the cgroup.
 func (runtime *Runtime) GetUsage(ctx context.Context, input vm.RuntimeMachine) (vm.RuntimeUsage, error) {
 	diskPath := filepath.Join(runtime.configuration.chrootRoot(input.ID), rootDrivePath)
 	diskInfo, err := os.Stat(diskPath)
@@ -204,8 +204,14 @@ func (runtime *Runtime) GetUsage(ctx context.Context, input vm.RuntimeMachine) (
 	if err != nil {
 		return vm.RuntimeUsage{}, err
 	}
+	memoryBytes := usage.MemoryBytes
+	statistics, err := api.New(runtime.configuration.socketPath(input.ID)).GetBalloonStatistics(ctx)
+	if guestMemoryBytes, valid := statistics.UsedMemoryBytes(); err == nil && valid {
+		memoryBytes = guestMemoryBytes
+	}
+
 	return vm.RuntimeUsage{
-		MemoryBytes: usage.MemoryBytes, CPUTimeMicroseconds: usage.CPUTimeMicroseconds,
+		MemoryBytes: memoryBytes, CPUTimeMicroseconds: usage.CPUTimeMicroseconds,
 		DiskReadBytes: usage.DiskReadBytes, DiskWriteBytes: usage.DiskWriteBytes,
 		DiskReadOperations: usage.DiskReadOperations, DiskWriteOperations: usage.DiskWriteOperations,
 	}, nil

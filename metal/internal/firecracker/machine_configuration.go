@@ -27,6 +27,9 @@ const (
 	// memorySnapshotOverheadMiB covers Firecracker itself on top of guest memory.
 	memorySnapshotOverheadMiB = 128
 
+	// balloonStatisticsIntervalSeconds matches the metrics sample interval.
+	balloonStatisticsIntervalSeconds = 10
+
 	// socketPollInterval is how often the jailed API socket is checked for.
 	socketPollInterval = 50 * time.Millisecond
 )
@@ -71,6 +74,15 @@ func configure(
 		GuestMAC:    networkInterface.MACAddress,
 	}
 	if err := client.PutNetworkInterface(operationContext, interfaceRequest); err != nil {
+		return err
+	}
+
+	balloonConfiguration := api.BalloonConfig{
+		DeflateOnOOM:                     true,
+		StatisticsPollingIntervalSeconds: balloonStatisticsIntervalSeconds,
+		FreePageReporting:                true,
+	}
+	if err := client.PutBalloonConfig(operationContext, balloonConfiguration); err != nil {
 		return err
 	}
 

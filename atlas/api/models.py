@@ -1014,7 +1014,9 @@ class VirtualMachineComputeUsage(BaseModel):
 	"""Cumulative CPU time and current memory use."""
 
 	cpu_microseconds: int = Field(description="Cumulative CPU time since the guest's process started.")
-	memory_bytes: int = Field(description="Current memory charged to the Firecracker cgroup, in bytes.")
+	memory_bytes: int = Field(
+		description="Memory in use inside the guest, in bytes. Without a guest report, the memory charged to the Firecracker cgroup."
+	)
 
 
 class VirtualMachineDiskUsage(BaseModel):

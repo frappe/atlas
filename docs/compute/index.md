@@ -22,6 +22,8 @@ Metal samples each VM every 10 seconds. It records CPU time, memory use, disk si
 
 Sent traffic includes ICMP, UDP, TCP SYN, and TCP RST packet counters. Disk use is from the last reconcile pass, so it can be older than the sample time. A stopped VM has no current CPU, memory, or disk I/O use.
 
+Memory use is the guest's own report through the Firecracker balloon device. A VM that booted without the balloon device, or that sends no valid report, shows the memory charged to its Firecracker cgroup. That value includes host page cache, so it can be larger than the VM memory.
+
 Disk rates come from the VM systemd cgroup's `io.stat` counters for the root disk device. Metal stores whole read and write bytes per second and milli-IOPS, where 1,000 milli-IOPS is one operation per second.
 
 The first sample after Metal starts, and the first sample after a counter reset, stores zero rates. Configured throughput and IOPS limits are zero when unlimited.

@@ -71,6 +71,29 @@ type MMDSConfig struct {
 	IMDSCompat        bool     `json:"imds_compat,omitempty"`
 }
 
+// BalloonConfig configures the balloon device.
+type BalloonConfig struct {
+	AmountMiB                        int  `json:"amount_mib"`
+	DeflateOnOOM                     bool `json:"deflate_on_oom"`
+	StatisticsPollingIntervalSeconds int  `json:"stats_polling_interval_s"`
+	FreePageReporting                bool `json:"free_page_reporting"`
+}
+
+// BalloonStatistics is the guest's memory report. Each field is optional.
+type BalloonStatistics struct {
+	TotalMemory     *uint64 `json:"total_memory"`
+	AvailableMemory *uint64 `json:"available_memory"`
+}
+
+// UsedMemoryBytes returns false for an incomplete or inconsistent report,
+// because the guest supplies the values.
+func (statistics BalloonStatistics) UsedMemoryBytes() (uint64, bool) {
+	if statistics.TotalMemory == nil || *statistics.TotalMemory == 0 || statistics.AvailableMemory == nil || *statistics.AvailableMemory > *statistics.TotalMemory {
+		return 0, false
+	}
+	return *statistics.TotalMemory - *statistics.AvailableMemory, true
+}
+
 // InstanceInfo contains the Firecracker process state.
 type InstanceInfo struct {
 	ID    string `json:"id"`
