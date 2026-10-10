@@ -5,7 +5,7 @@ ARG TARGETARCH
 
 RUN apt-get update \
 	&& apt-get install --yes --no-install-recommends \
-		ca-certificates clang curl e2fsprogs git libbpf-dev linux-libc-dev llvm make python3 squashfs-tools zstd \
+		binutils ca-certificates clang curl e2fsprogs git kmod libbpf-dev linux-libc-dev llvm make python3 squashfs-tools zstd \
 	&& rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /usr/local -xz
