@@ -42,7 +42,6 @@ archive_url="https://archive.ubuntu.com/ubuntu"
 series_url="https://cloud-images.ubuntu.com/releases/$series"
 rootfs_name="ubuntu-$version-server-cloudimg-amd64"
 if $minimal; then
-	[[ $version == 24.04 ]] || { echo "minimal images are available only for Ubuntu 24.04" >&2; exit 2; }
 	series_url="https://cloud-images.ubuntu.com/minimal/releases/$series"
 	rootfs_name="ubuntu-$version-minimal-cloudimg-amd64"
 fi

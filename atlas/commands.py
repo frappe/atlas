@@ -150,8 +150,6 @@ def build_ubuntu_base_image(
 	"""Build and publish a public Ubuntu server cloud image."""
 	if not context.sites:
 		raise SiteNotSpecifiedError
-	if minimal and version != "24.04":
-		raise click.UsageError("minimal images are available only for Ubuntu 24.04")
 
 	title = title or f"ubuntu-{version}" + ("-minimal" if minimal else "")
 	target_sites = context.sites
