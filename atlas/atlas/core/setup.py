@@ -94,6 +94,8 @@ class AtlasSetupConfiguration:
 	aws_availability_zone: str = ""
 	aws_access_key_id: str = ""
 	aws_secret_access_key: str = ""
+	# None keeps the current setting, so a setup rerun without the value does not change the region.
+	is_unicast_network_enabled: bool | None = None
 
 	@classmethod
 	def from_dict(cls, values: Any) -> "AtlasSetupConfiguration":
@@ -107,6 +109,7 @@ class AtlasSetupConfiguration:
 				f"Atlas setup field server_provider must be one of {', '.join(sorted(PROVIDER_FIELDS))}"
 			)
 
+		values = {"is_unicast_network_enabled": None, **values}
 		expected_fields = cls.expected_fields(provider)
 		if set(values) != expected_fields:
 			missing = sorted(expected_fields - set(values))
@@ -126,6 +129,7 @@ class AtlasSetupConfiguration:
 			"auto_spawn_metal_server",
 			"is_letsencrypt_staging",
 			"is_wildcard_tls_auto_renew_enabled",
+			"is_unicast_network_enabled",
 		}
 		for field in string_fields:
 			value = values[field]
@@ -147,6 +151,10 @@ class AtlasSetupConfiguration:
 		):
 			if not isinstance(values[field], bool):
 				raise ValueError(f"Atlas setup field {field} must be true or false")
+		if values["is_unicast_network_enabled"] is not None and not isinstance(
+			values["is_unicast_network_enabled"], bool
+		):
+			raise ValueError("Atlas setup field is_unicast_network_enabled must be true or false")
 		factor = values["sleepy_vm_overcommit_factor"]
 		if (
 			not isinstance(factor, (int, float))
@@ -173,7 +181,11 @@ class AtlasSetupConfiguration:
 
 	def settings_values(self) -> dict[str, object]:
 		"""Return the values that belong to Atlas Settings."""
-		return {field: getattr(self, field) for field in self.expected_fields(self.server_provider)}
+		return {
+			field: getattr(self, field)
+			for field in self.expected_fields(self.server_provider)
+			if getattr(self, field) is not None
+		}
 
 	@classmethod
 	def expected_fields(cls, provider: str) -> set[str]:

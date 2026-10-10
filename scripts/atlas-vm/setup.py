@@ -136,6 +136,7 @@ def read_atlas_setup_values(atlas: dict) -> dict[str, object]:
 		"wildcard_domain": atlas["wildcard_domain"],
 		"private_network_cidr": atlas["private_network_cidr"],
 		"private_network_mtu": atlas["private_network_mtu"],
+		"is_unicast_network_enabled": atlas.get("unicast_network"),
 		"central_jwks_url": atlas["central_jwks_url"],
 		**read_provider_values(atlas),
 		"route53_access_key_id": route53["access_key_id"],

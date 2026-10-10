@@ -111,6 +111,15 @@ class TestAtlasSetupConfiguration(UnitTestCase):
 		with self.assertRaisesRegex(ValueError, "unknown fields: scaleway_zone"):
 			AtlasSetupConfiguration.from_dict(values)
 
+	def test_unicast_networking_is_set_only_when_the_input_has_it(self) -> None:
+		self.assertTrue(
+			configuration(is_unicast_network_enabled=True).settings_values()["is_unicast_network_enabled"]
+		)
+		self.assertNotIn("is_unicast_network_enabled", configuration().settings_values())
+
+		with self.assertRaisesRegex(ValueError, "is_unicast_network_enabled must be true or false"):
+			configuration(is_unicast_network_enabled=1)
+
 	def test_an_unknown_server_provider_is_rejected(self) -> None:
 		values = configuration().settings_values()
 		values["server_provider"] = "GCP"
