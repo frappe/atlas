@@ -19,6 +19,8 @@ sudo atlas-vm create
 
 The configuration must contain the Atlas region, Route53, and Let's Encrypt values. Set `atlas.server_provider` to `Generic`, `Scaleway` or `AWS`. Atlas reads the matching provider table. `Generic` has no provider table. Route53 must contain an existing public zone for `atlas.wildcard_domain`. Do not add `*.` to the domain.
 
+Set `atlas.unicast_network = true` when the provider network cannot carry IPv6 multicast between hosts. Atlas setup then enables **Use Unicast Networking**. AWS always uses unicast networking.
+
 Atlas uses the `pilot.site` value with HTTPS as its public URL. Set `atlas.base_url` only if the public URL is different.
 
 The `[atlas.vm_scheduling]` table configures VM placement and optional Metal Server auto-spawn. When auto-spawn is enabled, set both machine fields to names from the selected provider catalogs.

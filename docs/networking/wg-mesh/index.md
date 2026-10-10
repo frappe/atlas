@@ -68,6 +68,8 @@ The [Linux IPv6 sysctl reference](https://docs.kernel.org/networking/ip-sysctl.h
 
 Some underlays cannot carry multicast. In unicast mode, the uplink egress hook wraps each NDP packet in IPv4 protocol 41 and sends one copy to each peer. The receiving uplink hook checks the peer address and removes the IPv4 header.
 
+The mode is kernel state, so a reboot clears it. metald selects unicast mode at start when `wg_mesh.unicast` is true in `metald.toml`, before any VM sends NDP. Each Atlas sync also applies the mode.
+
 When a VM moves, `vm sync` sends an unsolicited neighbor advertisement, so every peer learns the new host at once. `NOT_HERE` only repairs a missed advertisement.
 
 ## WireGuard hook rules

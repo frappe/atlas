@@ -98,6 +98,7 @@ class HostInstallation:
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
 				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
 				"ATLAS_MESH_ADDRESS": settings.wireguard_ip_address,
+				"MESH_UNICAST": "true" if settings.is_unicast_network_enabled else "false",
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,

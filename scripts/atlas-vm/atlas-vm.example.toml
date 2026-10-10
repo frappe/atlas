@@ -24,6 +24,8 @@ region_id = 1
 wildcard_domain = "par-1.example.com"
 private_network_cidr = "10.1.0.0/20"
 private_network_mtu = 1500
+# Set to true when the provider network cannot carry IPv6 multicast between hosts. AWS always uses unicast.
+# unicast_network = true
 
 # Set this URL when Central sends requests to this Atlas region.
 central_jwks_url = ""

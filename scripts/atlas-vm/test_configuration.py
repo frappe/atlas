@@ -147,6 +147,26 @@ class ConfigurationTest(unittest.TestCase):
 		):
 			atlas_vm.Settings.read(self.path)
 
+	def test_unicast_network_is_passed_to_atlas_setup(self) -> None:
+		with patch.object(setup, "generate_password", return_value="password"):
+			self.assertIsNone(
+				setup.Configuration.read(self.path).atlas_setup_values["is_unicast_network_enabled"]
+			)
+
+			self.path.write_text(
+				self.path.read_text().replace("# unicast_network = true", "unicast_network = true")
+			)
+			atlas_vm.Settings.read(self.path)
+			self.assertTrue(
+				setup.Configuration.read(self.path).atlas_setup_values["is_unicast_network_enabled"]
+			)
+
+		self.path.write_text(
+			self.path.read_text().replace("unicast_network = true", 'unicast_network = "yes"')
+		)
+		with self.assertRaisesRegex(atlas_vm.AtlasVmError, "unicast_network must be true or false"):
+			atlas_vm.Settings.read(self.path)
+
 	def test_atlas_settings_are_required(self) -> None:
 		self.path.write_text('[pilot]\nsite = "atlas.example.com"\nletsencrypt_email = "ops@example.com"\n')
 

@@ -237,6 +237,7 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 			"wildcard_domain",
 			"private_network_cidr",
 			"private_network_mtu",
+			"unicast_network",
 			"central_jwks_url",
 			"import_server_id",
 			"import_storage_pool_device",
@@ -344,6 +345,8 @@ def _validate_network_configuration(atlas: dict, path: Path, provider: str) -> N
 	private_network_mtu = _required_integer(atlas, "private_network_mtu", path, "atlas")
 	if private_network_mtu <= 0:
 		raise AtlasVmError(f"{path}: atlas.private_network_mtu must be a positive integer")
+	if not isinstance(atlas.get("unicast_network", False), bool):
+		raise AtlasVmError(f"{path}: atlas.unicast_network must be true or false")
 	try:
 		network = ipaddress.ip_network(atlas.get("private_network_cidr", "10.1.0.0/20"), strict=False)
 	except ValueError as error:

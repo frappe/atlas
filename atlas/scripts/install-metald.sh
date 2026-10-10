@@ -18,6 +18,7 @@ firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
 mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
+mesh_unicast=${MESH_UNICAST:-false}
 
 base_dir=/var/lib/metal
 machines_dir=$base_dir/machines
@@ -150,6 +151,7 @@ interface = "$wireguard_interface"
 binary_path = "$mesh_binary_path"
 uplink = "$MESH_UPLINK_INTERFACE"
 controller_address = "$ATLAS_MESH_ADDRESS"
+unicast = $mesh_unicast
 EOF
 }
 
@@ -188,6 +190,11 @@ if [ -f "$config_file" ]; then
 			sed -i "s|^controller_address[[:space:]]*=.*|controller_address = \"$ATLAS_MESH_ADDRESS\"|" "$config_file"
 		else
 			sed -i "/^uplink = /a controller_address = \"$ATLAS_MESH_ADDRESS\"" "$config_file"
+		fi
+		if grep -q '^unicast[[:space:]]*=' "$config_file"; then
+			sed -i "s|^unicast[[:space:]]*=.*|unicast = $mesh_unicast|" "$config_file"
+		else
+			sed -i "/^controller_address[[:space:]]*=/a unicast = $mesh_unicast" "$config_file"
 		fi
 		sed -i "s|^binary_path = \"/usr/local/bin/atlas-wg-mesh\"|binary_path = \"$mesh_binary_path\"|" "$config_file"
 	else
