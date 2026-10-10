@@ -11,6 +11,7 @@
 #include <linux/ipv6.h>
 #include <linux/pkt_cls.h>
 
+#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
@@ -59,6 +60,19 @@ struct pseudo_header
 	__u8 zero[3];
 	__u8 next_header;
 };
+
+#define CHECKSUM_PARTIAL 3
+
+struct sk_buff
+{
+	__u8 ip_summed : 2;
+	__u8 csum_not_inet : 1;
+	__u16 csum_start;
+	__u16 csum_offset;
+	__u16 mac_header;
+} __attribute__((preserve_access_index));
+
+extern void *bpf_cast_to_kern_ctx(void *) __ksym;
 
 /* Address policy. */
 static __always_inline __u16 ipv6_prefix(const struct in6_addr *address)
@@ -118,6 +132,36 @@ static __always_inline __u16 fold_checksum(__u64 sum)
 	return (__u16)~sum;
 }
 
+/* A guest packet can keep a pending checksum offload. Make its write land on the ICMPv6 checksum and produce it. */
+static __always_inline int fit_pending_checksum(struct __sk_buff *packet, const struct ipv6hdr *ip6, struct ndp_with_mac *message)
+{
+	struct sk_buff *kernel_packet = bpf_cast_to_kern_ctx(packet);
+	__u16 offset;
+	__s32 shift;
+	__s64 sum;
+
+	if (BPF_CORE_READ_BITFIELD(kernel_packet, ip_summed) != CHECKSUM_PARTIAL)
+		return 0;
+
+	offset = kernel_packet->csum_offset;
+	if (BPF_CORE_READ_BITFIELD(kernel_packet, csum_not_inet) || offset < 2 || offset > 18 || (offset & 1))
+		return -1;
+
+	shift = kernel_packet->csum_start - kernel_packet->mac_header + offset - 2 - (ETH_HLEN + sizeof(*ip6));
+	if (shift && bpf_skb_adjust_room(packet, -shift, BPF_ADJ_ROOM_MAC, BPF_F_ADJ_ROOM_FIXED_GSO))
+		return -1;
+
+	sum = bpf_csum_diff(NULL, 0, (__be32 *)message, sizeof(*message), 0);
+	if (sum < 0)
+		return -1;
+	for (int index = 0; index < 8; index++)
+		if (index >= (18 - offset) / 2)
+			sum += ip6->daddr.s6_addr16[index];
+	message->icmp.icmp6_cksum = fold_checksum(sum);
+
+	return 0;
+}
+
 /* NDP packet creation. The caller supplies complete Ethernet, IPv6, and message values. */
 static __always_inline int replace_with_ndp(struct __sk_buff *packet, struct ethhdr *eth, struct ipv6hdr *ip6, struct ndp_with_mac *message)
 {
@@ -144,7 +188,8 @@ static __always_inline int replace_with_ndp(struct __sk_buff *packet, struct eth
 		return -1;
 	message->icmp.icmp6_cksum = fold_checksum(checksum);
 
-	return bpf_skb_change_tail(packet, ETH_HLEN + sizeof(*ip6) + sizeof(*message), 0) ||
+	return fit_pending_checksum(packet, ip6, message) ||
+		   bpf_skb_change_tail(packet, ETH_HLEN + sizeof(*ip6) + sizeof(*message), 0) ||
 		   bpf_skb_store_bytes(packet, 0, eth, sizeof(*eth), BPF_F_INVALIDATE_HASH) ||
 		   bpf_skb_store_bytes(packet, ETH_HLEN, ip6, sizeof(*ip6), BPF_F_INVALIDATE_HASH) ||
 		   bpf_skb_store_bytes(packet, ETH_HLEN + sizeof(*ip6), message, sizeof(*message), BPF_F_INVALIDATE_HASH);
