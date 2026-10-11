@@ -41,6 +41,16 @@ reported_version() {
 	echo "$tool_version"
 }
 
+# uplink_nic_firmware prints "driver firmware" for the uplink and each device below it.
+uplink_nic_firmware() {
+	local uplink_path=/sys/class/net/$1 device
+
+	for device in "$uplink_path" "$uplink_path"/lower_* "$uplink_path"/lower_*/lower_*; do
+		[ -e "$device" ] || continue
+		ethtool -i "$(basename "$(readlink -f "$device")")" | awk '/^driver:/ { driver = $2 } /^firmware-version:/ { print driver, $2 }'
+	done
+}
+
 # service_is_stable checks that the metal service stays active.
 service_is_stable() {
 	local checks_remaining=5
@@ -56,10 +66,10 @@ service_is_stable() {
 
 
 step "install required packages"
-if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null || ! command -v nc >/dev/null; then
+if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null || ! command -v nc >/dev/null || ! command -v ethtool >/dev/null; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt update -qq
-	apt install -y -qq curl iptables netcat-openbsd openssl tar zfsutils-linux
+	apt install -y -qq curl ethtool iptables netcat-openbsd openssl tar zfsutils-linux
 else
 	skip "packages"
 fi
@@ -219,6 +229,30 @@ EOF
 fi
 
 
+step "NIC workarounds"
+# Add a case for each NIC driver or firmware with a known fault. A VLAN and a bond pass promiscuous mode to their NICs.
+promiscuous_uplink=""
+blacklisted_modules=()
+while read -r driver firmware; do
+	case "$driver $firmware" in
+	# Stops receiving in all-multicast mode, which bnxt_en enters above 16 multicast addresses.
+	# bnxt_re stalls udev at boot, so the storage pool does not import.
+	"bnxt_en "*)
+		promiscuous_uplink=$MESH_UPLINK_INTERFACE
+		blacklisted_modules+=(bnxt_re)
+		;;
+	esac
+done < <(uplink_nic_firmware "$MESH_UPLINK_INTERFACE")
+
+initramfs_changed=""
+for module in "${blacklisted_modules[@]}"; do
+	[ ! -f "/etc/modprobe.d/blacklist-$module.conf" ] || continue
+	echo "blacklist $module" > "/etc/modprobe.d/blacklist-$module.conf"
+	initramfs_changed=1
+done
+[ -z "$initramfs_changed" ] || update-initramfs -u
+
+
 step "network setup"
 install -d -m 0755 /usr/local/lib/metal
 cat > /usr/local/lib/metal/network-setup <<EOF
@@ -237,6 +271,9 @@ iptables -C FORWARD -i vh+ -d "$PRIVATE_NETWORK_CIDR" -j DROP 2>/dev/null ||
 iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE 2>/dev/null ||
 	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE
 EOF
+if [ -n "$promiscuous_uplink" ]; then
+	echo "ip link set $promiscuous_uplink promisc on" >> /usr/local/lib/metal/network-setup
+fi
 chmod 0755 /usr/local/lib/metal/network-setup
 
 
