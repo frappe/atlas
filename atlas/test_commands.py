@@ -90,5 +90,6 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			image_path,
 			kernel_path,
 			"Site File",
+			False,
 		)
 		destroy.assert_called_once_with()
