@@ -73,8 +73,8 @@ func syncPeers(path string, unicast bool) error {
 		_ = writePeerArray(current)
 		return err
 	}
-	if err := setUnicastMode(uplink, unicast); err != nil {
-		return errors.Join(err, writePeerArray(current), setUnicastMode(uplink, wasUnicast))
+	if err := setUnicastNDP(uplink, unicast); err != nil {
+		return errors.Join(err, writePeerArray(current), setUnicastNDP(uplink, wasUnicast))
 	}
 
 	mode := "multicast"
@@ -170,17 +170,9 @@ func writePeerArray(peers []peer) error {
 	return nil
 }
 
-func setUnicastMode(uplink string, enabled bool) error {
-	// Unicast NDP arrives as IPv4 unicast, so only multicast mode needs allmulticast.
+func setUnicastNDP(uplink string, enabled bool) error {
 	if enabled {
-		if err := attachHook(uplink, uplinkEgressProgram, "egress"); err != nil {
-			return err
-		}
-		return runCommand("ip", "link", "set", uplink, "allmulticast", "off")
-	}
-
-	if err := runCommand("ip", "link", "set", uplink, "allmulticast", "on"); err != nil {
-		return err
+		return attachHook(uplink, uplinkEgressProgram, "egress")
 	}
 	return detachHook(uplink, "egress")
 }
