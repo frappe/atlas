@@ -11,7 +11,7 @@
 
 ## Summary
 
-The Mumbai region moved to a new bare-metal host with Broadcom `bnxt_en` NICs in an LACP bond. Each time metald started, the host lost all network traffic within seconds, and only a reboot or console access restored it. WG Mesh set the private uplink to allmulticast. On this NIC and firmware, allmulticast without promiscuous mode stops all receive traffic on the bond. WG Mesh now sets allmulticast only in multicast NDP mode, and the host keeps the bond in promiscuous mode.
+The Mumbai region moved to a new bare-metal host with Broadcom `bnxt_en` NICs in an LACP bond. Each time metald started, the host lost all network traffic within seconds, and only a reboot or console access restored it. WG Mesh set the private uplink to allmulticast. On this NIC and firmware, allmulticast without promiscuous mode stops all receive traffic on the bond. WG Mesh no longer changes the uplink receive mode, and the host keeps the bond in promiscuous mode.
 
 ## Impact
 
@@ -53,6 +53,8 @@ Operators saw the faults directly. SSH to the host timed out, and the console sh
 
 Unicast NDP mode carries NDP in IPv4 unicast packets, so it does not need allmulticast. WG Mesh set allmulticast in both modes.
 
+The driver can also turn on all-multicast by itself. `bnxt_en` filters at most 16 multicast addresses in hardware. Each proxy NDP entry joins one solicited-node group, so a host with many VMs goes above this limit in either NDP mode. Promiscuous mode prevents the stall in both cases.
+
 ### Contributing factors
 
 - Each packet capture put the bond into promiscuous mode, which hid the fault. This made a multicast storm and proxy ARP look like the cause.
@@ -63,7 +65,8 @@ Unicast NDP mode carries NDP in IPv4 unicast packets, so it does not need allmul
 ## Resolution
 
 - WG Mesh sets allmulticast only in multicast NDP mode, and turns it off in unicast mode (PR #351).
-- A systemd-networkd drop-in sets the bond to promiscuous mode. `metal.service` does not start unless the bond is promiscuous.
+- WG Mesh no longer changes the uplink receive mode. Host setup sets it for each provider and NIC (PR #354).
+- A systemd-networkd drop-in sets the bond to promiscuous mode. `metal.service` does not start unless the bond is promiscuous. Hosts with this NIC need promiscuous mode in both NDP modes.
 - `bnxt_re` is blacklisted on hosts with this NIC.
 - The Metal Server is marked as provisioned, and Warpgate has the new host key.
 
