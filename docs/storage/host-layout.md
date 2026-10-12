@@ -29,9 +29,10 @@ This page shows every file and dataset that Metal keeps on a host. After a resta
     ├── status.json                observed state and cleanup progress
     ├── metrics/                  seven days of daily VM usage files
     ├── jailer.env                 arguments for metal-vm@<id>
-    ├── migration/                 only while a migration holds this VM
+    ├── migration/                 migration records and transfer staging
     │   ├── destination.json       destination reservation and progress
-    │   └── source.json            source lock
+    │   ├── source.json            source lock
+    │   └── memory-snapshot/       transferred state, memory, metadata, disk identity
     ├── saved-state/               idle shutdown: state, memory, metadata
     └── firecracker/<vm-id>/root/  the jail. The VM sees this as /
         ├── firecracker            copied in by jailer

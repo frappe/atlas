@@ -18,7 +18,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 - A destination record read before a long operation must be read again before mutation. Otherwise an abort can be lost.
 - Every destination record read-modify-write holds its VM migration lock. Code that already holds the lock uses `writeDestination`. Other code uses `mutateDestination`, which rereads under the lock. The lock is not reentrant.
 - A transfer holds no VM lock while bytes move. The source retains the last acknowledged snapshot as the next incremental base. A received interval counts only when its GUID matches.
-- Each external cutover step is checkpointed before the next step. The source removes its network before the final snapshot. Saved memory never moves to the destination.
+- Each external cutover step is checkpointed before the next step. The source removes its network before the final snapshot. An optional saved memory bundle is bound to the final disk GUID and stays in migration staging.
 - Finish and abort are mutually exclusive. The first request wins. Finish requires a destination in `ready`.
 - A rollback failure keeps both records, locks, and the source disk. The source ends an active stream before unlock or destruction. Two hosts must never own one disk.
 - A source lock expires only before the source stops. Its `expired` tombstone rejects the same migration ID. A `ready` destination does not expire.
@@ -27,7 +27,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 
 ## Extension points
 
-`CreateDestination` persists the optional `migrate_memory_snapshot` request flag and rejects changes to it on an active retry. Missing flags in existing records default to false. The flag does not change runtime or transfer behavior. See the [migration handbook](../../../../docs/compute/migration.md).
+`CreateDestination` persists the optional `migrate_memory_snapshot` request flag and rejects changes to it on an active retry. Missing flags in existing records default to false. `memory.go` owns bundle transfer and its checkpoint. [Memory transfer tests](memory_test.go) check parallel completion, cancellation, source fencing, and checksum verification. See the [migration handbook](../../../../docs/compute/migration.md).
 
 The daemon supplies concrete `vm.MigrationHost` and `storage.MigrationTransfer` values. Private interfaces are test seams within this package. The `vm` package does not import `migration`. The daemon injects `migration.Manager` as `vm.MigrationGuard` with `(*vm.Manager).SetMigrationGuard`.
 

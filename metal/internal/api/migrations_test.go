@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -44,6 +46,8 @@ type stubMigrationManager struct {
 	destroyErr        error
 
 	createMemorySnapshot bool
+	stopMemorySnapshot   bool
+	memoryPath           string
 }
 
 func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, migrateMemorySnapshot bool) (migration.DestinationProgress, error) {
@@ -86,9 +90,10 @@ func (m *stubMigrationManager) StartSourceStream(_ context.Context, migrationID,
 	return m.startErr
 }
 
-func (m *stubMigrationManager) StopSource(_ context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error) {
+func (m *stubMigrationManager) StopSource(_ context.Context, migrationID, virtualMachineID string, receivedSequence int, memorySnapshot bool) (migration.SourceSnapshot, error) {
 	m.stopArgs = []string{migrationID, virtualMachineID}
 	m.stopReceived = receivedSequence
+	m.stopMemorySnapshot = memorySnapshot
 	return m.snapshot, m.stopErr
 }
 
@@ -434,4 +439,34 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func (m *stubMigrationManager) OpenSourceMemoryFile(context.Context, string, string, int, string) (*os.File, error) {
+	if m.memoryPath != "" {
+		return os.Open(m.memoryPath)
+	}
+	return nil, vm.ErrNotFound
+}
+
+func TestCoordinationMemoryStreamCarriesChecksum(t *testing.T) {
+	path := t.TempDir() + "/snapshot"
+	if err := os.WriteFile(path, []byte("guest snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := &stubMigrationManager{memoryPath: path}
+	router, err := NewCoordination(nil, stub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(router)
+	defer server.Close()
+	tlsConfiguration := server.Client().Transport.(*http.Transport).TLSClientConfig
+	client := migration.NewSourceClient(0, tlsConfiguration)
+	if err := client.ReceiveMemorySnapshot(t.Context(), server.URL, "mig-1", "vm-1", 1, t.TempDir(), 1); err != nil {
+		t.Fatal(err)
+	}
+	do(t, router, http.MethodPost, "/v1/migrations/mig-1/stop?virtual_machine_id=vm-1", `{"migrate_memory_snapshot":true}`, http.StatusOK)
+	if !stub.stopMemorySnapshot {
+		t.Fatal("stop did not preserve the memory request")
+	}
 }

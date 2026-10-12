@@ -24,10 +24,14 @@ The diagram shows the successful path. An abort before completion enters rollbac
 
 1. Copy a full ZFS snapshot, then incremental changes.
 2. Stop the source and remove its network before the final snapshot.
-3. Receive and verify the final disk state.
+3. Receive and verify the final disk state. When `migrate_memory_snapshot` is true, transfer the saved memory bundle in parallel and wait for both transfers.
 4. Create the destination network and apply the source's desired power state.
 
-A stopped VM remains stopped. Saved guest memory does not cross hosts.
+A stopped VM remains stopped. With memory transfer enabled, the source uses `SaveAndStop` before it removes its network and creates the final disk snapshot. A source that is already stopped must have valid saved state. Memory transfer cannot include a resize.
+
+The destination downloads `state`, `memory`, and `metadata.json` over the node mutual-TLS API. It verifies each SHA-256 checksum and atomically publishes the bundle under `machines/<vm-id>/migration/memory-snapshot/`. The bundle includes `disk-snapshot.json` with the final disk sequence and GUID. Each completed transfer has a separate checkpoint, so an interrupted memory copy does not repeat a completed disk copy. An incomplete memory copy restarts from the beginning.
+
+The bundle stays in migration staging. Destination restore is not implemented, so the destination still boots from disk. The staged bundle is never loaded by normal VM reconciliation.
 
 Control calls use the node mutual-TLS listener. Disk bytes use a separate one-shot TLS stream on port `9002`:
 
@@ -42,7 +46,7 @@ The destination verifies the snapshot GUID and can resume an interrupted receive
 The destination stays ready until the Atlas app decides:
 
 - **Finish:** destroy the stopped source and remove transfer data after regional assignment changes.
-- **Abort:** remove destination resources and cold-start the source if needed.
+- **Abort:** remove destination resources and restore the source if needed. Memory transfers restore the source from its retained saved state; disk-only transfers cold-start it.
 
 An unfinished record on either host means recovery is not complete.
 

@@ -77,7 +77,7 @@ func TestStopSourceReturnsFinalSnapshot(t *testing.T) {
 	}))
 	defer server.Close()
 
-	snapshot, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2)
+	snapshot, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}

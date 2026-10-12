@@ -13,7 +13,7 @@ Atlas excludes the source host and checks destination capacity. Desk users canno
 
 The VM `migrate` method accepts the optional boolean `migrate_memory_snapshot`, which defaults to `false`. Atlas stores this flag and sends it to Metal when true.
 
-The flag records intent only. It does not enable memory transfer or restore, so migrations still use the disk-only sequence below.
+The flag enables memory snapshot transfer during the final disk copy. Destination restore is not implemented, so the destination still boots from disk. See the [migration engine](migration-engine.md#copy-the-disk) for transfer and retry behavior.
 
 A stopped VM also moves when a resize does not fit on its host. The migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`, and commits the new host and shape together. On failure, the VM keeps its old host and shape. The tenant API reports `migrating` during the move.
 
@@ -28,7 +28,7 @@ flowchart LR
     E --> F[Atlas moves public IPs and finishes cleanup]
 ```
 
-Metal copies a full ZFS snapshot, then smaller changes while the VM runs. It starts cutover when the change is below `migration.final_delta_mib`, after 16 intervals, or after 30 minutes. Cutover removes the source network, stops the source, and copies the final change. Saved guest memory does not move.
+Metal copies a full ZFS snapshot, then smaller changes while the VM runs. It starts cutover when the change is below `migration.final_delta_mib`, after 16 intervals, or after 30 minutes. Cutover stops the source, removes its network, and copies the final change. With memory transfer enabled, the saved bundle travels in parallel with the final disk change.
 
 | Source state | Destination state |
 | --- | --- |
@@ -66,7 +66,7 @@ Metal hides the incoming VM from normal reads until the move finishes.
 
 `memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `is_memory_snapshot` checkbox is checked. This checkbox reflects `migrate_memory_snapshot`.
 
-The snapshot status defaults to `not_started` and supports `creating`, `transferring`, `restoring`, `completed`, `failed`, and `aborted`. Memory transfer and restore are not implemented, so this field remains `not_started` even when the disk migration completes.
+The snapshot status defaults to `not_started` and supports `creating`, `transferring`, `restoring`, `completed`, `failed`, and `aborted`. Metal memory transfer progress is not connected to this field, so it remains `not_started` even when the bundle transfers.
 
 ## Failure and recovery
 
@@ -74,7 +74,7 @@ The snapshot status defaults to `not_started` and supports `creating`, `transfer
 | --- | --- |
 | Uncertain response | Retry with the same migration ID. Atlas polls Metal and records progress. |
 | Abort before source stop | Removes destination data and unlocks the source. |
-| Abort after source stop | Cold-starts the source before unlocking it. |
+| Abort after source stop | Restores saved source memory when requested; otherwise cold-starts the source before unlocking it. |
 | Finish | Valid only after `ready`. The first finish or abort wins. |
 | Network interruption | Resumes the saved snapshot sequence. |
 | Snapshot identity mismatch | Fails the migration and keeps data for inspection. |
