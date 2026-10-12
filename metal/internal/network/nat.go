@@ -105,9 +105,8 @@ func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, pu
 	})
 }
 
-// releasePublicIPv4Claims removes every public address claim of the VM except
-// keep on the current interface. Proxy entries on any other interface are
-// stale: the allocator that installed them is gone or the route has moved.
+// releasePublicIPv4Claims removes the VM's public address claims, keeping a
+// wanted address on the current interface.
 func releasePublicIPv4Claims(ctx context.Context, userID uint32, keep, currentInterface string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
@@ -128,7 +127,6 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, keep, currentIn
 			return fmt.Errorf("release the public IPv4 claim of %s: %w", fields[0], err)
 		}
 		// The route marks the claim, so it goes only after the proxy entry.
-		// A kept address keeps its route.
 		if fields[0] == keep {
 			continue
 		}
@@ -147,9 +145,8 @@ func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string
 	})
 }
 
-// releasePublicIPv6Claims removes every public address claim of the VM except
-// keep on the current interface. The mesh owns the host prefix routes, so only
-// the proxy entries this allocator installed are removed.
+// releasePublicIPv6Claims removes the VM's proxy entries, keeping a wanted
+// address on the current interface. Host prefix routes belong to the mesh.
 func releasePublicIPv6Claims(ctx context.Context, userID uint32, keep, currentInterface string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
@@ -173,11 +170,9 @@ func releasePublicIPv6Claims(ctx context.Context, userID uint32, keep, currentIn
 	return nil
 }
 
-// removeProxyNeighbours deletes the proxy entries of one address on every
-// interface except the current one when the address is still wanted. Entries
-// are device-scoped, so a moved route leaves the old entry behind; listing
-// without a device finds it wherever it lives. A retried release finds nothing
-// and does not fail.
+// removeProxyNeighbours deletes one address's proxy entries on every interface
+// except the current one when the address is still wanted. Entries are
+// device-scoped, so a moved route strands the old entry.
 func removeProxyNeighbours(ctx context.Context, familyFlag, address string, keep bool, currentInterface string) error {
 	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address)
 	if err != nil {

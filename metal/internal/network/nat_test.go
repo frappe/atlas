@@ -100,8 +100,6 @@ eth0	00000000	0102030A	0003	0	0	100	00000000	0	0	0
 	}
 }
 
-// fakeIP installs argv-recording shims for the named commands (default: ip),
-// serving canned outputs keyed by sanitized argv. It returns the call log path.
 func fakeIP(t *testing.T, fixtures map[string]string, commands ...string) string {
 	t.Helper()
 

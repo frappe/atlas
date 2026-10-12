@@ -50,12 +50,10 @@ type LinuxAllocator struct {
 	now            func() time.Time
 	logger         *slog.Logger
 	// routeTablePath is the kernel route table naming the default device.
-	// Tests substitute a fixture table.
 	routeTablePath string
 }
 
-// NewLinuxAllocator returns a Linux network allocator. The public claim
-// interface is resolved per operation: host routing can change while metald runs.
+// NewLinuxAllocator returns a Linux network allocator that resolves the public claim interface per operation.
 func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor, logger *slog.Logger) *LinuxAllocator {
 	var registrar meshRegistrar
 	if mesh != nil {
@@ -83,7 +81,6 @@ func newLinuxAllocator(mesh meshRegistrar, trafficMonitor trafficMonitor, logger
 	}
 }
 
-// defaultRouteInterface returns the IPv4 default route device.
 func (allocator *LinuxAllocator) defaultRouteInterface() (string, error) {
 	return defaultRouteInterfaceFromFile(allocator.routeTablePath)
 }
@@ -281,9 +278,8 @@ func (allocator *LinuxAllocator) currentTime() time.Time {
 	return time.Now()
 }
 
-// removeUnwanted tears down what this request no longer asks for. Cleanup reads
-// the current route but never depends on it: entries on a stale interface are
-// exactly what must go, with or without a default route.
+// removeUnwanted tears down what this request no longer asks for, on any
+// interface: cleanup must not depend on current routing.
 func (allocator *LinuxAllocator) removeUnwanted(ctx context.Context, request request) error {
 	currentInterface, _ := allocator.defaultRouteInterface()
 	if err := releasePublicIPv4Claims(ctx, request.UserID, request.PublicIPv4, currentInterface); err != nil {
@@ -327,8 +323,7 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 	if err := convergeNamespaceRoutes(ctx, request); err != nil {
 		return err
 	}
-	// Resolve once before touching public addresses: a missing route fails
-	// before anything is installed, and one interface serves both families.
+	// One interface serves both families; resolve it before installing anything.
 	var currentInterface string
 	if request.PublicIPv4 != "" || request.HasPublicIPv6Address() {
 		var err error
