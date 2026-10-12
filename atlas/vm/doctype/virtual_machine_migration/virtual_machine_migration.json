@@ -8,6 +8,8 @@
   "section_break_overview",
   "virtual_machine",
   "status",
+  "is_memory_snapshot",
+  "memory_snapshot_status",
   "progress_percent",
   "column_break_overview",
   "source_metal_server",
@@ -77,6 +79,23 @@
    "read_only": 1,
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "is_memory_snapshot",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Is Memory Snapshot",
+   "read_only": 1
+  },
+  {
+   "default": "not_started",
+   "depends_on": "eval:doc.is_memory_snapshot",
+   "fieldname": "memory_snapshot_status",
+   "fieldtype": "Select",
+   "label": "Memory Snapshot Status",
+   "options": "not_started\ncreating\ntransferring\nrestoring\ncompleted\nfailed\naborted",
+   "read_only": 1,
+   "reqd": 1
   },
   {
    "default": "0",
