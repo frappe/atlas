@@ -68,7 +68,7 @@ The [Linux IPv6 sysctl reference](https://docs.kernel.org/networking/ip-sysctl.h
 
 Some underlays cannot carry multicast. In unicast mode, the uplink egress hook wraps each NDP packet in IPv4 protocol 41 and sends one copy to each peer. The receiving uplink hook checks the peer address and removes the IPv4 header.
 
-WG Mesh does not change the uplink receive mode. Each proxy NDP entry joins its solicited-node group, so the NIC receives the lookups for local VMs.
+WG Mesh does not change the uplink receive mode. The metald install sets the uplink to allmulticast, so the NIC receives every neighbor lookup.
 
 When a VM moves, `vm sync` sends an unsolicited neighbor advertisement, so every peer learns the new host at once. `NOT_HERE` only repairs a missed advertisement.
 
