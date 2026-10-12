@@ -11,7 +11,7 @@
 
 ## Summary
 
-The Mumbai region moved to a new bare-metal host with Broadcom `bnxt_en` NICs in an LACP bond. Each time metald started, the host lost all network traffic within seconds, and only a reboot or console access restored it. WG Mesh set the private uplink to allmulticast. On this NIC and firmware, allmulticast without promiscuous mode stops all receive traffic on the bond. WG Mesh no longer changes the uplink receive mode, and the host keeps the bond in promiscuous mode.
+The Mumbai region moved to a new bare-metal host with Broadcom `bnxt_en` NICs in an LACP bond. Each time metald started, the host lost all network traffic within seconds, and only a reboot or console access restored it. WG Mesh set the private uplink to allmulticast. On this NIC and firmware, allmulticast without promiscuous mode stops all receive traffic on the bond. The fix is NIC firmware `230.0.1.0/pkg 230.1.116.0` or later.
 
 ## Impact
 
@@ -53,7 +53,9 @@ Operators saw the faults directly. SSH to the host timed out, and the console sh
 
 Unicast NDP mode carries NDP in IPv4 unicast packets, so it does not need allmulticast. WG Mesh set allmulticast in both modes.
 
-The driver can also turn on all-multicast by itself. `bnxt_en` filters at most 16 multicast addresses in hardware. Each proxy NDP entry joins one solicited-node group, so a host with many VMs goes above this limit in either NDP mode. Promiscuous mode prevents the stall in both cases.
+The driver can also turn on all-multicast by itself. `bnxt_en` filters at most 16 multicast addresses in hardware. Each proxy NDP entry joins one solicited-node group, so a host with many VMs goes above this limit in either NDP mode.
+
+The fault is in NIC firmware `214.4.9.9/pkg 214.0.286.17`. Firmware `230.0.1.0/pkg 230.1.116.0` receives in all-multicast mode. On 2026-10-12, the same test on the same hardware stalled within 10 seconds on firmware 214 and passed on firmware 230.
 
 ### Contributing factors
 
@@ -64,37 +66,18 @@ The driver can also turn on all-multicast by itself. `bnxt_en` filters at most 1
 
 ## Resolution
 
-- WG Mesh sets allmulticast only in multicast NDP mode, and turns it off in unicast mode (PR #351).
-- WG Mesh no longer changes the uplink receive mode. Host setup sets it for each provider and NIC (PR #354).
-- A systemd-networkd drop-in sets the bond to promiscuous mode. `metal.service` does not start unless the bond is promiscuous. Hosts with this NIC need promiscuous mode in both NDP modes.
-- `bnxt_re` is blacklisted on hosts with this NIC.
+- The NIC firmware on all hosts is upgraded to `230.0.1.0/pkg 230.1.116.0`. This is the fix. Use this version or later.
+- The metald install sets allmulticast on the mesh uplink, and fails on `bnxt_en` firmware before 230 (PR #359).
+- WG Mesh does not change the uplink receive mode (PR #354).
+- The metald install blacklists `bnxt_re` on hosts with this NIC (PR #355).
 - The Metal Server is marked as provisioned, and Warpgate has the new host key.
 
-Each host with this NIC gets these files before the Metal setup. The Metal setup does not change them.
-
-`/etc/systemd/network/10-netplan-bond0.network.d/promisc.conf` sets promiscuous mode at boot. The directory name must match the file that netplan generates for the bond:
-
-```ini
-[Link]
-Promiscuous=yes
-```
-
-`/etc/systemd/system/metal.service.d/promisc.conf` stops metald when the bond is not promiscuous:
-
-```ini
-[Service]
-ExecStartPre=/bin/sh -c 'ip -d link show bond0 | grep -q "promiscuity [1-9]"'
-```
-
-`/etc/modprobe.d/blacklist-bnxt_re.conf` stops the RoCE driver. Run `update-initramfs -u` after you add it:
-
-```text
-blacklist bnxt_re
-```
+Before the upgrade, the hosts kept the bond in promiscuous mode as a workaround (PR #355). The upgrade removed the workaround.
 
 ## Lessons
 
 - A packet capture changes the NIC state. Repeat a network test without the capture before you accept a cause.
 - Set a NIC mode only when the selected feature needs it.
+- When a NIC fails in a standard mode, compare its firmware with the latest vendor release first.
 - A manual install step must leave the same Atlas state as the provisioning flow.
 - A host that keeps its name but changes hardware needs a new trusted SSH host key.
