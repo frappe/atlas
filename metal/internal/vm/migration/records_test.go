@@ -50,6 +50,55 @@ func TestAColdCopyReportsCopyingUntilTheFinalSnapshotArrives(t *testing.T) {
 	}
 }
 
+func TestMemoryProgressSurvivesReloadAndTerminalCleanup(t *testing.T) {
+	store := newMigrationStore(t.TempDir())
+	record := newDestinationRecord()
+	record.MigrateMemorySnapshot = true
+	for _, step := range []struct {
+		state   destinationState
+		stopped bool
+		failure bool
+		want    string
+	}{
+		{destinationPreparing, false, false, "not_started"},
+		{destinationCopying, false, false, "not_started"},
+		{destinationStopping, false, false, "creating"},
+		{destinationStopping, true, false, "transferring"},
+		{destinationCreatingNetwork, true, false, "restoring"},
+		{destinationApplyingState, true, false, "restoring"},
+		{destinationReady, true, false, "completed"},
+		{destinationFinishing, true, false, "completed"},
+		{destinationFailed, true, true, "failed"},
+		{destinationRemovingRuntime, true, true, "failed"},
+		{destinationRestoringSource, true, false, "aborted"},
+		{destinationCompleted, true, false, "completed"},
+		{destinationAborted, true, false, "aborted"},
+	} {
+		record.State, record.SourceStopped = step.state, step.stopped
+		record.Error = nil
+		if step.failure {
+			record.Error = &vm.OperationError{Code: "transfer_failed"}
+		}
+		if step.state.terminal() {
+			record = terminalDestinationRecord(record, step.state, time.Now().UTC())
+		}
+		if err := store.writeDestination(record); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := store.readDestination(record.VirtualMachineID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := loaded.progress().MemorySnapshotStatus; got != step.want {
+			t.Fatalf("%s: snapshot status = %s, want %s", step.state, got, step.want)
+		}
+		loaded.MigrateMemorySnapshot = false
+		if got := loaded.progress().MemorySnapshotStatus; got != "" {
+			t.Fatalf("disk-only migration reported snapshot status %s", got)
+		}
+	}
+}
+
 func TestTerminalRecordNeedsNoPhase(t *testing.T) {
 	store := newMigrationStore(t.TempDir())
 	record := newDestinationRecord()

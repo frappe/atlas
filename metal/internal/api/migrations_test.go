@@ -251,6 +251,7 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	finishedAt := time.Date(2026, time.September, 20, 12, 0, 42, 0, time.UTC)
 	stub := &stubMigrationManager{record: migration.DestinationProgress{
 		ID: "mig-1", VirtualMachineID: "vm-1", Status: migration.StatusRunning, Phase: migration.PhaseCopying,
+		MemorySnapshotStatus: "transferring",
 		Intervals: []migration.TransferProgress{
 			{Sequence: 1, StartedAt: time.Date(2026, time.September, 20, 12, 0, 0, 0, time.UTC), FinishedAt: finishedAt, DurationSeconds: 42, BytesTransferred: 1024, TotalBytes: 1024, Completed: true},
 			{Sequence: 2, BytesTransferred: 256, TotalBytes: 1024, ThroughputMiBps: 64},
@@ -265,6 +266,9 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	}
 	if len(response.Transfers) != 2 {
 		t.Fatalf("response = %+v", response)
+	}
+	if response.MemorySnapshotStatus != "transferring" {
+		t.Fatalf("snapshot status = %q", response.MemorySnapshotStatus)
 	}
 	transfer := response.Transfers[0]
 	if transfer.Sequence != 1 || transfer.StartedAt.IsZero() || transfer.FinishedAt == nil {
