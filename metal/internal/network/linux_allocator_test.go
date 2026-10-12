@@ -229,12 +229,10 @@ func TestAddWantedFailsLoudWithoutDefaultRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldRouteTable := procNetRoute
-	procNetRoute = withoutRoute
-	defer func() { procNetRoute = oldRouteTable }()
 	logPath := fakeIP(t, nil, "ip", "iptables", "ip6tables", "sysctl")
 
 	allocator := newLinuxAllocator(nil, nil, nil)
+	allocator.routeTablePath = withoutRoute
 	wanted := request{
 		NetworkConfiguration: vm.NetworkConfiguration{
 			PublicIPv4:        "192.0.2.10",
@@ -252,7 +250,7 @@ func TestAddWantedFailsLoudWithoutDefaultRoute(t *testing.T) {
 		t.Errorf("failed claim installed proxy state:\n%s", calls)
 	}
 
-	procNetRoute = withRoute
+	allocator.routeTablePath = withRoute
 	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}

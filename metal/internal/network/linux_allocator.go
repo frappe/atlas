@@ -49,6 +49,9 @@ type LinuxAllocator struct {
 	firewallAudits map[string]firewallAudit
 	now            func() time.Time
 	logger         *slog.Logger
+	// routeTablePath is the kernel route table naming the default device.
+	// Tests substitute a fixture table.
+	routeTablePath string
 }
 
 // NewLinuxAllocator returns a Linux network allocator. The public claim
@@ -76,7 +79,13 @@ func newLinuxAllocator(mesh meshRegistrar, trafficMonitor trafficMonitor, logger
 		firewallAudits: make(map[string]firewallAudit),
 		now:            time.Now,
 		logger:         logger,
+		routeTablePath: "/proc/net/route",
 	}
+}
+
+// defaultRouteInterface returns the IPv4 default route device.
+func (allocator *LinuxAllocator) defaultRouteInterface() (string, error) {
+	return defaultRouteInterfaceFromFile(allocator.routeTablePath)
 }
 
 // Ensure converges all host network resources to the requested state.
@@ -276,7 +285,7 @@ func (allocator *LinuxAllocator) currentTime() time.Time {
 // the current route but never depends on it: entries on a stale interface are
 // exactly what must go, with or without a default route.
 func (allocator *LinuxAllocator) removeUnwanted(ctx context.Context, request request) error {
-	currentInterface, _ := defaultRouteInterface()
+	currentInterface, _ := allocator.defaultRouteInterface()
 	if err := releasePublicIPv4Claims(ctx, request.UserID, request.PublicIPv4, currentInterface); err != nil {
 		return err
 	}
@@ -323,7 +332,7 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 	var currentInterface string
 	if request.PublicIPv4 != "" || request.HasPublicIPv6Address() {
 		var err error
-		currentInterface, err = defaultRouteInterface()
+		currentInterface, err = allocator.defaultRouteInterface()
 		if err != nil {
 			return fmt.Errorf("claim a public address without a default route: %w", err)
 		}

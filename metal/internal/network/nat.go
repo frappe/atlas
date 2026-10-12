@@ -81,15 +81,6 @@ func ensurePublicIPv4(ctx context.Context, virtualMachineID string, userID uint3
 	})
 }
 
-// procNetRoute is the kernel route table that names the default device.
-// Tests substitute a fixture table.
-var procNetRoute = "/proc/net/route"
-
-// defaultRouteInterface returns the IPv4 default route device. WG Mesh uses the same public interface.
-func defaultRouteInterface() (string, error) {
-	return defaultRouteInterfaceFromFile(procNetRoute)
-}
-
 func defaultRouteInterfaceFromFile(path string) (string, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {

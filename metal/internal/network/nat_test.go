@@ -156,7 +156,7 @@ func TestReleasePublicIPv4ClaimsDropsStaleInterfaces(t *testing.T) {
 	fixtures := map[string]string{
 		fixtureKey("-o", "link", "show"):                                    "1: lo: <LOOPBACK> mtu 65536\n7: vh-7@if9: <BROADCAST> mtu 1500\n",
 		fixtureKey("-4", "route", "show", "dev", "vh-7", "proto", "static"): "192.0.2.10 dev vh-7 scope link\n192.0.2.11 dev vh-7 scope link\n",
-		fixtureKey("-4", "neigh", "show", "proxy", "192.0.2.10"):            "192.0.2.10 dev ethB proxy\n",
+		fixtureKey("-4", "neigh", "show", "proxy", "192.0.2.10"):            "192.0.2.10 dev ethB proxy\n192.0.2.10 dev ethA proxy\n",
 		fixtureKey("-4", "neigh", "show", "proxy", "192.0.2.11"):            "192.0.2.11 dev ethA proxy\n",
 	}
 	logPath := fakeIP(t, fixtures)
@@ -168,7 +168,10 @@ func TestReleasePublicIPv4ClaimsDropsStaleInterfaces(t *testing.T) {
 	if !strings.Contains(calls, "-4 neigh del proxy 192.0.2.11 dev ethA") {
 		t.Errorf("stale proxy entry was not deleted:\n%s", calls)
 	}
-	if strings.Contains(calls, "del proxy 192.0.2.10") {
+	if !strings.Contains(calls, "-4 neigh del proxy 192.0.2.10 dev ethA") {
+		t.Errorf("moved wanted entry was not deleted from the old interface:\n%s", calls)
+	}
+	if strings.Contains(calls, "del proxy 192.0.2.10 dev ethB") {
 		t.Errorf("kept proxy entry was deleted:\n%s", calls)
 	}
 	if !strings.Contains(calls, "route del 192.0.2.11/32 dev vh-7") {
@@ -195,7 +198,7 @@ func TestReleasePublicIPv6ClaimsDropsStaleInterfaces(t *testing.T) {
 		fixtureKey("-o", "link", "show"): "1: lo: <LOOPBACK> mtu 65536\n7: vh-7@if9: <BROADCAST> mtu 1500\n",
 		fixtureKey("-6", "route", "show", "dev", "vh-7"): "2001:db8::10 via fe80::1 dev vh-7 metric 1024\n" +
 			"2001:db8::11 via fe80::1 dev vh-7 metric 1024\n",
-		fixtureKey("-6", "neigh", "show", "proxy", "2001:db8::10"): "2001:db8::10 dev ethB proxy\n",
+		fixtureKey("-6", "neigh", "show", "proxy", "2001:db8::10"): "2001:db8::10 dev ethB proxy\n2001:db8::10 dev ethA proxy\n",
 		fixtureKey("-6", "neigh", "show", "proxy", "2001:db8::11"): "2001:db8::11 dev ethA proxy\n",
 	}
 	logPath := fakeIP(t, fixtures)
@@ -207,7 +210,10 @@ func TestReleasePublicIPv6ClaimsDropsStaleInterfaces(t *testing.T) {
 	if !strings.Contains(calls, "-6 neigh del proxy 2001:db8::11 dev ethA") {
 		t.Errorf("stale proxy entry was not deleted:\n%s", calls)
 	}
-	if strings.Contains(calls, "del proxy 2001:db8::10") {
+	if !strings.Contains(calls, "-6 neigh del proxy 2001:db8::10 dev ethA") {
+		t.Errorf("moved wanted entry was not deleted from the old interface:\n%s", calls)
+	}
+	if strings.Contains(calls, "del proxy 2001:db8::10 dev ethB") {
 		t.Errorf("kept proxy entry was deleted:\n%s", calls)
 	}
 }
