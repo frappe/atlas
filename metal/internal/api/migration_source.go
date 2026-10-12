@@ -1,7 +1,11 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 
@@ -77,11 +81,37 @@ func (s *Server) stopMigrationSource(c echo.Context) error {
 	if request.ReceivedSequence < 0 {
 		return badRequest("invalid received_sequence")
 	}
-	snapshot, err := s.migrationManager.StopSource(c.Request().Context(), identifier, virtualMachineID, request.ReceivedSequence)
+	snapshot, err := s.migrationManager.StopSource(c.Request().Context(), identifier, virtualMachineID, request.ReceivedSequence, request.MigrateMemorySnapshot)
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, snapshot)
+}
+
+// getMigrationMemoryFile streams one saved-state file over the node TLS listener.
+func (s *Server) getMigrationMemoryFile(c echo.Context) error {
+	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
+	if err != nil {
+		return err
+	}
+	sequence, err := strconv.Atoi(c.QueryParam("sequence"))
+	if err != nil || sequence < 1 {
+		return badRequest("invalid sequence")
+	}
+	file, err := s.migrationManager.OpenSourceMemoryFile(c.Request().Context(), identifier, virtualMachineID, sequence, c.QueryParam("file"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	c.Response().Header().Set("Content-Type", "application/octet-stream")
+	c.Response().Header().Set("Trailer", "X-Snapshot-SHA256")
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(c.Response(), hash), file); err != nil {
+		return err
+	}
+	c.Response().Header().Set("X-Snapshot-SHA256", hex.EncodeToString(hash.Sum(nil)))
+	return nil
 }
 
 // startMigrationSource restores the source during rollback.

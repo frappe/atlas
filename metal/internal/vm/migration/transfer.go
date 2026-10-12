@@ -163,11 +163,12 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 		record.ID,
 		record.VirtualMachineID,
 		lastCompletedSequence(record),
+		record.MigrateMemorySnapshot,
 	)
 	if err != nil {
 		return err
 	}
-	if final.Sequence < 1 {
+	if final.Sequence < 1 || (record.MigrateMemorySnapshot && final.GUID == "") {
 		return m.failTransfer(ctx, record, "source returned an invalid final sequence")
 	}
 
@@ -181,7 +182,7 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 	if record.State != destinationStopping {
 		return nil
 	}
-	if err := m.receiveSnapshot(ctx, record, final, 0); err != nil {
+	if err := m.receiveFinalSnapshots(ctx, record, final); err != nil {
 		return err
 	}
 
@@ -266,6 +267,14 @@ func (m *Manager) intervalThroughput(record destinationRecord) int {
 }
 
 func (m *Manager) receiveSnapshot(ctx context.Context, record destinationRecord, snapshot SourceSnapshot, throughputMiBps int) error {
+	for _, interval := range record.Intervals {
+		if interval.Sequence == snapshot.Sequence && interval.Completed {
+			if interval.GUID != snapshot.GUID {
+				return m.failTransfer(ctx, record, "completed snapshot GUID does not match the source")
+			}
+			return nil
+		}
+	}
 	resumeToken, err := m.disks.ReceiveResumeToken(ctx, record.VirtualMachineID)
 	if err != nil {
 		return err

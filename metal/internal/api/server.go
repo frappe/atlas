@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 
 	"github.com/labstack/echo/v4"
 
@@ -69,7 +70,8 @@ type MigrationManager interface {
 	LockSource(ctx context.Context, migrationID, virtualMachineID string) (migration.SourceDescription, error)
 	NextSourceSnapshot(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
 	StartSourceStream(ctx context.Context, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
-	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
+	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int, migrateMemorySnapshot bool) (migration.SourceSnapshot, error)
+	OpenSourceMemoryFile(ctx context.Context, migrationID, virtualMachineID string, sequence int, name string) (*os.File, error)
 	StartSourceRollback(ctx context.Context, migrationID, virtualMachineID string) error
 	DestroySource(ctx context.Context, migrationID, virtualMachineID string) error
 	UnlockSource(ctx context.Context, migrationID, virtualMachineID string) error

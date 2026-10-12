@@ -43,6 +43,15 @@ func (host *MigrationHost) NormalizeSourceToStopped(ctx context.Context, virtual
 	}
 }
 
+// SaveSourceMemory saves guest memory before terminating the source process.
+func (host *MigrationHost) SaveSourceMemory(ctx context.Context, virtualMachineID string) error {
+	desired, observed, err := host.manager.newVirtualMachine(virtualMachineID).records()
+	if err != nil {
+		return err
+	}
+	return host.manager.runtime.SaveAndStop(ctx, runtimeMachine(desired, observed.NetworkInterface))
+}
+
 // LimitSourceDisk applies a temporary combined read and write limit before a
 // stream. It never raises the configured limit.
 func (host *MigrationHost) LimitSourceDisk(ctx context.Context, virtualMachineID string, throughputMiBps int) (int, error) {
@@ -105,12 +114,12 @@ func (host *MigrationHost) ApplyMigratedDestinationState(ctx context.Context, vi
 	if err := manager.storage.ResizeDisk(ctx, virtualMachineID, desired.Specification.DiskMiB); err != nil {
 		return fmt.Errorf("grow migrated disk %s: %w", virtualMachineID, err)
 	}
-	return host.RestoreRuntimeState(ctx, virtualMachineID, desired.State)
+	return host.RestoreRuntimeState(ctx, virtualMachineID, desired.State, false)
 }
 
-// RestoreRuntimeState cold-starts running or paused VMs, verifies the result,
+// RestoreRuntimeState starts or restores running or paused VMs, verifies the result,
 // and records state and generations. Stopped VMs stay stopped.
-func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState State) error {
+func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState State, savedState bool) error {
 	manager := host.manager
 	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
 	if err != nil {
@@ -118,7 +127,25 @@ func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachi
 	}
 	machine := runtimeMachine(desired, observed.NetworkInterface)
 
-	resultState, err := manager.coldStartForState(ctx, desiredState, machine)
+	resultState := desiredState
+	if savedState {
+		status, inspectError := manager.runtime.Inspect(ctx, machine)
+		if inspectError != nil {
+			return inspectError
+		}
+		if status.State != desiredState {
+			switch desiredState {
+			case StateRunning:
+				err = manager.runtime.Restore(ctx, machine)
+			case StatePaused:
+				err = manager.runtime.RestorePaused(ctx, machine)
+			default:
+				return &TransitionError{DesiredState: desiredState, ObservedState: status.State}
+			}
+		}
+	} else {
+		resultState, err = manager.coldStartForState(ctx, desiredState, machine)
+	}
 	if err != nil {
 		return err
 	}

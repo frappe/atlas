@@ -201,6 +201,7 @@ type destinationRecord struct {
 	Source                string                    `json:"source"`
 	Resize                *Resize                   `json:"resize,omitempty"`
 	MigrateMemorySnapshot bool                      `json:"migrate_memory_snapshot,omitempty"`
+	MemorySnapshotGUID    string                    `json:"memory_snapshot_guid,omitempty"`
 	State                 destinationState          `json:"state"`
 	Definition            *VirtualMachineDefinition `json:"config,omitempty"`
 	SourceObservedState   vm.State                  `json:"source_observed_state,omitempty"`
@@ -253,6 +254,7 @@ func isValidSourceState(state sourceState) bool {
 }
 
 type sourceRecord struct {
+	MigrateMemorySnapshot   *bool       `json:"migrate_memory_snapshot,omitempty"`
 	SchemaVersion           int         `json:"schema_version"`
 	ID                      string      `json:"id"`
 	VirtualMachineID        string      `json:"virtual_machine_id"`
@@ -389,6 +391,7 @@ func terminalDestinationRecord(record destinationRecord, state destinationState,
 		VirtualMachineID:      record.VirtualMachineID,
 		State:                 state,
 		MigrateMemorySnapshot: record.MigrateMemorySnapshot,
+		MemorySnapshotGUID:    record.MemorySnapshotGUID,
 		CreatedAt:             record.CreatedAt,
 		FinishedAt:            finishedAt,
 	}

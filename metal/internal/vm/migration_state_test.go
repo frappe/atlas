@@ -215,3 +215,32 @@ func TestRemoveMigrationNetworkReleases(t *testing.T) {
 		t.Fatalf("network releases = %d, want 1", network.releases)
 	}
 }
+
+func TestMigrationMemorySaveAndRollback(t *testing.T) {
+	for _, state := range []State{StateRunning, StatePaused, StateStopped} {
+		t.Run(string(state), func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, state)
+			runtime.state = state
+			host := NewMigrationHost(machines)
+			if err := host.SaveSourceMemory(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.saves != 1 || runtime.stops != 0 || !runtime.hasSavedState {
+				t.Fatal("source discarded guest memory")
+			}
+			if err := host.RestoreRuntimeState(t.Context(), "vm-1", state, true); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.state != state || runtime.coldStarts != 0 {
+				t.Fatal("rollback cold booted the source")
+			}
+			if err := host.RestoreRuntimeState(t.Context(), "vm-1", state, true); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.restores+runtime.restoresPaused > 1 {
+				t.Fatal("rollback restored twice")
+			}
+		})
+	}
+}

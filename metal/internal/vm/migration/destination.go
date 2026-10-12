@@ -300,6 +300,11 @@ func (m *Manager) cleanAbortDestination(ctx context.Context, record destinationR
 		record = updated
 	}
 	if record.State == destinationRemovingStorage {
+		for _, directory := range []string{m.store.memorySnapshotDirectory(record.VirtualMachineID), m.store.memorySnapshotDirectory(record.VirtualMachineID) + "-pending"} {
+			if err := os.RemoveAll(directory); err != nil {
+				return record, err
+			}
+		}
 		if err := m.disks.AbortReceive(ctx, record.VirtualMachineID); err != nil {
 			return record, err
 		}

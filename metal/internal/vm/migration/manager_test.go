@@ -27,10 +27,12 @@ type fakeMigrationHost struct {
 	operationCalls  chan string
 
 	normalizeCalls      int
+	saveMemoryCalls     int
 	removeNetworkCalls  int
 	ensureNetworkCalls  int
 	applyStateCalls     int
 	restoreCalls        int
+	restoreMemory       bool
 	removeRuntimeCalls  int
 	releaseStorageCalls int
 	refreshDiskCalls    int
@@ -149,8 +151,9 @@ func (f *fakeMigrationHost) ApplyMigratedDestinationState(context.Context, strin
 	return f.applyStateError
 }
 
-func (f *fakeMigrationHost) RestoreRuntimeState(context.Context, string, vm.State) error {
+func (f *fakeMigrationHost) RestoreRuntimeState(_ context.Context, _ string, _ vm.State, savedState bool) error {
 	f.restoreCalls++
+	f.restoreMemory = savedState
 	return nil
 }
 
@@ -193,6 +196,7 @@ type fakeMigrationStorage struct {
 	aborts        int
 	sendErr       error
 	receiveErr    error
+	receive       func(context.Context) error
 	abortErr      error
 	sendHang      bool
 	sendStarted   chan struct{}
@@ -251,8 +255,11 @@ func (f *fakeMigrationStorage) StartSnapshotServer(ctx context.Context, _, name,
 	return stream, nil
 }
 
-func (f *fakeMigrationStorage) ReceiveSnapshotTLS(_ context.Context, _ string, _ string) error {
+func (f *fakeMigrationStorage) ReceiveSnapshotTLS(ctx context.Context, _ string, _ string) error {
 	f.received++
+	if f.receive != nil {
+		return f.receive(ctx)
+	}
 	return f.receiveErr
 }
 
@@ -284,6 +291,9 @@ type fakeSourceOperations struct {
 	startError        error
 	finishCalls       int
 	finishError       error
+
+	stopMemorySnapshot bool
+	memoryReceive      func(context.Context, string) error
 }
 
 func (c *fakeSourceOperations) PrepareSource(context.Context, string, string, string) (VirtualMachineDefinition, vm.State, error) {
@@ -316,8 +326,9 @@ func (c *fakeSourceOperations) StartSnapshotStream(ctx context.Context, _, _, _ 
 	return c.streamError
 }
 
-func (c *fakeSourceOperations) StopSource(_ context.Context, _, _, _ string, receivedSequence int) (SourceSnapshot, error) {
+func (c *fakeSourceOperations) StopSource(_ context.Context, _, _, _ string, receivedSequence int, memorySnapshot bool) (SourceSnapshot, error) {
 	c.stopCalls++
+	c.stopMemorySnapshot = memorySnapshot
 	c.stopReceived = receivedSequence
 	return c.stopSnapshot, c.stopError
 }
@@ -607,4 +618,16 @@ func TestDestinationReservationsCountOnlyMigrationsWithConfig(t *testing.T) {
 	if len(reservations) != 1 || reservations[0].CPUMillicores != 3000 || reservations[0].MemoryMiB != 3072 {
 		t.Fatalf("reservations = %+v", reservations)
 	}
+}
+
+func (f *fakeMigrationHost) SaveSourceMemory(context.Context, string) error {
+	f.saveMemoryCalls++
+	return nil
+}
+
+func (c *fakeSourceOperations) ReceiveMemorySnapshot(ctx context.Context, _, _, _ string, _ int, directory string, _ int) error {
+	if c.memoryReceive != nil {
+		return c.memoryReceive(ctx, directory)
+	}
+	return nil
 }
