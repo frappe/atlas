@@ -31,6 +31,9 @@ class VirtualMachineMigration(Document):
 		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
 		last_destination_metal_server_selection_at: DF.Datetime | None
+		memory_snapshot_status: DF.Literal[
+			"not_started", "creating", "transferring", "restoring", "completed", "failed", "aborted"
+		]
 		migrate_memory_snapshot: DF.Check
 		progress_percent: DF.Int
 		scheduled_at: DF.Datetime | None
@@ -54,6 +57,11 @@ class VirtualMachineMigration(Document):
 		transfers: DF.Table[VirtualMachineMigrationTransfer]
 		virtual_machine: DF.Link
 	# end: auto-generated types
+
+	@property
+	def is_memory_snapshot(self) -> bool:
+		"""Report whether this migration requests a memory snapshot."""
+		return bool(self.migrate_memory_snapshot)
 
 	def after_insert(self) -> None:
 		"""Claim the VM and queue destination selection after this transaction commits."""

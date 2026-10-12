@@ -64,6 +64,10 @@ Metal hides the incoming VM from normal reads until the move finishes.
 
 `progress_percent` estimates the whole lifecycle, not copied bytes. Use the transfer rows for copied MiB.
 
+`memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `is_memory_snapshot` checkbox is checked. This checkbox reflects `migrate_memory_snapshot`.
+
+The snapshot status defaults to `not_started` and supports `creating`, `transferring`, `restoring`, `completed`, `failed`, and `aborted`. Memory transfer and restore are not implemented, so this field remains `not_started` even when the disk migration completes.
+
 ## Failure and recovery
 
 | Event | Behavior |
