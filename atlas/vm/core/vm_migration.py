@@ -326,6 +326,8 @@ class MigrationService:
 		if status:
 			values["status"] = status
 			values["progress_percent"] = self.progress_percent(status, transfers)
+		if self.migration.migrate_memory_snapshot and response.get("memory_snapshot_status"):
+			values["memory_snapshot_status"] = response["memory_snapshot_status"]
 		self.update(values, transfers=transfers, commit=True)
 
 	def status_from_response(self, response: dict[str, Any]) -> str | None:
@@ -444,6 +446,8 @@ class MigrationService:
 		}
 		if status == "completed":
 			values["progress_percent"] = 100
+		if self.migration.migrate_memory_snapshot:
+			values["memory_snapshot_status"] = status
 		self.update(values)
 		frappe.db.set_value("Virtual Machine", self.migration.virtual_machine, "active_migration", None)
 		frappe.db.commit()  # nosemgrep

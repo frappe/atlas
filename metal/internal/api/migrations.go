@@ -61,12 +61,13 @@ func (r createMigrationRequest) resize() *migration.Resize {
 
 // migrationResponse is the public migration view.
 type migrationResponse struct {
-	ID               string                  `json:"id"`
-	VirtualMachineID string                  `json:"virtual_machine_id"`
-	Status           string                  `json:"status"`
-	Phase            string                  `json:"phase"`
-	Transfers        []migrationTransfer     `json:"transfers,omitempty"`
-	Error            *migrationErrorResponse `json:"error,omitempty"`
+	ID                   string                  `json:"id"`
+	VirtualMachineID     string                  `json:"virtual_machine_id"`
+	Status               string                  `json:"status"`
+	Phase                string                  `json:"phase"`
+	MemorySnapshotStatus string                  `json:"memory_snapshot_status,omitempty"`
+	Transfers            []migrationTransfer     `json:"transfers,omitempty"`
+	Error                *migrationErrorResponse `json:"error,omitempty"`
 }
 
 // migrationTransfer reports one migration data transfer.
@@ -152,10 +153,11 @@ func (s *Server) abortMigration(c echo.Context) error {
 // toMigration maps migration progress to its public response.
 func toMigration(record migration.DestinationProgress) migrationResponse {
 	response := migrationResponse{
-		ID:               record.ID,
-		VirtualMachineID: record.VirtualMachineID,
-		Status:           string(record.Status),
-		Phase:            string(record.Phase),
+		ID:                   record.ID,
+		VirtualMachineID:     record.VirtualMachineID,
+		Status:               string(record.Status),
+		Phase:                string(record.Phase),
+		MemorySnapshotStatus: record.MemorySnapshotStatus,
 	}
 	for _, interval := range record.Intervals {
 		var finishedAt *time.Time

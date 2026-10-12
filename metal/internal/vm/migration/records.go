@@ -186,12 +186,13 @@ type TransferProgress struct {
 
 // DestinationProgress is the controller-facing state of a destination migration.
 type DestinationProgress struct {
-	ID               string
-	VirtualMachineID string
-	Status           Status
-	Phase            Phase
-	Intervals        []TransferProgress
-	Error            *vm.OperationError
+	ID                   string
+	VirtualMachineID     string
+	Status               Status
+	Phase                Phase
+	MemorySnapshotStatus string
+	Intervals            []TransferProgress
+	Error                *vm.OperationError
 }
 
 type destinationRecord struct {
@@ -223,12 +224,41 @@ func (record destinationRecord) progress() DestinationProgress {
 		phase = PhaseCopying
 	}
 	return DestinationProgress{
-		ID:               record.ID,
-		VirtualMachineID: record.VirtualMachineID,
-		Status:           record.State.status(),
-		Phase:            phase,
-		Intervals:        record.Intervals,
-		Error:            record.Error,
+		ID:                   record.ID,
+		VirtualMachineID:     record.VirtualMachineID,
+		Status:               record.State.status(),
+		Phase:                phase,
+		MemorySnapshotStatus: record.memorySnapshotStatus(),
+		Intervals:            record.Intervals,
+		Error:                record.Error,
+	}
+}
+
+func (record destinationRecord) memorySnapshotStatus() string {
+	if !record.MigrateMemorySnapshot {
+		return ""
+	}
+	switch record.State {
+	case destinationStopping:
+		if record.SourceStopped {
+			return "transferring"
+		}
+		return "creating"
+	case destinationCreatingNetwork, destinationApplyingState:
+		return "restoring"
+	case destinationReady, destinationFinishing, destinationCompleted:
+		return "completed"
+	case destinationFailed:
+		return "failed"
+	case destinationRemovingRuntime, destinationRemovingStorage, destinationRestoringSource, destinationUnlockingSource:
+		if record.Error != nil {
+			return "failed"
+		}
+		return "aborted"
+	case destinationAborted:
+		return "aborted"
+	default:
+		return "not_started"
 	}
 }
 

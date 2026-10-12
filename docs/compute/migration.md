@@ -66,7 +66,9 @@ Metal hides the incoming VM from normal reads until the move finishes.
 
 `memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `is_memory_snapshot` checkbox is checked. This checkbox reflects `migrate_memory_snapshot`.
 
-The snapshot status defaults to `not_started` and supports `creating`, `transferring`, `restoring`, `completed`, `failed`, and `aborted`. Metal memory progress is not connected to this field, so it remains `not_started` even when the VM restores.
+Metal reports `not_started` during disk precopy, `creating` while it captures and stops the source, `transferring` during the final copy, and `restoring` during destination setup. The snapshot is `completed` when the destination is loaded paused and ready. Migration finish still controls guest activation.
+
+Rollback reports `failed` or `aborted`. Atlas stores the optional `memory_snapshot_status` response field and sets the terminal result when the migration settles. Hosts that omit this field report no intermediate snapshot progress.
 
 ## Failure and recovery
 
