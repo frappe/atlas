@@ -385,7 +385,7 @@ class MigrationService:
 		frappe.db.commit()  # nosemgrep
 		self.migration = migration
 
-		# The VM already runs on the destination. The scheduled reconcile retries a failed move.
+		# Public IP moves retry without undoing the committed destination.
 		for allocation in frappe.get_all(
 			"Public IP Allocation",
 			filters={"virtual_machine": virtual_machine.name, "status": "Attached"},

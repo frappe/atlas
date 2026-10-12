@@ -67,6 +67,8 @@ type migrationHost interface {
 	RemoveMigrationNetwork(ctx context.Context, virtualMachineID string) error
 	EnsureMigrationNetwork(ctx context.Context, virtualMachineID string) error
 	ApplyMigratedDestinationState(ctx context.Context, virtualMachineID string) error
+	RestoreMigratedMemory(ctx context.Context, virtualMachineID, directory string) error
+	ActivateMigratedMemory(ctx context.Context, virtualMachineID string) error
 	RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState vm.State, savedState bool) error
 	RemoveMigratedRuntime(ctx context.Context, virtualMachineID string) error
 	RefreshSourceDisk(ctx context.Context, virtualMachineID string) error

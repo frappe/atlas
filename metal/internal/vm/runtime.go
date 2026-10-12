@@ -12,6 +12,8 @@ type Runtime interface {
 	SaveAndStop(context.Context, RuntimeMachine) error
 	Restore(context.Context, RuntimeMachine) error
 	RestorePaused(context.Context, RuntimeMachine) error
+	// RestoreMigrationSnapshot loads a transferred bundle with the guest paused.
+	RestoreMigrationSnapshot(ctx context.Context, machine RuntimeMachine, directory string) error
 	DeleteSavedState(context.Context, RuntimeMachine) error
 	Pause(context.Context, RuntimeMachine) error
 	Resume(context.Context, RuntimeMachine) error

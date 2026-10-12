@@ -154,7 +154,7 @@ func (runtime *Runtime) launchMemorySnapshot(
 	}
 	if metadata != nil {
 		if err := client.PutMMDS(ctx, metadata); err != nil {
-			runtime.logger.Error("MMDS refresh failed", "virtual_machine_id", configuration.ID, "error", err)
+			return fmt.Errorf("refresh snapshot metadata: %w", err)
 		}
 	}
 	if !resume {

@@ -40,6 +40,12 @@ type fakeMigrationHost struct {
 	limitDiskValue      int
 
 	applyStateError error
+
+	restoreMemoryCalls  int
+	activateMemoryCalls int
+	restoreMemoryError  error
+	activateMemoryError error
+	activateMemory      func() error
 }
 
 func newFakeMigrationHost(t *testing.T) *fakeMigrationHost {
@@ -149,6 +155,19 @@ func (f *fakeMigrationHost) EnsureMigrationNetwork(context.Context, string) erro
 func (f *fakeMigrationHost) ApplyMigratedDestinationState(context.Context, string) error {
 	f.applyStateCalls++
 	return f.applyStateError
+}
+
+func (f *fakeMigrationHost) RestoreMigratedMemory(context.Context, string, string) error {
+	f.restoreMemoryCalls++
+	return f.restoreMemoryError
+}
+
+func (f *fakeMigrationHost) ActivateMigratedMemory(context.Context, string) error {
+	f.activateMemoryCalls++
+	if f.activateMemory != nil {
+		return f.activateMemory()
+	}
+	return f.activateMemoryError
 }
 
 func (f *fakeMigrationHost) RestoreRuntimeState(_ context.Context, _ string, _ vm.State, savedState bool) error {
