@@ -3,6 +3,8 @@ package network
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -211,5 +213,71 @@ func TestRemoveMeshRegistrationWrapsTheRegistrarError(t *testing.T) {
 	err := allocator.removeMeshRegistration(context.Background(), 100000, "fdaa:1:0:1::1")
 	if err == nil || !strings.Contains(err.Error(), "fdaa:1:0:1::1") {
 		t.Errorf("error = %v, want the address", err)
+	}
+}
+
+func TestAddWantedFailsLoudWithoutDefaultRoute(t *testing.T) {
+	directory := t.TempDir()
+	withoutRoute := filepath.Join(directory, "route-noroute")
+	withRoute := filepath.Join(directory, "route-ethB")
+	routeTable := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+		"lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n"
+	if err := os.WriteFile(withoutRoute, []byte(routeTable), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(withRoute, []byte("ethB\t00000000\t0102030A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRouteTable := procNetRoute
+	procNetRoute = withoutRoute
+	defer func() { procNetRoute = oldRouteTable }()
+	logPath := fakeIP(t, nil, "ip", "iptables", "ip6tables", "sysctl")
+
+	allocator := newLinuxAllocator(nil, nil, nil)
+	wanted := request{
+		NetworkConfiguration: vm.NetworkConfiguration{
+			PublicIPv4:        "192.0.2.10",
+			WireGuardMeshIPv6: "fdaa::7",
+		},
+		VirtualMachineID: "vm-0-7",
+		UserID:           7,
+	}
+	if err := allocator.addWanted(context.Background(), wanted); err == nil {
+		t.Fatal("public claim without a default route succeeded silently")
+	} else if !strings.Contains(err.Error(), "default route") {
+		t.Fatalf("error = %q, want a default-route failure", err)
+	}
+	if calls := recordedCalls(t, logPath); strings.Contains(calls, "neigh replace proxy") {
+		t.Errorf("failed claim installed proxy state:\n%s", calls)
+	}
+
+	procNetRoute = withRoute
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := allocator.addWanted(context.Background(), wanted); err != nil {
+		t.Fatal(err)
+	}
+	if calls := recordedCalls(t, logPath); !strings.Contains(calls, "neigh replace proxy 192.0.2.10 dev ethB") {
+		t.Errorf("route recovery did not claim on the current interface:\n%s", calls)
+	}
+
+	wanted6 := request{
+		NetworkConfiguration: vm.NetworkConfiguration{
+			PublicIPv6:        "2001:db8::10/128",
+			WireGuardMeshIPv6: "fdaa::7",
+		},
+		VirtualMachineID: "vm-0-7",
+		UserID:           7,
+	}
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := allocator.addWanted(context.Background(), wanted6); err != nil {
+		t.Fatal(err)
+	}
+	if calls := recordedCalls(t, logPath); !strings.Contains(calls, "neigh replace proxy 2001:db8::10 dev ethB") {
+		t.Errorf("IPv6 claim missed the current interface:\n%s", calls)
 	}
 }

@@ -43,16 +43,16 @@ type trafficMonitor interface {
 
 // LinuxAllocator creates Linux network resources for virtual machines.
 type LinuxAllocator struct {
-	mesh                meshRegistrar
-	publicInterfaceName string
-	trafficMonitor      trafficMonitor
-	firewallMutex       sync.Mutex
-	firewallAudits      map[string]firewallAudit
-	now                 func() time.Time
-	logger              *slog.Logger
+	mesh           meshRegistrar
+	trafficMonitor trafficMonitor
+	firewallMutex  sync.Mutex
+	firewallAudits map[string]firewallAudit
+	now            func() time.Time
+	logger         *slog.Logger
 }
 
-// NewLinuxAllocator returns a Linux network allocator.
+// NewLinuxAllocator returns a Linux network allocator. The public claim
+// interface is resolved per operation: host routing can change while metald runs.
 func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor, logger *slog.Logger) *LinuxAllocator {
 	var registrar meshRegistrar
 	if mesh != nil {
@@ -62,13 +62,7 @@ func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor, logger *slog.Logger
 	if monitor != nil {
 		trafficMonitor = monitor
 	}
-	allocator := newLinuxAllocator(registrar, trafficMonitor, logger)
-	publicInterfaceName, err := defaultRouteInterface()
-	if err != nil {
-		allocator.logger.Warn("public address claims are disabled", "error", err)
-	}
-	allocator.publicInterfaceName = publicInterfaceName
-	return allocator
+	return newLinuxAllocator(registrar, trafficMonitor, logger)
 }
 
 // newLinuxAllocator returns an allocator with test dependencies.
@@ -119,11 +113,9 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseReq
 	}
 	meshError := allocator.removeMeshRegistration(ctx, request.UserID, request.WireGuardMeshIPv6)
 	rulesError := errors.Join(removePublicIPv4Rules(ctx, virtualMachineID), removePublicIPv6Rules(ctx, virtualMachineID))
-	if allocator.publicInterfaceName != "" {
-		rulesError = errors.Join(rulesError,
-			releasePublicIPv4Claims(ctx, request.UserID, allocator.publicInterfaceName, ""),
-			releasePublicIPv6Claims(ctx, request.UserID, allocator.publicInterfaceName, ""))
-	}
+	rulesError = errors.Join(rulesError,
+		releasePublicIPv4Claims(ctx, request.UserID, "", ""),
+		releasePublicIPv6Claims(ctx, request.UserID, "", ""))
 
 	exists, err := networkNamespaceExists(ctx, virtualMachineID)
 	if err != nil {
@@ -280,15 +272,16 @@ func (allocator *LinuxAllocator) currentTime() time.Time {
 	return time.Now()
 }
 
-// removeUnwanted tears down what this request no longer asks for.
+// removeUnwanted tears down what this request no longer asks for. Cleanup reads
+// the current route but never depends on it: entries on a stale interface are
+// exactly what must go, with or without a default route.
 func (allocator *LinuxAllocator) removeUnwanted(ctx context.Context, request request) error {
-	if allocator.publicInterfaceName != "" {
-		if err := releasePublicIPv4Claims(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv4); err != nil {
-			return err
-		}
-		if err := releasePublicIPv6Claims(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv6); err != nil {
-			return err
-		}
+	currentInterface, _ := defaultRouteInterface()
+	if err := releasePublicIPv4Claims(ctx, request.UserID, request.PublicIPv4, currentInterface); err != nil {
+		return err
+	}
+	if err := releasePublicIPv6Claims(ctx, request.UserID, request.PublicIPv6, currentInterface); err != nil {
+		return err
 	}
 	if request.PublicIPv4 == "" {
 		if err := removePublicIPv4Rules(ctx, request.VirtualMachineID); err != nil {
@@ -325,24 +318,30 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 	if err := convergeNamespaceRoutes(ctx, request); err != nil {
 		return err
 	}
+	// Resolve once before touching public addresses: a missing route fails
+	// before anything is installed, and one interface serves both families.
+	var currentInterface string
+	if request.PublicIPv4 != "" || request.HasPublicIPv6Address() {
+		var err error
+		currentInterface, err = defaultRouteInterface()
+		if err != nil {
+			return fmt.Errorf("claim a public address without a default route: %w", err)
+		}
+	}
 	if request.PublicIPv4 != "" {
 		if err := ensurePublicIPv4(ctx, request.VirtualMachineID, request.UserID, request.PublicIPv4); err != nil {
 			return err
 		}
-		if allocator.publicInterfaceName != "" {
-			if err := claimPublicIPv4(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv4); err != nil {
-				return err
-			}
+		if err := claimPublicIPv4(ctx, request.UserID, currentInterface, request.PublicIPv4); err != nil {
+			return err
 		}
 	}
 	if request.HasPublicIPv6Address() {
 		if err := ensurePublicIPv6(ctx, request.VirtualMachineID, request.PublicIPv6, request.WireGuardMeshIPv6); err != nil {
 			return err
 		}
-		if allocator.publicInterfaceName != "" {
-			if err := claimPublicIPv6(ctx, allocator.publicInterfaceName, request.PublicIPv6); err != nil {
-				return err
-			}
+		if err := claimPublicIPv6(ctx, currentInterface, request.PublicIPv6); err != nil {
+			return err
 		}
 	}
 	return allocator.addMeshRegistration(ctx, request)
