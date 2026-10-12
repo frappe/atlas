@@ -230,15 +230,17 @@ fi
 
 
 step "NIC workarounds"
-# Add a case for each NIC driver or firmware with a known fault. A VLAN and a bond pass promiscuous mode to their NICs.
-promiscuous_uplink=""
+# Add a case for each NIC driver or firmware with a known fault.
 blacklisted_modules=()
 while read -r driver firmware; do
 	case "$driver $firmware" in
-	# Stops receiving in all-multicast mode, which bnxt_en enters above 16 multicast addresses.
+	# Firmware before 230 stops receiving in all-multicast mode.
 	# bnxt_re stalls udev at boot, so the storage pool does not import.
 	"bnxt_en "*)
-		promiscuous_uplink=$MESH_UPLINK_INTERFACE
+		if [ "${firmware%%.*}" -lt 230 ]; then
+			echo "bnxt_en firmware $firmware stops receiving in all-multicast mode. Update the NIC firmware to 230 or later." >&2
+			exit 1
+		fi
 		blacklisted_modules+=(bnxt_re)
 		;;
 	esac
@@ -270,10 +272,9 @@ iptables -C FORWARD -i vh+ -d "$PRIVATE_NETWORK_CIDR" -j DROP 2>/dev/null ||
 
 iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE 2>/dev/null ||
 	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE
+
+ip link set "$MESH_UPLINK_INTERFACE" allmulticast on
 EOF
-if [ -n "$promiscuous_uplink" ]; then
-	echo "ip link set $promiscuous_uplink promisc on" >> /usr/local/lib/metal/network-setup
-fi
 chmod 0755 /usr/local/lib/metal/network-setup
 
 

@@ -5,7 +5,6 @@ set -eu
 netplan_file=/etc/netplan/51-private-network.yaml
 networkd_dropin_dir="/etc/systemd/network/10-netplan-$DEVICE.network.d"
 networkd_dropin="$networkd_dropin_dir/20-atlas-proxy-ndp.conf"
-allmulticast_dropin="$networkd_dropin_dir/21-atlas-allmulticast.conf"
 
 if ! command -v netplan >/dev/null; then
     echo "netplan is required to configure the private network" >&2
@@ -44,12 +43,7 @@ cat > "$networkd_dropin" <<EOF
 IPv6ProxyNDP=yes
 EOF
 
-cat > "$allmulticast_dropin" <<EOF
-[Link]
-AllMulticast=yes
-EOF
-
-chmod 644 "$networkd_dropin" "$allmulticast_dropin"
+chmod 644 "$networkd_dropin"
 
 if ! ip link show "$DEVICE" >/dev/null 2>&1; then
     ip link add link "$PARENT_INTERFACE" name "$DEVICE" type vlan id "$VLAN"
