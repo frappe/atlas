@@ -244,3 +244,71 @@ func TestMigrationMemorySaveAndRollback(t *testing.T) {
 		})
 	}
 }
+
+func TestMemoryDestinationLoadsPausedThenActivates(t *testing.T) {
+	for _, desiredState := range []State{StateRunning, StatePaused, StateStopped} {
+		t.Run(string(desiredState), func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, desiredState)
+			runtime.state = StateStopped
+			host := NewMigrationHost(machines)
+			for range 2 {
+				if err := host.RestoreMigratedMemory(t.Context(), "vm-1", "/incoming/bundle"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if runtime.state != StatePaused || runtime.migrationRestores != 1 || runtime.resumes != 0 || runtime.coldStarts != 0 {
+				t.Fatalf("runtime after restore = %+v", runtime)
+			}
+			if runtime.migrationDirectory != "/incoming/bundle" || runtime.metadata != 2 || runtime.diskRefresh != 2 {
+				t.Fatal("restore did not apply the incoming bundle and destination configuration")
+			}
+			for range 2 {
+				if err := host.ActivateMigratedMemory(t.Context(), "vm-1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantResumes := 0
+			if desiredState == StateRunning {
+				wantResumes = 1
+			}
+			if runtime.state != desiredState || runtime.resumes != wantResumes || runtime.migrationRestores != 1 || runtime.coldStarts != 0 {
+				t.Fatalf("runtime after activation = %+v", runtime)
+			}
+		})
+	}
+}
+
+func TestMemoryDestinationDoesNotHideRestoreFailures(t *testing.T) {
+	for _, failing := range []string{"load", "metadata", "disk", "already_running"} {
+		t.Run(failing, func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, StateRunning)
+			runtime.state = StateStopped
+			failure := errors.New("restore interrupted")
+			switch failing {
+			case "load":
+				runtime.restoreError = failure
+			case "metadata":
+				runtime.metadataError = failure
+			case "disk":
+				runtime.diskError = failure
+			case "already_running":
+				runtime.state = StateRunning
+			}
+			err := NewMigrationHost(machines).RestoreMigratedMemory(t.Context(), "vm-1", "/incoming/bundle")
+			if err == nil || runtime.coldStarts != 0 || runtime.resumes != 0 {
+				t.Fatalf("error = %v, runtime = %+v", err, runtime)
+			}
+			if failing != "already_running" && !errors.Is(err, failure) {
+				t.Fatal(err)
+			}
+		})
+	}
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StateRunning)
+	runtime.state = StateStopped
+	if err := NewMigrationHost(machines).ActivateMigratedMemory(t.Context(), "vm-1"); err == nil || runtime.migrationRestores != 0 || runtime.coldStarts != 0 {
+		t.Fatal("activation replayed old memory after losing the destination process")
+	}
+}

@@ -256,3 +256,89 @@ func TestAbortRemovesTransferredAndPartialMemory(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.T) {
+	for _, failing := range []string{"", "disk_guid", "checkpoint", "restore", "activation"} {
+		t.Run(failing, func(t *testing.T) {
+			manager, machines, source := newMigrationManager(t)
+			store := writeCopyingDestination(t, machines, vm.StateRunning)
+			record, err := store.readDestination("vm-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.State, record.MigrateMemorySnapshot, record.SourceStopped = destinationApplyingState, true, true
+			record.MemorySnapshotGUID = "final-guid"
+			record.Intervals = []TransferProgress{{Sequence: 2, Completed: true, GUID: "final-guid"}}
+			if failing == "checkpoint" {
+				record.MemorySnapshotGUID = "other-guid"
+			}
+			if err := store.writeDestination(record); err != nil {
+				t.Fatal(err)
+			}
+			directory := store.memorySnapshotDirectory("vm-1")
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeMigrationRecord(filepath.Join(directory, "disk-snapshot.json"), SourceSnapshot{Sequence: 2, GUID: "final-guid"}); err != nil {
+				t.Fatal(err)
+			}
+			disks := manager.disks.(*fakeMigrationStorage)
+			disks.guid = "final-guid"
+			if failing == "disk_guid" {
+				disks.guid = "other-guid"
+			}
+			if failing == "restore" {
+				machines.restoreMemoryError = errors.New("load failed")
+			}
+			manager.runTransfer(t.Context(), "vm-1")
+			record, err = store.readDestination("vm-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failing != "" && failing != "activation" {
+				if record.State != destinationFailed || source.finishCalls != 0 || machines.activateMemoryCalls != 0 {
+					t.Fatalf("record = %+v", record)
+				}
+				if failing != "restore" && machines.restoreMemoryCalls != 0 {
+					t.Fatal("loaded memory before disk validation")
+				}
+				return
+			}
+			if record.State != destinationReady || machines.restoreMemoryCalls != 1 || machines.applyStateCalls != 0 || machines.activateMemoryCalls != 0 {
+				t.Fatalf("ready without a paused memory restore: %+v", record)
+			}
+			machines.activateMemory = func() error {
+				if source.finishCalls != 0 {
+					t.Error("source destroyed before activation")
+				}
+				if failing == "activation" {
+					return errors.New("resume failed")
+				}
+				return nil
+			}
+			if err := manager.RequestFinish(t.Context(), "mig-1"); err != nil {
+				t.Fatal(err)
+			}
+			manager.runTransfer(t.Context(), "vm-1")
+			record, err = store.readDestination("vm-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failing == "activation" {
+				if record.State != destinationFinishing || source.finishCalls != 0 {
+					t.Fatal("activation failure lost forward recovery")
+				}
+				if err := manager.AbortDestination(t.Context(), "mig-1"); !errors.Is(err, vm.ErrConflict) {
+					t.Fatal("rollback allowed after ownership commit")
+				}
+				return
+			}
+			if record.State != destinationCompleted || source.finishCalls != 1 {
+				t.Fatalf("record = %+v", record)
+			}
+			if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("staging remained after finish")
+			}
+		})
+	}
+}

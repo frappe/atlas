@@ -176,7 +176,7 @@ function migrateVirtualMachine(frm) {
 				fieldtype: "HTML",
 				fieldname: "summary",
 				options: __(
-					"This moves {0} off {1}. It stays available until the short cutover.<br><br>Memory snapshots transfer with the final disk changes. The destination still boots from disk.<br><br>",
+					"This moves {0} off {1}. It stays available until the short cutover.<br><br>Memory snapshots transfer with the final disk changes. The destination restores the VM from memory.<br><br>",
 					[frm.doc.name.bold(), (frm.doc.server || "").bold()]
 				),
 			},

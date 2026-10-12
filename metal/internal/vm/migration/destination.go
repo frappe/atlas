@@ -226,13 +226,26 @@ func (m *Manager) RequestFinish(ctx context.Context, migrationID string) error {
 	return m.store.writeDestination(record)
 }
 
-// advanceFinish destroys the source and writes a completed record. Each step is
-// idempotent, so a retry after the source is gone still completes.
+// advanceFinish activates the destination and removes source and staging data.
 func (m *Manager) advanceFinish(ctx context.Context, record destinationRecord) error {
+	if record.MigrateMemorySnapshot {
+		unlock, err := m.host.LockOperation(ctx, record.VirtualMachineID)
+		if err != nil {
+			return err
+		}
+		err = m.host.ActivateMigratedMemory(ctx, record.VirtualMachineID)
+		unlock()
+		if err != nil {
+			return fmt.Errorf("activate migrated memory: %w", err)
+		}
+	}
 	if err := m.source.FinishSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
 		return err
 	}
 	if err := m.removeReceivedSnapshots(ctx, record); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(m.store.memorySnapshotDirectory(record.VirtualMachineID)); err != nil {
 		return err
 	}
 

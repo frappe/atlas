@@ -13,7 +13,7 @@ Atlas excludes the source host and checks destination capacity. Desk users canno
 
 The VM `migrate` method accepts the optional boolean `migrate_memory_snapshot`, which defaults to `false`. Atlas stores this flag and sends it to Metal when true.
 
-The flag enables memory snapshot transfer during the final disk copy. Destination restore is not implemented, so the destination still boots from disk. See the [migration engine](migration-engine.md#copy-the-disk) for transfer and retry behavior.
+The flag transfers memory during the final disk copy and restores the destination paused. After Atlas commits the new host, Metal applies the original desired power state. See the [migration engine](migration-engine.md#copy-the-disk) for compatibility checks and retry behavior.
 
 A stopped VM also moves when a resize does not fit on its host. The migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`, and commits the new host and shape together. On failure, the VM keeps its old host and shape. The tenant API reports `migrating` during the move.
 
@@ -30,11 +30,11 @@ flowchart LR
 
 Metal copies a full ZFS snapshot, then smaller changes while the VM runs. It starts cutover when the change is below `migration.final_delta_mib`, after 16 intervals, or after 30 minutes. Cutover stops the source, removes its network, and copies the final change. With memory transfer enabled, the saved bundle travels in parallel with the final disk change.
 
-| Source state | Destination state |
-| --- | --- |
-| Running | Boots from the copied disk. |
-| Stopped | Stays stopped. |
-| Paused | Cold-boots, then pauses. |
+| Desired power state | Disk-only migration | Memory migration after finish |
+| --- | --- | --- |
+| Running | Boots from the copied disk. | Resumes the saved guest. |
+| Stopped | Stays stopped. | Stays stopped. |
+| Paused | Cold-boots, then pauses. | Keeps the restored guest paused. |
 
 ### The commit point
 
@@ -43,7 +43,7 @@ Atlas keeps the source host as the VM's recorded owner until the destination rep
 1. Destination Metal reports `ready`.
 2. Atlas commits the new host and resize values in one transaction.
 3. Atlas requests public IP moves. A failed move retries on its own schedule. It does not undo the host change.
-4. Atlas asks Metal to finish, which removes the stopped source.
+4. Atlas asks Metal to finish. Memory migrations activate the restored destination before removing the stopped source.
 
 Metal hides the incoming VM from normal reads until the move finishes.
 
@@ -66,7 +66,7 @@ Metal hides the incoming VM from normal reads until the move finishes.
 
 `memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `is_memory_snapshot` checkbox is checked. This checkbox reflects `migrate_memory_snapshot`.
 
-The snapshot status defaults to `not_started` and supports `creating`, `transferring`, `restoring`, `completed`, `failed`, and `aborted`. Metal memory transfer progress is not connected to this field, so it remains `not_started` even when the bundle transfers.
+The snapshot status defaults to `not_started` and supports `creating`, `transferring`, `restoring`, `completed`, `failed`, and `aborted`. Metal memory progress is not connected to this field, so it remains `not_started` even when the VM restores.
 
 ## Failure and recovery
 

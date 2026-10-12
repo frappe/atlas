@@ -219,7 +219,12 @@ func (m *Manager) advanceStarting(ctx context.Context, record destinationRecord)
 		}
 	}
 	if record.State == destinationApplyingState {
-		if err := m.host.ApplyMigratedDestinationState(ctx, record.VirtualMachineID); err != nil {
+		if record.MigrateMemorySnapshot {
+			err = m.restoreMemorySnapshot(ctx, record)
+		} else {
+			err = m.host.ApplyMigratedDestinationState(ctx, record.VirtualMachineID)
+		}
+		if err != nil {
 			if isWorkerCancelled(ctx, err) {
 				return err
 			}

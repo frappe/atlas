@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func savedStateFixture(t *testing.T, configuration Config, requirement savedStateRequirement) savedStateMetadata {
@@ -24,7 +26,8 @@ func savedStateFixture(t *testing.T, configuration Config, requirement savedStat
 		FirecrackerCompatibility: requirement.FirecrackerCompatibility,
 		CreatedAt:                time.Now().UTC(), StateFileName: memorySnapshotStateFileName,
 		MemoryFileName: memorySnapshotMemoryFileName, StateFileSizeBytes: stateSize,
-		MemoryFileSizeBytes: memorySize,
+		MemoryFileSizeBytes:    memorySize,
+		MigrationCompatibility: requirement.MigrationCompatibility,
 	}
 	data, err := json.Marshal(metadata)
 	if err != nil {
@@ -147,5 +150,50 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
+	compatibility := migrationSnapshotCompatibility{Host: "binary-and-host", MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4}}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigrationCompatibility: &compatibility}
+	configuration := Config{MachinesDir: t.TempDir()}
+	metadata := savedStateFixture(t, configuration, requirement)
+	metadata.UserID = 2002
+	metadata.FirecrackerCompatibility = "source-only-build-marker"
+	if err := metadata.validate(requirement); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"host", "cpu", "memory", "disk", "generation", "restart", "vm", "legacy"} {
+		t.Run(field, func(t *testing.T) {
+			candidate := metadata
+			changed := compatibility
+			candidate.MigrationCompatibility = &changed
+			switch field {
+			case "host":
+				changed.Host = "different-binary-or-host"
+			case "cpu":
+				changed.VirtualCPUCount++
+			case "memory":
+				changed.MemoryMiB++
+			case "disk":
+				changed.DiskMiB++
+			case "generation":
+				candidate.SpecificationGeneration++
+			case "restart":
+				candidate.RestartGeneration++
+			case "vm":
+				candidate.VirtualMachineID = "another-vm"
+			case "legacy":
+				candidate.MigrationCompatibility = nil
+			}
+			if err := candidate.validate(requirement); err == nil {
+				t.Fatal("incompatible migration metadata accepted")
+			}
+		})
+	}
+	// The host-specific user ID remains enforced for ordinary local restores.
+	requirement.MigrationCompatibility = nil
+	if err := metadata.validate(requirement); err == nil {
+		t.Fatal("local restore ignored its host user ID")
 	}
 }

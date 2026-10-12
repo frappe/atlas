@@ -160,3 +160,22 @@ func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationR
 func (store *migrationStore) memorySnapshotDirectory(virtualMachineID string) string {
 	return filepath.Join(store.migrationDirectory(virtualMachineID), "memory-snapshot")
 }
+
+func (m *Manager) restoreMemorySnapshot(ctx context.Context, record destinationRecord) error {
+	directory := m.store.memorySnapshotDirectory(record.VirtualMachineID)
+	var snapshot SourceSnapshot
+	if err := readMigrationRecord(filepath.Join(directory, "disk-snapshot.json"), &snapshot); err != nil {
+		return err
+	}
+	if snapshot.GUID == "" || snapshot.GUID != record.MemorySnapshotGUID || snapshot.Sequence != lastCompletedSequence(record) {
+		return errors.New("memory snapshot does not match the final disk checkpoint")
+	}
+	guid, err := m.disks.SnapshotGUID(ctx, record.VirtualMachineID, migrationSnapshotName(record.ID, snapshot.Sequence))
+	if err != nil {
+		return err
+	}
+	if guid != snapshot.GUID {
+		return errors.New("memory snapshot does not match the received disk")
+	}
+	return m.host.RestoreMigratedMemory(ctx, record.VirtualMachineID, directory)
+}

@@ -30,19 +30,21 @@ type savedStateRequirement struct {
 	SpecificationGeneration  uint64
 	RestartGeneration        uint64
 	FirecrackerCompatibility string
+	MigrationCompatibility   *migrationSnapshotCompatibility
 }
 
 type savedStateMetadata struct {
-	VirtualMachineID         string    `json:"virtual_machine_id"`
-	UserID                   uint32    `json:"user_id"`
-	SpecificationGeneration  uint64    `json:"specification_generation"`
-	RestartGeneration        uint64    `json:"restart_generation"`
-	FirecrackerCompatibility string    `json:"firecracker_compatibility"`
-	CreatedAt                time.Time `json:"created_at"`
-	StateFileName            string    `json:"state_file_name"`
-	MemoryFileName           string    `json:"memory_file_name"`
-	StateFileSizeBytes       int64     `json:"state_file_size_bytes"`
-	MemoryFileSizeBytes      int64     `json:"memory_file_size_bytes"`
+	VirtualMachineID         string                          `json:"virtual_machine_id"`
+	UserID                   uint32                          `json:"user_id"`
+	SpecificationGeneration  uint64                          `json:"specification_generation"`
+	RestartGeneration        uint64                          `json:"restart_generation"`
+	FirecrackerCompatibility string                          `json:"firecracker_compatibility"`
+	CreatedAt                time.Time                       `json:"created_at"`
+	StateFileName            string                          `json:"state_file_name"`
+	MemoryFileName           string                          `json:"memory_file_name"`
+	StateFileSizeBytes       int64                           `json:"state_file_size_bytes"`
+	MemoryFileSizeBytes      int64                           `json:"memory_file_size_bytes"`
+	MigrationCompatibility   *migrationSnapshotCompatibility `json:"migration_compatibility,omitempty"`
 }
 
 type savedState struct {
@@ -61,6 +63,10 @@ func (configuration Config) pendingSavedStateDirectory(id string) string {
 
 func (configuration Config) loadSavedState(requirement savedStateRequirement) (savedState, error) {
 	directory := configuration.savedStateDirectory(requirement.VirtualMachineID)
+	return loadSavedState(directory, requirement)
+}
+
+func loadSavedState(directory string, requirement savedStateRequirement) (savedState, error) {
 	data, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
 	if errors.Is(err, fs.ErrNotExist) {
 		return savedState{}, errSavedStateNotFound
@@ -87,6 +93,12 @@ func (configuration Config) loadSavedState(requirement savedStateRequirement) (s
 }
 
 func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.RuntimeMachine) (savedState, error) {
+	// The jailed executable is the build that creates this snapshot.
+	executable := filepath.Join(runtime.configuration.chrootRoot(machine.ID), filepath.Base(runtime.configuration.FirecrackerBin))
+	compatibility, err := newMigrationSnapshotCompatibility(ctx, executable, machine.Specification)
+	if err != nil {
+		return savedState{}, err
+	}
 	pending := runtime.configuration.pendingSavedStateDirectory(machine.ID)
 	if err := os.RemoveAll(pending); err != nil {
 		return savedState{}, fmt.Errorf("remove pending saved state: %w", err)
@@ -114,6 +126,7 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		MemoryFileName:           memorySnapshotMemoryFileName,
 		StateFileSizeBytes:       stateSize,
 		MemoryFileSizeBytes:      memorySize,
+		MigrationCompatibility:   &compatibility,
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
@@ -141,13 +154,13 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 	switch {
 	case metadata.VirtualMachineID != requirement.VirtualMachineID:
 		return fmt.Errorf("saved state VM ID %q does not match %q", metadata.VirtualMachineID, requirement.VirtualMachineID)
-	case metadata.UserID != requirement.UserID:
+	case requirement.MigrationCompatibility == nil && metadata.UserID != requirement.UserID:
 		return fmt.Errorf("saved state user ID %d does not match %d", metadata.UserID, requirement.UserID)
 	case metadata.SpecificationGeneration != requirement.SpecificationGeneration:
 		return fmt.Errorf("saved state specification generation %d does not match %d", metadata.SpecificationGeneration, requirement.SpecificationGeneration)
 	case metadata.RestartGeneration != requirement.RestartGeneration:
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
-	case metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
+	case requirement.MigrationCompatibility == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
 		return fmt.Errorf("saved state Firecracker compatibility %q does not match %q", metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
 	case metadata.StateFileName != memorySnapshotStateFileName || metadata.MemoryFileName != memorySnapshotMemoryFileName:
 		return errors.New("saved state metadata has unexpected file names")
@@ -155,6 +168,9 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 		return errors.New("saved state metadata has an invalid file size")
 	case metadata.CreatedAt.IsZero():
 		return errors.New("saved state metadata has no creation time")
+	}
+	if requirement.MigrationCompatibility != nil && (metadata.MigrationCompatibility == nil || *metadata.MigrationCompatibility != *requirement.MigrationCompatibility) {
+		return errors.New("saved state migration compatibility does not match the destination")
 	}
 	return nil
 }
