@@ -171,6 +171,11 @@ func (host *MigrationHost) ActivateMigratedMemory(ctx context.Context, virtualMa
 			return err
 		}
 	}
+	if desired.State == StateRunning {
+		if err := manager.runtime.CheckMigratedGuest(ctx, machine); err != nil {
+			return fmt.Errorf("check migrated guest: %w", err)
+		}
+	}
 	return manager.recordMigrationRuntimeState(ctx, desired, &observed, desired.State)
 }
 
