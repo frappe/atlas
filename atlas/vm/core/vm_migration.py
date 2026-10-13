@@ -242,35 +242,11 @@ class MigrationService:
 			return
 		if self.has_target_shape:
 			raise AtlasUserError(_("A memory migration cannot resize the VM."))
-		reports = []
-		for server in (self.migration.source_metal_server, destination):
-			try:
-				report = MetalHostCompatibility.from_dict(
-					frappe.parse_json(frappe.db.get_value("Metal Server", server, "cpu_compatibility_report"))
-				)
-			except ValueError as error:
-				raise AtlasUserError(
-					_("Metal Server {0} has no CPU compatibility report. Wait for host sync.").format(server)
-				) from error
-			reports.append(report)
-		source, target = reports
-		if source.architecture != architecture:
-			raise AtlasUserError(_("The source CPU architecture does not match the VM."))
-		fields = ("architecture", "cpu_profile", "cpu_vendor", "snapshot_host")
-		if source.cpu_profile == "native":
-			fields += ("cpu_model", "cpu_features")
-		for field in fields:
-			if getattr(source, field) != getattr(target, field):
-				raise AtlasUserError(_("Migration hosts have different {0}.").format(field.replace("_", " ")))
-		if architecture == "amd64":
-			if not source.tsc_khz or not target.tsc_khz:
-				raise AtlasUserError(_("The migration hosts did not report a stable CPU clock."))
-			# Firecracker accepts boot-time clock calibration differences up to 250 ppm.
-			if (
-				abs(source.tsc_khz - target.tsc_khz) > source.tsc_khz * 250 // 1_000_000
-				and not target.tsc_scaling
-			):
-				raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
+
+		source = self._load_compatibility_report(self.migration.source_metal_server)
+		target = self._load_compatibility_report(destination)
+		self._validate_cpu_compatibility(source, target, architecture)
+		self._validate_clock_compatibility(source, target)
 
 	def record_destination_metal_server_selection_failure(self, error: Exception) -> None:
 		"""Record one unsuccessful destination selection attempt."""
@@ -627,6 +603,48 @@ class MigrationService:
 	def source_metal_server(self) -> MetalServer:
 		"""Return the source Metal Server record."""
 		return cast("MetalServer", frappe.get_doc("Metal Server", self.migration.source_metal_server))
+
+	@staticmethod
+	def _load_compatibility_report(server: str) -> MetalHostCompatibility:
+		"""Load and validate one synced host report."""
+		try:
+			return MetalHostCompatibility.from_dict(
+				frappe.parse_json(frappe.db.get_value("Metal Server", server, "cpu_compatibility_report"))
+			)
+		except ValueError as error:
+			raise AtlasUserError(
+				_("Metal Server {0} has no CPU compatibility report. Wait for host sync.").format(server)
+			) from error
+
+	@staticmethod
+	def _validate_cpu_compatibility(
+		source: MetalHostCompatibility, target: MetalHostCompatibility, architecture: str
+	) -> None:
+		"""Check the VM architecture and host CPU contract."""
+		if source.architecture != architecture:
+			raise AtlasUserError(_("The source CPU architecture does not match the VM."))
+
+		fields = ("architecture", "cpu_profile", "cpu_vendor", "snapshot_host")
+		if source.cpu_profile == "native":
+			fields += ("cpu_model", "cpu_features")
+		for field in fields:
+			if getattr(source, field) != getattr(target, field):
+				raise AtlasUserError(_("Migration hosts have different {0}.").format(field.replace("_", " ")))
+
+	@staticmethod
+	def _validate_clock_compatibility(source: MetalHostCompatibility, target: MetalHostCompatibility) -> None:
+		"""Check stable x86 clocks and destination scaling support."""
+		if source.architecture != "amd64":
+			return
+		if not source.tsc_khz or not target.tsc_khz:
+			raise AtlasUserError(_("The migration hosts did not report a stable CPU clock."))
+
+		# Firecracker accepts boot-time clock calibration differences up to 250 ppm.
+		if (
+			abs(source.tsc_khz - target.tsc_khz) > source.tsc_khz * 250 // 1_000_000
+			and not target.tsc_scaling
+		):
+			raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
 
 
 def reconcile_migration(migration_name: str) -> None:
