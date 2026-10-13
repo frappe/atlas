@@ -3,9 +3,12 @@ package patches
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -75,4 +78,149 @@ func TestRunAppliesEachPatchOnce(t *testing.T) {
 	if runs != 1 {
 		t.Fatalf("the patch ran %d times, want once", runs)
 	}
+}
+
+func TestInitializeMemoryMigrationFlagsKeepsLegacyCheckpoints(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		contents string
+		mode     any
+	}{
+		{"source.json", `{"schema_version":2,"id":"mig-1","virtual_machine_id":"vm-1","state":"locked","sequence":7,"acknowledged_sequence":6}`, nil},
+		{"destination.json", `{"schema_version":2,"id":"mig-1","virtual_machine_id":"vm-1","state":"copying","intervals":[{"guid":"g1","total_bytes":9007199254740993,"completed":true}]}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			baseDirectory := t.TempDir()
+			path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", test.name)
+			writeMigrationPatchRecord(t, path, test.contents)
+			want := readMigrationPatchRecord(t, path)
+			want["migrate_memory_snapshot"] = test.mode
+
+			for range 2 {
+				if err := initializeMemoryMigrationFlags(baseDirectory); err != nil {
+					t.Fatal(err)
+				}
+				if got := readMigrationPatchRecord(t, path); !reflect.DeepEqual(got, want) {
+					t.Fatalf("record = %v, want %v", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestInitializeMemoryMigrationFlagsPreservesSelectedModes(t *testing.T) {
+	for _, name := range []string{"source.json", "destination.json"} {
+		for _, mode := range []string{"true", "false", "null"} {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				baseDirectory := t.TempDir()
+				path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", name)
+				contents := fmt.Sprintf(`{"migrate_memory_snapshot":%s,"memory_snapshot_guid":"g1","memory_transfer":{"sequence":7,"bytes_transferred":4096,"completed":true}}`, mode)
+				if name == "source.json" {
+					contents = fmt.Sprintf(`{"migrate_memory_snapshot":%s,"sequence":7,"acknowledged_sequence":6}`, mode)
+				}
+				writeMigrationPatchRecord(t, path, contents)
+
+				for range 2 {
+					if err := initializeMemoryMigrationFlags(baseDirectory); err != nil {
+						t.Fatal(err)
+					}
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(data) != contents {
+						t.Fatalf("an existing mode or checkpoint changed: %s", data)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMemoryMigrationPatchFailureIsNotRecorded(t *testing.T) {
+	for _, contents := range []string{"{", "null", "[]"} {
+		t.Run(contents, func(t *testing.T) {
+			baseDirectory := t.TempDir()
+			writeMigrationPatchRecord(t, filepath.Join(baseDirectory, "machines", "vm-1", "migration", "source.json"), `{}`)
+			path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", "destination.json")
+			writeMigrationPatchRecord(t, path, contents)
+
+			err := Run(baseDirectory, slog.New(slog.DiscardHandler))
+			if err == nil || !strings.Contains(err.Error(), path) {
+				t.Fatalf("patch error = %v, want the failing record path", err)
+			}
+			applied, err := os.ReadFile(filepath.Join(baseDirectory, "patches.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(applied, []byte("initialize_memory_migration_flags")) {
+				t.Fatalf("failed patch was marked applied: %s", applied)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != contents {
+				t.Fatalf("corrupt record changed: %s", data)
+			}
+		})
+	}
+}
+
+func TestMemoryMigrationPatchRetriesAfterPartialUpgrade(t *testing.T) {
+	baseDirectory := t.TempDir()
+	sourcePath := filepath.Join(baseDirectory, "machines", "vm-1", "migration", "source.json")
+	destinationPath := filepath.Join(baseDirectory, "machines", "vm-2", "migration", "destination.json")
+	writeMigrationPatchRecord(t, sourcePath, `{"sequence":7}`)
+	writeMigrationPatchRecord(t, destinationPath, "{")
+	logger := slog.New(slog.DiscardHandler)
+
+	if err := Run(baseDirectory, logger); err == nil {
+		t.Fatal("a corrupt destination record was accepted")
+	}
+	wantSource := map[string]any{"sequence": json.Number("7"), "migrate_memory_snapshot": nil}
+	if got := readMigrationPatchRecord(t, sourcePath); !reflect.DeepEqual(got, wantSource) {
+		t.Fatalf("source was not upgraded before the failure: %v", got)
+	}
+
+	writeMigrationPatchRecord(t, destinationPath, `{}`)
+	for range 2 {
+		if err := Run(baseDirectory, logger); err != nil {
+			t.Fatal(err)
+		}
+		if mode := readMigrationPatchRecord(t, destinationPath)["migrate_memory_snapshot"]; mode != false {
+			t.Fatalf("destination mode = %v, want false", mode)
+		}
+	}
+}
+
+func TestMemoryMigrationPatchRunsWithoutRecords(t *testing.T) {
+	if err := Run(t.TempDir(), slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeMigrationPatchRecord(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o640); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readMigrationPatchRecord(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var record map[string]any
+	if err := decoder.Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	return record
 }
