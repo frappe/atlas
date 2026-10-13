@@ -26,25 +26,45 @@ func TestMigrationFingerprintUsesBinaryContents(t *testing.T) {
 	if err := os.Chtimes(second, time.Unix(0, 0), time.Unix(0, 0)); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint, err := migrationHostFingerprint(t.Context(), first)
+	fingerprint, err := migrationHostCompatibility(t.Context(), first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := migrationHostFingerprint(t.Context(), second)
+	other, err := migrationHostCompatibility(t.Context(), second)
 	if err != nil || fingerprint != other {
 		t.Fatalf("same binary rejected: %v", err)
 	}
 	if err := os.WriteFile(second, []byte("build-two"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	other, err = migrationHostFingerprint(t.Context(), second)
+	other, err = migrationHostCompatibility(t.Context(), second)
 	if err != nil || fingerprint == other {
 		t.Fatalf("different binary accepted: %v", err)
 	}
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := migrationHostFingerprint(cancelled, first); !errors.Is(err, context.Canceled) {
+	if _, err := migrationHostCompatibility(cancelled, first); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrationCPUParserRejectsUnknownHardwareAndPreservesARMIdentity(t *testing.T) {
+	info := "CPU implementer: 0x41\nCPU architecture: 8\nCPU part: 0xd0c\nCPU variant: 0x1\nCPU revision: 2\nFeatures: fp asimd aes\n"
+	cpu, err := migrationCPUFromInfo(info, "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := migrationCPUFromInfo(strings.ReplaceAll(info, "revision: 2", "revision: 3"), "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cpu.Model == changed.Model {
+		t.Fatal("ARM CPU revision was not recorded")
+	}
+	for _, architecture := range []string{"amd64", "arm64", "unsupported"} {
+		if _, err := migrationCPUFromInfo("processor: 0", architecture); err == nil {
+			t.Fatalf("incomplete %s CPU identity accepted", architecture)
+		}
 	}
 }
 
@@ -72,8 +92,8 @@ func (units *migrationUnits) Start(context.Context, string) error {
 }
 
 func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
-	for _, metadataFailure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "success", true: "metadata_failure"}[metadataFailure], func(t *testing.T) {
+	for _, failure := range []string{"success", "metadata_failure", "snapshot_failure"} {
+		t.Run(failure, func(t *testing.T) {
 			root, err := os.MkdirTemp("/tmp", "fc-migration-")
 			if err != nil {
 				t.Fatal(err)
@@ -96,6 +116,8 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			compatibility.Host = "different-source-build"
+			compatibility.CPU = migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2"}
 			savedStateFixture(t, configuration, savedStateRequirement{
 				VirtualMachineID: input.ID, UserID: input.UserID + 1, SpecificationGeneration: 2, RestartGeneration: 3,
 				FirecrackerCompatibility: "source-local-marker", MigrationCompatibility: &compatibility,
@@ -119,6 +141,11 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 					if load.Resume || load.Memory.Path != "snap/mem" || load.SnapshotPath != "snap/state" {
 						t.Errorf("load = %+v", load)
 					}
+					if failure == "snapshot_failure" {
+						writer.WriteHeader(http.StatusBadRequest)
+						json.NewEncoder(writer).Encode(map[string]string{"fault_message": "snapshot CPU not supported"})
+						return
+					}
 				}
 				if request.URL.Path == "/drives/drive0" {
 					var drive api.PartialDrive
@@ -129,14 +156,24 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 						t.Errorf("migration throttle was not cleared: %+v", drive.RateLimiter)
 					}
 				}
-				if request.URL.Path == "/mmds" && metadataFailure {
+				if request.URL.Path == "/mmds" && failure == "metadata_failure" {
 					writer.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 				writer.WriteHeader(http.StatusNoContent)
 			})
 			err = runtime.RestoreMigrationSnapshot(t.Context(), input, bundle)
-			if metadataFailure {
+			if failure == "snapshot_failure" {
+				var apiError *api.Error
+				if !errors.As(err, &apiError) || apiError.Status != http.StatusBadRequest || apiError.Message != "snapshot CPU not supported" {
+					t.Fatalf("Firecracker load error was not preserved: %v", err)
+				}
+				if len(requests) != 1 || <-requests != "/snapshot/load" {
+					t.Fatal("snapshot load failure continued activation")
+				}
+				return
+			}
+			if failure == "metadata_failure" {
 				if err == nil || !strings.Contains(err.Error(), "refresh snapshot metadata") {
 					t.Fatalf("error = %v", err)
 				}
@@ -189,15 +226,15 @@ func TestSavedSnapshotFingerprintsTheRunningJailedBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured, err := migrationHostFingerprint(t.Context(), jailedBinary)
+	captured, err := migrationHostCompatibility(t.Context(), jailedBinary)
 	if err != nil {
 		t.Fatal(err)
 	}
-	installed, err := migrationHostFingerprint(t.Context(), configuration.FirecrackerBin)
+	installed, err := migrationHostCompatibility(t.Context(), configuration.FirecrackerBin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Metadata.MigrationCompatibility == nil || snapshot.Metadata.MigrationCompatibility.Host != captured || captured == installed {
+	if snapshot.Metadata.MigrationCompatibility == nil || snapshot.Metadata.MigrationCompatibility.Host != captured.Host || captured.Host == installed.Host {
 		t.Fatal("snapshot used the installed binary instead of the running build")
 	}
 }

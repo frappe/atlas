@@ -31,11 +31,15 @@ A stopped VM remains stopped. With memory transfer enabled, the source uses `Sav
 
 The destination downloads `state`, `memory`, and `metadata.json` over the node mutual-TLS API. It verifies each SHA-256 checksum and atomically publishes the bundle under `machines/<vm-id>/migration/memory-snapshot/`. The bundle includes `disk-snapshot.json` with the final disk sequence and GUID. Each completed transfer has a separate checkpoint, so an interrupted memory copy does not repeat a completed disk copy. An incomplete memory copy restarts from the beginning.
 
-Before restore, Metal verifies that the staged bundle matches the final received disk snapshot GUID. It then validates the VM ID, specification and restart generations, vCPU count, memory, disk size, and a host compatibility fingerprint. The fingerprint includes the Firecracker binary contents, architecture, host kernel release, CPU model, microcode, and CPU features. These values must match. A mismatch fails the migration and retains the source for rollback.
+Before restore, Metal verifies that the staged bundle matches the final received disk snapshot GUID. It then validates the VM ID, specification and restart generations, vCPU count, memory, and disk size.
+
+Metal records the source software fingerprint and CPU identity and features but does not compare them with the destination. Firecracker and KVM decide host compatibility when they load the saved state while the guest is paused. A load failure retains the source for rollback.
+
+A successful load does not prove that every guest instruction is supported by the destination. Cross-model migration needs a verified common [Firecracker CPU template](https://github.com/firecracker-microvm/firecracker/blob/main/docs/cpu_templates/cpu-template-helper.md#custom-cpu-template-creation), applied before the guest first boots. Changing a template during restore cannot change what a running guest already detected. See [Firecracker CPU compatibility](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/versioning.md#cpu-model).
 
 The runtime loads the bundle into a new jail with the destination's host user ID. Guest IP, MAC, TAP name, and disk path remain the same. Metal refreshes guest metadata and disk limits before it reports `ready`. The guest stays paused until Atlas commits ownership and requests `finish`.
 
-Snapshots without migration compatibility metadata remain valid for local restore. Wake an older sleeping VM and capture a new snapshot before requesting memory migration. Deploy the restore code on both hosts before enabling this option.
+Deploy the restore code on both hosts before enabling memory migration. Incoming snapshots must contain migration metadata with the VM shape.
 
 Control calls use the node mutual-TLS listener. Disk bytes use a separate one-shot TLS stream on port `9002`:
 
