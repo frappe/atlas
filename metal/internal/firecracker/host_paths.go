@@ -1,6 +1,13 @@
 package firecracker
 
-import "path/filepath"
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	platform "github.com/frappe/atlas/metal/internal/platform"
+)
 
 // Config contains Firecracker host and binary paths.
 type Config struct {
@@ -18,6 +25,21 @@ func DefaultConfig() Config {
 		JailerBin:      "/usr/bin/jailer",
 		FirecrackerBin: "/usr/bin/firecracker",
 	}
+}
+
+// FirecrackerVersion returns the version that the Firecracker binary prints,
+// for example "v1.16.1".
+func (configuration Config) FirecrackerVersion(ctx context.Context) (string, error) {
+	output, err := platform.Output(ctx, configuration.FirecrackerBin, "--version")
+	if err != nil {
+		return "", err
+	}
+	// The first line is "Firecracker v1.16.1".
+	fields := strings.Fields(output)
+	if len(fields) < 2 {
+		return "", fmt.Errorf("Firecracker printed no version: %q", output)
+	}
+	return fields[1], nil
 }
 
 // vmDir holds everything one VM owns on the host, so removing it removes the

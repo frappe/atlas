@@ -13,6 +13,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 
 	versionOneRoutes := router.Group("/v1")
 	versionOneRoutes.POST("/sync", s.exchangeControllerState)
+	versionOneRoutes.GET("/versions", s.getVersions)
 
 	virtualMachineRoutes := versionOneRoutes.Group("/vms")
 	virtualMachineRoutes.GET("", s.listVirtualMachines)

@@ -412,7 +412,16 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure coordination API: %w", err)
 	}
-	server, err := api.New(api.Config{Logger: logger}, api.Dependencies{
+	versions := api.Versions{MetaldVersion: version}
+	if mesh != nil {
+		if versions.MeshVersion, err = mesh.Version(daemonContext); err != nil {
+			logger.Warn("could not read the Atlas WG Mesh version", "error", err)
+		}
+	}
+	if versions.FirecrackerVersion, err = options.cfg.FirecrackerVersion(daemonContext); err != nil {
+		logger.Warn("could not read the Firecracker version", "error", err)
+	}
+	server, err := api.New(api.Config{Logger: logger, Versions: versions}, api.Dependencies{
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      migrationManager,
 		SnapshotStore:         stores.Snapshots,

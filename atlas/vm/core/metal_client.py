@@ -112,6 +112,16 @@ class MetalClient:
 		)
 		return self._virtual_machine(response)
 
+	def get_versions(self) -> dict[str, str]:
+		"""Return the metald, Atlas WG Mesh, and Firecracker versions on the host."""
+		return self._request(
+			"GET",
+			"/v1/versions",
+			timeout=self.status_timeout_seconds,
+			attempts=self.status_attempts,
+			budget_seconds=self.status_budget_seconds,
+		)
+
 	def get_virtual_machine_metrics(
 		self,
 		virtual_machine_id: str,
