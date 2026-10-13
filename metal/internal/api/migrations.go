@@ -72,6 +72,7 @@ type migrationResponse struct {
 
 // migrationTransfer reports one migration data transfer.
 type migrationTransfer struct {
+	SnapshotType    string     `json:"snapshot_type,omitempty"`
 	Sequence        int        `json:"sequence"`
 	StartedAt       time.Time  `json:"started_at"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`
@@ -160,25 +161,34 @@ func toMigration(record migration.DestinationProgress) migrationResponse {
 		MemorySnapshotStatus: record.MemorySnapshotStatus,
 	}
 	for _, interval := range record.Intervals {
-		var finishedAt *time.Time
-		if !interval.FinishedAt.IsZero() {
-			finishedAt = &interval.FinishedAt
-		}
-		response.Transfers = append(response.Transfers, migrationTransfer{
-			Sequence:        interval.Sequence,
-			StartedAt:       interval.StartedAt,
-			FinishedAt:      finishedAt,
-			DurationSeconds: interval.DurationSeconds,
-			TransferredMiB:  bytesToMiB(interval.BytesTransferred),
-			TotalMiB:        bytesToMiB(interval.TotalBytes),
-			ThroughputMiBps: interval.ThroughputMiBps,
-			Completed:       interval.Completed,
-		})
+		response.Transfers = append(response.Transfers, toMigrationTransfer(interval))
+	}
+	if record.MemoryTransfer != nil {
+		transfer := toMigrationTransfer(*record.MemoryTransfer)
+		transfer.SnapshotType = "memory"
+		response.Transfers = append(response.Transfers, transfer)
 	}
 	if record.Error != nil {
 		response.Error = &migrationErrorResponse{Code: record.Error.Code, Message: record.Error.Message}
 	}
 	return response
+}
+
+func toMigrationTransfer(progress migration.TransferProgress) migrationTransfer {
+	var finishedAt *time.Time
+	if !progress.FinishedAt.IsZero() {
+		finishedAt = &progress.FinishedAt
+	}
+	return migrationTransfer{
+		Sequence:        progress.Sequence,
+		StartedAt:       progress.StartedAt,
+		FinishedAt:      finishedAt,
+		DurationSeconds: progress.DurationSeconds,
+		TransferredMiB:  bytesToMiB(progress.BytesTransferred),
+		TotalMiB:        bytesToMiB(progress.TotalBytes),
+		ThroughputMiBps: progress.ThroughputMiBps,
+		Completed:       progress.Completed,
+	}
 }
 
 func bytesToMiB(bytes int64) int {

@@ -41,13 +41,29 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 				self.assertEqual(
 					frappe.get_doc(migration.doctype, migration.name).memory_snapshot_status, status
 				)
-			service.store_progress({"status": "ready"})
+			service.store_progress(
+				{
+					"status": "ready",
+					"transfers": [
+						{"sequence": 1, "completed": True, "transferred_mib": 10, "total_mib": 10},
+						{
+							"sequence": 2,
+							"snapshot_type": "memory",
+							"completed": True,
+							"transferred_mib": 512,
+							"total_mib": 512,
+						},
+					],
+				}
+			)
 			self.assertEqual(service.migration.memory_snapshot_status, "completed")
 			for status in ("completed", "failed", "aborted"):
 				service.settle(status)
 				stored = frappe.get_doc(migration.doctype, migration.name)
 				self.assertEqual(stored.memory_snapshot_status, status)
 				self.assertEqual(stored.status, status)
+				self.assertEqual([row.snapshot_type for row in stored.transfers], ["Disk", "Memory"])
+				self.assertEqual(stored.transfers[1].transferred_mib, 512)
 			migration.db_set({"migrate_memory_snapshot": 0, "memory_snapshot_status": "not_started"})
 			service = MigrationService(frappe.get_doc(migration.doctype, migration.name))
 			service.store_progress({"memory_snapshot_status": "transferring"})

@@ -646,7 +646,14 @@ func (f *fakeMigrationHost) SaveSourceMemory(context.Context, string) error {
 
 func (c *fakeSourceOperations) ReceiveMemorySnapshot(ctx context.Context, _, _, _ string, _ int, directory string, _ int) error {
 	if c.memoryReceive != nil {
-		return c.memoryReceive(ctx, directory)
+		if err := c.memoryReceive(ctx, directory); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"state", "memory", "metadata.json"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o600); err != nil {
+			return err
+		}
 	}
 	return nil
 }
