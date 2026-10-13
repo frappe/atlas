@@ -34,7 +34,7 @@ Each request goes through these steps in order:
 
 ## Routes
 
-The generated [Metal API reference](../../../docs/region/metald.md#request-rules) lists each route. Rules:
+The generated [Metal API reference](/api/metal/) lists each route. Rules:
 
 - Use PUT when a request replaces desired state, so a repeat is safe.
 - Use POST only for an action that runs on each call, such as a restart, or to create a resource.

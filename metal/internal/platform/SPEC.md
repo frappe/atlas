@@ -42,7 +42,7 @@ Each error keeps the command diagnostics. A context can stop a running command.
 ## File descriptor store
 
 - `FileDescriptorStore` stores with `FDSTORE=1` and removes with `FDSTOREREMOVE=1`.
-- `Listen` takes a stored TCP listener that has the configured address, or listens and stores a new one. A stored socket stays open across a restart, so the kernel queues connections until the next process accepts them. A listener on another address is removed from the store.
+- `Listen` reuses a stored listener at the configured address or stores a new one. It removes listeners at other addresses. Stored listeners queue connections across restarts.
 - `SetStatus` sets the status text that `systemctl show -p StatusText` reports.
 - The unit needs `NotifyAccess`, `FileDescriptorStoreMax`, and `FileDescriptorStorePreserve=yes`.
 - Without the notification socket, `IsAvailable` is false and store operations do nothing.

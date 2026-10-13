@@ -35,8 +35,8 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 5. Host service and reconcilers.
 6. Atlas trusted keys, then the Atlas and coordination APIs.
 
-- The control and coordination listeners come from the systemd descriptor store as `listener-api` and `listener-coordination`. Take them before the consoles, because `TakeFiles` returns every other descriptor.
-- After startup, metald sets the systemd status to `ready <version>`. Shutdown sets it to `stopping`. `upgrade-metald.sh` waits for the ready status.
+- Take `listener-api` and `listener-coordination` from the systemd descriptor store before console adoption. `TakeFiles` returns all remaining descriptors.
+- Startup sets systemd status to `ready <version>`; shutdown sets it to `stopping`. `upgrade-metald.sh` waits for ready status.
 - The mesh and traffic monitor services are optional and can be nil.
 - `connectMesh` runs on every start when `wg_mesh.enabled` is true.
 - `wg_mesh.enabled = false` does not disable managed WireGuard peers.
