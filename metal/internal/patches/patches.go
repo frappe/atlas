@@ -23,7 +23,9 @@ type Patch struct {
 }
 
 // All lists the patches in the order they run.
-var All = []Patch{}
+var All = []Patch{
+	{Name: "rename_status_keys_to_snake_case", Apply: renameStatusKeysToSnakeCase},
+}
 
 // Run applies each patch that patches.json does not list yet, and then lists it.
 func Run(baseDirectory string, logger *slog.Logger) error {

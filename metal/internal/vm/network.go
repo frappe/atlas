@@ -4,11 +4,11 @@ import "context"
 
 // NetworkInterface contains the host network values used by a runtime.
 type NetworkInterface struct {
-	NetworkNamespacePath string
-	TapName              string
-	MACAddress           string
-	GuestIPAddress       string
-	GatewayIPAddress     string
+	NetworkNamespacePath string `json:"network_namespace_path"`
+	TapName              string `json:"tap_name"`
+	MACAddress           string `json:"mac_address"`
+	GuestIPAddress       string `json:"guest_ip_address"`
+	GatewayIPAddress     string `json:"gateway_ip_address"`
 }
 
 // Network converges and releases host network resources.
