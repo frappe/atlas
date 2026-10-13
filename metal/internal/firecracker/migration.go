@@ -21,18 +21,13 @@ import (
 
 // HostCompatibility probes the configured runtime for the controller sync response.
 func (service *Runtime) HostCompatibility(ctx context.Context) (vm.HostCompatibility, error) {
-	state, err := migrationHostCompatibility(ctx, service.configuration.FirecrackerBin)
+	result, err := hostCompatibility(ctx, service.configuration.FirecrackerBin)
 	if err != nil {
 		return vm.HostCompatibility{}, err
 	}
-	profile, err := service.cpuProfile()
+	result.CPUProfile, err = service.cpuProfile()
 	if err != nil {
 		return vm.HostCompatibility{}, err
-	}
-	result := vm.HostCompatibility{
-		Architecture: runtime.GOARCH, CPUProfile: profile,
-		CPUVendor: state.CPU.Vendor, CPUModel: state.CPU.Model,
-		CPUFeatures: state.CPU.Features, SnapshotHost: state.Host,
 	}
 	if result.Architecture == "amd64" {
 		result.TSCKHz, result.TSCScaling, err = migrationTSC()
@@ -88,8 +83,8 @@ func migrationTSC() (int, bool, error) {
 }
 
 type migrationSnapshotCompatibility struct {
-	Host string                    `json:"host"`
-	CPU  migrationCPUCompatibility `json:"cpu"`
+	Host string                     `json:"host,omitempty"`
+	CPU  *migrationCPUCompatibility `json:"cpu,omitempty"`
 	vm.MemorySnapshotConfiguration
 }
 
@@ -97,13 +92,6 @@ type migrationCPUCompatibility struct {
 	Vendor   string `json:"vendor"`
 	Model    string `json:"model"`
 	Features string `json:"features"`
-}
-
-func (source migrationSnapshotCompatibility) validate(destination migrationSnapshotCompatibility) error {
-	if source.MemorySnapshotConfiguration != destination.MemorySnapshotConfiguration {
-		return errors.New("saved state VM shape does not match the destination")
-	}
-	return nil
 }
 
 // RestoreMigrationSnapshot validates transferred state and loads it paused into a new jail.
@@ -132,19 +120,8 @@ func (runtime *Runtime) RestoreMigrationSnapshot(ctx context.Context, input vm.R
 	return nil
 }
 
-func newMigrationSnapshotCompatibility(ctx context.Context, executable string, specification vm.Specification) (migrationSnapshotCompatibility, error) {
-	compatibility, err := migrationHostCompatibility(ctx, executable)
-	if err != nil {
-		return migrationSnapshotCompatibility{}, err
-	}
-	compatibility.MemorySnapshotConfiguration = vm.MemorySnapshotConfiguration{
-		VirtualCPUCount: specification.VirtualCPUCount(), MemoryMiB: specification.MemoryMiB, DiskMiB: specification.DiskMiB,
-	}
-	return compatibility, nil
-}
-
-func migrationHostCompatibility(ctx context.Context, executable string) (migrationSnapshotCompatibility, error) {
-	var compatibility migrationSnapshotCompatibility
+func hostCompatibility(ctx context.Context, executable string) (vm.HostCompatibility, error) {
+	compatibility := vm.HostCompatibility{Architecture: runtime.GOARCH}
 	if err := ctx.Err(); err != nil {
 		return compatibility, err
 	}
@@ -162,7 +139,7 @@ func migrationHostCompatibility(ctx context.Context, executable string) (migrati
 		return compatibility, err
 	}
 	fmt.Fprintln(hash, runtime.GOARCH, unix.ByteSliceToString(kernel.Release[:]))
-	compatibility.Host = hex.EncodeToString(hash.Sum(nil))
+	compatibility.SnapshotHost = hex.EncodeToString(hash.Sum(nil))
 	cpu, err := os.ReadFile("/proc/cpuinfo")
 	if err != nil {
 		return compatibility, err
@@ -171,7 +148,9 @@ func migrationHostCompatibility(ctx context.Context, executable string) (migrati
 	if err != nil {
 		return compatibility, err
 	}
-	compatibility.CPU = processor
+	compatibility.CPUVendor = processor.Vendor
+	compatibility.CPUModel = processor.Model
+	compatibility.CPUFeatures = processor.Features
 	return compatibility, ctx.Err()
 }
 

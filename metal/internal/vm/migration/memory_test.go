@@ -333,7 +333,7 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 				}
 				return
 			}
-			if record.State != destinationCompleted || source.finishCalls != 1 {
+			if record.State != destinationCompleted || record.MemorySnapshotGUID != "" || source.finishCalls != 1 {
 				t.Fatalf("record = %+v", record)
 			}
 			if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {

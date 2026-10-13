@@ -19,7 +19,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 
 `Start` chooses shared warm memory only for a fresh disk clone and exact shape. `ColdStart` never uses source guest memory. `Restore` and `RestorePaused` use VM-local saved state and return an error instead of silently cold-booting. See the [warm-memory incident](../../../docs/incidents/2026-09-24-guest-disk-corruption.md).
 
-`RestoreMigrationSnapshot` validates the bundle identity and VM shape and loads it paused with the destination's user ID. Firecracker and KVM decide host compatibility during snapshot load. Source software and CPU metadata are recorded but do not block migration. See [migration](../../../docs/compute/migration-engine.md) for the transfer and activation contract.
+`RestoreMigrationSnapshot` validates the bundle identity and VM shape and loads it paused with the destination's user ID. Firecracker and KVM validate host compatibility during snapshot load. `HostCompatibility` supplies the startup facts for Atlas preflight checks. See [migration](../../../docs/compute/migration-engine.md) for the transfer and activation contract.
 
 ## Invariants
 

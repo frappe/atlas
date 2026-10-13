@@ -26,7 +26,6 @@ type DesiredState struct {
 // SyncResult contains what the controller reads back from one sync exchange.
 type SyncResult struct {
 	Compatibility        *vm.HostCompatibility
-	CompatibilityError   error
 	Capacity             Capacity
 	VirtualMachineStates map[string]vm.State
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
@@ -82,7 +81,7 @@ type MigrationReservations func(context.Context) ([]migration.DestinationReserva
 
 // Dependencies contains host synchronization services.
 type Dependencies struct {
-	Compatibility func(context.Context) (vm.HostCompatibility, error)
+	Compatibility *vm.HostCompatibility
 	// Mesh is nil when Atlas WG Mesh is disabled.
 	Mesh                  Mesh
 	WireGuard             WireGuardManager
@@ -98,7 +97,7 @@ type Dependencies struct {
 
 // Service owns controller synchronization and host capacity calculation.
 type Service struct {
-	compatibility         func(context.Context) (vm.HostCompatibility, error)
+	compatibility         *vm.HostCompatibility
 	mesh                  Mesh
 	wireGuard             WireGuardManager
 	images                ImagePolicyStore
@@ -171,15 +170,7 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 		states[information.ID] = information.State
 	}
 
-	result := SyncResult{Capacity: capacity, VirtualMachineStates: states}
-	if service.compatibility != nil {
-		compatibility, err := service.compatibility(ctx)
-		if err != nil {
-			result.CompatibilityError = fmt.Errorf("read host compatibility: %w", err)
-		} else {
-			result.Compatibility = &compatibility
-		}
-	}
+	result := SyncResult{Compatibility: service.compatibility, Capacity: capacity, VirtualMachineStates: states}
 	if service.mesh != nil {
 		mac, err := service.mesh.PrivateNetworkMAC()
 		if err != nil {

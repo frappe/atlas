@@ -421,7 +421,6 @@ func terminalDestinationRecord(record destinationRecord, state destinationState,
 		VirtualMachineID:      record.VirtualMachineID,
 		State:                 state,
 		MigrateMemorySnapshot: record.MigrateMemorySnapshot,
-		MemorySnapshotGUID:    record.MemorySnapshotGUID,
 		CreatedAt:             record.CreatedAt,
 		FinishedAt:            finishedAt,
 	}

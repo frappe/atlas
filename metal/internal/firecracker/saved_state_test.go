@@ -158,7 +158,7 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 
 func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 	compatibility := migrationSnapshotCompatibility{
-		Host: "binary-and-host", CPU: migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/58", Features: "fpu sse"},
+		Host: "binary-and-host", CPU: &migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/58", Features: "fpu sse"},
 		MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4},
 	}
 	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigrationCompatibility: &compatibility}
@@ -168,7 +168,7 @@ func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 	metadata.FirecrackerCompatibility = "source-only-build-marker"
 	source := compatibility
 	source.Host = "different-binary-or-host"
-	source.CPU = migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2 fpu sse"}
+	source.CPU = &migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2 fpu sse"}
 	metadata.MigrationCompatibility = &source
 	if err := metadata.validate(requirement); err != nil {
 		t.Fatal(err)

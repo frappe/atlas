@@ -366,11 +366,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		}
 		return migrationManager.DestinationReservations(ctx)
 	}
-	compatibility, compatibilityError := virtualMachineRuntime.HostCompatibility(daemonContext)
 	hostDependencies := host.Dependencies{
-		Compatibility: func(context.Context) (vm.HostCompatibility, error) {
-			return compatibility, compatibilityError
-		},
 		WireGuard:             wireGuardManager,
 		Images:                stores.Images,
 		GatewayRoutes:         virtualMachineManager,
@@ -378,6 +374,12 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		Storage:               stores.Pool,
 		MigrationReservations: migrationReservations,
 		Wake:                  notifyReconcilers,
+	}
+	compatibility, compatibilityError := virtualMachineRuntime.HostCompatibility(daemonContext)
+	if compatibilityError != nil {
+		logger.WarnContext(daemonContext, "Host compatibility probe failed", "error", compatibilityError)
+	} else {
+		hostDependencies.Compatibility = &compatibility
 	}
 	// A nil *network.Mesh in the interface would not compare equal to nil.
 	if mesh != nil {

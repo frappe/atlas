@@ -127,10 +127,6 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	if err != nil {
 		return synchronizationFailure(err)
 	}
-	if result.CompatibilityError != nil {
-		s.logger.WarnContext(c.Request().Context(), "Host compatibility probe failed", "error", result.CompatibilityError)
-	}
-
 	return c.JSON(http.StatusOK, syncResponse{
 		Compatibility:     (*hostCompatibilityResponse)(result.Compatibility),
 		Capacity:          capacityResponseFromHost(result.Capacity),
