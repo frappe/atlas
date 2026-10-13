@@ -1,0 +1,65 @@
+name: Pull request stats
+
+on:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-stats-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: 'Comment'
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+
+    steps:
+      # workflow_run checks out the default branch, so pull request code never runs here.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Post the stats comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPOSITORY_ID: ${{ github.event.repository.id }}
+        run: |
+          number=$(gh pr list --state open --search "$HEAD_SHA" --json number,headRefOid --jq ".[] | select(.headRefOid == \"$HEAD_SHA\") | .number")
+          if [ -z "$number" ]; then
+            echo "No open pull request has head $HEAD_SHA"
+            exit 0
+          fi
+
+          base_branch=$(gh pr view "$number" --json baseRefName --jq .baseRefName)
+          git fetch --quiet origin "pull/$number/head"
+          base=$(git merge-base "origin/$base_branch" "$HEAD_SHA")
+
+          for name in atlas-coverage metal-coverage; do
+            gh run download "$RUN_ID" --name "$name" --dir "$RUNNER_TEMP/coverage/head/$name" || echo "No $name in this run"
+
+            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name&per_page=100" \
+              --jq "[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == \"$base_branch\" and .workflow_run.head_repository_id == $REPOSITORY_ID)][0].id // empty")
+            if [ -n "$artifact" ]; then
+              gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/$name.zip"
+              unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$RUNNER_TEMP/coverage/base/$name"
+            fi
+          done
+
+          python3 .github/scripts/pr-stats.py --base "$base" --head "$HEAD_SHA" --base-branch "$base_branch" --coverage "$RUNNER_TEMP/coverage" > "$RUNNER_TEMP/comment.md"
+
+          comment=$(gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- atlas-pr-stats -->"))) | .id' | head -1)
+          if [ -n "$comment" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment" -F "body=@$RUNNER_TEMP/comment.md" > /dev/null
+          else
+            gh pr comment "$number" --body-file "$RUNNER_TEMP/comment.md"
+          fi

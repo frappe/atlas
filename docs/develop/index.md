@@ -74,6 +74,8 @@ Mergify labels each pull request. The labels change when you push or edit the ti
 
 The rules are in `.mergify.yml`.
 
+After the tests finish, a bot comment shows the changed lines per module and the Atlas and Metal test coverage. The comment changes after each push.
+
 ## Release
 
 A release manager runs the **Release** workflow on `master` from the GitHub Actions tab. The workflow tags the `master` head and creates a GitHub Release with notes from the merged pull requests.
