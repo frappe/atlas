@@ -63,7 +63,16 @@ Mergify merges the base branch into an open pull request that is behind it. It s
 
 Mergify closes a pull request that is open for more than 30 days. To keep it open, add the `keep-open` label.
 
-Mergify labels a pull request by its changed files. An `area:` label shows the component, such as `area: metal`. A `risk:` label shows a change that needs careful review: `risk: migration`, `risk: ebpf`, `risk: api` or `risk: dependencies`. The rules are in `.mergify.yml`.
+Mergify labels each pull request. The labels change when you push or edit the title.
+
+| Label | Shows | Example |
+| --- | --- | --- |
+| `area:` | The changed component or feature | `area: metal`, `area: placement` |
+| `domain:` | The handbook section that the change affects | `domain: networking` |
+| `kind:` | The type in the Conventional Commit title | `kind: fix`, `kind: breaking` |
+| `risk:` | A change that needs careful review | `risk: migration`, `risk: ebpf` |
+
+The rules are in `.mergify.yml`.
 
 ## Release
 
