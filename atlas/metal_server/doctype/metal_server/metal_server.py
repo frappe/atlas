@@ -152,6 +152,9 @@ class MetalServer(Document):
 			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
 
 	def _validate_bmc(self) -> None:
+		if not self.has_bmc_driver:
+			return
+
 		values = (self.bmc_url, self.bmc_username, self.bmc_password)
 		if any(values) and not all(values):
 			frappe.throw(_("Enter the BMC URL, username, and password together."))

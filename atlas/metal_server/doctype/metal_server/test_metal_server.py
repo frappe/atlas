@@ -147,15 +147,29 @@ class TestServer(UnitTestCase):
 		server._set_wireguard_ip_address_if_not_set.assert_not_called()
 
 	def test_validate_bmc_requires_the_url_username_and_password_together(self) -> None:
-		MetalServer._validate_bmc(SimpleNamespace(bmc_url=None, bmc_username=None, bmc_password=None))
 		MetalServer._validate_bmc(
-			SimpleNamespace(bmc_url="https://bmc.local", bmc_username="admin", bmc_password="secret")
+			SimpleNamespace(has_bmc_driver=True, bmc_url=None, bmc_username=None, bmc_password=None)
+		)
+		MetalServer._validate_bmc(
+			SimpleNamespace(
+				has_bmc_driver=True, bmc_url="https://bmc.local", bmc_username="admin", bmc_password="secret"
+			)
 		)
 
 		with self.assertRaises(frappe.ValidationError):
 			MetalServer._validate_bmc(
-				SimpleNamespace(bmc_url="https://bmc.local", bmc_username="admin", bmc_password=None)
+				SimpleNamespace(
+					has_bmc_driver=True, bmc_url="https://bmc.local", bmc_username="admin", bmc_password=None
+				)
 			)
+
+	def test_validate_bmc_ignores_the_bmc_fields_without_a_driver(self) -> None:
+		"""The form hides the BMC fields without a driver, so stale values must not block a save."""
+		MetalServer._validate_bmc(
+			SimpleNamespace(
+				has_bmc_driver=False, bmc_url="https://bmc.local", bmc_username=None, bmc_password=None
+			)
+		)
 
 	def test_bmc_power_state_skips_the_bmc_without_a_driver(self) -> None:
 		client = Mock()
