@@ -17,7 +17,6 @@ from atlas.metal_server.usage import (
 	sync_server,
 )
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.metal_models import MetalHostCompatibility
 
 CAPACITY = {
 	"total_cpu_millicores": 8000,
@@ -31,20 +30,31 @@ CAPACITY = {
 
 
 class TestServerUsage(UnitTestCase):
-	def test_sync_replaces_or_invalidates_cached_compatibility(self) -> None:
+	def test_sync_persists_changed_compatibility_only(self) -> None:
 		report = {
 			"architecture": "amd64",
-			"cpu_profile": "builtin:baseline",
+			"cpu_profile": "custom:baseline",
 			"cpu_vendor": "GenuineIntel",
 			"cpu_model": "6/58",
 			"cpu_features": "fpu sse",
 			"snapshot_host": "build",
 			"tsc_khz": 2_500_000,
-			"tsc_scaling": False,
+			"tsc_scaling": True,
 		}
-		for compatibility in (report, None, {}):
-			with self.subTest(compatibility=compatibility):
-				server = Mock(private_network_mac_address=None)
+		stored = frappe.as_json(report)
+		for compatibility, previous, changed in (
+			(report, None, True),
+			(report, stored, False),
+			(None, stored, True),
+			(None, None, False),
+			({}, stored, True),
+		):
+			with self.subTest(compatibility=compatibility, previous=previous):
+				server = Mock(
+					private_network_mac_address=None,
+					cpu_compatibility_report=previous,
+					tsc_scaling_supported=bool(previous),
+				)
 				server.name = "server-1"
 				client = Mock()
 				client.sync.return_value = {"capacity": CAPACITY, "compatibility": compatibility}
@@ -53,24 +63,24 @@ class TestServerUsage(UnitTestCase):
 					patch("atlas.metal_server.usage.MetalClient", return_value=client),
 					patch("atlas.metal_server.usage.get_desired_images", return_value=[]),
 					patch("atlas.metal_server.usage.store_reported_states"),
-					patch("atlas.metal_server.usage.frappe.cache") as cache,
+					patch("atlas.metal_server.usage.frappe.db.set_value") as set_value,
 					patch("atlas.metal_server.usage.frappe.log_error") as log_error,
 				):
 					sync_server("server-1", [], [], False)
 				server.insert.assert_called_once()
-				if compatibility != report:
-					cache.return_value.delete_value.assert_called_once_with(
-						"metal-host-compatibility:server-1"
+				if changed:
+					set_value.assert_called_once_with(
+						"Metal Server",
+						"server-1",
+						{
+							"cpu_compatibility_report": stored if compatibility == report else None,
+							"tsc_scaling_supported": compatibility == report,
+						},
 					)
-					cache.return_value.set_value.assert_not_called()
-					if compatibility == {}:
-						log_error.assert_called_once()
 				else:
-					cache.return_value.set_value.assert_called_once_with(
-						"metal-host-compatibility:server-1",
-						MetalHostCompatibility.from_dict(report),
-						expires_in_sec=120,
-					)
+					set_value.assert_not_called()
+				if compatibility == {}:
+					log_error.assert_called_once()
 
 	def test_sync_logs_a_metal_connection_failure(self) -> None:
 		server = SimpleNamespace(name="server-1")
@@ -248,7 +258,9 @@ class TestServerUsage(UnitTestCase):
 			self.assertEqual(get_wireguard_peers(), [])
 
 	def test_sync_stores_the_reported_private_network_mac_address(self) -> None:
-		server = Mock(private_network_mac_address=None)
+		server = Mock(
+			private_network_mac_address=None, cpu_compatibility_report=None, tsc_scaling_supported=0
+		)
 		server.name = "server-1"
 		client = Mock()
 		client.sync.return_value = {"capacity": CAPACITY, "private_network_mac_address": "aa:bb:cc:dd:ee:07"}

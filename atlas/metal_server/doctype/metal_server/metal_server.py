@@ -57,6 +57,7 @@ class MetalServer(Document):
 		bmc_password: DF.Password | None
 		bmc_url: DF.Data | None
 		bmc_username: DF.Data | None
+		cpu_compatibility_report: DF.Code | None
 		disks: DF.Table[MetalServerDisk]
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check
@@ -76,6 +77,7 @@ class MetalServer(Document):
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
 		tags: DF.Table[AtlasTag]
 		title: DF.Data | None
+		tsc_scaling_supported: DF.Check
 		wireguard_ip_address: DF.Data | None
 		wireguard_public_key: DF.Data | None
 	# end: auto-generated types
