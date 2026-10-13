@@ -1,0 +1,22 @@
+pull_request_rules:
+  - name: Close direct pull requests to master
+    conditions:
+      - base=master
+      - author!=mergify[bot]
+      - label!=manual-backport-pr
+    actions:
+      close:
+      comment:
+        message: |
+          @{{author}}, `master` is the stable branch and accepts only backports. Raise this pull request on `develop` and add the `backport master` label.
+          For a manual backport, add the `manual-backport-pr` label and reopen this pull request.
+
+  - name: Backport to master
+    conditions:
+      - label="backport master"
+    actions:
+      backport:
+        branches:
+          - master
+        assignees:
+          - "{{ author }}"
