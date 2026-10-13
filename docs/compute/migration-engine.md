@@ -43,6 +43,10 @@ The runtime loads the bundle into a new jail with the destination's host user ID
 
 Deploy the restore code on both hosts before enabling memory migration. Incoming snapshots must contain migration metadata with the VM shape and source TAP MAC.
 
+At startup, the `initialize_memory_migration_flags` [host patch](../develop/metal.md#change-stored-state-with-a-patch) adds missing memory flags to existing migration records. A destination defaults to disk-only transfer. A source keeps its mode unset until cutover. The patch preserves existing flags and transfer checkpoints.
+
+The patch can run again after an interrupted upgrade. A malformed record stops startup and reports its path.
+
 Control calls use the node mutual-TLS listener. Disk bytes use a separate one-shot TLS stream on port `9002`:
 
 ```text
