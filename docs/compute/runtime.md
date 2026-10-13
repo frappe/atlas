@@ -21,6 +21,14 @@ This rule prevents the [warm-memory disk corruption incident](../incidents/2026-
 
 Firecracker receives guest CPUs rounded up from the millicore entitlement. systemd applies the exact CPU quota. Firecracker drive limiters enforce disk throughput and IOPS.
 
+### Common CPU configuration
+
+Set `firecracker.cpu_template_file` in `metald.toml` to a custom Firecracker CPU template JSON file. Metal reads the file at startup and applies it through `/cpu-config` before each cold boot. An absent setting uses Firecracker's default CPU configuration. Invalid JSON or an unreadable file stops daemon startup. Firecracker validates the template schema before guest boot.
+
+Use Firecracker's [CPU template helper](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/cpu_templates/cpu-template-helper.md) to compare guest CPUID and model-specific registers on every target CPU, kernel, and Firecracker combination. Verify the resulting template on each host, then test the guest and memory migration in both directions. Matching template files alone do not prove migration compatibility.
+
+Changing the template requires a daemon restart and a cold boot of each VM that needs the new CPU configuration. Existing running and restored guests keep the CPU configuration in their memory state. Shared warm images and VM-local snapshots include the template digest in their compatibility marker.
+
 ## Stop, pause, and restore a guest
 
 Power requests accept `running`, `paused`, or `stopped`.

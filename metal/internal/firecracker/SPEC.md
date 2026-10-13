@@ -11,6 +11,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 | `Runtime` | Runtime and warm-runtime interfaces. |
 | `machine` | One VM operation, unit, and API client. |
 | `Config` | Host directories and executable paths. |
+| `Config.CPUTemplate` | Immutable custom CPU template applied before cold boot. |
 | `firecracker/api.Client` | One VM Unix socket and serialized Firecracker requests. |
 | `firecracker/api.Error` | Non-2xx status and fault message. |
 | `sshSession` | Owns an SSH unit, console PTY, MMDS key, and session files. |
@@ -25,6 +26,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - The console master remains open while its VM runs. Startup adopts masters from the systemd descriptor store. See the [console package](../console/SPEC.md).
 - Firecracker gets whole vCPUs rounded up from millicores. systemd applies the exact CPU quota. The API limit is 32000 millicores.
 - A VM-local memory snapshot requires a matching Firecracker build. Binary size and modification time identify that build. Migration delegates build compatibility to Firecracker.
+- Shared warm images and VM-local snapshot matching include the configured CPU template digest.
 - `SaveAndStop` writes VM-local state to temporary files, publishes it with one atomic rename, then stops Firecracker. A running VM with an existing valid snapshot conflicts. A paused VM with one terminates Firecracker. A stopped VM with one is complete.
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.
 - `RefreshDisk` changes live drive limits. Unlimited values send zero-sized buckets to clear temporary migration limits.

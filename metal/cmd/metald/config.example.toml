@@ -20,6 +20,8 @@ atlas_common_name = "atlas.example.com"
 binary_path = "/usr/bin/firecracker"
 # Short paths to VM API sockets.
 sockets_dir = "/run/metal"
+# Empty uses Firecracker's default guest CPU configuration.
+cpu_template_file = ""
 
 [jailer]
 binary_path = "/usr/bin/jailer"

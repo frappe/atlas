@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -120,8 +123,9 @@ type metaldFile struct {
 }
 
 type firecrackerFile struct {
-	BinaryPath string `toml:"binary_path"`
-	SocketsDir string `toml:"sockets_dir"`
+	BinaryPath      string `toml:"binary_path"`
+	SocketsDir      string `toml:"sockets_dir"`
+	CPUTemplateFile string `toml:"cpu_template_file"`
 }
 
 type jailerFile struct {
@@ -180,6 +184,17 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.coordinationListen, fc.Metald.CoordinationListen)
 	overlay(&resolvedOptions.cfg.FirecrackerBin, fc.Firecracker.BinaryPath)
 	overlay(&resolvedOptions.cfg.SocketsDir, fc.Firecracker.SocketsDir)
+	if fc.Firecracker.CPUTemplateFile != "" {
+		template, err := os.ReadFile(fc.Firecracker.CPUTemplateFile)
+		if err != nil {
+			return fmt.Errorf("read CPU template: %w", err)
+		}
+		template = bytes.TrimSpace(template)
+		if len(template) == 0 || !json.Valid(template) || template[0] != '{' {
+			return fmt.Errorf("CPU template %s must be a JSON object", fc.Firecracker.CPUTemplateFile)
+		}
+		resolvedOptions.cfg.CPUTemplate = template
+	}
 	overlay(&resolvedOptions.cfg.JailerBin, fc.Jailer.BinaryPath)
 	overlay(&resolvedOptions.pool, fc.ZFS.Pool)
 	overlay(&resolvedOptions.wireGuardName, fc.WireGuard.Interface)
