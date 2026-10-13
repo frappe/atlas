@@ -48,7 +48,7 @@ Atlas is in production. Existing clients, hosts and data must keep working after
 - Do not add a new API version. Change the current contract so that old clients keep working.
 - Avoid breaking changes to eBPF programs, maps and wire formats as far as possible. Prefer new maps or fields that old programs ignore.
 - When a break cannot be avoided, explain the break and the upgrade path to the user before you implement it.
-- Add a migration patch when you change stored data or a schema.
+- Add a migration patch when you change stored data or a schema: a Frappe patch for the Atlas database, a [metald patch](docs/develop/metal.md#change-stored-state-with-a-patch) for host state, and a [map layout patch](docs/networking/wg-mesh/operations.md#change-a-map) for a pinned WG Mesh map.
 
 ## Environments
 
