@@ -1,0 +1,57 @@
+// Package patches changes host state from an older metald, once per host, before metald reads it. Add each
+// patch at the end of All, and give the patch, its file and its function one name that says what it changes,
+// such as rename_status_keys_to_snake_case. Mandatory: a patch must be idempotent. Never change a released patch.
+package patches
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+
+	"github.com/frappe/atlas/metal/internal/platform"
+)
+
+// Patch is one named change to the state under the metald base directory.
+type Patch struct {
+	Name  string
+	Apply func(baseDirectory string) error
+}
+
+// All lists the patches in the order they run.
+var All = []Patch{}
+
+// Run applies each patch that patches.json does not list yet, and then lists it.
+func Run(baseDirectory string, logger *slog.Logger) error {
+	path := filepath.Join(baseDirectory, "patches.json")
+	var applied []string
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &applied); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	for _, patch := range All {
+		if slices.Contains(applied, patch.Name) {
+			continue
+		}
+
+		logger.Info("applying patch", "patch", patch.Name)
+		if err := patch.Apply(baseDirectory); err != nil {
+			return fmt.Errorf("patch %s: %w", patch.Name, err)
+		}
+		applied = append(applied, patch.Name)
+		data, _ := json.Marshal(applied)
+		if err := platform.WriteFile(path, data, 0o640); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

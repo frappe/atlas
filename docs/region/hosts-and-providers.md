@@ -76,7 +76,7 @@ Only one update can be Running or Paused. A step runs every 5 seconds and contin
 
 A failed upgrade or check pauses the update. Read the Status Reason of the Failed row and its SSH Task.
 
-To restore an earlier build, duplicate its Metald Update, then plan and start the duplicate.
+To restore an earlier build, duplicate its Metald Update, then plan and start the duplicate. A build with a new [metald patch](../develop/metal.md#change-stored-state-with-a-patch) or [WG Mesh map layout](../networking/wg-mesh/operations.md#change-a-map) cannot be restored this way, because an older build cannot read the new data. Roll forward with a fixed build instead.
 
 ### Upgrade on one host
 

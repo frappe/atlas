@@ -29,6 +29,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network"
 	traffic "github.com/frappe/atlas/metal/internal/network/traffic"
+	"github.com/frappe/atlas/metal/internal/patches"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/reconciler"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -249,6 +250,10 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		}
 	}
 	if err := makeDirs(options); err != nil {
+		return err
+	}
+	// Patches change state from an older metald, so they run before anything reads it.
+	if err := patches.Run(options.baseDir, logger); err != nil {
 		return err
 	}
 	units, err := platform.Connect(context.Background())

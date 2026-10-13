@@ -57,6 +57,48 @@ Use `gofmt -w <changed-go-files>` after editing Go files. `make build` regenerat
 
 Unit tests can run without a VM host. Boot, network, and firewall checks need host features. The [Metal host test guide](metal-testing.md) has the setup and commands. It is still a work in progress.
 
+## Change stored state with a patch
+
+metald keeps records and other state under `base_dir`, which is `/var/lib/metal` by default. A new build must read the state that an older build left. When a change makes old state unreadable, such as a renamed record field, add a patch in `internal/patches`.
+
+At startup, before it reads any state, metald runs each patch that `base_dir/patches.json` does not list yet. It runs them in list order and adds each name to the file after the patch succeeds. A failed patch stops startup, and the error names the patch.
+
+### Add a patch
+
+1. Choose one name that says what the patch changes, such as `rename_status_keys_to_snake_case`. Use it for the patch name, the file, and the function.
+2. Write the function in `internal/patches/<name>.go`. It gets the base directory and changes the files under it.
+3. Add the patch at the end of `All` in `internal/patches/patches.go`.
+4. Add a test that writes the old state, runs the patch, and checks that metald reads the result with every value.
+
+```go
+// rename_status_keys_to_snake_case.go
+func renameStatusKeysToSnakeCase(baseDirectory string) error {
+	paths, err := filepath.Glob(filepath.Join(baseDirectory, "machines", "*", "status.json"))
+	// For each file: read it, rename the old keys that are still present, and write it with platform.WriteFile.
+}
+```
+
+```go
+// patches.go
+var All = []Patch{
+	{Name: "rename_status_keys_to_snake_case", Apply: renameStatusKeysToSnakeCase},
+}
+```
+
+### Keep a patch idempotent
+
+**Mandatory: a patch must be idempotent.** metald can stop after a patch changes the state and before it lists the patch, so the next start runs the patch again. A second run must leave the same state as the first run, without an error.
+
+- Change only what is still in the old form. For example, rename a key only if the old key exists.
+- Write each file with `platform.WriteFile`, which replaces the file in one step. A crash then leaves the old file or the new file, never part of one.
+- Do not depend on state that the patch removes. Read what you need before you delete or replace it.
+- Test it: run the patch twice on the same state, and check that the result does not change.
+
+### Rules
+
+- Never change or remove a released patch. A host that skips builds runs every patch that it has not run yet.
+- Patches only move forward. An older `metald` cannot read state that a newer patch changed, so fix a bad change with a new patch.
+
 ## Check host behavior when it matters
 
 Test both first boot from a fresh clone and later boot from an existing disk. Shared warm memory is valid only for the first case. If your change touches lifecycle or console handling, also test explicit stop, daemon restart with console adoption, and idle save and restore.
