@@ -152,8 +152,9 @@ type trafficFile struct {
 }
 
 type migrationFile struct {
-	FinalDeltaMiB *int `toml:"final_delta_mib"`
-	TransferPort  *int `toml:"transfer_port"`
+	FinalDeltaMiB *int  `toml:"final_delta_mib"`
+	TransferPort  *int  `toml:"transfer_port"`
+	CheckGuestSSH *bool `toml:"check_guest_ssh"`
 }
 
 func load(path string) (options, error) {
@@ -205,6 +206,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlayBool(&resolvedOptions.trafficMonitor.enabled, fc.Traffic.Enabled)
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)
+	overlayBool(&resolvedOptions.cfg.CheckMigrationGuestSSH, fc.Migration.CheckGuestSSH)
 	overlay(&resolvedOptions.tls.caFile, fc.TLS.CAFile)
 	overlay(&resolvedOptions.tls.certificateFile, fc.TLS.CertificateFile)
 	overlay(&resolvedOptions.tls.privateKeyFile, fc.TLS.PrivateKeyFile)

@@ -60,6 +60,8 @@ An unfinished record on either host means recovery is not complete.
 
 After `finish` starts, an activation or cleanup fault retries forward. Abort is rejected. Activation retries inspect the existing process and do not reload an old snapshot over a disk that the guest may have changed. The jail retains its immutable memory backing file when Metal removes transfer staging, as required by [Firecracker snapshot loading](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md#loading-snapshots).
 
+Hosts with SSH-enabled guests can set `migration.check_guest_ssh = true`. After a running memory guest resumes, Metal requires an SSH key-exchange response from its guest address inside the VM network namespace before source cleanup. The probe needs no guest credentials and has a ten-second timeout. A failure keeps the migration in `finishing`, retains source recovery state, and retries the check without replaying memory. Paused and stopped guests skip the probe. The setting defaults to false; it checks guest responsiveness rather than application health.
+
 ## Limits and recovery
 
 The source allows one outbound snapshot stream at a time because streams use a fixed port. A cutover or rollback fault can keep both hosts locked. Migration needs free destination storage and a reachable private host network.

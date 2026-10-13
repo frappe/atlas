@@ -275,7 +275,36 @@ func TestMemoryDestinationLoadsPausedThenActivates(t *testing.T) {
 			if runtime.state != desiredState || runtime.resumes != wantResumes || runtime.migrationRestores != 1 || runtime.coldStarts != 0 {
 				t.Fatalf("runtime after activation = %+v", runtime)
 			}
+			wantGuestChecks := 0
+			if desiredState == StateRunning {
+				wantGuestChecks = 2
+			}
+			if runtime.guestChecks != wantGuestChecks {
+				t.Fatalf("guest checks = %d, want %d", runtime.guestChecks, wantGuestChecks)
+			}
 		})
+	}
+}
+
+func TestMemoryActivationRetainsRunningGuestAfterHealthCheckFailure(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StateRunning)
+	runtime.state = StatePaused
+	failure := errors.New("guest SSH unavailable")
+	runtime.guestCheckError = failure
+	host := NewMigrationHost(machines)
+	if err := host.ActivateMigratedMemory(t.Context(), "vm-1"); !errors.Is(err, failure) {
+		t.Fatalf("activation error = %v", err)
+	}
+	if runtime.state != StateRunning || runtime.resumes != 1 || runtime.migrationRestores != 0 {
+		t.Fatalf("runtime after failed check = %+v", runtime)
+	}
+	runtime.guestCheckError = nil
+	if err := host.ActivateMigratedMemory(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.guestChecks != 2 || runtime.resumes != 1 || runtime.migrationRestores != 0 {
+		t.Fatal("health check retry replayed guest memory")
 	}
 }
 

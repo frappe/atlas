@@ -104,9 +104,9 @@ func TestLoadCPUTemplate(t *testing.T) {
 			if err := os.WriteFile(template, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			options, err := load(writeConfig(t, fmt.Sprintf("[firecracker]\ncpu_template_file = %q\n", template)))
+			options, err := load(writeConfig(t, fmt.Sprintf("[firecracker]\ncpu_template_file = %q\n[migration]\ncheck_guest_ssh = true\n", template)))
 			if body == "\n{\"cpuid_modifiers\": []}\n" {
-				if err != nil || string(options.cfg.CPUTemplate) != "{\"cpuid_modifiers\": []}" {
+				if err != nil || string(options.cfg.CPUTemplate) != "{\"cpuid_modifiers\": []}" || !options.cfg.CheckMigrationGuestSSH {
 					t.Fatalf("load template: %v, configuration %+v", err, options.cfg)
 				}
 			} else if err == nil {

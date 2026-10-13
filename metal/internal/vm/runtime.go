@@ -24,6 +24,8 @@ type Runtime interface {
 	RefreshDisk(context.Context, RuntimeMachine) error
 	ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error)
 	ResumeSSH(virtualMachineID, sessionID string) (SSHSession, error)
+	// CheckMigratedGuest verifies guest responsiveness when configured on the host.
+	CheckMigratedGuest(context.Context, RuntimeMachine) error
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
 }
 

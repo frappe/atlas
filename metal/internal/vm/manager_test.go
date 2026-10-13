@@ -40,6 +40,8 @@ type fakeRuntime struct {
 	migrationDirectory string
 	metadataError      error
 	diskError          error
+	guestCheckError    error
+	guestChecks        int
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
@@ -153,6 +155,11 @@ func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSess
 
 func (runtime *fakeRuntime) ResumeSSH(string, string) (SSHSession, error) {
 	return nil, nil
+}
+
+func (runtime *fakeRuntime) CheckMigratedGuest(context.Context, RuntimeMachine) error {
+	runtime.guestChecks++
+	return runtime.guestCheckError
 }
 
 func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error) {
