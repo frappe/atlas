@@ -27,6 +27,15 @@ var all = []Patch{
 	{Name: "rename_status_keys_to_snake_case", Apply: renameStatusKeysToSnakeCase},
 }
 
+// Names returns the patch names in the order they run.
+func Names() []string {
+	names := make([]string, 0, len(all))
+	for _, patch := range all {
+		names = append(names, patch.Name)
+	}
+	return names
+}
+
 // Run applies each patch that patches.json does not list yet, and then lists it.
 func Run(baseDirectory string, logger *slog.Logger) error {
 	return run(all, baseDirectory, logger)

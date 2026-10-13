@@ -71,12 +71,16 @@ func main() {
 		fmt.Println(version)
 		return
 	}
+	if cmd == "patches" {
+		fmt.Println(strings.Join(patches.Names(), "\n"))
+		return
+	}
 	configPath, err := parseFlags(cmd, args)
 	if err != nil {
 		os.Exit(2)
 	}
 	if cmd != "serve" {
-		fmt.Fprintf(os.Stderr, "usage: metald [serve] [--config path] | metald version\n")
+		fmt.Fprintf(os.Stderr, "usage: metald [serve] [--config path] | metald version | metald patches\n")
 		os.Exit(2)
 	}
 	options, err := load(configPath)

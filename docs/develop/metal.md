@@ -97,7 +97,7 @@ var all = []Patch{
 ### Rules
 
 - Never change or remove a released patch. A host that skips builds runs every patch that it has not run yet.
-- Patches only move forward. An older `metald` cannot read state that a newer patch changed, so fix a bad change with a new patch.
+- Patches only move forward. An older `metald` cannot read state that a newer patch changed, so fix a bad change with a new patch. `metald patches` lists the patches of a build, and `upgrade-metald.sh` does not restore the previous build when the host has not applied one of them.
 
 ## Check host behavior when it matters
 

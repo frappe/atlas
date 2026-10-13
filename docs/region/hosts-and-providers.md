@@ -80,7 +80,7 @@ A failed upgrade or check pauses the update. [When a server fails](../operate/ro
 
 ### Upgrade on one host
 
-`upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. A repeated upgrade to the running build changes nothing.
+`upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. It keeps the new binaries when the new build has a [metald patch](../develop/metal.md#change-stored-state-with-a-patch) that the host has not applied, because the previous build cannot read the patched state. A repeated upgrade to the running build changes nothing.
 
 If the script reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
 

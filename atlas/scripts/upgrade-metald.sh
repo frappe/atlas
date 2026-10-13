@@ -117,11 +117,11 @@ stage() {
 	echo "$staged"
 }
 
-# restore_previous puts back the binaries that this upgrade replaced. After the new metald applies a patch, the
-# previous build cannot read the patched state, so the new build stays and the fix is a new build.
+# restore_previous puts back the binaries that this upgrade replaced. The previous build cannot read state that a
+# new patch changed, even in part, so the new build stays and the fix is a new build.
 restore_previous() {
-	if [ "$(cat "$patches_file" 2>/dev/null || true)" != "$applied_patches" ]; then
-		echo "    the new metald applied a patch that $current_version cannot read; keeping $new_version" >&2
+	if [ -n "$new_patches" ]; then
+		echo "    $new_version has patches that $current_version cannot undo ($new_patches); keeping $new_version" >&2
 		return
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
@@ -160,7 +160,13 @@ else
 	echo "    systemd holds $stored_descriptor_count descriptors; the virtual machines stay up"
 fi
 virtual_machine_count=$(active_virtual_machine_count)
-applied_patches=$(cat "$patches_file" 2>/dev/null || true)
+
+# A build from before metald patches has no patches command and no patch.
+new_patches=""
+for patch in $("$staged_metald" patches 2>/dev/null || true); do
+	grep -qF "\"$patch\"" "$patches_file" 2>/dev/null || new_patches="$new_patches $patch"
+done
+new_patches=${new_patches# }
 
 # Keep the running binaries before anything changes, so every later step can undo.
 step "back up the running binaries"

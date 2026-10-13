@@ -80,6 +80,6 @@ A failed upgrade or check pauses the update, and the server row becomes **Failed
 1. Read the row's **Status Reason**. For a failed upgrade, read the end of its SSH Task output.
 2. Fix the cause, then click **Resume Rollout**, or click **Cancel Rollout**.
 
-The upgrade script restores the previous binaries when the new build does not start, so a failed server keeps running its old build. [A Metald Update pauses](metal.md#a-metald-update-pauses) lists the host checks.
+The upgrade script restores the previous binaries when the new build does not start, so a failed server keeps running its old build. A build with a new metald patch is an exception: the server keeps the new build, and you roll forward with a fixed build. [A Metald Update pauses](metal.md#a-metald-update-pauses) lists the host checks.
 
 To go back to an earlier build, duplicate its Metald Update, then plan and start the duplicate. This does not work for a build with a new [metald patch](../develop/metal.md#change-stored-state-with-a-patch) or [WG Mesh map layout](../networking/wg-mesh/operations.md#change-a-map). Roll forward with a fixed build instead.
