@@ -28,7 +28,7 @@ func TestRescueStoppedSelectionAndExitPreservePower(t *testing.T) {
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
@@ -56,14 +56,14 @@ func TestRescueURLRefreshKeepsSessionAndDifferentImageConflicts(t *testing.T) {
 	manager, runtime, _ := rescueMachine(t)
 	ctx := context.Background()
 	image := testRescueImage()
-	if err := manager.RequestRescue(ctx, "machine-1", image); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", image, RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
 		t.Fatal(err)
 	}
 	image.RootfsURL += "?renewed=true"
-	if err := manager.RequestRescue(ctx, "machine-1", image); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", image, RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
@@ -77,7 +77,7 @@ func TestRescueURLRefreshKeepsSessionAndDifferentImageConflicts(t *testing.T) {
 		t.Fatal("URL refresh restarted rescue or lost the refreshed URL")
 	}
 	image.Name = "different-image"
-	if err := manager.RequestRescue(ctx, "machine-1", image); !errors.Is(err, ErrConflict) {
+	if err := manager.RequestRescue(ctx, "machine-1", image, RescueProtected); !errors.Is(err, ErrConflict) {
 		t.Fatalf("different image: %v", err)
 	}
 }
@@ -85,7 +85,7 @@ func TestRescueURLRefreshKeepsSessionAndDifferentImageConflicts(t *testing.T) {
 func TestRescueStopStartPreservesSessionAndRestartExits(t *testing.T) {
 	manager, runtime, storage := rescueMachine(t)
 	ctx := context.Background()
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []State{StateRunning, StateStopped, StateRunning} {
@@ -130,11 +130,11 @@ func TestRescueRequiresDiskAndBlocksResize(t *testing.T) {
 	manager, _, storage := rescueMachine(t)
 	ctx := context.Background()
 	storage.missingDisk = true
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); !errors.Is(err, ErrConflict) {
 		t.Fatalf("missing original disk: %v", err)
 	}
 	storage.missingDisk = false
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.SetPowerState(ctx, "machine-1", StateStopped); err != nil {
@@ -175,7 +175,7 @@ func TestRescueUnexpectedStopPreservesSessionAndReportedRebootExits(t *testing.T
 		t.Run(fmt.Sprint(reported), func(t *testing.T) {
 			manager, runtime, storage := rescueMachine(t)
 			ctx := context.Background()
-			if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+			if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
 				t.Fatal(err)
 			}
 			if err := manager.Reconcile(ctx, "machine-1"); err != nil {
@@ -203,7 +203,7 @@ func TestRescueUnexpectedStopPreservesSessionAndReportedRebootExits(t *testing.T
 func TestRescueBlocksSnapshotsUntilExitIsApplied(t *testing.T) {
 	manager, _, _ := rescueMachine(t)
 	ctx := context.Background()
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.CreateSnapshot(ctx, "machine-1"); !errors.Is(err, ErrConflict) {

@@ -27,8 +27,9 @@ type Specification struct {
 // configured rescue image with the VM's own disk attached as a secondary
 // drive; disabling it returns to a normal cold boot from the VM's own disk.
 type Rescue struct {
-	Enabled bool  `json:"enabled"`
-	Image   Image `json:"image,omitempty"`
+	Enabled bool         `json:"enabled"`
+	Image   Image        `json:"image,omitempty"`
+	Access  RescueAccess `json:"access,omitempty"`
 }
 
 // Compute is the requested compute configuration of one VM.
@@ -226,6 +227,7 @@ func isObservedState(state State) bool {
 
 // Information describes a virtual machine.
 type Information struct {
+	Recovery                        Recovery
 	Rescue                          Rescue
 	ObservedRescueEnabled           bool
 	DesiredRescueGeneration         uint64

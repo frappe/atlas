@@ -161,13 +161,19 @@ func (network *fakeNetwork) Release(context.Context, NetworkReleaseRequest) erro
 }
 
 type fakeStorage struct {
-	missingDisk        bool
-	runtime            *fakeRuntime
-	resizes            int
-	releases           int
-	releaseError       error
-	rescueDiskReleases int
-	releaseRescueError error
+	checkpointGUID      string
+	checkpointCreates   int
+	checkpointRollbacks int
+	checkpointDiscards  int
+	checkpointError     error
+	preflightError      error
+	missingDisk         bool
+	runtime             *fakeRuntime
+	resizes             int
+	releases            int
+	releaseError        error
+	rescueDiskReleases  int
+	releaseRescueError  error
 }
 
 func (storage *fakeStorage) HasDisk(context.Context, string) (bool, error) {
@@ -620,7 +626,7 @@ func TestRequestRescueEntersAndCyclesThePower(t *testing.T) {
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
@@ -654,13 +660,13 @@ func TestRequestRescueRepeatingTheSameImageIsANoOp(t *testing.T) {
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
@@ -679,7 +685,7 @@ func TestRequestRescueRejectsAPausedVM(t *testing.T) {
 	if err := manager.SetPowerState(context.Background(), "machine-1", StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); !errors.Is(err, ErrConflict) {
 		t.Fatalf("error = %v, want ErrConflict", err)
 	}
 }
@@ -692,7 +698,7 @@ func TestRequestRescueExitReleasesTheRescueDiskAndCyclesThePower(t *testing.T) {
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
@@ -924,4 +930,43 @@ func TestInformationReportsRequestedDiskSize(t *testing.T) {
 	if information.DiskMiB != 25600 || information.DiskUsedMiB != 512 {
 		t.Fatalf("disk = %d MiB, used = %d MiB", information.DiskMiB, information.DiskUsedMiB)
 	}
+}
+
+func (storage *fakeStorage) CheckRescueCheckpointSpace(context.Context, string) (RescueCheckpointSpace, error) {
+	return RescueCheckpointSpace{}, storage.preflightError
+}
+func (storage *fakeStorage) CreateRescueCheckpoint(context.Context, string, uint64) (string, error) {
+	if storage.checkpointError != nil {
+		return "", storage.checkpointError
+	}
+	storage.checkpointCreates++
+	storage.checkpointGUID = "42"
+	return "42", nil
+}
+func (storage *fakeStorage) RescueCheckpointGUID(context.Context, string, uint64) (string, error) {
+	if storage.checkpointError != nil {
+		return "", storage.checkpointError
+	}
+	if storage.checkpointGUID == "" {
+		return "", ErrNotFound
+	}
+	return storage.checkpointGUID, nil
+}
+func (storage *fakeStorage) RollbackRescueCheckpoint(context.Context, string, uint64, string) error {
+	if storage.runtime != nil && storage.runtime.state != StateStopped {
+		return errors.New("rollback while running")
+	}
+	if storage.checkpointError != nil {
+		return storage.checkpointError
+	}
+	storage.checkpointRollbacks++
+	return nil
+}
+func (storage *fakeStorage) DiscardRescueCheckpoint(context.Context, string, uint64, string) error {
+	if storage.checkpointError != nil {
+		return storage.checkpointError
+	}
+	storage.checkpointDiscards++
+	storage.checkpointGUID = ""
+	return nil
 }

@@ -24,6 +24,7 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		bootConfiguration, err = runtime.virtualMachineStorage.PrepareRescueBoot(ctx, storage.VirtualMachineRescueBootRequest{
 			VirtualMachineID:     configuration.ID,
 			RescueGeneration:     configuration.RescueGeneration,
+			OriginalReadOnly:     configuration.Specification.Rescue.Access == vm.RescueReadOnly,
 			RescueImageReference: configuration.Specification.Rescue.Image.Name,
 			RescueImage:          configuration.Specification.Rescue.Image,
 			ChrootRoot:           runtime.configuration.chrootRoot(configuration.ID),

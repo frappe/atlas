@@ -48,10 +48,8 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	}, nil
 }
 
-// PrepareRescueBoot prepares a throwaway rescue clone as the root drive, with
-// the VM's own disk attached read-write as a secondary drive, so a stuck guest
-// can be repaired from a known-good environment. The VM's own disk must
-// already exist; this never provisions or modifies it.
+// PrepareRescueBoot boots a rescue clone with the existing VM disk attached.
+// It does not provision or modify the original disk.
 func (store *VirtualMachineStore) PrepareRescueBoot(ctx context.Context, request VirtualMachineRescueBootRequest) (BootConfiguration, error) {
 	hasDisk, err := store.HasDisk(ctx, request.VirtualMachineID)
 	if err != nil {
@@ -86,7 +84,7 @@ func (store *VirtualMachineStore) PrepareRescueBoot(ctx context.Context, request
 	return BootConfiguration{
 		Kernel:     "/vmlinux",
 		KernelArgs: kernelArguments(store.images.imageDirectory(request.RescueImageReference)),
-		Drives:     []Drive{{Path: "/rootfs.img", Root: true}, {Path: "/disk.img"}},
+		Drives:     []Drive{{Path: "/rootfs.img", Root: true}, {Path: "/disk.img", ReadOnly: request.OriginalReadOnly}},
 	}, nil
 }
 
@@ -115,8 +113,7 @@ func (store *VirtualMachineStore) provisionRescueDisk(ctx context.Context, reque
 		store.pool.baseSnapshot(request.RescueImageReference), dataset)
 }
 
-// ReleaseRescueDisk destroys the throwaway rescue clone. It is a no-op when
-// the VM was never rescued, or rescue already exited.
+// ReleaseRescueDisk removes the temporary rescue disk, if present.
 func (store *VirtualMachineStore) ReleaseRescueDisk(ctx context.Context, virtualMachineID string) error {
 	if err := platform.Run(ctx, "zfs", "destroy", "-r", store.pool.rescueDataset(virtualMachineID)); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
@@ -237,8 +234,7 @@ func (store *VirtualMachineStore) ResizeDisk(ctx context.Context, virtualMachine
 	return store.growDisk(ctx, virtualMachineID, diskMiB)
 }
 
-// Release removes the VM disk and keeps dependent staging clones. Any
-// leftover rescue clone goes too, so a VM destroyed mid-rescue leaves nothing behind.
+// Release removes both VM disks and keeps dependent staging clones.
 func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID string) error {
 	dataset := store.pool.virtualMachineDataset(virtualMachineID)
 

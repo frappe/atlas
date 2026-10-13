@@ -210,6 +210,7 @@ type VirtualMachineStorageRequest struct {
 // machine whose own disk attaches alongside it.
 type VirtualMachineRescueBootRequest struct {
 	RescueGeneration     uint64
+	OriginalReadOnly     bool
 	VirtualMachineID     string
 	RescueImageReference string
 	RescueImage          vm.Image

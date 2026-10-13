@@ -94,3 +94,7 @@ func (pool *ZFSPool) rescueDataset(virtualMachineID string) string {
 func (pool *ZFSPool) rescueDevicePath(virtualMachineID string) string {
 	return "/dev/zvol/" + pool.rescueDataset(virtualMachineID)
 }
+
+func (pool *ZFSPool) rescueCheckpoint(virtualMachineID string, generation uint64) string {
+	return pool.snapshot(virtualMachineID, "rescue-"+strconv.FormatUint(generation, 10))
+}

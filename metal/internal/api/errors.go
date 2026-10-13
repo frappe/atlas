@@ -74,6 +74,10 @@ func publicAPIError(err error) *apiError {
 		return explicitError
 	}
 
+	var capacity *vm.RescueCheckpointSpaceError
+	if errors.As(err, &capacity) {
+		return newAPIError(http.StatusConflict, "checkpoint_unavailable", capacity.Error())
+	}
 	switch {
 	case errors.Is(err, network.ErrInvalidPeers), errors.Is(err, storage.ErrInvalidUpload), errors.Is(err, vm.ErrMetadataServiceTooLarge):
 		return newAPIError(http.StatusBadRequest, "invalid_request", err.Error())

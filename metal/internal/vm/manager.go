@@ -331,6 +331,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 	}
 	return Information{
 		Rescue:                          cloneSpecification(desired.Specification).Rescue,
+		Recovery:                        desired.Recovery,
 		ObservedRescueEnabled:           observed.RescueEnabled,
 		DesiredRescueGeneration:         desired.RescueGeneration,
 		ObservedRescueGeneration:        observed.RescueGeneration,
