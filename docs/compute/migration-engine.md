@@ -37,9 +37,11 @@ Metal records the source software fingerprint and CPU identity and features but 
 
 A successful load does not prove that every guest instruction is supported by the destination. Cross-model migration needs a verified common [Firecracker CPU template](https://github.com/firecracker-microvm/firecracker/blob/main/docs/cpu_templates/cpu-template-helper.md#custom-cpu-template-creation), applied before the guest first boots. Changing a template during restore cannot change what a running guest already detected. See [Firecracker CPU compatibility](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/versioning.md#cpu-model).
 
+The saved metadata includes the source TAP gateway MAC. Before loading memory, Metal applies this MAC to the destination TAP so the guest's restored ARP and NDP caches remain valid. Source rollback also restores this MAC when it recreates the namespace.
+
 The runtime loads the bundle into a new jail with the destination's host user ID. Guest IP, MAC, TAP name, and disk path remain the same. Metal refreshes guest metadata and disk limits before it reports `ready`. The guest stays paused until Atlas commits ownership and requests `finish`.
 
-Deploy the restore code on both hosts before enabling memory migration. Incoming snapshots must contain migration metadata with the VM shape.
+Deploy the restore code on both hosts before enabling memory migration. Incoming snapshots must contain migration metadata with the VM shape and source TAP MAC.
 
 Control calls use the node mutual-TLS listener. Disk bytes use a separate one-shot TLS stream on port `9002`:
 
