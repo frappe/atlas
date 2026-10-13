@@ -366,8 +366,11 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		}
 		return migrationManager.DestinationReservations(ctx)
 	}
+	compatibility, compatibilityError := virtualMachineRuntime.HostCompatibility(daemonContext)
 	hostDependencies := host.Dependencies{
-		Compatibility:         virtualMachineRuntime.HostCompatibility,
+		Compatibility: func(context.Context) (vm.HostCompatibility, error) {
+			return compatibility, compatibilityError
+		},
 		WireGuard:             wireGuardManager,
 		Images:                stores.Images,
 		GatewayRoutes:         virtualMachineManager,
