@@ -167,7 +167,7 @@ pull_request_rules:
 
   - name: Label risk ebpf
     conditions:
-      - 'files~=/bpf/'
+      - 'files~=/bpf/|(^|/)bpf(_[a-z_]+)?\.go$'
     actions:
       label:
         toggle:
@@ -175,7 +175,7 @@ pull_request_rules:
 
   - name: Label risk api
     conditions:
-      - 'files~=^(atlas/api|metal/internal/api|clients/openapi)/'
+      - 'files~=^(atlas/api|metal/internal/api|clients)/|^services/http-proxy/control/proxy_control/(main|routes)\.py$'
     actions:
       label:
         toggle:
@@ -183,7 +183,7 @@ pull_request_rules:
 
   - name: Label risk dependencies
     conditions:
-      - 'files~=(^|/)(uv\.lock|package-lock\.json|go\.mod|go\.sum)$'
+      - 'files~=(^|/)(uv\.lock|package-lock\.json|go\.mod|go\.sum|pyproject\.toml|package\.json)$'
     actions:
       label:
         toggle:
