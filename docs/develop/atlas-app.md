@@ -120,6 +120,8 @@ On macOS, install Docker instead. Atlas uses Docker to build eBPF.
 
 The builder uses an installed Go toolchain when it is new enough for `metal/go.mod`. Otherwise it downloads Go. The builds also download Go modules. An offline machine needs an installed Go toolchain and a populated module cache. It also needs an internal APT mirror or approved local packages.
 
+`metal/VERSION` and `services/wg-mesh/VERSION` hold release versions. Bump them for a release. Atlas appends eight hex digits from the source digest, such as `0.1.0+3f9a1c2e`. A direct `make build` uses `0.1.0+dev`.
+
 Build one binary by hand with these commands. Each command skips the build when the linked File and source hash are current. A missing tool stops the command or migration.
 
 ```bash

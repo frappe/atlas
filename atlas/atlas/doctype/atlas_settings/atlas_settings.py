@@ -90,6 +90,7 @@ class AtlasSettings(Document):
 		metald_binary_hash: DF.Data | None
 		metald_binary_x86_64_file: DF.Link | None
 		metald_source_hash: DF.Data | None
+		metald_version: DF.Data | None
 		object_storage_access_key_id: DF.Data | None
 		object_storage_bucket: DF.Data | None
 		object_storage_endpoint_url: DF.Data | None
@@ -138,6 +139,7 @@ class AtlasSettings(Document):
 		wg_mesh_binary_hash: DF.Data | None
 		wg_mesh_binary_x86_64_file: DF.Link | None
 		wg_mesh_source_hash: DF.Data | None
+		wg_mesh_version: DF.Data | None
 		wildcard_domain: DF.Data
 		wildcard_tls_certificate: DF.Password | None
 		wildcard_tls_expires_on: DF.Datetime | None

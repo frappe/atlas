@@ -52,6 +52,7 @@ class HostBinary:
 	settings_field: str
 	source_hash_field: str
 	binary_hash_field: str
+	version_field: str
 	required_commands: tuple[str, ...] = ("make",)
 	required_headers: tuple[str, ...] = ()
 
@@ -70,6 +71,7 @@ HOST_BINARIES = (
 		settings_field="metald_binary_x86_64_file",
 		source_hash_field="metald_source_hash",
 		binary_hash_field="metald_binary_hash",
+		version_field="metald_version",
 		required_commands=BUILD_COMMANDS,
 		required_headers=BUILD_HEADERS,
 	),
@@ -81,6 +83,7 @@ HOST_BINARIES = (
 		settings_field="wg_mesh_binary_x86_64_file",
 		source_hash_field="wg_mesh_source_hash",
 		binary_hash_field="wg_mesh_binary_hash",
+		version_field="wg_mesh_version",
 		required_commands=BUILD_COMMANDS,
 		required_headers=BUILD_HEADERS,
 	),
@@ -113,9 +116,11 @@ def publish_host_binaries() -> None:
 
 def publish_host_binary(binary: HostBinary, digest: str) -> str:
 	"""Build one binary, attach it as a File, and link it in Atlas Settings."""
-	content = build_host_binary(binary).read_bytes()
+	version = get_build_version(binary, digest)
+	content = build_host_binary(binary, version).read_bytes()
 	file_name = publish_public_file(binary.file_name, binary.label, content)
 	frappe.db.set_single_value("Atlas Settings", binary.settings_field, file_name)
+	frappe.db.set_single_value("Atlas Settings", binary.version_field, version)
 	frappe.db.set_single_value("Atlas Settings", binary.source_hash_field, digest)
 	frappe.db.set_single_value(
 		"Atlas Settings", binary.binary_hash_field, hashlib.sha256(content).hexdigest()
@@ -154,6 +159,12 @@ def is_published(binary: HostBinary, digest: str) -> bool:
 	if not settings.get(binary.binary_hash_field):
 		return False
 	return bool(frappe.db.exists("File", file_name))
+
+
+def get_build_version(binary: HostBinary, digest: str) -> str:
+	"""Return the VERSION file release with the source digest as build metadata, such as 0.1.0+3f9a1c2e."""
+	release = (repository_path() / binary.module_directory / "VERSION").read_text().strip()
+	return f"{release}+{digest[:8]}"
 
 
 def source_digest(binary: HostBinary) -> str:
@@ -258,7 +269,7 @@ def missing_build_requirements(binary: HostBinary) -> list[str]:
 	return missing
 
 
-def build_host_binary(binary: HostBinary) -> Path:
+def build_host_binary(binary: HostBinary, version: str) -> Path:
 	"""Build one host binary with `make build` and return its artifact path."""
 	missing = missing_build_requirements(binary)
 	if missing:
@@ -266,7 +277,7 @@ def build_host_binary(binary: HostBinary) -> Path:
 
 	module_path = repository_path() / binary.module_directory
 	search_path = os.environ.get("PATH", "")
-	command = ["make", "build"]
+	command = ["make", "build", f"VERSION={version}"]
 	if IS_MACOS:
 		repository = repository_path()
 		volume = f"--volume={repository}:{repository}"

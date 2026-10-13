@@ -37,6 +37,7 @@ class TestHostBinaries(UnitTestCase):
 		fields = [binary.settings_field for binary in HOST_BINARIES]
 		fields += [binary.source_hash_field for binary in HOST_BINARIES]
 		fields += [binary.binary_hash_field for binary in HOST_BINARIES]
+		fields += [binary.version_field for binary in HOST_BINARIES]
 		fields += [binary.key for binary in HOST_BINARIES]
 
 		self.assertEqual(len(fields), len(set(fields)))
@@ -120,7 +121,7 @@ class TestHostBinaries(UnitTestCase):
 			patch.object(host_binaries.subprocess, "run") as run,
 			self.assertRaises(FileNotFoundError) as caught,
 		):
-			host_binaries.build_host_binary(mesh)
+			host_binaries.build_host_binary(mesh, "dev")
 
 		self.assertIn("clang", str(caught.exception))
 		run.assert_not_called()
