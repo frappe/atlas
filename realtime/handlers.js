@@ -15,6 +15,10 @@ const INVALID_TOKEN_MESSAGE = "This console link is invalid or expired.";
 const UNREACHABLE_MESSAGE = "Could not reach the virtual machine console.";
 const INVALID_INPUT_MESSAGE = "Console input is invalid.";
 const METAL_OPEN_TIMEOUT_MILLISECONDS = 10 * 1000;
+// metald closes its consoles with this code when it restarts.
+const SERVICE_RESTART_CLOSE_CODE = 1012;
+const RECONNECT_MILLISECONDS = 60 * 1000;
+const SSH_SESSION_HEADER = "metal-console-session";
 
 // Active bridges by socket ID, and the sockets that are still opening one.
 const sessions = new Map();
@@ -44,29 +48,71 @@ function cache() {
 	return cache_connection;
 }
 
-/** Bridge one browser to one Metal console. */
+/** Bridge one browser to one Metal console, and reconnect after a metald restart. */
 class ConsoleSession {
-	constructor(socket, connection) {
+	constructor(socket, connection, url, ssh_session_id) {
 		this.socket = socket;
-		this.connection = connection;
+		this.resume_url = ssh_session_id ? with_ssh_session(url, ssh_session_id) : url;
+		this.size = null;
 		this.is_closed = false;
+		this.attach(connection);
+	}
 
+	attach(connection) {
+		this.connection = connection;
 		connection.binaryType = "arraybuffer";
 		connection.onmessage = (event) => this.forward_output(event.data);
-		connection.onclose = () => this.close();
+		connection.onclose = (event) =>
+			event.code === SERVICE_RESTART_CLOSE_CODE ? this.reconnect() : this.close();
 		connection.onerror = () => this.close();
+	}
+
+	/** Open the console on the next metald, or close the session when it does not open in time. */
+	async reconnect() {
+		const deadline = Date.now() + RECONNECT_MILLISECONDS;
+		try {
+			while (!this.is_closed && Date.now() < deadline) {
+				const connection = new WebSocket(
+					this.resume_url,
+					tls_options(site_of(this.socket))
+				);
+				if ((await wait_for_open(connection)) !== null) {
+					if (this.is_closed) {
+						connection.close();
+						return;
+					}
+					this.attach(connection);
+					if (this.size) {
+						this.send_resize(...this.size);
+					}
+					return;
+				}
+				connection.close();
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+			}
+		} catch (error) {
+			console.error(`Console reconnect failed for socket ${this.socket.id}`, error);
+		}
+		this.close();
 	}
 
 	forward_output(data) {
 		this.socket.emit("atlas_console_output", Buffer.from(data).toString("base64"));
 	}
 
+	/** Send one input frame to Metal. Input during a reconnection is dropped. */
 	send_input(data) {
-		this.connection.send(data);
+		if (this.connection.readyState === WebSocket.OPEN) {
+			this.connection.send(data);
+		}
 	}
 
+	/** Send one resize control message to Metal and keep it for a reconnection. */
 	send_resize(cols, rows) {
-		this.connection.send(JSON.stringify({ resize: { cols, rows } }));
+		this.size = [cols, rows];
+		if (this.connection.readyState === WebSocket.OPEN) {
+			this.connection.send(JSON.stringify({ resize: { cols, rows } }));
+		}
 	}
 
 	/** Close this session once and remove it from the active session map. */
@@ -127,18 +173,32 @@ function is_websocket_url(value) {
 	}
 }
 
-/** Resolve once Metal accepts, refuses, or stops answering the console connection. */
+/**
+ * Resolve the SSH session ID, or "" for a TTY console, once Metal accepts the
+ * console connection. Resolve null when Metal refuses or stops answering.
+ */
 function wait_for_open(connection) {
 	return new Promise((resolve) => {
-		const timer = setTimeout(() => resolve(false), METAL_OPEN_TIMEOUT_MILLISECONDS);
-		const settle = (is_open) => {
+		let ssh_session_id = "";
+		const timer = setTimeout(() => resolve(null), METAL_OPEN_TIMEOUT_MILLISECONDS);
+		const settle = (value) => {
 			clearTimeout(timer);
-			resolve(is_open);
+			resolve(value);
 		};
-		connection.onopen = () => settle(true);
-		connection.onerror = () => settle(false);
-		connection.onclose = () => settle(false);
+		connection.once("upgrade", (response) => {
+			ssh_session_id = response.headers[SSH_SESSION_HEADER] || "";
+		});
+		connection.onopen = () => settle(ssh_session_id);
+		connection.onerror = () => settle(null);
+		connection.onclose = () => settle(null);
 	});
+}
+
+/** Return the console URL that resumes one SSH session, and so the same shell. */
+function with_ssh_session(url, ssh_session_id) {
+	const parsed = new URL(url);
+	parsed.searchParams.set("session", ssh_session_id);
+	return parsed.toString();
 }
 
 /** Consume the token and open the console. */
@@ -172,7 +232,8 @@ async function open_console(socket, token) {
 		}
 
 		const metal_connection = new WebSocket(connection.url, tls_options(site_of(socket)));
-		if (!(await wait_for_open(metal_connection))) {
+		const ssh_session_id = await wait_for_open(metal_connection);
+		if (ssh_session_id === null) {
 			metal_connection.close();
 			socket.emit("atlas_console_error", UNREACHABLE_MESSAGE);
 			return;
@@ -182,7 +243,10 @@ async function open_console(socket, token) {
 			return;
 		}
 
-		sessions.set(socket.id, new ConsoleSession(socket, metal_connection));
+		sessions.set(
+			socket.id,
+			new ConsoleSession(socket, metal_connection, connection.url, ssh_session_id)
+		);
 		socket.emit("atlas_console_ready");
 	} catch (error) {
 		console.error(`Console open failed for socket ${socket.id}`, error);

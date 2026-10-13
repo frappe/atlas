@@ -35,6 +35,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - Atlas SSH to a guest runs `ip netns exec metal-<id> nc 172.16.0.2 22` on the current host. It depends on the Metal namespace name and guest address in `linux_allocator.go`.
 - A protected VM cannot be terminated. An unprotected Atlas record is deleted only after Metal confirms that the VM is absent.
 - `ConsoleSession.close` owns console cleanup. Do not log Metal credentials.
+- `ConsoleSession` reconnects after a `metald` restart as the [console guide](../../docs/compute/console.md) explains. `atlas/realtime/handlers.py` and `realtime/handlers.js` must keep the same behavior.
 
 ## Add or change behavior
 
