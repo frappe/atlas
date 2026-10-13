@@ -121,6 +121,11 @@ const handbook: DefaultTheme.SidebarItem[] = [
 		],
 	},
 	{
+		text: 'Operations',
+		collapsed: true,
+		items: [{ text: 'Roll out metald and WG Mesh', link: '/docs/operate/roll-out-metald' }],
+	},
+	{
 		text: 'Fix problems',
 		collapsed: true,
 		items: [

@@ -95,7 +95,7 @@ A Metald Update is Paused and a server row is Failed.
 2. On the host, run `systemctl show metal.service -p StatusText` and `metald version`.
 3. Run `journalctl -u metal.service --since "1 hour ago"`.
 
-**Recover:** Fix the cause, then resume, cancel, or roll back as [Roll out a build](../region/hosts-and-providers.md#roll-out-a-build) explains.
+**Recover:** Fix the cause, then resume, cancel, or roll back as [When a server fails](roll-out-metald.md#when-a-server-fails) explains.
 
 Do not replace `/usr/bin/metald` by hand during a rollout.
 

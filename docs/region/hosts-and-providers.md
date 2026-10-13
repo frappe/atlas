@@ -56,7 +56,9 @@ Each method checks permissions and local state before delegating long work.
 
 ### Roll out a build
 
-Select servers in the Metal Server list and use **Create Metald Update**. An update with an empty server table includes all running servers. A new update pins the versions, binaries, and hashes from Atlas Settings, so later builds do not change it.
+A Metald Update moves Metal Servers to one pinned metald and Atlas WG Mesh build. [Roll out metald and WG Mesh](../operate/roll-out-metald.md) gives the steps with screenshots. This section explains how the update works.
+
+A new update pins the versions, binaries, and hashes from Atlas Settings, so later builds do not change it.
 
 | Status | What happens |
 | --- | --- |
@@ -74,9 +76,7 @@ Only one update can be Running or Paused. A step runs every 5 seconds and contin
 3. Checks current and earlier batches. Each server must report the pinned `metald` and Atlas WG Mesh versions and must have synchronized within 2 minutes.
 4. Starts the next batch or completes the update.
 
-A failed upgrade or check pauses the update. Read the Status Reason of the Failed row and its SSH Task.
-
-To restore an earlier build, duplicate its Metald Update, then plan and start the duplicate. A build with a new [metald patch](../develop/metal.md#change-stored-state-with-a-patch) or [WG Mesh map layout](../networking/wg-mesh/operations.md#change-a-map) cannot be restored this way, because an older build cannot read the new data. Roll forward with a fixed build instead.
+A failed upgrade or check pauses the update. [When a server fails](../operate/roll-out-metald.md#when-a-server-fails) explains how to continue or go back to an earlier build.
 
 ### Upgrade on one host
 
