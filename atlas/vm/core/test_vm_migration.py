@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
+from uuid import uuid7
 
-from frappe.tests import UnitTestCase
+import frappe
+import MySQLdb
+from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.vm_migration import MigrationService
 
 
@@ -320,3 +328,396 @@ class TestMigrationTransfers(UnitTestCase):
 		self.assertEqual(migration.transfers[1].finished_at, datetime(2026, 9, 20, 12, 1, 10))
 		self.assertEqual(migration.transfers[1].transferred_mib, 100)
 		self.assertTrue(migration.transfers[1].completed)
+
+
+class CancelIntentBase(IntegrationTestCase):
+	def setUp(self) -> None:
+		super().setUp()
+		# Unit test mocks can leave System Settings cached as a SimpleNamespace.
+		if hasattr(frappe.local, "system_settings"):
+			delattr(frappe.local, "system_settings")
+		try:
+			frappe.client_cache.delete_value(
+				frappe.get_document_cache_key("System Settings", "System Settings")
+			)
+		except Exception:
+			pass
+
+	def make_chain(self, initial_status: str = "copying") -> dict[str, str]:
+		size = frappe.new_doc("Metal Server Size")
+		size.update({"name": f"test-size-{frappe.generate_hash(length=8)}", "architecture": "amd64"})
+		size.db_insert()
+		image = frappe.new_doc("Metal Server Image")
+		image.update({"name": f"test-image-{frappe.generate_hash(length=8)}"})
+		image.db_insert()
+		src = frappe.new_doc("Metal Server")
+		src.update(
+			{
+				"name": str(uuid7()),
+				"server_size": size.name,
+				"server_image": image.name,
+				"architecture": "amd64",
+			}
+		)
+		src.db_insert()
+		dst = frappe.new_doc("Metal Server")
+		dst.update(
+			{
+				"name": str(uuid7()),
+				"server_size": size.name,
+				"server_image": image.name,
+				"architecture": "amd64",
+			}
+		)
+		dst.db_insert()
+		vm = frappe.new_doc("Virtual Machine")
+		vm.update(
+			{
+				"name": f"vm-{frappe.generate_hash(length=8)}",
+				"server": src.name,
+				"virtual_machine_image": "img-1",
+				"architecture": "amd64",
+				"cpu_millicores": 1000,
+				"memory_mib": 512,
+				"disk_mib": 1024,
+				"tenant_id": 7,
+			}
+		)
+		vm.db_insert()
+		mig = frappe.new_doc("Virtual Machine Migration")
+		mig.update(
+			{
+				"virtual_machine": vm.name,
+				"source_metal_server": src.name,
+				"destination_metal_server": dst.name,
+				"status": initial_status,
+			}
+		)
+		mig.db_insert()
+		frappe.db.commit()
+		names = {
+			"size": size.name,
+			"image": image.name,
+			"src": src.name,
+			"dst": dst.name,
+			"vm": vm.name,
+			"mig": mig.name,
+		}
+		self.addCleanup(self._cleanup_chain, names)
+		return names
+
+	@staticmethod
+	def _cleanup_chain(names: dict[str, str]) -> None:
+		frappe.db.delete("Virtual Machine Migration", {"name": names["mig"]})
+		frappe.db.delete("Virtual Machine", {"name": names["vm"]})
+		frappe.db.delete("Metal Server", {"name": ("in", [names["src"], names["dst"]])})
+		frappe.db.delete("Metal Server Size", {"name": names["size"]})
+		frappe.db.delete("Metal Server Image", {"name": names["image"]})
+		frappe.db.commit()
+
+	def mock_destination(self, mock_dc: PropertyMock) -> Mock:
+		client = Mock()
+		mock_dc.return_value = client
+		return client
+
+	def service_for(self, names: dict[str, str]) -> MigrationService:
+		return MigrationService(frappe.get_doc("Virtual Machine Migration", names["mig"]))
+
+	@staticmethod
+	def migration_status(names: dict[str, str]) -> object:
+		return frappe.db.get_value("Virtual Machine Migration", names["mig"], "status")
+
+	@staticmethod
+	def vm_server(names: dict[str, str]) -> object:
+		return frappe.db.get_value("Virtual Machine", names["vm"], "server")
+
+	@contextmanager
+	def migration_client(
+		self, *, abort_retryable: bool = False, poll_response: dict | None = None
+	) -> Iterator[Mock]:
+		with patch.object(MigrationService, "destination_client", new_callable=PropertyMock) as mock_dc:
+			client = self.mock_destination(mock_dc)
+			if abort_retryable:
+				client.abort_migration.side_effect = MetalClientError("lost", retryable=True, uncertain=True)
+			if poll_response is not None:
+				client.get_migration.return_value = poll_response
+			yield client
+
+	@staticmethod
+	def raw_connection_kwargs() -> dict[str, object]:
+		settings = frappe.db.get_connection_settings()
+		kwargs: dict[str, object] = {"user": settings["user"], "db": settings.get("database")}
+		if settings.get("unix_socket"):
+			kwargs["unix_socket"] = settings["unix_socket"]
+		else:
+			kwargs["host"] = settings.get("host") or "localhost"
+			if settings.get("port"):
+				kwargs["port"] = int(settings["port"])
+		if settings.get("password"):
+			kwargs["passwd"] = settings["password"]
+		return kwargs
+
+
+class TestCancelIntent(CancelIntentBase):
+	def test_cancel_survives_copying_poll_and_abort_retried(self) -> None:
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+		with self.migration_client(
+			abort_retryable=True,
+			poll_response={"status": "running", "phase": "copying", "transfers": []},
+		) as client:
+			service.request_abort()
+			self.assertEqual(self.migration_status(names), "canceling")
+			service.advance(service.poll())
+			self.assertEqual(self.migration_status(names), "canceling")
+			self.assertEqual(client.abort_migration.call_count, 2)
+
+	def test_cancel_blocks_ready_commit_and_finish(self) -> None:
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+		with self.migration_client(abort_retryable=True, poll_response={"status": "ready"}) as client:
+			client.finish_migration = Mock()
+			service.request_abort()
+			service.advance(service.poll())
+
+			self.assertEqual(self.vm_server(names), names["src"])
+			client.finish_migration.assert_not_called()
+			self.assertEqual(self.migration_status(names), "canceling")
+
+
+class TestCancelIntentControls(CancelIntentBase):
+	def test_control_a_copying_poll_updates_progress_when_not_canceling(self) -> None:
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+		service.store_progress(
+			{
+				"status": "running",
+				"phase": "copying",
+				"transfers": [{"sequence": 1, "transferred_mib": 50, "total_mib": 100, "completed": False}],
+			}
+		)
+		self.assertEqual(self.migration_status(names), "copying")
+		self.assertGreater(
+			frappe.db.get_value("Virtual Machine Migration", names["mig"], "progress_percent"),
+			0,
+		)
+		self.assertEqual(len(frappe.get_doc("Virtual Machine Migration", names["mig"]).transfers), 1)
+
+	def test_control_b_completed_settles_completed(self) -> None:
+		names = self.make_chain("copying")
+		frappe.db.set_value("Virtual Machine", names["vm"], "active_migration", names["mig"])
+		frappe.db.commit()
+		service = self.service_for(names)
+		service.settle = MigrationService.settle.__get__(service)
+		self.assertTrue(service.advance({"status": "completed"}))
+		self.assertEqual(self.migration_status(names), "completed")
+		self.assertEqual(
+			frappe.db.get_value("Virtual Machine Migration", names["mig"], "progress_percent"),
+			100,
+		)
+		self.assertIsNone(frappe.db.get_value("Virtual Machine", names["vm"], "active_migration"))
+
+	def test_control_c_aborted_settles_aborted_or_failed(self) -> None:
+		for error_code, expected in ((None, "aborted"), ("migration_error", "failed")):
+			with self.subTest(error_code=error_code):
+				names = self.make_chain("copying")
+				if error_code:
+					frappe.db.set_value("Virtual Machine Migration", names["mig"], "error_code", error_code)
+					frappe.db.commit()
+				service = self.service_for(names)
+				self.assertTrue(service.advance({"status": "aborted"}))
+				self.assertEqual(self.migration_status(names), expected)
+
+	def test_control_d_failed_records_error_and_respects_expiry(self) -> None:
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+		with self.migration_client() as client:
+			client.abort_migration = Mock()
+
+			self.assertFalse(service.advance({"status": "failed", "error": {}}))
+			self.assertEqual(self.migration_status(names), "canceling")
+			self.assertEqual(
+				frappe.db.get_value("Virtual Machine Migration", names["mig"], "error_code"),
+				"migration_error",
+			)
+			client.abort_migration.assert_called_once()
+
+	def test_control_e_rollback_becomes_canceling(self) -> None:
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+		service.store_progress({"status": "running", "phase": "rollback", "transfers": []})
+
+		self.assertEqual(self.migration_status(names), "canceling")
+
+	def test_control_f_ready_commit_moves_vm_and_sends_finish(self) -> None:
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+		with self.migration_client() as client:
+			client.finish_migration = Mock()
+			client.abort_migration = Mock()
+			service.advance({"status": "ready"})
+
+			self.assertEqual(self.vm_server(names), names["dst"])
+			client.finish_migration.assert_called_once_with(names["mig"])
+
+	def test_control_g_shield_keeps_progress_transfers_duration(self) -> None:
+		names = self.make_chain("canceling")
+		service = self.service_for(names)
+		service.store_progress(
+			{
+				"status": "running",
+				"phase": "copying",
+				"transfers": [{"sequence": 1, "transferred_mib": 50, "total_mib": 100, "completed": False}],
+			}
+		)
+
+		doc = frappe.get_doc("Virtual Machine Migration", names["mig"])
+		self.assertEqual(len(doc.transfers), 1)
+		self.assertGreater(doc.progress_percent, 0)
+		self.assertGreaterEqual(doc.duration_seconds, 0)
+
+	def test_control_h_scheduled_abort_needs_no_destination_call(self) -> None:
+		names = self.make_chain("scheduled")
+		frappe.db.set_value("Virtual Machine Migration", names["mig"], "destination_metal_server", None)
+		frappe.db.commit()
+		service = self.service_for(names)
+		service.request_destination_abort = Mock()
+		service.settle = Mock()
+		service.request_abort()
+		service.settle.assert_called_once_with("aborted")
+		service.request_destination_abort.assert_not_called()
+
+
+class TestCancelIntentFreshAndWorker(CancelIntentBase):
+	def test_fresh_doc_stale_service_respects_fresh_cancel(self) -> None:
+		names = self.make_chain("copying")
+		stale = self.service_for(names)
+		fresh = self.service_for(names)
+		with self.migration_client(abort_retryable=True):
+			fresh.request_abort()
+			self.assertEqual(stale.migration.status, "copying")
+			stale.store_progress({"status": "running", "phase": "copying", "transfers": []})
+
+			self.assertEqual(self.migration_status(names), "canceling")
+
+	def test_already_running_worker_commit_sees_fresh_cancel(self) -> None:
+		names = self.make_chain("copying")
+		worker = self.service_for(names)
+		with self.migration_client(poll_response={"status": "ready"}) as client:
+			client.finish_migration = Mock()
+			client.abort_migration = Mock()
+			polled = worker.poll()
+
+			concurrent = self.service_for(names)
+			concurrent.request_abort()
+			worker.advance(polled)
+
+			self.assertEqual(self.vm_server(names), names["src"])
+			client.finish_migration.assert_not_called()
+
+	def test_cancelled_cutover_releases_row_locks(self) -> None:
+		names = self.make_chain("copying")
+		worker = self.service_for(names)
+
+		def assert_locks_released() -> None:
+			connection = MySQLdb.connect(**self.raw_connection_kwargs())
+			try:
+				cursor = connection.cursor()
+				for doctype, name in (
+					("Virtual Machine", names["vm"]),
+					("Virtual Machine Migration", names["mig"]),
+				):
+					try:
+						cursor.execute(
+							f"SELECT name FROM `tab{doctype}` WHERE name=%s FOR UPDATE NOWAIT", (name,)
+						)
+					except MySQLdb.OperationalError as error:
+						self.fail(f"Cannot lock {doctype} after canceled cutover: {error}")
+					self.assertEqual(cursor.fetchone(), (name,))
+			finally:
+				connection.rollback()
+				connection.close()
+
+		def poll_without_locks(migration_id: str) -> dict[str, str]:
+			self.assertEqual(migration_id, names["mig"])
+			assert_locks_released()
+			return {"status": "running", "phase": "copying"}
+
+		with self.migration_client(poll_response={"status": "ready"}) as client:
+			polled = worker.poll()
+			self.service_for(names).request_abort()
+			worker.advance(polled)
+
+			self.assertEqual(self.vm_server(names), names["src"])
+			client.finish_migration.assert_not_called()
+			assert_locks_released()
+			client.get_migration.side_effect = poll_without_locks
+			worker.poll()
+			self.assertEqual(self.migration_status(names), "canceling")
+
+
+class TestCancelIntentStoreProgressRace(CancelIntentBase):
+	def test_race_cancel_between_decision_and_commit_wins(self) -> None:
+		frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+		self.addCleanup(lambda: frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+		names = self.make_chain("copying")
+		service = self.service_for(names)
+
+		raw_kwargs = self.raw_connection_kwargs()
+		fired = threading.Event()
+		cancel_threads: list[threading.Thread] = []
+		errors: list[BaseException] = []
+		real_get_doc = frappe.get_doc
+
+		def cancel_from_separate_connection() -> None:
+			try:
+				conn = MySQLdb.connect(**raw_kwargs)  # type: ignore[arg-type]
+				try:
+					cur = conn.cursor()
+					cur.execute("SET SESSION innodb_lock_wait_timeout = 30")
+					cur.execute(
+						"UPDATE `tabVirtual Machine Migration`"
+						" SET `status` = 'canceling', `modified` = NOW(6)"
+						" WHERE `name` = %s",
+						(names["mig"],),
+					)
+					conn.commit()
+				finally:
+					conn.close()
+			except BaseException as error:
+				errors.append(error)
+
+		def hooked_get_doc(*args: object, **kwargs: object) -> object:
+			doctype = args[0] if args else kwargs.get("doctype")
+			name = args[1] if len(args) > 1 else kwargs.get("name")
+			if (
+				doctype == "Virtual Machine Migration"
+				and name == names["mig"]
+				and not kwargs.get("for_update")
+				and not fired.is_set()
+			):
+				# Join only after progress commits and releases the row lock.
+				fired.set()
+				thread = threading.Thread(target=cancel_from_separate_connection, daemon=True)
+				cancel_threads.append(thread)
+				thread.start()
+				time.sleep(3)
+			return real_get_doc(*args, **kwargs)
+
+		with patch("atlas.vm.core.vm_migration.frappe.get_doc", hooked_get_doc):
+			service.store_progress({"status": "running", "phase": "copying", "transfers": []})
+		for thread in cancel_threads:
+			thread.join(timeout=30)
+		self.assertFalse(any(thread.is_alive() for thread in cancel_threads))
+		self.assertEqual(errors, [])
+
+		self.assertEqual(self.migration_status(names), "canceling")
+
+		with self.migration_client(
+			abort_retryable=True,
+			poll_response={"status": "running", "phase": "copying", "transfers": []},
+		) as retry_client:
+			fresh = self.service_for(names)
+			fresh.advance(fresh.poll())
+			self.assertEqual(retry_client.abort_migration.call_count, 1)
+			self.assertEqual(self.migration_status(names), "canceling")
