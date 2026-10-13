@@ -43,3 +43,212 @@ pull_request_rules:
           Hey @{{author}}, thanks for this pull request! It has been open for over a month, so we're closing it automatically to keep things tidy.
 
           Still working on it? Add the `keep-open` label and reopen it, or leave a comment and we'll help.
+
+
+  - name: Label area atlas
+    conditions:
+      - 'files~=^(atlas|realtime)/|^pyproject\.toml$'
+    actions:
+      label:
+        toggle:
+          - "area: atlas"
+
+  - name: Label area metal
+    conditions:
+      - 'files~=^metal/'
+    actions:
+      label:
+        toggle:
+          - "area: metal"
+
+  - name: Label area http-proxy
+    conditions:
+      - 'files~=^services/http-proxy/'
+    actions:
+      label:
+        toggle:
+          - "area: http-proxy"
+
+  - name: Label area ipv6-router
+    conditions:
+      - 'files~=^services/ipv6-router/'
+    actions:
+      label:
+        toggle:
+          - "area: ipv6-router"
+
+  - name: Label area wg-mesh
+    conditions:
+      - 'files~=^services/wg-mesh/'
+    actions:
+      label:
+        toggle:
+          - "area: wg-mesh"
+
+  - name: Label area wg-gateway
+    conditions:
+      - 'files~=^services/wg-gateway/'
+    actions:
+      label:
+        toggle:
+          - "area: wg-gateway"
+
+  - name: Label area control-cluster
+    conditions:
+      - 'files~=^services/control-cluster/'
+    actions:
+      label:
+        toggle:
+          - "area: control-cluster"
+
+  - name: Label area firecracker
+    conditions:
+      - 'files~=^metal/internal/firecracker/'
+    actions:
+      label:
+        toggle:
+          - "area: firecracker"
+
+  - name: Label area live-migration
+    conditions:
+      - 'files~=^metal/internal/vm/migration/|^atlas/vm/(core/(test_)?vm_migration|doctype/virtual_machine_migration)'
+    actions:
+      label:
+        toggle:
+          - "area: live-migration"
+
+  - name: Label area placement
+    conditions:
+      - 'files~=^atlas/vm/core/placement/'
+    actions:
+      label:
+        toggle:
+          - "area: placement"
+
+  - name: Label domain compute
+    conditions:
+      - 'files~=^metal/internal/(vm|firecracker|reconciler|console)/|^atlas/vm/'
+    actions:
+      label:
+        toggle:
+          - "domain: compute"
+
+  - name: Label domain networking
+    conditions:
+      - 'files~=^metal/internal/network/|^services/(http-proxy|ipv6-router|wg-mesh|wg-gateway)/|^atlas/(metal_server/(doctype/public_ip_|core/(test_)?public_ip_service)|api/routes/public_ips|service/doctype/(ipv6_router_server|proxy_server|wireguard_gateway_server)/|atlas/core/(mesh_address|test_mesh_address|dns_providers/|tls/))'
+    actions:
+      label:
+        toggle:
+          - "domain: networking"
+
+  - name: Label domain storage
+    conditions:
+      - 'files~=^metal/internal/storage/|^atlas/(metal_server/(doctype/metal_server_(disk|image)/|core/disk_inventory)|vm/(doctype/virtual_machine_image/|core/(test_)?(vm_image_|image_builder|multipart_upload)))'
+    actions:
+      label:
+        toggle:
+          - "domain: storage"
+
+  - name: Label domain region
+    conditions:
+      - 'files~=^metal/(cmd|internal/(host|platform|metrics|patches))/|^atlas/(metal_server|operations)/|^atlas/atlas/core/(server_providers/|(test_)?host_binaries)|^services/control-cluster/|^atlas/service/doctype/cargo_server/'
+    actions:
+      label:
+        toggle:
+          - "domain: region"
+
+  - name: Label risk migration
+    conditions:
+      - 'files~=^atlas/patches(/|\.txt$)|^metal/internal/patches/|^services/wg-mesh/cli/patches/'
+    actions:
+      label:
+        toggle:
+          - "risk: migration"
+
+  - name: Label risk ebpf
+    conditions:
+      - 'files~=/bpf/|(^|/)bpf(_[a-z_]+)?\.go$'
+    actions:
+      label:
+        toggle:
+          - "risk: ebpf"
+
+  - name: Label risk api
+    conditions:
+      - 'files~=^(atlas/api|metal/internal/api|clients)/|^services/http-proxy/control/proxy_control/(main|routes)\.py$'
+    actions:
+      label:
+        toggle:
+          - "risk: api"
+
+  - name: Label risk dependencies
+    conditions:
+      - 'files~=(^|/)(uv\.lock|package-lock\.json|go\.mod|go\.sum|pyproject\.toml|package\.json)$'
+    actions:
+      label:
+        toggle:
+          - "risk: dependencies"
+
+  - name: Label kind feature
+    conditions:
+      - 'title~=^feat(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: feature"
+
+  - name: Label kind fix
+    conditions:
+      - 'title~=^fix(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: fix"
+
+  - name: Label kind refactor
+    conditions:
+      - 'title~=^refactor(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: refactor"
+
+  - name: Label kind perf
+    conditions:
+      - 'title~=^perf(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: perf"
+
+  - name: Label kind docs
+    conditions:
+      - 'title~=^docs(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: docs"
+
+  - name: Label kind test
+    conditions:
+      - 'title~=^test(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: test"
+
+  - name: Label kind chore
+    conditions:
+      - 'title~=^(build|chore)(\(.+\))?!?:'
+    actions:
+      label:
+        toggle:
+          - "kind: chore"
+
+  - name: Label kind breaking
+    conditions:
+      - 'title~=^[a-z]+(\(.+\))?!:'
+    actions:
+      label:
+        toggle:
+          - "kind: breaking"
