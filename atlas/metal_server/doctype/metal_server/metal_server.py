@@ -147,6 +147,12 @@ class MetalServer(Document):
 		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
 
+	def before_save(self) -> None:
+		"""Preserve host facts that sync owns when saving an older document."""
+		if previous := self.get_doc_before_save():
+			self.cpu_compatibility_report = previous.cpu_compatibility_report
+			self.tsc_scaling_supported = previous.tsc_scaling_supported
+
 	def _validate_title(self) -> None:
 		if not self.is_new() and not self.has_value_changed("title"):
 			return

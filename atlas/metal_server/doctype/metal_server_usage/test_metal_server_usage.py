@@ -76,6 +76,7 @@ class TestServerUsage(UnitTestCase):
 							"cpu_compatibility_report": stored if compatibility == report else None,
 							"tsc_scaling_supported": compatibility == report,
 						},
+						update_modified=False,
 					)
 				else:
 					set_value.assert_not_called()

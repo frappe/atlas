@@ -119,6 +119,7 @@ def sync_server(
 			"Metal Server",
 			server.name,
 			{"cpu_compatibility_report": report, "tsc_scaling_supported": scaling},
+			update_modified=False,
 		)
 
 
