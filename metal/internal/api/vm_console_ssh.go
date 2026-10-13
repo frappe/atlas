@@ -2,8 +2,7 @@ package api
 
 import (
 	"context"
-	"io"
-	"sync"
+	"errors"
 
 	"github.com/coder/websocket"
 
@@ -11,42 +10,20 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// streamSSHConsole opens an SSH session to the guest for one viewer. The session
-// belongs to this WebSocket and ends with it.
-func (s *Server) streamSSHConsole(ctx context.Context, connection *websocket.Conn, id string) {
-	session, err := s.virtualMachineManager.ConnectSSH(ctx, id)
-	if err != nil {
-		connection.Close(websocket.StatusGoingAway, "ssh session unavailable")
+// streamSSHConsole joins the viewer to an SSH session. The session ends when the
+// viewer leaves or the guest shell exits. A metald shutdown keeps it, so the
+// viewer can resume the same shell on the next metald.
+func (s *Server) streamSSHConsole(ctx context.Context, connection *websocket.Conn, session vm.SSHSession) {
+	terminal := newWebSocketTerminal(ctx, connection)
+	err := session.Attach(ctx, terminal, terminal.resize)
+	if s.consoleShutdown.Err() != nil {
+		return
+	}
+	if errors.Is(err, console.ErrConsoleBusy) {
+		connection.Close(websocket.StatusTryAgainLater, "console has too many viewers")
 		return
 	}
 
-	var once sync.Once
-	closeSession := func() { once.Do(func() { _ = session.Close() }) }
-	defer closeSession()
-
-	terminal := newWebSocketTerminal(ctx, connection)
-	go forwardResize(ctx, terminal.resize, session)
-
-	// A viewer that disconnects ends this copy. Closing the session here releases
-	// the guest process, the temporary key, and the session slot, and it unblocks
-	// the read below. Without it a quiet guest would hold all three open.
-	go func() {
-		defer closeSession()
-		_, _ = io.Copy(session, terminal)
-	}()
-
-	_, _ = io.Copy(terminal, session)
+	_ = session.Close()
 	connection.Close(websocket.StatusNormalClosure, "")
-}
-
-// forwardResize applies viewer resize requests to the SSH session until ctx ends.
-func forwardResize(ctx context.Context, requests <-chan console.Winsize, session vm.SSHConnection) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case size := <-requests:
-			_ = session.Resize(size.Cols, size.Rows)
-		}
-	}
 }

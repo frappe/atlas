@@ -132,7 +132,11 @@ func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachin
 	return nil
 }
 
-func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHConnection, error) {
+func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error) {
+	return nil, nil
+}
+
+func (runtime *fakeRuntime) ResumeSSH(string, string) (SSHSession, error) {
 	return nil, nil
 }
 

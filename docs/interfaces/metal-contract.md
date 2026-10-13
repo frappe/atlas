@@ -58,6 +58,10 @@ The Atlas app sends signed multipart URLs and an `upload_id` for each artifact. 
 
 `GET /v1/versions` returns `metald_version`, `wg_mesh_version`, and `firecracker_version`. `metald` reads them at startup. An empty value means that `metald` could not read it.
 
+## Console
+
+`GET /v1/vms/{id}/console` upgrades to a WebSocket. Code `1012` signals a service restart. An SSH console returns its ID in the `Metal-Console-Session` header. Pass that ID as the `session` query parameter to resume it. See the [console guide](../compute/console.md).
+
 ## Host sync
 
 `POST /v1/sync` replaces the complete WireGuard peer, cached image, and privileged VM sets. An empty array removes all managed values. Each peer needs a public IPv4 address and a private network MAC address. Invalid peer data returns `400`.

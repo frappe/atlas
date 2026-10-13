@@ -31,7 +31,7 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 1. Configuration, TLS credentials, and the control and coordination listeners.
 2. Directories, systemd, storage stores, and the WireGuard manager.
 3. WG Mesh and the optional traffic monitor.
-4. Firecracker runtime, record validation, and the VM manager.
+4. Firecracker runtime, SSH session recovery, record validation, and the VM manager.
 5. Host service and reconcilers.
 6. Atlas trusted keys, then the Atlas and coordination APIs.
 

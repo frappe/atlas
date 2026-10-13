@@ -42,6 +42,25 @@ func (configuration Config) FirecrackerVersion(ctx context.Context) (string, err
 	return fields[1], nil
 }
 
+// ConsolesDir holds the console PTY links of VMs and SSH sessions.
+func (configuration Config) ConsolesDir() string {
+	return filepath.Join(configuration.SocketsDir, "consoles")
+}
+
+// consolePath is the PTY link that a console unit uses as its terminal.
+func (configuration Config) consolePath(id string) string {
+	return filepath.Join(configuration.ConsolesDir(), id)
+}
+
+// sshSessionsDir holds one directory with the key and record of each SSH session.
+func (configuration Config) sshSessionsDir() string {
+	return filepath.Join(configuration.SocketsDir, "ssh-sessions")
+}
+
+func (configuration Config) sshSessionDir(sessionID string) string {
+	return filepath.Join(configuration.sshSessionsDir(), sessionID)
+}
+
 // vmDir holds everything one VM owns on the host, so removing it removes the
 // jail, the chroot, and the jailer environment together.
 func (configuration Config) vmDir(id string) string {

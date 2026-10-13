@@ -28,7 +28,7 @@ Run `metald serve` with `/var/lib/metal/metald.toml`, or pass `--config` for ano
 
 1. Load TLS credentials, validate the snapshot bind address, and open the control and coordination listeners.
 2. Prepare WG Mesh when enabled, create host directories, and connect to systemd.
-3. Open storage and adopt serial consoles for running VM units.
+3. Open storage and adopt the consoles of running VM units and SSH console sessions.
 4. Create the VM, host, migration, network, and API services.
 5. Serve the listeners, start the background workers, and set the systemd status to `ready <version>`.
 
@@ -62,7 +62,7 @@ Metal hides command output and secrets in public errors. Read host logs and the 
 
 ## What shutdown stops
 
-Shutdown stops listeners and workers, cancels uploads and migration streams, and closes owned connections within a bounded wait. It does not ask systemd to stop VM units. Guest survival depends on preserved console handles, as described above.
+Shutdown stops listeners and workers, cancels uploads and migration streams, and closes owned connections within a bounded wait. It closes console WebSockets with code `1012` so Atlas can reconnect. It does not stop VM units. Preserved console handles keep guests running.
 
 ::: details Source code and tests
 

@@ -5,66 +5,290 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/creack/pty"
-
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/vm"
 	"golang.org/x/crypto/ssh"
 )
 
-// sshConsoleUser is the guest account used by the SSH console.
-const sshConsoleUser = "root"
+const (
+	// sshConsoleUser is the guest account used by the SSH console.
+	sshConsoleUser = "root"
+
+	// sshSessionReconnectGrace is how long a session that a new metald adopts
+	// waits for its viewer. The Atlas bridge reconnects within 60 seconds.
+	sshSessionReconnectGrace = 2 * time.Minute
+
+	// sshSessionCleanupTimeout bounds the cleanup of one ended session.
+	sshSessionCleanupTimeout = 30 * time.Second
+)
+
+// sshSessionUnits runs the ssh client of each session as a systemd unit that
+// outlives metald.
+type sshSessionUnits interface {
+	Start(ctx context.Context, sessionID string, command []string, ttyPath string) error
+	Stop(ctx context.Context, sessionID string) error
+	Wait(ctx context.Context, sessionID string) error
+	List(ctx context.Context) ([]string, error)
+}
+
+// sshSession is one SSH console. The ssh client runs in its own systemd unit on
+// a console PTY whose master systemd keeps, so a viewer can resume the same
+// shell after a metald restart. The session ID is also its console ID and
+// starts with "ssh-", so it cannot match a VM ID.
+type sshSession struct {
+	runtime *Runtime
+	record  sshSessionRecord
+	id      string
+	viewers atomic.Int32
+	done    chan struct{}
+	endOnce sync.Once
+}
+
+// sshSessionRecord lets the next metald clean up a session that ended while no
+// metald ran.
+type sshSessionRecord struct {
+	VirtualMachineID string `json:"virtual_machine_id"`
+	KeyIndex         string `json:"key_index"`
+}
 
 // ConnectSSH opens an interactive SSH session to a VM guest. Authorization is a
-// throwaway key pushed through MMDS and removed on close, so no key outlives the
-// session and the guest image carries none.
-func (runtime *Runtime) ConnectSSH(ctx context.Context, input vm.RuntimeMachine) (vm.SSHConnection, error) {
-	select {
-	case runtime.sshSlots <- struct{}{}:
-	default:
-		return nil, fmt.Errorf("ssh session limit reached")
+// throwaway key pushed through MMDS and removed when the session ends, so no
+// key outlives the session and the guest image carries none.
+func (runtime *Runtime) ConnectSSH(ctx context.Context, input vm.RuntimeMachine) (vm.SSHSession, error) {
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		return nil, fmt.Errorf("ssh session id: %w", err)
 	}
-	releaseSlot := func() { <-runtime.sshSlots }
+	identifier := hex.EncodeToString(random)
+	session := runtime.newSSHSession("ssh-"+identifier, sshSessionRecord{
+		VirtualMachineID: input.ID,
+		KeyIndex:         "console-" + identifier,
+	})
+	if err := runtime.addSSHSession(session); err != nil {
+		return nil, err
+	}
 
+	if err := session.start(ctx, input); err != nil {
+		session.end()
+		return nil, err
+	}
+	go session.endWhenClientExits()
+
+	return session, nil
+}
+
+// ResumeSSH returns the open SSH session sessionID of a VM.
+func (runtime *Runtime) ResumeSSH(virtualMachineID, sessionID string) (vm.SSHSession, error) {
+	runtime.sshMutex.Lock()
+	defer runtime.sshMutex.Unlock()
+
+	session := runtime.sshSessions[sessionID]
+	if session == nil || session.record.VirtualMachineID != virtualMachineID {
+		return nil, fmt.Errorf("ssh session %s: %w", sessionID, vm.ErrNotFound)
+	}
+
+	return session, nil
+}
+
+// RecoverSSHSessions adopts the SSH sessions that outlived the previous metald
+// and ends the ones that have no client or console any more. Call it after the
+// serial broker adopts its consoles. An adopted session ends when no viewer
+// returns within the reconnect grace.
+func (runtime *Runtime) RecoverSSHSessions() {
+	entries, err := os.ReadDir(runtime.configuration.sshSessionsDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		runtime.logger.Error("read ssh sessions", "error", err)
+	}
+
+	recorded := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		recorded[entry.Name()] = true
+		var record sshSessionRecord
+		contents, err := os.ReadFile(filepath.Join(runtime.configuration.sshSessionDir(entry.Name()), "record.json"))
+		if err == nil {
+			err = json.Unmarshal(contents, &record)
+		}
+		session := runtime.newSSHSession(entry.Name(), record)
+		runtime.sshMutex.Lock()
+		runtime.sshSessions[session.id] = session
+		runtime.sshMutex.Unlock()
+
+		if err != nil || !runtime.serialBroker.IsOpen(session.id) {
+			go session.end()
+			continue
+		}
+		go session.endWhenClientExits()
+		time.AfterFunc(sshSessionReconnectGrace, func() {
+			if session.viewers.Load() == 0 {
+				session.end()
+			}
+		})
+	}
+	runtime.stopSSHSessionsWithoutRecords(recorded)
+	runtime.logger.Info("recovered ssh sessions", "session_count", len(entries))
+}
+
+// stopSSHSessionsWithoutRecords ends each SSH session unit that has no record.
+// Nobody can resume such a shell or remove its key later.
+func (runtime *Runtime) stopSSHSessionsWithoutRecords(recorded map[string]bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), sshSessionCleanupTimeout)
+	defer cancel()
+
+	sessionIDs, err := runtime.sshUnits.List(ctx)
+	if err != nil {
+		runtime.logger.Error("list ssh session units", "error", err)
+		return
+	}
+	for _, sessionID := range sessionIDs {
+		if !recorded[sessionID] {
+			go runtime.newSSHSession(sessionID, sshSessionRecord{}).end()
+		}
+	}
+}
+
+func (runtime *Runtime) newSSHSession(id string, record sshSessionRecord) *sshSession {
+	return &sshSession{runtime: runtime, record: record, id: id, done: make(chan struct{})}
+}
+
+// addSSHSession registers a session within the host-wide session limit.
+func (runtime *Runtime) addSSHSession(session *sshSession) error {
+	runtime.sshMutex.Lock()
+	defer runtime.sshMutex.Unlock()
+
+	if len(runtime.sshSessions) >= maxConcurrentSSHSessions {
+		return fmt.Errorf("ssh session limit reached")
+	}
+	runtime.sshSessions[session.id] = session
+
+	return nil
+}
+
+// ID returns the session ID that a viewer passes to resume the session.
+func (session *sshSession) ID() string { return session.id }
+
+// Attach streams the session to one viewer until the viewer leaves, ctx ends,
+// or the ssh client exits.
+func (session *sshSession) Attach(ctx context.Context, client io.ReadWriter, resize <-chan console.Winsize) error {
+	session.viewers.Add(1)
+	defer session.viewers.Add(-1)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-session.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	return session.runtime.serialBroker.Attach(ctx, session.id, client, resize)
+}
+
+// Close ends the session.
+func (session *sshSession) Close() error {
+	session.end()
+	return nil
+}
+
+// start authorizes a key in the guest and starts the ssh client unit on a new console.
+func (session *sshSession) start(ctx context.Context, input vm.RuntimeMachine) error {
+	runtime := session.runtime
 	keyPair, err := generateSSHKey()
 	if err != nil {
-		releaseSlot()
-		return nil, err
-	}
-	index, err := sshConsoleKeyIndex()
-	if err != nil {
-		releaseSlot()
-		return nil, err
+		return err
 	}
 
+	// Write the record before the key reaches the guest, so a crash leaves a
+	// record that the next metald uses to remove the key.
+	directory := runtime.configuration.sshSessionDir(session.id)
+	keyPath := filepath.Join(directory, "key")
+	if err := writeSSHSessionFiles(directory, keyPath, keyPair.privatePEM, session.record); err != nil {
+		return err
+	}
 	client := api.New(runtime.configuration.socketPath(input.ID))
-	if err := authorizeSSHConsoleKey(ctx, client, index, strings.TrimSpace(keyPair.authorizedKey)); err != nil {
-		releaseSlot()
-		return nil, fmt.Errorf("authorize ssh key: %w", err)
-	}
-	removeKey := func() {
-		_ = authorizeSSHConsoleKey(context.WithoutCancel(ctx), client, index, nil)
+	if err := authorizeSSHConsoleKey(ctx, client, session.record.KeyIndex, strings.TrimSpace(keyPair.authorizedKey)); err != nil {
+		return fmt.Errorf("authorize ssh key: %w", err)
 	}
 
-	namespace := filepath.Base(input.NetworkInterface.NetworkNamespacePath)
-	session, err := startSSHSession(ctx, runtime.configuration.SocketsDir, namespace, sshConsoleUser, input.NetworkInterface.GuestIPAddress, keyPair.privatePEM)
+	ipCommand, err := exec.LookPath("ip")
 	if err != nil {
-		removeKey()
-		releaseSlot()
-		return nil, err
+		return fmt.Errorf("find ip: %w", err)
 	}
-	return &sshConsoleConnection{session: session, cleanup: func() {
-		removeKey()
-		releaseSlot()
-	}}, nil
+	command := []string{
+		ipCommand, "netns", "exec", filepath.Base(input.NetworkInterface.NetworkNamespacePath),
+		"ssh", "-tt",
+		"-i", keyPath,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"-o", "ConnectTimeout=10",
+		fmt.Sprintf("%s@%s", sshConsoleUser, input.NetworkInterface.GuestIPAddress),
+	}
+
+	if err := runtime.serialBroker.Open(session.id); err != nil {
+		return err
+	}
+	if err := runtime.sshUnits.Start(ctx, session.id, command, runtime.configuration.consolePath(session.id)); err != nil {
+		return fmt.Errorf("start ssh client: %w", err)
+	}
+
+	// systemd drops a stored master while no process holds the slave, so store
+	// it only after the unit opened its terminal.
+	return runtime.serialBroker.Persist(session.id)
+}
+
+// endWhenClientExits ends the session after its ssh client exits. A failed
+// wait, for example when metald shuts down, leaves the session for the next metald.
+func (session *sshSession) endWhenClientExits() {
+	if err := session.runtime.sshUnits.Wait(context.Background(), session.id); err == nil {
+		session.end()
+	}
+}
+
+// end stops the ssh client and removes the console, the guest key, and the
+// session files. Each step tolerates a part that is already gone.
+func (session *sshSession) end() {
+	session.endOnce.Do(func() {
+		runtime := session.runtime
+		ctx, cancel := context.WithTimeout(context.Background(), sshSessionCleanupTimeout)
+		defer cancel()
+
+		if err := runtime.sshUnits.Stop(ctx, session.id); err != nil {
+			runtime.logger.Warn("stop ssh session", "session_id", session.id, "error", err)
+		}
+		if err := runtime.serialBroker.Close(session.id); err != nil {
+			runtime.logger.Warn("close ssh session console", "session_id", session.id, "error", err)
+		}
+		if session.record.VirtualMachineID != "" {
+			client := api.New(runtime.configuration.socketPath(session.record.VirtualMachineID))
+			if err := authorizeSSHConsoleKey(ctx, client, session.record.KeyIndex, nil); err != nil {
+				runtime.logger.Warn("remove ssh session key", "session_id", session.id, "error", err)
+			}
+		}
+		if err := os.RemoveAll(runtime.configuration.sshSessionDir(session.id)); err != nil {
+			runtime.logger.Warn("remove ssh session files", "session_id", session.id, "error", err)
+		}
+
+		runtime.sshMutex.Lock()
+		delete(runtime.sshSessions, session.id)
+		runtime.sshMutex.Unlock()
+		close(session.done)
+	})
 }
 
 // authorizeSSHConsoleKey adds or removes one SSH console key in MMDS.
@@ -85,38 +309,6 @@ func sshConsoleKeyValue(authorizedKey any) any {
 		return nil
 	}
 	return map[string]any{"openssh-key": authorizedKey}
-}
-
-// sshConsoleKeyIndex names one session's MMDS key slot. A random index keeps
-// concurrent sessions from replacing each other's keys.
-func sshConsoleKeyIndex() (string, error) {
-	buffer := make([]byte, 8)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", fmt.Errorf("ssh key index: %w", err)
-	}
-	return "console-" + hex.EncodeToString(buffer), nil
-}
-
-// sshConsoleConnection runs cleanup when the SSH session closes.
-type sshConsoleConnection struct {
-	session *sshSession
-	cleanup func()
-}
-
-// Read returns guest output.
-func (c *sshConsoleConnection) Read(buffer []byte) (int, error) { return c.session.Read(buffer) }
-
-// Write sends viewer input to the guest.
-func (c *sshConsoleConnection) Write(buffer []byte) (int, error) { return c.session.Write(buffer) }
-
-// Resize sets the guest terminal size.
-func (c *sshConsoleConnection) Resize(cols, rows uint16) error { return c.session.Resize(cols, rows) }
-
-// Close ends the session, removes the MMDS key, and frees the session slot.
-func (c *sshConsoleConnection) Close() error {
-	err := c.session.Close()
-	c.cleanup()
-	return err
 }
 
 // sshKeyPair is an ephemeral SSH key for one console session.
@@ -147,96 +339,22 @@ func generateSSHKey() (sshKeyPair, error) {
 	}, nil
 }
 
-// sshSession is one interactive SSH session bridged over a PTY.
-type sshSession struct {
-	master  *os.File
-	command *exec.Cmd
-	keyPath string
-}
-
-// startSSHSession runs ssh inside the network namespace on a PTY and returns the
-// session. The guest must already authorize the key. namespace is the name passed
-// to `ip netns exec`. keyDir holds the temporary private key and should be on a
-// runtime file system, so a crash does not leave the key on disk across a reboot.
-func startSSHSession(ctx context.Context, keyDir, namespace, user, host string, privatePEM []byte) (*sshSession, error) {
-	if err := os.MkdirAll(keyDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create ssh key directory: %w", err)
+// writeSSHSessionFiles stores the private key, with the owner-only permissions
+// that ssh requires, and the session record. directory should be on a runtime
+// file system, so a crash does not leave the key on disk across a reboot.
+func writeSSHSessionFiles(directory, keyPath string, privatePEM []byte, record sshSessionRecord) error {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create ssh session directory: %w", err)
 	}
-	keyFile, err := os.CreateTemp(keyDir, "atlas-ssh-*.key")
-	if err != nil {
-		return nil, fmt.Errorf("create ssh key file: %w", err)
-	}
-	keyPath := keyFile.Name()
-	if err := writeSSHKey(keyFile, privatePEM); err != nil {
-		os.Remove(keyPath)
-		return nil, err
-	}
-
-	command := exec.CommandContext(ctx, "ip", "netns", "exec", namespace,
-		"ssh", "-tt",
-		"-i", keyPath,
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
-		"-o", "ConnectTimeout=10",
-		fmt.Sprintf("%s@%s", user, host),
-	)
-	// ssh forwards its own TERM to the guest PTY. metald has no usable TERM, so set
-	// one the guest terminfo knows, or full-screen tools fail to open the terminal.
-	command.Env = append(environmentWithoutTerm(), "TERM=xterm-256color")
-
-	master, err := pty.Start(command)
-	if err != nil {
-		os.Remove(keyPath)
-		return nil, fmt.Errorf("start ssh: %w", err)
-	}
-	return &sshSession{master: master, command: command, keyPath: keyPath}, nil
-}
-
-// environmentWithoutTerm returns the process environment with TERM removed, so
-// the caller can set one value that wins.
-func environmentWithoutTerm() []string {
-	environment := os.Environ()
-	filtered := environment[:0]
-	for _, entry := range environment {
-		if !strings.HasPrefix(entry, "TERM=") {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered
-}
-
-// writeSSHKey stores the private key with owner-only permissions, which ssh
-// requires before it will use a key file.
-func writeSSHKey(file *os.File, privatePEM []byte) error {
-	defer file.Close()
-	if err := file.Chmod(0o600); err != nil {
-		return fmt.Errorf("secure ssh key file: %w", err)
-	}
-	if _, err := file.Write(privatePEM); err != nil {
+	if err := os.WriteFile(keyPath, privatePEM, 0o600); err != nil {
 		return fmt.Errorf("write ssh key file: %w", err)
 	}
-	return nil
-}
-
-// Read returns output from the ssh process PTY.
-func (s *sshSession) Read(buffer []byte) (int, error) { return s.master.Read(buffer) }
-
-// Write sends input to the ssh process PTY.
-func (s *sshSession) Write(buffer []byte) (int, error) { return s.master.Write(buffer) }
-
-// Resize sets the guest terminal size.
-func (s *sshSession) Resize(cols, rows uint16) error {
-	return pty.Setsize(s.master, &pty.Winsize{Rows: rows, Cols: cols})
-}
-
-// Close ends the SSH process and removes the temporary key file.
-func (s *sshSession) Close() error {
-	err := s.master.Close()
-	if s.command.Process != nil {
-		_ = s.command.Process.Kill()
+	contents, err := json.Marshal(record)
+	if err != nil {
+		return err
 	}
-	_ = s.command.Wait()
-	os.Remove(s.keyPath)
-	return err
+	if err := os.WriteFile(filepath.Join(directory, "record.json"), contents, 0o600); err != nil {
+		return fmt.Errorf("write ssh session record: %w", err)
+	}
+	return nil
 }

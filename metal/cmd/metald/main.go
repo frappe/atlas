@@ -181,12 +181,18 @@ func adoptConsoles(
 	if err != nil {
 		return fmt.Errorf("list virtual machine units: %w", err)
 	}
+	// An SSH session ID is also its console ID.
+	runningSSHSessionIDs, err := units.SSHSessions().List(ctx)
+	if err != nil {
+		return fmt.Errorf("list ssh session units: %w", err)
+	}
 
-	adoptedConsoleCount := serialBroker.Adopt(runningVirtualMachineIDs)
+	runningConsoleIDs := append(runningVirtualMachineIDs, runningSSHSessionIDs...)
+	adoptedConsoleCount := serialBroker.Adopt(runningConsoleIDs)
 	logger.Info(
 		"adopted serial consoles",
 		"adopted_console_count", adoptedConsoleCount,
-		"running_unit_count", len(runningVirtualMachineIDs),
+		"running_unit_count", len(runningConsoleIDs),
 		"descriptor_store_available", descriptorStoreAvailable,
 	)
 
@@ -202,11 +208,11 @@ func adoptConsoles(
 	}
 
 	// A VM without an adopted console has no stored master. Its next metald exit stops it.
-	if adoptedConsoleCount < len(runningVirtualMachineIDs) {
+	if adoptedConsoleCount < len(runningConsoleIDs) {
 		logger.Warn(
 			"running VMs have no adopted console; a metald exit stops them",
 			"adopted_console_count", adoptedConsoleCount,
-			"running_unit_count", len(runningVirtualMachineIDs),
+			"running_unit_count", len(runningConsoleIDs),
 		)
 	}
 
@@ -253,7 +259,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	// Create resources that metald owns.
 	daemonContext, cancelDaemon := context.WithCancel(context.Background())
 	stores := storage.NewStores(daemonContext, options.pool, options.imagesDir, logger)
-	serialBroker := console.NewSerialBroker(filepath.Join(options.cfg.SocketsDir, "consoles"), descriptorStore)
+	serialBroker := console.NewSerialBroker(options.cfg.ConsolesDir(), descriptorStore)
 	daemon := newDaemon(daemonContext, cancelDaemon, logger, stores.Snapshots, serialBroker, units)
 	defer func() {
 		// The upgrade script waits for "ready <version>", so an old status must not match.
@@ -295,11 +301,13 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	virtualMachineRuntime := firecracker.NewRuntime(
 		options.cfg,
 		units,
+		units.SSHSessions(),
 		stores.VirtualMachines,
 		stores.Images,
 		serialBroker,
 		logger,
 	)
+	virtualMachineRuntime.RecoverSSHSessions()
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,

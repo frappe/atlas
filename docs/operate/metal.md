@@ -69,8 +69,8 @@ Firecracker holds the PTY slave as its controlling terminal. A closed PTY master
 
 **Check**
 
-1. Run `systemctl show metal.service -p NFileDescriptorStore`. Expect one descriptor per running VM, plus two listeners. `0` means no protected consoles.
-2. Read the startup log. Expect `descriptor_store_available=true` and `adopted_console_count` equal to `running_unit_count`.
+1. Run `systemctl show metal.service -p NFileDescriptorStore`. Expect one descriptor per running VM and SSH console, plus two listeners. `0` means no protected consoles.
+2. Read the startup log. Expect `descriptor_store_available=true` and `adopted_console_count` equal to `running_unit_count`. Both counts include VM and SSH console units.
 3. Confirm `NotifyAccess=main`, `FileDescriptorStoreMax`, and `FileDescriptorStorePreserve=yes` in the unit.
 
 If descriptors disappear, use this diagnostic sequence:

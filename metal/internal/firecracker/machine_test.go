@@ -3,6 +3,7 @@ package firecracker
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -41,6 +43,10 @@ type stubSerialBroker struct{}
 func (*stubSerialBroker) Open(string) error    { return nil }
 func (*stubSerialBroker) Persist(string) error { return nil }
 func (*stubSerialBroker) Close(string) error   { return nil }
+func (*stubSerialBroker) IsOpen(string) bool   { return false }
+func (*stubSerialBroker) Attach(context.Context, string, io.ReadWriter, <-chan console.Winsize) error {
+	return nil
+}
 
 func (s *stubUnits) shutdown() {
 	s.mu.Lock()

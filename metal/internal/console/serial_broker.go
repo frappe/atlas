@@ -201,6 +201,11 @@ func (b *SerialBroker) Shutdown() {
 	}
 }
 
+// IsOpen reports whether id has an open console.
+func (b *SerialBroker) IsOpen(id string) bool {
+	return b.currentConsole(id) != nil
+}
+
 // currentConsole returns the open console of a VM, or nil.
 func (b *SerialBroker) currentConsole(id string) *console {
 	b.mutex.Lock()

@@ -13,6 +13,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 | `Config` | Host directories and executable paths. |
 | `firecracker/api.Client` | One VM Unix socket and serialized Firecracker requests. |
 | `firecracker/api.Error` | Non-2xx status and fault message. |
+| `sshSession` | Owns an SSH unit, console PTY, MMDS key, and session files. |
 
 `Start` chooses shared warm memory only for a fresh disk clone and exact shape. `ColdStart` never uses source guest memory. `Restore` and `RestorePaused` use VM-local saved state and return an error instead of silently cold-booting. See the [warm-memory incident](../../../docs/incidents/2026-09-24-guest-disk-corruption.md).
 
@@ -26,6 +27,13 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.
 - `RefreshDisk` changes live drive limits. `LimitDiskThroughput` sets a temporary migration limit. A nonpositive value cannot clear a limit.
 - `Remove` deletes runtime files. The VM manager releases storage and network.
+
+## SSH console sessions
+
+- A session ID is `ssh-` plus 16 hex digits. It names the console and descriptor, and follows `metal-` in the unit name.
+- `RecoverSSHSessions` keeps adopted sessions and ends sessions without a console or record. See the [console guide](../../../docs/compute/console.md) for reconnect timing.
+- `end` stops the unit, closes the console, removes the MMDS key, and deletes session files. Each step tolerates missing parts.
+- A failed `sshSessionUnits.Wait` does not end a session, because metald shutdown closes the D-Bus connection.
 
 ## Firecracker API client
 

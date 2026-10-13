@@ -77,6 +77,7 @@ A domain error maps to one status and one safe message. An unknown error becomes
 - Every error body carries a `retryable` flag. `501` is never retryable.
 - `POST /v1/sync` maps a host-state not-found to `503`, not `404`. A `404` would stop the controller retry.
 - Responses never carry command output, signed URL values, or local error detail.
+- `http.Server.Shutdown` does not track WebSockets. Close each console with `1012` on shutdown so the Atlas bridge reconnects.
 
 ## Related
 
