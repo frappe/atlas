@@ -154,23 +154,28 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 }
 
 func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
-	compatibility := migrationSnapshotCompatibility{Host: "binary-and-host", MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4}}
+	compatibility := migrationSnapshotCompatibility{
+		Host: "binary-and-host", CPU: migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/58", Features: "fpu sse"},
+		MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4},
+	}
 	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigrationCompatibility: &compatibility}
 	configuration := Config{MachinesDir: t.TempDir()}
 	metadata := savedStateFixture(t, configuration, requirement)
 	metadata.UserID = 2002
 	metadata.FirecrackerCompatibility = "source-only-build-marker"
+	source := compatibility
+	source.Host = "different-binary-or-host"
+	source.CPU = migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2 fpu sse"}
+	metadata.MigrationCompatibility = &source
 	if err := metadata.validate(requirement); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"host", "cpu", "memory", "disk", "generation", "restart", "vm", "legacy"} {
+	for _, field := range []string{"cpu", "memory", "disk", "generation", "restart", "vm", "missing_metadata"} {
 		t.Run(field, func(t *testing.T) {
 			candidate := metadata
 			changed := compatibility
 			candidate.MigrationCompatibility = &changed
 			switch field {
-			case "host":
-				changed.Host = "different-binary-or-host"
 			case "cpu":
 				changed.VirtualCPUCount++
 			case "memory":
@@ -183,7 +188,7 @@ func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 				candidate.RestartGeneration++
 			case "vm":
 				candidate.VirtualMachineID = "another-vm"
-			case "legacy":
+			case "missing_metadata":
 				candidate.MigrationCompatibility = nil
 			}
 			if err := candidate.validate(requirement); err == nil {

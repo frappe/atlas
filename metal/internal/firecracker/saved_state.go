@@ -169,8 +169,11 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 	case metadata.CreatedAt.IsZero():
 		return errors.New("saved state metadata has no creation time")
 	}
-	if requirement.MigrationCompatibility != nil && (metadata.MigrationCompatibility == nil || *metadata.MigrationCompatibility != *requirement.MigrationCompatibility) {
-		return errors.New("saved state migration compatibility does not match the destination")
+	if requirement.MigrationCompatibility != nil {
+		if metadata.MigrationCompatibility == nil {
+			return errors.New("saved state has no migration compatibility metadata")
+		}
+		return metadata.MigrationCompatibility.validate(*requirement.MigrationCompatibility)
 	}
 	return nil
 }

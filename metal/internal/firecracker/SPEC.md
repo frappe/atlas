@@ -17,14 +17,14 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 
 `Start` chooses shared warm memory only for a fresh disk clone and exact shape. `ColdStart` never uses source guest memory. `Restore` and `RestorePaused` use VM-local saved state and return an error instead of silently cold-booting. See the [warm-memory incident](../../../docs/incidents/2026-09-24-guest-disk-corruption.md).
 
-`RestoreMigrationSnapshot` validates portable compatibility metadata and loads an incoming bundle paused with the destination's user ID. `migration.go` owns its compatibility fingerprint. See [migration](../../../docs/compute/migration-engine.md) for the transfer and activation contract.
+`RestoreMigrationSnapshot` validates the bundle identity and VM shape and loads it paused with the destination's user ID. Firecracker and KVM decide host compatibility during snapshot load. Source software and CPU metadata are recorded but do not block migration. See [migration](../../../docs/compute/migration-engine.md) for the transfer and activation contract.
 
 ## Invariants
 
 - Each launch discards the previous jail. The chroot base and kernel stay on the same file system because the kernel is hard linked. Jailer arguments in the systemd `EnvironmentFile` cannot contain spaces.
 - The console master remains open while its VM runs. Startup adopts masters from the systemd descriptor store. See the [console package](../console/SPEC.md).
 - Firecracker gets whole vCPUs rounded up from millicores. systemd applies the exact CPU quota. The API limit is 32000 millicores.
-- A memory snapshot restores only into the Firecracker build that wrote it. Binary size and modification time identify that build.
+- A VM-local memory snapshot requires a matching Firecracker build. Binary size and modification time identify that build. Migration delegates build compatibility to Firecracker.
 - `SaveAndStop` writes VM-local state to temporary files, publishes it with one atomic rename, then stops Firecracker. A running VM with an existing valid snapshot conflicts. A paused VM with one terminates Firecracker. A stopped VM with one is complete.
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.
 - `RefreshDisk` changes live drive limits. Unlimited values send zero-sized buckets to clear temporary migration limits.
