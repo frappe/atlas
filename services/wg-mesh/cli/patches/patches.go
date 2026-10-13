@@ -1,6 +1,6 @@
-// Package patches converts pinned map entries between map layout versions. Patches[i] moves version i to i+1.
+// Package patches converts pinned map entries between map layout versions. all[i] moves version i to i+1.
 // configure runs them in order, so a host can skip versions. Add each patch in its own file, such as v1.go,
-// append it to Patches, and never change a released one.
+// append it to all, and never change a released one.
 package patches
 
 import (
@@ -16,12 +16,26 @@ type Patch struct {
 	Convert func(mapName string, key, value []byte) (newKey, newValue []byte, err error)
 }
 
-var Patches = []Patch{}
+var all = []Patch{}
+
+// LatestVersion is the layout version that the patches reach.
+func LatestVersion() uint32 {
+	return uint32(len(all))
+}
 
 // ChangedMaps returns the maps that the patches between two versions convert.
 func ChangedMaps(from, to uint32) map[string]bool {
+	return changedMaps(all, from, to)
+}
+
+// Convert runs one entry through the patches between two versions. A nil key means a patch dropped it.
+func Convert(from, to uint32, mapName string, key, value []byte) ([]byte, []byte, error) {
+	return convert(all, from, to, mapName, key, value)
+}
+
+func changedMaps(list []Patch, from, to uint32) map[string]bool {
 	changed := make(map[string]bool)
-	for _, patch := range Patches[from:to] {
+	for _, patch := range list[from:to] {
 		for _, name := range patch.Maps {
 			changed[name] = true
 		}
@@ -30,10 +44,9 @@ func ChangedMaps(from, to uint32) map[string]bool {
 	return changed
 }
 
-// Convert runs one entry through the patches between two versions. A nil key means a patch dropped it.
-func Convert(from, to uint32, mapName string, key, value []byte) ([]byte, []byte, error) {
+func convert(list []Patch, from, to uint32, mapName string, key, value []byte) ([]byte, []byte, error) {
 	for version := from; version < to; version++ {
-		patch := Patches[version]
+		patch := list[version]
 		if !slices.Contains(patch.Maps, mapName) {
 			continue
 		}

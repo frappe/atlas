@@ -54,7 +54,7 @@ A build from before the layout versions recreates its maps empty when it replace
 A map keeps its type, key, value, maximum entries, and flags for the life of its pin. To change one of them:
 
 1. Change the map in `bpf/maps.h`, and increase `map_layout_version` by one.
-2. Add `cli/patches/v<version>.go`, and list the patch at the end of `Patches`. The patch names each changed map and converts one entry. A nil key drops the entry.
+2. Add `cli/patches/v<version>.go`, and add the patch at the end of `all` in `cli/patches/patches.go`. The patch names each changed map and converts one entry. A nil key drops the entry.
 
 ```go
 // v1.go: remote_vms stores the time of the last advertisement after the host address.

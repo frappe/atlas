@@ -43,8 +43,8 @@ func mustReadMapLayoutVersion(object []byte) uint32 {
 	if err != nil {
 		panic(err)
 	}
-	if int(version) != len(patches.Patches) {
-		panic(fmt.Sprintf("map layout version %d needs %d patches, found %d", version, version, len(patches.Patches)))
+	if version != patches.LatestVersion() {
+		panic(fmt.Sprintf("map layout version %d needs %d patches, found %d", version, version, patches.LatestVersion()))
 	}
 
 	return version
