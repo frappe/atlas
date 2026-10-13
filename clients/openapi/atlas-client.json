@@ -1673,6 +1673,56 @@
         "title": "PublicIPResponse",
         "type": "object"
       },
+      "RescuePayload": {
+        "additionalProperties": false,
+        "description": "Select rescue mode. Atlas chooses the image for each new session.",
+        "properties": {
+          "access": {
+            "default": "protected",
+            "enum": [
+              "protected",
+              "read_only",
+              "unprotected"
+            ],
+            "title": "Access",
+            "type": "string"
+          },
+          "action": {
+            "default": "",
+            "enum": [
+              "",
+              "rollback",
+              "finish"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "allow_unprotected": {
+            "default": false,
+            "description": "Explicit acknowledgement of writes without undo.",
+            "title": "Allow Unprotected",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Enter rescue when true; exit when false.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "recovery_generation": {
+            "default": 0,
+            "description": "Checkpoint session shown to the user; required for rollback and finish.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "title": "Recovery Generation",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "RescuePayload",
+        "type": "object"
+      },
       "ReservePublicIPPayload": {
         "additionalProperties": false,
         "description": "Select the IP version of one direct reservation.",
@@ -2056,6 +2106,18 @@
               }
             ],
             "description": "Attached public IPv6 allocation, or null."
+          },
+          "rescue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VirtualMachineRescue"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Rescue selection and progress, or null when host state is unavailable."
           },
           "tags": {
             "additionalProperties": {
@@ -2579,6 +2641,106 @@
           "sent_packets"
         ],
         "title": "VirtualMachineNetworkUsage",
+        "type": "object"
+      },
+      "VirtualMachineRecovery": {
+        "description": "Checkpoint protection retained independently of rescue boot.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "boolean"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "rollback_applied": {
+            "title": "Rollback Applied",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "generation",
+          "checkpoint",
+          "active",
+          "expires_at",
+          "action",
+          "complete",
+          "rollback_applied"
+        ],
+        "title": "VirtualMachineRecovery",
+        "type": "object"
+      },
+      "VirtualMachineRescue": {
+        "description": "Requested and applied rescue mode from the assigned host.",
+        "properties": {
+          "access": {
+            "default": "",
+            "title": "Access",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Requested rescue mode.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "image_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Image pinned to this rescue session, or null.",
+            "title": "Image Ref"
+          },
+          "observed_enabled": {
+            "description": "Last successfully applied rescue mode.",
+            "title": "Observed Enabled",
+            "type": "boolean"
+          },
+          "pending": {
+            "description": "Whether the host has an unapplied rescue selection or recovery action.",
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VirtualMachineRecovery"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "enabled",
+          "observed_enabled",
+          "pending",
+          "image_ref"
+        ],
+        "title": "VirtualMachineRescue",
         "type": "object"
       },
       "VirtualMachineResponse": {
@@ -6263,6 +6425,123 @@
           }
         },
         "summary": "Attach public IPv6",
+        "tags": [
+          "VM Configuration"
+        ]
+      }
+    },
+    "/api/atlas/virtual-machines/{virtual_machine_id}/rescue": {
+      "put": {
+        "description": "Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue progress.",
+        "operationId": "set_virtual_machine_rescue",
+        "parameters": [
+          {
+            "description": "Virtual machine ID.",
+            "in": "path",
+            "name": "virtual_machine_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "enabled": true
+              },
+              "schema": {
+                "$ref": "#/components/schemas/RescuePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VirtualMachineResponse"
+                }
+              }
+            },
+            "description": "The change is accepted. Poll the virtual machine route."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The VM state does not allow this rescue transition."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Set rescue mode",
         "tags": [
           "VM Configuration"
         ]

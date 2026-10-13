@@ -317,6 +317,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		logger,
 	)
 	virtualMachineRuntime.RecoverSSHSessions()
+
+	daemon.virtualMachineRuntime = virtualMachineRuntime
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,

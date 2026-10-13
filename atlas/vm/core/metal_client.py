@@ -155,6 +155,34 @@ class MetalClient:
 		)
 		return self._virtual_machine(response)
 
+	def set_virtual_machine_rescue(
+		self,
+		virtual_machine_id: str,
+		enabled: bool,
+		image: dict[str, Any] | None = None,
+		*,
+		access: str = "protected",
+		allow_unprotected: bool = False,
+		action: str = "",
+		recovery_generation: int = 0,
+	) -> MetalVirtualMachine:
+		"""Select rescue mode while preserving the requested power state."""
+		request: dict[str, Any] = {"enabled": enabled}
+		if enabled:
+			request.update(access=access, allow_unprotected=allow_unprotected)
+		elif action:
+			request.update(action=action, recovery_generation=recovery_generation)
+		if image is not None:
+			request["image"] = image
+		response = self._request(
+			"PUT",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/rescue",
+			json=request,
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
 	def delete_virtual_machine(self, virtual_machine_id: str) -> MetalVirtualMachine:
 		"""Store a removal request for one VM."""
 		response = self._request(

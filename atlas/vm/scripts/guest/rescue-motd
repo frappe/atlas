@@ -1,0 +1,11 @@
+Atlas Rescue
+
+Run sudo atlas-rescue-menu for guided repair, or sudo atlas-rescue status.
+The original disk is /dev/vdb. Inspect actual mounts before repair.
+Protected sessions have a recovery checkpoint. Read-only sessions refuse disk writes.
+Unprotected sessions have no undo. Check the access mode before changing files.
+
+Long managed repair/export jobs survive terminal disconnection. Read their result with atlas-rescue status. Arbitrary expert-shell commands are not managed jobs.
+
+Use Atlas for rollback or Finish recovery. Keep-exit discards the rescue disk; copy notes and exports elsewhere first. The original disk is preserved.
+SSH authentication remains keys-only. The console shows a boot-local password.

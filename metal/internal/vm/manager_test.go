@@ -13,32 +13,33 @@ import (
 )
 
 type fakeRuntime struct {
-	state          State
-	hasSavedState  bool
-	starts         int
-	stops          int
-	saves          int
-	restores       int
-	restoresPaused int
-	deletes        int
-	pauses         int
-	resumes        int
-	removes        int
-	coldStarts     int
-	metadata       int
-	diskRefresh    int
-	diskLimitMiBps int
-	inspectError   error
-	restoreError   error
-	saveError      error
-	deleteError    error
-	coldStartError error
-	usage          RuntimeUsage
-	usageError     error
+	rescueRebootRequested bool
+	state                 State
+	hasSavedState         bool
+	starts                int
+	stops                 int
+	saves                 int
+	restores              int
+	restoresPaused        int
+	deletes               int
+	pauses                int
+	resumes               int
+	removes               int
+	coldStarts            int
+	metadata              int
+	diskRefresh           int
+	diskLimitMiBps        int
+	inspectError          error
+	restoreError          error
+	saveError             error
+	deleteError           error
+	coldStartError        error
+	usage                 RuntimeUsage
+	usageError            error
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
-	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState}, runtime.inspectError
+	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState, RescueRebootRequested: runtime.rescueRebootRequested}, runtime.inspectError
 }
 
 func (runtime *fakeRuntime) Start(context.Context, RuntimeMachine) error {
@@ -160,9 +161,23 @@ func (network *fakeNetwork) Release(context.Context, NetworkReleaseRequest) erro
 }
 
 type fakeStorage struct {
-	resizes      int
-	releases     int
-	releaseError error
+	checkpointGUID      string
+	checkpointCreates   int
+	checkpointRollbacks int
+	checkpointDiscards  int
+	checkpointError     error
+	preflightError      error
+	missingDisk         bool
+	runtime             *fakeRuntime
+	resizes             int
+	releases            int
+	releaseError        error
+	rescueDiskReleases  int
+	releaseRescueError  error
+}
+
+func (storage *fakeStorage) HasDisk(context.Context, string) (bool, error) {
+	return !storage.missingDisk, nil
 }
 
 func (storage *fakeStorage) DiskUsage(context.Context, string) (DiskUsage, error) {
@@ -179,6 +194,14 @@ func (storage *fakeStorage) Release(context.Context, string) error {
 	return storage.releaseError
 }
 
+func (storage *fakeStorage) ReleaseRescueDisk(context.Context, string) error {
+	if storage.runtime != nil && storage.runtime.state != StateStopped {
+		return errors.New("rescue disk is still attached")
+	}
+	storage.rescueDiskReleases++
+	return storage.releaseRescueError
+}
+
 type fakeSnapshots struct{}
 
 func (fakeSnapshots) Stage(context.Context, SnapshotRequest) (StagedSnapshot, error) {
@@ -189,7 +212,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 	t.Helper()
 	runtime := &fakeRuntime{state: StateStopped}
 	network := &fakeNetwork{}
-	storage := &fakeStorage{}
+	storage := &fakeStorage{runtime: runtime}
 	manager, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir(), UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
 		ManagerDependencies{
@@ -253,6 +276,43 @@ func TestCreateFingerprintAcceptsChangedSignedURLs(t *testing.T) {
 	}
 	if record.Specification.Image.RootfsURL != specification.Image.RootfsURL {
 		t.Fatal("signed URL was not refreshed")
+	}
+}
+
+func TestCreateRetryAcceptsAPreRescueFingerprint(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	specification := testSpecification()
+	if _, err := manager.Create(t.Context(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CreateFingerprint = "488af3295651cbd08a132b744b566fe059f4315101a6b3efefb61b715a560a31"
+	if err := manager.store.writeDesired(record); err != nil {
+		t.Fatal(err)
+	}
+
+	specification.Image.RootfsURL += "&renewed=true"
+	specification.Image.KernelURL += "&renewed=true"
+	if _, err := manager.Create(t.Context(), "machine-1", specification); err != nil {
+		t.Fatalf("retry against a persisted pre-rescue fingerprint: %v", err)
+	}
+	retried, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Generation != record.Generation || retried.UserID != record.UserID || retried.CreateFingerprint != record.CreateFingerprint {
+		t.Fatal("create retry changed the existing reservation")
+	}
+	if retried.Specification.Image != specification.Image {
+		t.Fatal("create retry did not refresh the image URLs")
+	}
+
+	specification.MemoryMiB++
+	if _, err := manager.Create(t.Context(), "machine-1", specification); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different request against a pre-rescue fingerprint: %v", err)
 	}
 }
 
@@ -584,6 +644,144 @@ func TestRestartIntentSurvivesManagerRecreation(t *testing.T) {
 	}
 }
 
+func testRescueImage() Image {
+	return Image{
+		Name:         "rescue-1",
+		Architecture: "amd64",
+		RootfsURL:    "https://example.com/rescue-rootfs",
+		RootfsSHA256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		KernelURL:    "https://example.com/rescue-kernel",
+		KernelSHA256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	}
+}
+
+func TestRequestRescueEntersAndCyclesThePower(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 1 || runtime.starts != 2 {
+		t.Fatalf("rescue entry calls = stops %d, starts %d", runtime.stops, runtime.starts)
+	}
+
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !desired.Specification.Rescue.Enabled || desired.Specification.Rescue.Image != testRescueImage() {
+		t.Fatalf("desired rescue = %+v", desired.Specification.Rescue)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.RescueGeneration != 1 {
+		t.Fatalf("rescue generation = %d, want 1", observed.RescueGeneration)
+	}
+}
+
+func TestRequestRescueRepeatingTheSameImageIsANoOp(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 1 || runtime.starts != 2 {
+		t.Fatalf("repeating the same rescue image cycled power again: stops %d, starts %d", runtime.stops, runtime.starts)
+	}
+}
+
+func TestRequestRescueRejectsAPausedVM(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetPowerState(context.Background(), "machine-1", StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); !errors.Is(err, ErrConflict) {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+}
+
+func TestRequestRescueExitReleasesTheRescueDiskAndCyclesThePower(t *testing.T) {
+	manager, runtime, _, storage := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescueExit(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 2 || runtime.starts != 3 {
+		t.Fatalf("rescue exit calls = stops %d, starts %d", runtime.stops, runtime.starts)
+	}
+	if storage.rescueDiskReleases != 1 {
+		t.Fatalf("rescue disk releases = %d, want 1", storage.rescueDiskReleases)
+	}
+
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.Specification.Rescue.Enabled {
+		t.Fatal("rescue is still enabled after exit")
+	}
+}
+
+func TestRequestRescueExitIsANoOpWhenNeverRescued(t *testing.T) {
+	manager, _, _, storage := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescueExit(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if storage.rescueDiskReleases != 0 {
+		t.Fatalf("rescue disk releases = %d, want 0", storage.rescueDiskReleases)
+	}
+}
+
 func TestInspectFailureStoresSafeAndLocalErrors(t *testing.T) {
 	manager, runtime, _, _ := newTestManager(t)
 	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
@@ -769,4 +967,43 @@ func TestInformationReportsRequestedDiskSize(t *testing.T) {
 	if information.DiskMiB != 25600 || information.DiskUsedMiB != 512 {
 		t.Fatalf("disk = %d MiB, used = %d MiB", information.DiskMiB, information.DiskUsedMiB)
 	}
+}
+
+func (storage *fakeStorage) CheckRescueCheckpointSpace(context.Context, string) (RescueCheckpointSpace, error) {
+	return RescueCheckpointSpace{}, storage.preflightError
+}
+func (storage *fakeStorage) CreateRescueCheckpoint(context.Context, string, uint64) (string, error) {
+	if storage.checkpointError != nil {
+		return "", storage.checkpointError
+	}
+	storage.checkpointCreates++
+	storage.checkpointGUID = "42"
+	return "42", nil
+}
+func (storage *fakeStorage) RescueCheckpointGUID(context.Context, string, uint64) (string, error) {
+	if storage.checkpointError != nil {
+		return "", storage.checkpointError
+	}
+	if storage.checkpointGUID == "" {
+		return "", ErrNotFound
+	}
+	return storage.checkpointGUID, nil
+}
+func (storage *fakeStorage) RollbackRescueCheckpoint(context.Context, string, uint64, string) error {
+	if storage.runtime != nil && storage.runtime.state != StateStopped {
+		return errors.New("rollback while running")
+	}
+	if storage.checkpointError != nil {
+		return storage.checkpointError
+	}
+	storage.checkpointRollbacks++
+	return nil
+}
+func (storage *fakeStorage) DiscardRescueCheckpoint(context.Context, string, uint64, string) error {
+	if storage.checkpointError != nil {
+		return storage.checkpointError
+	}
+	storage.checkpointDiscards++
+	storage.checkpointGUID = ""
+	return nil
 }

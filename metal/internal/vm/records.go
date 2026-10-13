@@ -28,25 +28,29 @@ const (
 
 // DesiredRecord stores the complete desired state of one virtual machine.
 type DesiredRecord struct {
-	SchemaVersion     int    `json:"schema_version"`
-	ID                string `json:"id"`
-	UserID            uint32 `json:"user_id"`
-	GroupID           uint32 `json:"group_id"`
-	CreateFingerprint string `json:"create_fingerprint"`
-	Generation        uint64 `json:"generation"`
-	RestartGeneration uint64 `json:"restart_generation"`
+	Recovery          Recovery `json:"recovery,omitempty"`
+	SchemaVersion     int      `json:"schema_version"`
+	ID                string   `json:"id"`
+	UserID            uint32   `json:"user_id"`
+	GroupID           uint32   `json:"group_id"`
+	CreateFingerprint string   `json:"create_fingerprint"`
+	Generation        uint64   `json:"generation"`
+	RestartGeneration uint64   `json:"restart_generation"`
 	// SpecificationGeneration identifies the compute, disk, and network shape.
 	SpecificationGeneration uint64        `json:"specification_generation,omitempty"`
+	RescueGeneration        uint64        `json:"rescue_generation,omitempty"`
 	State                   State         `json:"state"`
 	Specification           Specification `json:"specification"`
 }
 
 // ObservedRecord stores reconciliation progress and observed state.
 type ObservedRecord struct {
+	RescueEnabled           bool             `json:"rescue_enabled"`
 	SchemaVersion           int              `json:"schema_version"`
 	Generation              uint64           `json:"generation"`
 	SpecificationGeneration uint64           `json:"specification_generation,omitempty"`
 	RestartGeneration       uint64           `json:"restart_generation"`
+	RescueGeneration        uint64           `json:"rescue_generation,omitempty"`
 	State                   State            `json:"state"`
 	Phase                   string           `json:"phase,omitempty"`
 	OperationID             string           `json:"operation_id,omitempty"`
@@ -105,7 +109,8 @@ func (store *recordStore) validateAll() error {
 		}
 		if observed.Generation > desired.Generation ||
 			observed.SpecificationGeneration > desired.SpecificationGeneration ||
-			observed.RestartGeneration > desired.RestartGeneration {
+			observed.RestartGeneration > desired.RestartGeneration ||
+			observed.RescueGeneration > desired.RescueGeneration {
 			return fmt.Errorf("validate %s: observed generation is ahead of desired generation", store.virtualMachineDirectory(identifier))
 		}
 	}
@@ -155,6 +160,9 @@ func (store *recordStore) readDesired(identifier string) (DesiredRecord, error) 
 	fingerprint, fingerprintError := hex.DecodeString(record.CreateFingerprint)
 	if fingerprintError != nil || len(fingerprint) != sha256.Size || record.Generation == 0 || !IsDesiredState(record.State) {
 		return DesiredRecord{}, fmt.Errorf("read %s: invalid desired record", store.desiredPath(identifier))
+	}
+	if err := record.Recovery.validate(); err != nil {
+		return DesiredRecord{}, fmt.Errorf("read recovery: %w", err)
 	}
 	return record, nil
 }

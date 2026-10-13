@@ -656,3 +656,24 @@ func TestATombstoneRefusesItsOwnMigrationAndAcceptsANewOne(t *testing.T) {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
+
+func TestLockSourceRejectsRescueAndPendingExit(t *testing.T) {
+	manager, machines, _ := newMigrationManager(t)
+	machines.create("vm-1", testSpecification())
+	setObservedState(t, machines, "vm-1", vm.StateStopped)
+	desired, err := machines.ReadDesired("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired.Specification.Rescue.Enabled = true
+	desired.RescueGeneration = 1
+	machines.desired["vm-1"] = desired
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("rescue migration: %v", err)
+	}
+	desired.Specification.Rescue.Enabled = false
+	machines.desired["vm-1"] = desired
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("pending rescue exit migration: %v", err)
+	}
+}

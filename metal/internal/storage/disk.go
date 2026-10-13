@@ -48,6 +48,82 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	}, nil
 }
 
+// PrepareRescueBoot boots a rescue clone with the existing VM disk attached.
+// It does not provision or modify the original disk.
+func (store *VirtualMachineStore) PrepareRescueBoot(ctx context.Context, request VirtualMachineRescueBootRequest) (BootConfiguration, error) {
+	hasDisk, err := store.HasDisk(ctx, request.VirtualMachineID)
+	if err != nil {
+		return BootConfiguration{}, err
+	}
+	if !hasDisk {
+		return BootConfiguration{}, fmt.Errorf("rescue requires an existing VM disk: %w", ErrNotFound)
+	}
+	if request.RescueGeneration == 0 {
+		return BootConfiguration{}, fmt.Errorf("rescue requires a session generation")
+	}
+	if err := os.MkdirAll(request.ChrootRoot, 0o755); err != nil {
+		return BootConfiguration{}, err
+	}
+	if err := store.images.ensureImage(ctx, request.RescueImageReference, request.RescueImage); err != nil {
+		return BootConfiguration{}, err
+	}
+	if err := replaceHardLink(store.images.kernelFile(request.RescueImageReference), filepath.Join(request.ChrootRoot, "vmlinux")); err != nil {
+		return BootConfiguration{}, err
+	}
+	if err := store.provisionRescueDisk(ctx, request); err != nil {
+		return BootConfiguration{}, err
+	}
+	for name, device := range map[string]string{
+		"rootfs.img": store.pool.rescueDevicePath(request.VirtualMachineID),
+		"disk.img":   store.pool.virtualMachineDevicePath(request.VirtualMachineID),
+	} {
+		if err := createBlockDevice(device, filepath.Join(request.ChrootRoot, name), request.UserID, request.GroupID); err != nil {
+			return BootConfiguration{}, err
+		}
+	}
+	return BootConfiguration{
+		Kernel:     "/vmlinux",
+		KernelArgs: kernelArguments(store.images.imageDirectory(request.RescueImageReference)),
+		Drives:     []Drive{{Path: "/rootfs.img", Root: true}, {Path: "/disk.img", ReadOnly: request.OriginalReadOnly}},
+	}, nil
+}
+
+// provisionRescueDisk retains the current session's disk across cold boots.
+// The caller must stop the old guest before preparing a new session.
+func (store *VirtualMachineStore) provisionRescueDisk(ctx context.Context, request VirtualMachineRescueBootRequest) error {
+	dataset := store.pool.rescueDataset(request.VirtualMachineID)
+	generation := strconv.FormatUint(request.RescueGeneration, 10)
+	exists, err := datasetExists(ctx, dataset)
+	if err != nil {
+		return err
+	}
+	if exists {
+		current, err := platform.Output(ctx, "zfs", "get", "-Hp", "-o", "value", "atlas:rescue-generation", dataset)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(current) == generation {
+			return nil
+		}
+		if err := store.ReleaseRescueDisk(ctx, request.VirtualMachineID); err != nil {
+			return err
+		}
+	}
+	return platform.Run(ctx, "zfs", "clone", "-p", "-o", "atlas:rescue-generation="+generation,
+		store.pool.baseSnapshot(request.RescueImageReference), dataset)
+}
+
+// ReleaseRescueDisk removes the temporary rescue disk, if present.
+func (store *VirtualMachineStore) ReleaseRescueDisk(ctx context.Context, virtualMachineID string) error {
+	if err := platform.Run(ctx, "zfs", "destroy", "-r", store.pool.rescueDataset(virtualMachineID)); err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // PrepareRootFileSystem prepares a disk for snapshot restore.
 func (store *VirtualMachineStore) PrepareRootFileSystem(ctx context.Context, request VirtualMachineStorageRequest) error {
 	if err := os.MkdirAll(request.ChrootRoot, 0o755); err != nil {
@@ -158,10 +234,13 @@ func (store *VirtualMachineStore) ResizeDisk(ctx context.Context, virtualMachine
 	return store.growDisk(ctx, virtualMachineID, diskMiB)
 }
 
-// Release removes the VM disk and keeps dependent staging clones.
+// Release removes both VM disks and keeps dependent staging clones.
 func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID string) error {
 	dataset := store.pool.virtualMachineDataset(virtualMachineID)
 
+	if err := store.ReleaseRescueDisk(ctx, virtualMachineID); err != nil {
+		return err
+	}
 	if err := store.promoteDependentClones(ctx, dataset); err != nil {
 		return err
 	}

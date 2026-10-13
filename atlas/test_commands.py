@@ -91,5 +91,89 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			kernel_path,
 			"Site File",
 			False,
+			purpose="base",
 		)
 		destroy.assert_called_once_with()
+
+
+class TestBuildUbuntuRescueImageCommand(UnitTestCase):
+	def test_rescue_builder_is_registered_with_frappe(self) -> None:
+		self.assertIn(commands.build_ubuntu_rescue_image_command, commands.commands)
+
+	def test_existing_build_configures_only_a_missing_default(self) -> None:
+		for current, count in ((None, 1), ("selected-image", 1), (None, 0), (None, 2)):
+			with (
+				self.subTest(current=current, count=count),
+				patch.object(commands, "is_image_available", return_value=True),
+				patch.object(commands, "build_ubuntu_rescue_image") as build,
+				patch.object(commands.frappe, "init"),
+				patch.object(commands.frappe, "connect"),
+				patch.object(commands.frappe, "destroy") as destroy,
+				patch.object(commands.frappe, "get_doc") as get_settings,
+				patch.object(commands, "get_available_ubuntu_images") as available,
+				patch.object(commands.frappe, "db", create=True) as database,
+			):
+				settings = get_settings.return_value
+				settings.rescue_virtual_machine_image = current
+				image = MagicMock()
+				image.name = "built-image"
+				available.return_value = [image] * count
+				result = CliRunner().invoke(
+					commands.build_ubuntu_rescue_image_command,
+					["--skip-existing", "--set-default-if-missing"],
+					obj=command_context("test.local"),
+				)
+				self.assertEqual(result.exit_code, 2 if not current and count != 1 else 0, result.output)
+				get_settings.assert_called_once_with("Atlas Settings", for_update=True)
+				build.assert_not_called()
+				destroy.assert_called_once()
+				if not current and count != 1:
+					database.set_single_value.assert_not_called()
+					database.commit.assert_not_called()
+				elif current:
+					database.set_single_value.assert_not_called()
+					available.assert_not_called()
+				else:
+					image.validate_rescue_image.assert_called_once()
+					database.set_single_value.assert_called_once_with(
+						"Atlas Settings", "rescue_virtual_machine_image", "built-image"
+					)
+					database.commit.assert_called_once()
+
+	def test_rescue_command_builds_once_and_publishes_with_its_own_purpose(self) -> None:
+		with (
+			patch.object(commands, "is_image_available", side_effect=[True, False]) as available,
+			patch.object(
+				commands, "build_ubuntu_rescue_image", return_value=(Path("rootfs"), Path("kernel"))
+			) as build,
+			patch.object(commands, "_publish_image_to_sites") as publish,
+		):
+			result = CliRunner().invoke(
+				commands.build_ubuntu_rescue_image_command,
+				["--skip-existing"],
+				obj=command_context("existing.local", "new.local"),
+			)
+		self.assertEqual(result.exit_code, 0, result.output)
+		self.assertEqual(available.call_args.args, ("new.local", "ubuntu-24.04-rescue", "amd64", "rescue"))
+		build.assert_called_once_with(Path("dist"))
+		publish.assert_called_once_with(
+			["new.local"],
+			"ubuntu-24.04-rescue",
+			"24.04",
+			"amd64",
+			Path("rootfs"),
+			Path("kernel"),
+			"object-storage",
+			"rescue",
+		)
+
+	def test_failed_rescue_build_does_not_publish(self) -> None:
+		with (
+			patch.object(commands, "build_ubuntu_rescue_image", side_effect=RuntimeError("build failed")),
+			patch.object(commands, "_publish_image_to_sites") as publish,
+		):
+			result = CliRunner().invoke(
+				commands.build_ubuntu_rescue_image_command, [], obj=command_context("test.local")
+			)
+		self.assertIsInstance(result.exception, RuntimeError)
+		publish.assert_not_called()

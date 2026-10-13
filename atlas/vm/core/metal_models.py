@@ -102,17 +102,42 @@ class MetalGuest:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalRescue:
+	"""Store the selected rescue mode and pinned image, when supplied."""
+
+	enabled: bool
+	image: MetalImage | None
+	access: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class MetalRecovery:
+	"""Durable recovery state reported by Metal."""
+
+	generation: int = 0
+	checkpoint: bool = False
+	active: bool = False
+	expires_at: str = ""
+	action: str = ""
+	complete: bool = False
+	rollback_applied: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class MetalDesiredState:
 	"""Store one desired virtual machine state."""
 
 	generation: int
 	restart_generation: int
+	rescue_generation: int
+	rescue: MetalRescue
 	state: str
 	compute: MetalCompute
 	disk: MetalDisk
 	image: MetalImage
 	network: MetalNetwork
 	guest: MetalGuest
+	recovery: MetalRecovery = MetalRecovery()
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +169,8 @@ class MetalObservedState:
 
 	generation: int
 	restart_generation: int
+	rescue_generation: int
+	rescue: MetalRescue
 	state: str
 	phase: str
 	operation_id: str
@@ -284,9 +311,21 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 	network = object_field(value, "network")
 	firewall = object_field(network, "firewall")
 	guest = object_field(value, "guest")
+	recovery = object_value(value.get("recovery", {}), "recovery")
 	return MetalDesiredState(
+		recovery=MetalRecovery(
+			generation=integer_field(recovery, "generation", default=0),
+			checkpoint=boolean_field(recovery, "checkpoint", default=False),
+			active=boolean_field(recovery, "active", default=False),
+			expires_at=string_field(recovery, "expires_at", default=""),
+			action=string_field(recovery, "action", default=""),
+			complete=boolean_field(recovery, "complete", default=False),
+			rollback_applied=boolean_field(recovery, "rollback_applied", default=False),
+		),
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
+		rescue_generation=integer_field(value, "rescue_generation", default=0),
+		rescue=parse_rescue(object_value(value.get("rescue", {"enabled": False}), "rescue")),
 		state=string_field(value, "state"),
 		compute=MetalCompute(
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
@@ -359,6 +398,16 @@ def parse_image(value: dict[str, Any]) -> MetalImage:
 	)
 
 
+def parse_rescue(value: dict[str, Any]) -> MetalRescue:
+	"""Parse rescue selection and the optional immutable image identity."""
+	image = value.get("image")
+	return MetalRescue(
+		access=string_field(value, "access", default=""),
+		enabled=boolean_field(value, "enabled"),
+		image=parse_image(object_value(image, "image")) if image is not None else None,
+	)
+
+
 def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 	"""Parse the observed half of a Metal VM response."""
 	error_value = value.get("error")
@@ -373,6 +422,8 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 	return MetalObservedState(
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
+		rescue_generation=integer_field(value, "rescue_generation", default=0),
+		rescue=parse_rescue(object_value(value.get("rescue", {"enabled": False}), "rescue")),
 		state=string_field(value, "state"),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),

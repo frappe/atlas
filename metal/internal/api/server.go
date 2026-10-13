@@ -49,6 +49,9 @@ type VirtualMachineManager interface {
 	List(context.Context) ([]vm.Information, error)
 	SetPowerState(context.Context, string, vm.State) error
 	RequestRestart(context.Context, string) error
+	RequestRescue(context.Context, string, vm.Image, vm.RescueAccess) error
+	RequestRecoveryAction(context.Context, string, string, uint64) error
+	RequestRescueExit(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error
 	SetDisk(context.Context, string, int, vm.Disk) error
 	Resize(context.Context, string, vm.Compute, int) error

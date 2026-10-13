@@ -11,7 +11,7 @@ from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
 from atlas.metal_server.core.public_ip_service import PublicIPService
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
+from atlas.vm.core.metal_models import MetalRescue, MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
 	IPV4_INTERNET_DESTINATION,
 	IPV6_INTERNET_DESTINATION,
@@ -282,6 +282,79 @@ class VirtualMachineService:
 			)
 		)
 
+	def set_rescue(
+		self,
+		enabled: bool,
+		access: str = "protected",
+		allow_unprotected: bool = False,
+		action: str = "",
+		recovery_generation: int = 0,
+	) -> dict[str, Any]:
+		"""Select rescue mode or renew the pinned image URLs for an active session."""
+		current = self.require_information()
+		if current.desired.state not in {"running", "stopped"}:
+			frappe.throw(
+				_("Stop the paused Virtual Machine before changing rescue mode."), exc=AtlasConflictError
+			)
+		image_request = None
+		if enabled:
+			image = self._get_rescue_image(current.desired.rescue)
+			image.validate_rescue_image()
+			if image.architecture != self.virtual_machine.architecture:
+				frappe.throw(
+					_("The rescue image architecture does not match this Virtual Machine."),
+					exc=AtlasUserError,
+				)
+			image_request = image.get_metal_image_request()
+		information = self.perform_metal_operation(
+			lambda client: client.set_virtual_machine_rescue(
+				cast(str, self.virtual_machine.name),
+				enabled,
+				image_request,
+				access=access,
+				allow_unprotected=allow_unprotected,
+				action=action,
+				recovery_generation=recovery_generation,
+			)
+		)
+		return information.as_dict()
+
+	def _get_rescue_image(self, rescue: MetalRescue) -> VirtualMachineImage:
+		if rescue.enabled:
+			if rescue.image is None:
+				frappe.throw(_("Metal did not return the pinned rescue image."), exc=AtlasConflictError)
+			image_name = frappe.db.get_value(
+				"Virtual Machine Image",
+				{
+					"image_type": "system",
+					"status": "Available",
+					"enabled": 1,
+					"architecture": rescue.image.architecture,
+					"image_sha256": rescue.image.rootfs.sha256,
+					"kernel_sha256": rescue.image.kernel.sha256,
+				},
+				"name",
+			)
+			if not image_name:
+				frappe.throw(_("The pinned rescue image is no longer available."), exc=AtlasConflictError)
+		else:
+			image_name = frappe.get_single("Atlas Settings").rescue_virtual_machine_image
+			if not image_name:
+				frappe.throw(_("Select a rescue image in Atlas Settings first."), exc=AtlasUserError)
+		return self.get_image(image_name, self.virtual_machine.tenant_id)
+
+	def ensure_rescue_inactive(self, information: MetalVirtualMachine) -> None:
+		"""Block disk layout changes until rescue exit has been applied."""
+		if (
+			information.desired.rescue.enabled
+			or (information.desired.recovery.generation > 0 and not information.desired.recovery.complete)
+			or information.desired.rescue_generation != information.observed.rescue_generation
+		):
+			frappe.throw(
+				_("Exit rescue and finish recovery before resizing, migrating, or taking a snapshot."),
+				exc=AtlasConflictError,
+			)
+
 	def set_compute(self, compute: dict[str, Any]) -> dict[str, Any]:
 		"""Set the complete compute values in Metal."""
 		information = self.perform_metal_operation(
@@ -303,8 +376,11 @@ class VirtualMachineService:
 
 	def update_disk(self, changes: dict[str, int]) -> dict[str, Any]:
 		"""Apply selected disk changes and keep the stored disk size in step."""
-		current_disk = self.require_information().desired.disk
+		information = self.require_information()
+		current_disk = information.desired.disk
 		size_mib = changes.get("size_mib", current_disk.size_mib)
+		if size_mib != current_disk.size_mib:
+			self.ensure_rescue_inactive(information)
 		if size_mib < current_disk.size_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
 
@@ -509,6 +585,8 @@ class VirtualMachineService:
 	@staticmethod
 	def raise_metal_error(error: MetalClientError) -> Never:
 		"""Raise one safe Metal failure at the Frappe boundary."""
+		if error.status == 409 and not error.is_insufficient_capacity:
+			frappe.throw(_("Metal request failed: {0}").format(error), exc=AtlasConflictError)
 		if error.is_insufficient_capacity:
 			frappe.throw(
 				_("The host has no room for this change. Stop the Virtual Machine and resize it to move it."),

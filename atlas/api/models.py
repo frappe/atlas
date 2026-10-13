@@ -862,6 +862,49 @@ class VirtualMachineGuest(BaseModel):
 	metadata: dict[str, str] = Field(description="Custom guest metadata.")
 
 
+class RescuePayload(StrictModel):
+	"""Select rescue mode. Atlas chooses the image for each new session."""
+
+	enabled: bool = Field(strict=True, description="Enter rescue when true; exit when false.")
+	access: Literal["protected", "read_only", "unprotected"] = "protected"
+	allow_unprotected: bool = Field(
+		default=False, strict=True, description="Explicit acknowledgement of writes without undo."
+	)
+	action: Literal["", "rollback", "finish"] = ""
+	recovery_generation: int = Field(
+		default=0,
+		strict=True,
+		ge=0,
+		le=2**64 - 1,
+		description="Checkpoint session shown to the user; required for rollback and finish.",
+	)
+
+
+class VirtualMachineRecovery(BaseModel):
+	"""Checkpoint protection retained independently of rescue boot."""
+
+	generation: int
+	checkpoint: bool
+	active: bool
+	expires_at: str
+	action: str
+	complete: bool
+	rollback_applied: bool
+
+
+class VirtualMachineRescue(BaseModel):
+	"""Requested and applied rescue mode from the assigned host."""
+
+	enabled: bool = Field(description="Requested rescue mode.")
+	observed_enabled: bool = Field(description="Last successfully applied rescue mode.")
+	pending: bool = Field(
+		description="Whether the host has an unapplied rescue selection or recovery action."
+	)
+	image_ref: str | None = Field(description="Image pinned to this rescue session, or null.")
+	access: str = ""
+	recovery: VirtualMachineRecovery | None = None
+
+
 class VirtualMachineDetailResponse(BaseModel):
 	"""One virtual machine with its state, addresses, and guest configuration."""
 
@@ -920,6 +963,9 @@ class VirtualMachineDetailResponse(BaseModel):
 	disk: VirtualMachineDisk = Field(description="Disk configuration and usage.")
 	network: VirtualMachineNetwork = Field(description="Network configuration and addresses.")
 	guest: VirtualMachineGuest = Field(description="Guest configuration.")
+	rescue: VirtualMachineRescue | None = Field(
+		default=None, description="Rescue selection and progress, or null when host state is unavailable."
+	)
 
 	@classmethod
 	def from_document_and_metal(
@@ -939,6 +985,20 @@ class VirtualMachineDetailResponse(BaseModel):
 			is_privileged=bool(virtual_machine.is_privileged),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
+			rescue=VirtualMachineRescue(
+				enabled=desired.rescue.enabled,
+				access=desired.rescue.access,
+				recovery=VirtualMachineRecovery(**asdict(desired.recovery)),
+				observed_enabled=observed.rescue.enabled,
+				pending=(
+					desired.rescue_generation != observed.rescue_generation
+					or desired.rescue.enabled != observed.rescue.enabled
+					or bool(desired.recovery.action and not desired.recovery.complete)
+				),
+				image_ref=desired.rescue.image.ref if desired.rescue.image else None,
+			)
+			if desired and observed
+			else None,
 			desired_state=desired.state if desired else None,
 			current_state=get_current_state(virtual_machine, observed.state if observed else None),
 			error=observed.error.message if observed and observed.error else None,

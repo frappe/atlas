@@ -42,6 +42,10 @@ Each sample is the latest sample in its bucket, with disk I/O rates averaged acr
 
 Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol counters read direct transport headers; IPv6 extension headers and later IPv4 fragments still increase the total packet count but not the protocol count. A Metal restart or TAP reattachment resets network counters, so discard a negative counter difference when calculating rates.
 
+## Repair a VM
+
+Use [rescue mode](rescue.md) to boot a repair system with the original disk attached and unmounted.
+
 ## Terminate a VM
 
 1. Atlas requests destruction and marks its record as terminating.

@@ -31,6 +31,12 @@ frappe.ui.form.on("Virtual Machine", {
 			[__("Start VM"), "start", is_stopped, ACTIONS, __("Starting...")],
 			[__("Stop VM"), "stop", is_running || is_paused, ACTIONS, __("Stopping...")],
 			[__("Reboot VM"), "reboot", is_running, ACTIONS, __("Rebooting...")],
+			[
+				__("Rescue Mode"),
+				() => showRescueDialog(frm),
+				(is_live || current_state === "failed") && !is_migrating,
+				ACTIONS,
+			],
 			[__("Pause VM"), "pause", is_running, ACTIONS, __("Pausing...")],
 			[__("Resume VM"), "resume", is_paused, ACTIONS, __("Resuming...")],
 			[__("Snapshot VM"), () => showCreateMachineImageDialog(frm), true, ACTIONS],
@@ -801,4 +807,256 @@ function setWireGuardGatewayAccess(frm) {
 			})
 			.then(() => frm.reload_doc())
 	);
+}
+
+function rescueRequest(operation, generation) {
+	switch (operation) {
+		case "protected":
+			return { enabled: true, access: "protected" };
+		case "read_only":
+			return { enabled: true, access: "read_only" };
+		case "unprotected":
+			return { enabled: true, access: "unprotected", allow_unprotected: true };
+		case "keep":
+			return { enabled: false };
+		case "rollback":
+			return { enabled: false, action: "rollback", recovery_generation: generation };
+		case "finish":
+			return { enabled: false, action: "finish", recovery_generation: generation };
+		default:
+			throw new Error("Invalid recovery operation");
+	}
+}
+
+function rescueWarning(request) {
+	let warning = __(
+		"A running VM restarts. A stopped VM stays stopped. Rescue starts with the original disk unmounted."
+	);
+	if (request.action === "rollback") {
+		warning = __(
+			"Rollback permanently loses every original-disk write since this checkpoint, including writes made during normal boot. It cannot undo changes in external databases or services. The VM stops before restoration. Continue?"
+		);
+	} else if (request.action === "finish") {
+		warning = __(
+			"Keep the current disk and permanently delete this recovery checkpoint? Undo will no longer be available."
+		);
+	} else if (!request.enabled) {
+		warning = __(
+			"Keep original-disk changes and discard the temporary rescue disk? Copy its files out first and wait for repair jobs to finish. A protected session retains undo for 12 hours from its first exit; re-entry does not restart that window. If the original deadline has passed, this exit deletes the checkpoint."
+		);
+	} else if (request.allow_unprotected) {
+		warning = __(
+			"You are explicitly allowing original-disk writes WITHOUT a recovery checkpoint. Repairs can cause permanent data loss and cannot be rolled back. Continue without undo?"
+		);
+	}
+	return warning;
+}
+
+function rescueOperationOptions(state) {
+	const selected = state.desired.rescue.enabled;
+	const recovery = state.desired.recovery || {};
+	const labels = {
+		protected: __("Enter protected rescue"),
+		read_only: __("Enter read-only rescue"),
+		unprotected: __("Enter rescue without undo"),
+		keep: __("Keep changes and exit rescue"),
+		rollback: __("Roll back to the recovery checkpoint"),
+		finish: __("Finish recovery"),
+	};
+	let operations = [selected ? "keep" : "protected"];
+	if (!selected && !recovery.checkpoint) operations.push("read_only", "unprotected");
+	if (recovery.checkpoint) operations.push("rollback");
+	if (recovery.checkpoint && !recovery.active) operations.push("finish");
+	if (recovery.action && !recovery.complete) operations = [recovery.action];
+	return [
+		{ value: "", label: "" },
+		...operations.map((value) => ({ value, label: labels[value] })),
+	];
+}
+
+function rescueChangePending(state) {
+	const recovery = state.desired.recovery || {};
+	return (
+		state.desired.rescue_generation !== state.observed.rescue_generation ||
+		Boolean(recovery.action && !recovery.complete)
+	);
+}
+
+function rescueHeading(state) {
+	if (state.observed.error) return __("Recovery needs attention");
+	if (rescueChangePending(state)) return __("Applying recovery change");
+	if (!state.desired.rescue.enabled) return __("Normal boot is selected");
+	return state.observed.state === "running" ? __("Rescue is running") : __("Rescue is selected");
+}
+
+function rescueProtection(recovery) {
+	if (recovery.complete)
+		return recovery.rollback_applied
+			? __("Rollback completed; checkpoint removed.")
+			: __("Recovery finished; changes kept and checkpoint removed.");
+	let protection = recovery.checkpoint
+		? __("Recovery checkpoint recorded. Its identity is checked before rollback.")
+		: __("No recovery checkpoint available.");
+	if (recovery.expires_at) {
+		protection +=
+			" " + __("Original expiry: {0}.", [new Date(recovery.expires_at).toLocaleString()]);
+		if (recovery.active)
+			protection +=
+				" " +
+				__(
+					"Protection remains until this rescue session ends, even if that deadline passes."
+				);
+	}
+	return protection;
+}
+
+function rescueStatusHTML(state) {
+	const escape = (value) => frappe.utils.escape_html(String(value || ""));
+	const error = state.observed.error;
+	return `<p><strong>${escape(rescueHeading(state))}</strong></p>
+		<p>${escape(rescueProtection(state.desired.recovery || {}))}</p>
+		<p>${escape(
+			__("Access: {0}. Host state: {1}. Phase: {2}.", [
+				state.desired.rescue.access || __("normal"),
+				state.observed.state,
+				state.observed.phase || "—",
+			])
+		)}</p>
+		${error ? `<p class="text-danger">${escape(error.message)}</p>` : ""}
+		<p>${escape(
+			__(
+				"A checkpoint preserves the disk as rescue began; it is not a known-good backup. VM running does not mean Pilot or your sites are healthy."
+			)
+		)}</p>
+		<p>${escape(
+			__(
+				"Connect through the console or your existing VM SSH keys. Run atlas-rescue status to inspect actual mounts and repair jobs."
+			)
+		)}</p>`;
+}
+
+function showRescueDialog(frm) {
+	let state;
+	let refreshing = false;
+	let submitting = false;
+	let timer;
+	let closed = false;
+	const dialog = new frappe.ui.Dialog({
+		title: __("Rescue and recovery"),
+		fields: [
+			{ fieldtype: "HTML", fieldname: "status" },
+			{
+				fieldtype: "Select",
+				fieldname: "operation",
+				label: __("Choose an action"),
+				options: "",
+				reqd: 1,
+			},
+			{
+				fieldtype: "Button",
+				fieldname: "console",
+				label: __("Open console"),
+				click: () => openConsole(frm, "tty"),
+			},
+			{
+				fieldtype: "Button",
+				fieldname: "retry",
+				label: __("Retry status"),
+				hidden: 1,
+				click: () => refresh().then(startPolling),
+			},
+		],
+		primary_action_label: __("Continue"),
+		primary_action: submit,
+	});
+	function updateSubmitButton() {
+		const pending = state && rescueChangePending(state) && !state.observed.error;
+		dialog.get_primary_btn().prop("disabled", Boolean(!state || pending || submitting));
+	}
+	function submit(values) {
+		if (!state || submitting || closed) return;
+		if (rescueChangePending(state) && !state.observed.error) return;
+		if (
+			!rescueOperationOptions(state).some(
+				(option) => option.value === values.operation && option.value
+			)
+		)
+			return;
+		const request = rescueRequest(values.operation, state.desired.recovery?.generation);
+		submitting = true;
+		updateSubmitButton();
+		frappe.confirm(
+			rescueWarning(request),
+			() => {
+				if (closed) return;
+				return Promise.resolve(
+					frm.call({ method: "set_rescue", doc: frm.doc, args: request, freeze: true })
+				)
+					.then(() => {
+						frappe.show_alert({
+							message: __(
+								"Recovery request accepted. Check progress before proceeding."
+							),
+							indicator: "blue",
+						});
+						frm.reload_doc();
+					})
+					.finally(() => {
+						submitting = false;
+						return refresh();
+					});
+			},
+			() => {
+				submitting = false;
+				updateSubmitButton();
+			}
+		);
+	}
+	function startPolling() {
+		if (state && !closed && !timer) timer = setInterval(refresh, 3000);
+	}
+	function refresh() {
+		if (refreshing || closed) return Promise.resolve();
+		refreshing = true;
+		return Promise.resolve(frm.call({ method: "read_rescue", doc: frm.doc, type: "GET" }))
+			.then(({ message }) => {
+				if (!message) throw new Error("Missing recovery state");
+				state = message;
+				dialog.set_df_property("retry", "hidden", 1);
+				dialog.fields_dict.status.$wrapper.html(rescueStatusHTML(state));
+				const previous = dialog.get_value("operation");
+				const options = rescueOperationOptions(state);
+				dialog.set_df_property("operation", "options", options);
+				dialog.set_value(
+					"operation",
+					options.some((option) => option.value === previous) ? previous : ""
+				);
+				updateSubmitButton();
+			})
+			.catch(() => {
+				state = undefined;
+				clearInterval(timer);
+				timer = undefined;
+				dialog.set_df_property("retry", "hidden", 0);
+				updateSubmitButton();
+				dialog.fields_dict.status.$wrapper.html(
+					`<p class="text-danger">${frappe.utils.escape_html(
+						__(
+							"Recovery state is unavailable. Select Retry status to reconnect. Actions remain disabled until the read succeeds."
+						)
+					)}</p>`
+				);
+			})
+			.finally(() => {
+				refreshing = false;
+			});
+	}
+	refresh().then(() => {
+		dialog.show();
+		startPolling();
+		dialog.onhide = () => {
+			closed = true;
+			clearInterval(timer);
+		};
+	});
 }
