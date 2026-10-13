@@ -29,6 +29,9 @@ func savedStateFixture(t *testing.T, configuration Config, requirement savedStat
 		MemoryFileSizeBytes:    memorySize,
 		MigrationCompatibility: requirement.MigrationCompatibility,
 	}
+	if requirement.MigrationCompatibility != nil {
+		metadata.TapMACAddress = "02:11:22:33:44:55"
+	}
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +173,7 @@ func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 	if err := metadata.validate(requirement); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"cpu", "memory", "disk", "generation", "restart", "vm", "missing_metadata"} {
+	for _, field := range []string{"cpu", "memory", "disk", "generation", "restart", "vm", "missing_metadata", "missing_mac", "invalid_mac", "multicast_mac", "extended_mac"} {
 		t.Run(field, func(t *testing.T) {
 			candidate := metadata
 			changed := compatibility
@@ -190,6 +193,14 @@ func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 				candidate.VirtualMachineID = "another-vm"
 			case "missing_metadata":
 				candidate.MigrationCompatibility = nil
+			case "missing_mac":
+				candidate.TapMACAddress = ""
+			case "invalid_mac":
+				candidate.TapMACAddress = "not-a-mac"
+			case "multicast_mac":
+				candidate.TapMACAddress = "33:33:00:00:00:01"
+			case "extended_mac":
+				candidate.TapMACAddress = "02:11:22:33:44:55:66:77"
 			}
 			if err := candidate.validate(requirement); err == nil {
 				t.Fatal("incompatible migration metadata accepted")

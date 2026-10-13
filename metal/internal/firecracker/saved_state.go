@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	platform "github.com/frappe/atlas/metal/internal/platform"
@@ -44,6 +46,7 @@ type savedStateMetadata struct {
 	MemoryFileName           string                          `json:"memory_file_name"`
 	StateFileSizeBytes       int64                           `json:"state_file_size_bytes"`
 	MemoryFileSizeBytes      int64                           `json:"memory_file_size_bytes"`
+	TapMACAddress            string                          `json:"tap_mac_address,omitempty"`
 	MigrationCompatibility   *migrationSnapshotCompatibility `json:"migration_compatibility,omitempty"`
 }
 
@@ -51,6 +54,18 @@ type savedState struct {
 	Metadata   savedStateMetadata
 	StatePath  string
 	MemoryPath string
+}
+
+func (snapshot savedState) restoreNetwork(ctx context.Context, networkInterface vm.NetworkInterface) error {
+	if snapshot.Metadata.TapMACAddress == "" {
+		return nil
+	}
+	// Restored ARP and NDP caches still map the gateway to the source TAP MAC.
+	if _, err := platform.RunInNetworkNamespace(ctx, filepath.Base(networkInterface.NetworkNamespacePath),
+		"ip", "link", "set", "dev", networkInterface.TapName, "address", snapshot.Metadata.TapMACAddress); err != nil {
+		return fmt.Errorf("restore snapshot TAP MAC: %w", err)
+	}
+	return nil
 }
 
 func (configuration Config) savedStateDirectory(id string) string {
@@ -99,6 +114,11 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 	if err != nil {
 		return savedState{}, err
 	}
+	tapMAC, err := platform.RunInNetworkNamespace(ctx, filepath.Base(machine.NetworkInterface.NetworkNamespacePath),
+		"cat", filepath.Join("/sys/class/net", machine.NetworkInterface.TapName, "address"))
+	if err != nil {
+		return savedState{}, fmt.Errorf("read snapshot TAP MAC: %w", err)
+	}
 	pending := runtime.configuration.pendingSavedStateDirectory(machine.ID)
 	if err := os.RemoveAll(pending); err != nil {
 		return savedState{}, fmt.Errorf("remove pending saved state: %w", err)
@@ -126,6 +146,7 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		MemoryFileName:           memorySnapshotMemoryFileName,
 		StateFileSizeBytes:       stateSize,
 		MemoryFileSizeBytes:      memorySize,
+		TapMACAddress:            strings.TrimSpace(tapMAC),
 		MigrationCompatibility:   &compatibility,
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
@@ -169,7 +190,16 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 	case metadata.CreatedAt.IsZero():
 		return errors.New("saved state metadata has no creation time")
 	}
+	if metadata.TapMACAddress != "" {
+		address, err := net.ParseMAC(metadata.TapMACAddress)
+		if err != nil || len(address) != 6 || address[0]&1 != 0 {
+			return errors.New("saved state has an invalid TAP MAC address")
+		}
+	}
 	if requirement.MigrationCompatibility != nil {
+		if metadata.TapMACAddress == "" {
+			return errors.New("saved state has no TAP MAC address")
+		}
 		if metadata.MigrationCompatibility == nil {
 			return errors.New("saved state has no migration compatibility metadata")
 		}

@@ -51,6 +51,9 @@ func (runtime *Runtime) RestoreMigrationSnapshot(ctx context.Context, input vm.R
 	if err != nil {
 		return fmt.Errorf("validate migrated snapshot: %w", err)
 	}
+	if err := snapshot.restoreNetwork(ctx, input.NetworkInterface); err != nil {
+		return err
+	}
 	metadata := input.Specification.MetadataServiceData(input.ID, input.NetworkInterface.GuestIPAddress, input.NetworkInterface.MACAddress)
 	if err := runtime.launchMemorySnapshot(ctx, input, "", snapshot.StatePath, snapshot.MemoryPath, metadata, false); err != nil {
 		return err

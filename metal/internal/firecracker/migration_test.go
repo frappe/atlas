@@ -92,13 +92,23 @@ func (units *migrationUnits) Start(context.Context, string) error {
 }
 
 func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
-	for _, failure := range []string{"success", "metadata_failure", "snapshot_failure"} {
+	for _, failure := range []string{"success", "metadata_failure", "snapshot_failure", "tap_failure"} {
 		t.Run(failure, func(t *testing.T) {
 			root, err := os.MkdirTemp("/tmp", "fc-migration-")
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { os.RemoveAll(root) })
+			commandFile := filepath.Join(root, "tap-command")
+			if err := os.WriteFile(filepath.Join(root, "ip"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$TAP_COMMAND_FILE\"\n[ \"$TAP_RESTORE_FAIL\" != 1 ]\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", root+":"+os.Getenv("PATH"))
+			t.Setenv("TAP_COMMAND_FILE", commandFile)
+			t.Setenv("TAP_RESTORE_FAIL", "0")
+			if failure == "tap_failure" {
+				t.Setenv("TAP_RESTORE_FAIL", "1")
+			}
 			configuration := Config{MachinesDir: root, SocketsDir: filepath.Join(root, "sockets"), FirecrackerBin: filepath.Join(root, "binary")}
 			if err := os.WriteFile(configuration.FirecrackerBin, []byte("firecracker-build"), 0o600); err != nil {
 				t.Fatal(err)
@@ -110,7 +120,7 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 				ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid()),
 				Specification:           vm.Specification{CPUMillicores: 1000, MemoryMiB: 1, DiskMiB: 4},
 				SpecificationGeneration: 2, RestartGeneration: 3,
-				NetworkInterface: vm.NetworkInterface{GuestIPAddress: "172.16.0.2", MACAddress: "06:00:ac:10:00:02"},
+				NetworkInterface: vm.NetworkInterface{NetworkNamespacePath: "/run/netns/destination-vm", TapName: "tap0", GuestIPAddress: "172.16.0.2", MACAddress: "06:00:ac:10:00:02"},
 			}
 			compatibility, err := newMigrationSnapshotCompatibility(t.Context(), configuration.FirecrackerBin, input.Specification)
 			if err != nil {
@@ -134,6 +144,10 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 					return
 				}
 				if request.URL.Path == "/snapshot/load" {
+					command, err := os.ReadFile(commandFile)
+					if err != nil || strings.TrimSpace(string(command)) != "netns exec destination-vm ip link set dev tap0 address 02:11:22:33:44:55" {
+						t.Errorf("source gateway MAC was not applied before snapshot load: %q, %v", command, err)
+					}
 					var load api.LoadSnapshotRequest
 					if err := json.NewDecoder(request.Body).Decode(&load); err != nil {
 						t.Error(err)
@@ -163,6 +177,12 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 				writer.WriteHeader(http.StatusNoContent)
 			})
 			err = runtime.RestoreMigrationSnapshot(t.Context(), input, bundle)
+			if failure == "tap_failure" {
+				if err == nil || !strings.Contains(err.Error(), "restore snapshot TAP MAC") || units.active || len(requests) != 0 {
+					t.Fatalf("TAP failure started the guest: %v", err)
+				}
+				return
+			}
 			if failure == "snapshot_failure" {
 				var apiError *api.Error
 				if !errors.As(err, &apiError) || apiError.Status != http.StatusBadRequest || apiError.Message != "snapshot CPU not supported" {
@@ -202,6 +222,12 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 func TestSavedSnapshotFingerprintsTheRunningJailedBinary(t *testing.T) {
 	configuration := Config{MachinesDir: t.TempDir(), FirecrackerBin: filepath.Join(t.TempDir(), "firecracker")}
 	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid()), Specification: vm.Specification{CPUMillicores: 1000, MemoryMiB: 1, DiskMiB: 4}}
+	input.NetworkInterface = vm.NetworkInterface{NetworkNamespacePath: "/run/netns/source-vm", TapName: "tap0"}
+	commands := t.TempDir()
+	if err := os.WriteFile(filepath.Join(commands, "ip"), []byte("#!/bin/sh\n[ \"$*\" = 'netns exec source-vm cat /sys/class/net/tap0/address' ] || exit 1\nprintf '02:11:22:33:44:55\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", commands+":"+os.Getenv("PATH"))
 	if err := os.WriteFile(configuration.FirecrackerBin, []byte("installed-build"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -236,5 +262,8 @@ func TestSavedSnapshotFingerprintsTheRunningJailedBinary(t *testing.T) {
 	}
 	if snapshot.Metadata.MigrationCompatibility == nil || snapshot.Metadata.MigrationCompatibility.Host != captured.Host || captured.Host == installed.Host {
 		t.Fatal("snapshot used the installed binary instead of the running build")
+	}
+	if snapshot.Metadata.TapMACAddress != "02:11:22:33:44:55" {
+		t.Fatalf("snapshot lost the source TAP MAC: %q", snapshot.Metadata.TapMACAddress)
 	}
 }
