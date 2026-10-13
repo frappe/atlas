@@ -6,35 +6,50 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
+
+	"github.com/frappe/atlas/services/wg-mesh/cli/patches"
 )
 
-// A host upgrade reuses each pinned map with the same name, and loadBPF stops
-// on a changed layout. CI passes the object of the base branch in
-// BPF_BASELINE_OBJECT, so a layout change fails before it reaches a host.
-func TestPinnedMapsKeepTheirLayout(t *testing.T) {
+// A pinned map that changes layout needs a patch. CI passes the base branch object in BPF_BASELINE_OBJECT.
+func TestChangedMapLayoutsHavePatches(t *testing.T) {
 	baselinePath := os.Getenv("BPF_BASELINE_OBJECT")
 	if baselinePath == "" {
 		t.Skip("BPF_BASELINE_OBJECT names no baseline object")
 	}
 
-	baseline, err := ebpf.LoadCollectionSpec(baselinePath)
+	baselineObject, err := os.ReadFile(baselinePath)
 	if err != nil {
 		t.Fatalf("read the baseline object: %v", err)
+	}
+	baseline, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(baselineObject))
+	if err != nil {
+		t.Fatalf("read the baseline object: %v", err)
+	}
+	baselineVersion, err := readMapLayoutVersion(baselineObject)
+	if err != nil {
+		t.Fatal(err)
 	}
 	current, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(bpfObject))
 	if err != nil {
 		t.Fatalf("read the embedded object: %v", err)
 	}
 
-	for name, currentMap := range current.Maps {
-		baselineMap, found := baseline.Maps[name]
-		if !found {
+	if mapLayoutVersion < baselineVersion {
+		t.Fatalf("map_layout_version went back from %d to %d; patches only move forward", baselineVersion, mapLayoutVersion)
+	}
+
+	changed := patches.ChangedMaps(baselineVersion, mapLayoutVersion)
+	for name, baselineMap := range baseline.Maps {
+		currentMap, found := current.Maps[name]
+		if !found || hasSameLayout(baselineMap, currentMap) || changed[name] {
 			continue
 		}
-		if currentMap.Type != baselineMap.Type || currentMap.KeySize != baselineMap.KeySize ||
-			currentMap.ValueSize != baselineMap.ValueSize || currentMap.MaxEntries != baselineMap.MaxEntries ||
-			currentMap.Flags != baselineMap.Flags {
-			t.Errorf("map %s changed layout from %v to %v; add a map with a new name instead", name, baselineMap, currentMap)
-		}
+
+		t.Errorf("map %s changed from %v to %v: bump map_layout_version and add a patch for it", name, baselineMap, currentMap)
 	}
+}
+
+func hasSameLayout(first, second *ebpf.MapSpec) bool {
+	return first.Type == second.Type && first.KeySize == second.KeySize && first.ValueSize == second.ValueSize &&
+		first.MaxEntries == second.MaxEntries && first.Flags == second.Flags
 }

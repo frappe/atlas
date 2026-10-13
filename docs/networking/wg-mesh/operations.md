@@ -72,6 +72,14 @@ var addAdvertisementTime = Patch{
 
 If a migration stops before it commits, the next `configure` builds the new layout again from the old maps.
 
+CI fails a pull request that changes a map without a patch that lists it. A new map or a removed map needs no patch. CI also installs the build of the base branch on a test host, adds state, upgrades it to the pull request build, and checks that every map keeps its entries. Run the same check on a machine with `bpftool` and `jq`:
+
+```sh
+sudo tests/upgrade.sh <base-branch-atlas-wg-mesh> <new-atlas-wg-mesh>
+```
+
+The check runs in its own network namespace and BPF file system, so it does not change the mesh of the machine.
+
 ## Synchronize peers
 
 Use multicast Neighbor Discovery Protocol (NDP) on a shared host network:

@@ -14,6 +14,7 @@ It uses eBPF, WireGuard, Linux NDP with proxy NDP, and NOT_HERE recovery. It ser
 bpf/                         eBPF hooks and maps
 cli/                         Go CLI, one file per command group
 cli/patches/                 Map layout patches, one file per version
+tests/upgrade.sh             Upgrade check from one build to another
 Makefile                     Build targets
 ```
 
@@ -27,7 +28,7 @@ The module path is `github.com/frappe/atlas/services/wg-mesh/cli`. Run Go comman
 
 ## Validation
 
-From this directory, run `make bpf` and `make build`. Run `go vet ./...` from `cli/`. `TestPinnedMapsKeepTheirLayout` compares map layouts with `BPF_BASELINE_OBJECT`, which CI builds from the base branch. See the [design page](../../docs/networking/wg-mesh/index.md#hooks-and-state) for hooks.
+From this directory, run `make bpf` and `make build`. Run `go vet ./...` from `cli/`. `TestChangedMapLayoutsHavePatches` requires a patch for each map that changes layout against `BPF_BASELINE_OBJECT`, which CI builds from the base branch. CI then runs `tests/upgrade.sh` from the base branch build. [Change a map](../../docs/networking/wg-mesh/operations.md#change-a-map) gives the rules. See the [design page](../../docs/networking/wg-mesh/index.md#hooks-and-state) for hooks.
 
 ## Documentation
 
