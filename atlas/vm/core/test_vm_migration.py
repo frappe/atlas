@@ -63,7 +63,21 @@ class TestMigrationValidation(UnitTestCase):
 	def test_rejects_a_vm_without_a_live_state(self) -> None:
 		for state in ("failed", "unknown"):
 			with self.assertRaises(AtlasUserError):
-				MigrationService.validate_source(source_vm(current_state=state))
+				MigrationService.create(source_vm(current_state=state))
+
+	def test_reads_metal_state_before_locking_the_vm(self) -> None:
+		with patch("frappe.get_doc", side_effect=RuntimeError("Lock requested")) as lock:
+
+			class Source(SimpleNamespace):
+				@property
+				def current_state(self) -> str:
+					if lock.called:
+						raise AssertionError("Metal state read after the row lock")
+					return "running"
+
+			with self.assertRaisesRegex(RuntimeError, "Lock requested"):
+				MigrationService.create(Source(name="vm-00001"))
+			lock.assert_called_once_with("Virtual Machine", "vm-00001", for_update=True)
 
 
 class TestMigrationStatus(UnitTestCase):
@@ -323,6 +337,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 	def test_the_commit_stores_the_server_and_the_resized_shape(self) -> None:
 		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
 		migration = SimpleNamespace(
+			status="starting",
 			destination_metal_server="metal-2",
 			target_cpu_millicores=4000,
 			target_memory_mib=8192,
@@ -353,7 +368,10 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		service.settle = Mock()
 		service.request_destination_abort = Mock()
 
-		service.request_abort()
+		with patch.object(
+			service, "_lock_records", return_value=(SimpleNamespace(server="metal-1"), service.migration)
+		):
+			service.request_abort()
 
 		service.settle.assert_called_once_with("aborted")
 		service.request_destination_abort.assert_not_called()

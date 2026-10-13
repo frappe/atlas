@@ -1,12 +1,15 @@
 # Copyright (c) 2026, Frappe and Contributors
 # See license.txt
 
-from unittest.mock import patch
+from datetime import timedelta
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import now_datetime
 
+from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.vm_migration import MigrationService
 
 # On IntegrationTestCase, the doctype test records and all
@@ -17,6 +20,94 @@ IGNORE_TEST_RECORD_DEPENDENCIES = []  # eg. ["User"]
 
 
 class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
+	def create_migration(self) -> MigrationService:
+		"""Store a migration and its VM for controller recovery checks."""
+		servers = []
+		for _ in range(2):
+			server = frappe.get_doc({"doctype": "Metal Server", "name": str(uuid4())})
+			server.db_insert()
+			servers.append(server.name)
+		virtual_machine = frappe.get_doc(
+			{"doctype": "Virtual Machine", "name": str(uuid4()), "server": servers[0]}
+		)
+		virtual_machine.db_insert()
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"name": str(uuid4()),
+				"virtual_machine": virtual_machine.name,
+				"source_metal_server": servers[0],
+				"destination_metal_server": servers[1],
+				"status": "copying",
+				"started_at": now_datetime() - timedelta(minutes=11),
+				"migrate_memory_snapshot": 1,
+				"memory_snapshot_status": "not_started",
+			}
+		)
+		migration.db_insert()
+		virtual_machine.db_set("active_migration", migration.name)
+		return MigrationService(migration)
+
+	def test_cancellation_wins_over_stale_progress_and_commit(self) -> None:
+		service = self.create_migration()
+		stale = MigrationService(frappe.get_doc(service.migration.doctype, service.migration.name))
+		client = Mock()
+		with patch("frappe.db.commit"), patch.object(MigrationService, "destination_client", client):
+			service.request_abort()
+			self.assertFalse(stale.commit_destination())
+			stale.store_progress({"status": "ready", "memory_snapshot_status": "completed"})
+			self.assertEqual(stale.migration.status, "canceling")
+			self.assertFalse(stale.advance({"status": "ready"}))
+			self.assertEqual(
+				frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "server"),
+				service.migration.source_metal_server,
+			)
+			client.finish_migration.assert_not_called()
+
+	def test_committed_destination_only_recovers_forward(self) -> None:
+		service = self.create_migration()
+		stale = MigrationService(frappe.get_doc(service.migration.doctype, service.migration.name))
+		client = Mock()
+		with patch("frappe.db.commit"), patch.object(MigrationService, "destination_client", client):
+			self.assertTrue(service.commit_destination())
+			with self.assertRaisesRegex(AtlasUserError, "committed its destination"):
+				stale.request_abort()
+			service.fail("migration_worker_error", "Finish request timed out")
+			self.assertEqual(service.migration.status, "finalizing")
+			service.request_destination_abort()
+			client.finish_migration.assert_called_once_with(service.migration.name)
+			client.abort_migration.assert_not_called()
+			self.assertEqual(
+				frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "active_migration"),
+				service.migration.name,
+			)
+
+	def test_failed_rollback_keeps_the_vm_lock_until_recovery(self) -> None:
+		service = self.create_migration()
+		client = Mock()
+		with patch("frappe.db.commit"), patch.object(MigrationService, "destination_client", client):
+			self.assertTrue(service.is_expired)
+			self.assertFalse(service.advance({"status": "failed", "error": {"message": "Restore failed"}}))
+			self.assertEqual(service.migration.status, "canceling")
+			self.assertEqual(
+				frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "active_migration"),
+				service.migration.name,
+			)
+			self.assertTrue(service.advance({"status": "aborted"}))
+			self.assertEqual(service.migration.status, "failed")
+			self.assertFalse(
+				frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "active_migration")
+			)
+
+	def test_stale_progress_cannot_reopen_a_settled_migration(self) -> None:
+		service = self.create_migration()
+		stale = MigrationService(frappe.get_doc(service.migration.doctype, service.migration.name))
+		with patch("frappe.db.commit"):
+			service.settle("aborted")
+			stale.store_progress({"status": "running", "phase": "copying"})
+			self.assertEqual(stale.migration.status, "aborted")
+			self.assertTrue(stale.advance({"status": "ready"}))
+
 	def test_snapshot_progress_and_terminal_results_are_persisted(self) -> None:
 		server = frappe.get_doc({"doctype": "Metal Server", "name": str(uuid4())})
 		server.db_insert()
@@ -58,13 +149,16 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 			)
 			self.assertEqual(service.migration.memory_snapshot_status, "completed")
 			for status in ("completed", "failed", "aborted"):
+				migration.db_set("status", "finalizing")
 				service.settle(status)
 				stored = frappe.get_doc(migration.doctype, migration.name)
 				self.assertEqual(stored.memory_snapshot_status, status)
 				self.assertEqual(stored.status, status)
 				self.assertEqual([row.snapshot_type for row in stored.transfers], ["Disk", "Memory"])
 				self.assertEqual(stored.transfers[1].transferred_mib, 512)
-			migration.db_set({"migrate_memory_snapshot": 0, "memory_snapshot_status": "not_started"})
+			migration.db_set(
+				{"status": "copying", "migrate_memory_snapshot": 0, "memory_snapshot_status": "not_started"}
+			)
 			service = MigrationService(frappe.get_doc(migration.doctype, migration.name))
 			service.store_progress({"memory_snapshot_status": "transferring"})
 			service.settle("completed")

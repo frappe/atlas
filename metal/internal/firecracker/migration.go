@@ -83,6 +83,7 @@ func migrationTSC() (int, bool, error) {
 }
 
 type migrationSnapshotCompatibility struct {
+	// Host and CPU preserve the metadata schema of existing snapshots.
 	Host string                     `json:"host,omitempty"`
 	CPU  *migrationCPUCompatibility `json:"cpu,omitempty"`
 	vm.MemorySnapshotConfiguration
@@ -98,7 +99,9 @@ type migrationCPUCompatibility struct {
 func (runtime *Runtime) RestoreMigrationSnapshot(ctx context.Context, input vm.RuntimeMachine, directory string) error {
 	compatibility := migrationSnapshotCompatibility{
 		MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{
-			VirtualCPUCount: input.Specification.VirtualCPUCount(), MemoryMiB: input.Specification.MemoryMiB, DiskMiB: input.Specification.DiskMiB,
+			VirtualCPUCount: input.Specification.VirtualCPUCount(),
+			MemoryMiB:       input.Specification.MemoryMiB,
+			DiskMiB:         input.Specification.DiskMiB,
 		},
 	}
 	machine := runtime.newMachine(input)

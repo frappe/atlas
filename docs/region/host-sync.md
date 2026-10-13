@@ -26,7 +26,9 @@ sequenceDiagram
 
 Metal replaces its managed policy sets and wakes the relevant reconcilers. Atlas stores a capacity sample and updates its VM state cache.
 
-When Metal starts, the Firecracker runtime captures architecture, configured CPU profile, CPU vendor/model/features, a Firecracker binary and host kernel digest, and x86 clock frequency and scaling support. It sends the same facts in each sync without running the probes again. Provisioning, host reboot, and daemon restart refresh these facts.
+When Metal starts, the Firecracker runtime captures architecture, configured CPU profile, CPU vendor/model/features, and x86 clock frequency and scaling support. Its runtime fingerprint hashes Firecracker binary contents, architecture, and the host kernel release.
+
+It sends the same facts in each sync without running the probes again. Provisioning, host reboot, and daemon restart refresh these facts.
 
 A failed startup probe is logged once and leaves the optional report absent until Metal restarts. Capacity and VM-state sync continue.
 

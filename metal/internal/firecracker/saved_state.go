@@ -143,7 +143,9 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		TapMACAddress:            strings.TrimSpace(tapMAC),
 		MigrationCompatibility: &migrationSnapshotCompatibility{
 			MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{
-				VirtualCPUCount: machine.Specification.VirtualCPUCount(), MemoryMiB: machine.Specification.MemoryMiB, DiskMiB: machine.Specification.DiskMiB,
+				VirtualCPUCount: machine.Specification.VirtualCPUCount(),
+				MemoryMiB:       machine.Specification.MemoryMiB,
+				DiskMiB:         machine.Specification.DiskMiB,
 			},
 		},
 	}
