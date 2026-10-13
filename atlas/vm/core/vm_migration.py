@@ -11,7 +11,7 @@ from frappe.utils import get_datetime, now_datetime
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
-from atlas.vm.core.metal_models import timestamp_field
+from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
 from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import AffinityRules, PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
@@ -145,6 +145,7 @@ class MigrationService:
 		if self.migration.status == "scheduled":
 			if not self.select_destination_metal_server():
 				return
+			frappe.db.commit()  # nosemgrep
 
 		if self.is_canceling:
 			self.request_destination_abort()
@@ -210,6 +211,19 @@ class MigrationService:
 				self.settle("failed")
 			return False
 
+		try:
+			self.validate_compatibility(destination, virtual_machine.architecture)
+		except AtlasUserError as error:
+			self.update(
+				{
+					"error_code": "migration_incompatible",
+					"error_message": str(error),
+					"error_at": now_datetime(),
+				}
+			)
+			self.settle("failed")
+			return False
+
 		started_at = now_datetime()
 		self.update(
 			{
@@ -221,6 +235,43 @@ class MigrationService:
 			}
 		)
 		return True
+
+	def validate_compatibility(self, destination: str, architecture: str) -> None:
+		"""Check synced host facts before a memory snapshot migration."""
+		if not self.migration.migrate_memory_snapshot:
+			return
+		if self.has_target_shape:
+			raise AtlasUserError(_("A memory migration cannot resize the VM."))
+		reports = []
+		for server in (self.migration.source_metal_server, destination):
+			report = frappe.cache().get_value(
+				f"metal-host-compatibility:{server}", expires=True, use_local_cache=False
+			)
+			if not isinstance(report, MetalHostCompatibility):
+				raise AtlasUserError(
+					_("Metal Server {0} has no recent compatibility report. Wait for host sync.").format(
+						server
+					)
+				)
+			reports.append(report)
+		source, target = reports
+		if source.architecture != architecture:
+			raise AtlasUserError(_("The source CPU architecture does not match the VM."))
+		fields = ("architecture", "cpu_profile", "cpu_vendor", "snapshot_host")
+		if source.cpu_profile == "native":
+			fields += ("cpu_model", "cpu_features")
+		for field in fields:
+			if getattr(source, field) != getattr(target, field):
+				raise AtlasUserError(_("Migration hosts have different {0}.").format(field.replace("_", " ")))
+		if architecture == "amd64":
+			if not source.tsc_khz or not target.tsc_khz:
+				raise AtlasUserError(_("The migration hosts did not report a stable CPU clock."))
+			# Firecracker accepts boot-time clock calibration differences up to 250 ppm.
+			if (
+				abs(source.tsc_khz - target.tsc_khz) > source.tsc_khz * 250 // 1_000_000
+				and not target.tsc_scaling
+			):
+				raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
 
 	def record_destination_metal_server_selection_failure(self, error: Exception) -> None:
 		"""Record one unsuccessful destination selection attempt."""

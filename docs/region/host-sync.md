@@ -9,7 +9,7 @@ The scheduler selects Metal Servers that are `Running` with completed setup.
 | Direction | Data |
 | --- | --- |
 | Atlas → Metal | Complete WireGuard peer set, privileged VM addresses, WireGuard gateway return routes, image cache policy, and transport mode. |
-| Metal → Atlas | Capacity, VM states, and private interface MAC address. |
+| Metal → Atlas | Capacity, VM states, private interface MAC address, and optional host compatibility facts. |
 
 ```mermaid
 sequenceDiagram
@@ -26,6 +26,8 @@ sequenceDiagram
 
 Metal replaces its managed policy sets and wakes the relevant reconcilers. Atlas stores a capacity sample and updates its VM state cache.
 
+During each sync, the Firecracker runtime reports architecture, configured CPU profile, CPU vendor/model/features, a Firecracker binary and host kernel digest, and x86 clock frequency and scaling support. Atlas validates and caches the report for two minutes. A host that omits the optional report clears its cached compatibility facts. Only memory snapshot migrations use this cache; they do not probe hosts. See [migration checks](../compute/migration.md#compatibility-before-transfer).
+
 ### Why sync sends complete sets
 
 A complete set repairs policy after a restart or missed sync. Atlas includes a peer only after it has keys, network addresses, and a private interface MAC.
@@ -37,6 +39,7 @@ The Atlas `Virtual Machine State` record remains a **cache**. Its `server` field
 | Failure | Result |
 | --- | --- |
 | Invalid or failed sync | Atlas logs the failure and writes no new capacity sample. |
+| Compatibility probe or report fails | Capacity and VM-state sync continue. Compatibility facts are cleared; new memory snapshot migrations are blocked. Disk-only migrations can proceed. |
 | Sample older than 2 minutes | Placement excludes the host. |
 | Policy partly applied | The next full sync can apply it again. |
 | Atlas unavailable | Metal continues VM, image, and migration reconciliation. |

@@ -10,6 +10,43 @@ from atlas.vm.core.models import Route, parse_routes
 
 
 @dataclass(frozen=True, slots=True)
+class MetalHostCompatibility:
+	"""Store host facts from the last successful sync."""
+
+	architecture: str
+	cpu_profile: str
+	cpu_vendor: str
+	cpu_model: str
+	cpu_features: str
+	snapshot_host: str
+	tsc_khz: int
+	tsc_scaling: bool
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalHostCompatibility:
+		"""Validate the optional sync report at the Metal boundary."""
+		report = object_value(value, "compatibility")
+		strings = {
+			field: string_field(report, field)
+			for field in (
+				"architecture",
+				"cpu_profile",
+				"cpu_vendor",
+				"cpu_model",
+				"cpu_features",
+				"snapshot_host",
+			)
+		}
+		if not all(strings.values()) or strings["architecture"] not in {"amd64", "arm64"}:
+			raise ValueError("Host compatibility report is incomplete")
+		return cls(
+			**strings,
+			tsc_khz=integer_field(report, "tsc_khz"),
+			tsc_scaling=boolean_field(report, "tsc_scaling"),
+		)
+
+
+@dataclass(frozen=True, slots=True)
 class MetalCompute:
 	"""Store the desired compute configuration."""
 
