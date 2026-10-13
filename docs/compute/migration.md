@@ -27,7 +27,7 @@ Disk-only migrations skip these reports. Placement checks destination readiness,
 | --- | --- |
 | Architecture and profile | VM and host architecture match. Source and destination CPU template JSON content matches. |
 | CPU | Same vendor. Native profiles also require matching host CPU model and features. |
-| Runtime | Matching Firecracker binary and host kernel digest. |
+| Runtime | Matching fingerprint of Firecracker binary contents, architecture, and host kernel release. |
 | Shape | The VM shape cannot change. |
 | x86 clock | Stable clock reports. A frequency difference above Firecracker's 250 ppm tolerance requires destination TSC scaling. |
 
@@ -62,6 +62,8 @@ Atlas keeps the source host as the VM's recorded owner until the destination rep
 2. Atlas commits the new host and resize values in one transaction.
 3. Atlas requests public IP moves. A failed move retries on its own schedule. It does not undo the host change.
 4. Atlas asks Metal to finish. Memory migrations activate the restored destination before removing the stopped source.
+
+Atlas rejects cancellation after it commits destination ownership. A later controller error retries finish.
 
 Metal hides the incoming VM from normal reads until the move finishes.
 
@@ -118,7 +120,7 @@ The default probe interval is 0.25 seconds and the probe timeout is one second. 
 | Finish | Valid only after `ready`. The first finish or abort wins. |
 | Network interruption | Resumes the saved snapshot sequence. |
 | Snapshot identity mismatch | Fails the migration and keeps data for inspection. |
-| Cutover or rollback fault | Keeps both hosts locked and preserves snapshots. |
+| Cutover or rollback fault | Keeps both hosts and the Atlas VM action locked until recovery completes. Preserves snapshots. |
 
 **Keep unfinished migration records** on both hosts and in Atlas. Their status and saved public IP requests can differ during recovery. The [migration engine](migration-engine.md) describes Metal's checkpoints.
 
