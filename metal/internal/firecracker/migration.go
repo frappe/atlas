@@ -1,9 +1,11 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,74 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
+
+// HostCompatibility probes the configured runtime for the controller sync response.
+func (service *Runtime) HostCompatibility(ctx context.Context) (vm.HostCompatibility, error) {
+	state, err := migrationHostCompatibility(ctx, service.configuration.FirecrackerBin)
+	if err != nil {
+		return vm.HostCompatibility{}, err
+	}
+	profile, err := service.cpuProfile()
+	if err != nil {
+		return vm.HostCompatibility{}, err
+	}
+	result := vm.HostCompatibility{
+		Architecture: runtime.GOARCH, CPUProfile: profile,
+		CPUVendor: state.CPU.Vendor, CPUModel: state.CPU.Model,
+		CPUFeatures: state.CPU.Features, SnapshotHost: state.Host,
+	}
+	if result.Architecture == "amd64" {
+		result.TSCKHz, result.TSCScaling, err = migrationTSC()
+	}
+	return result, err
+}
+
+func (runtime *Runtime) cpuProfile() (string, error) {
+	if len(runtime.configuration.CPUTemplate) == 0 {
+		return "native", nil
+	}
+	var template map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(runtime.configuration.CPUTemplate))
+	decoder.UseNumber()
+	if err := decoder.Decode(&template); err != nil {
+		return "", err
+	}
+	content, err := json.Marshal(template)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(content)
+	return "custom:" + hex.EncodeToString(digest[:]), nil
+}
+
+func migrationTSC() (int, bool, error) {
+	kvm, err := unix.Open("/dev/kvm", unix.O_RDWR|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return 0, false, err
+	}
+	defer unix.Close(kvm)
+	// KVM_CHECK_EXTENSION(KVM_CAP_TSC_CONTROL), KVM_CREATE_VM and KVM_CREATE_VCPU.
+	scaling, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(kvm), 0xae03, 60)
+	if errno != 0 {
+		return 0, false, errno
+	}
+	virtualMachine, err := unix.IoctlRetInt(kvm, 0xae01)
+	if err != nil {
+		return 0, false, err
+	}
+	defer unix.Close(virtualMachine)
+	virtualCPU, err := unix.IoctlRetInt(virtualMachine, 0xae41)
+	if err != nil {
+		return 0, false, err
+	}
+	defer unix.Close(virtualCPU)
+	frequency, err := unix.IoctlRetInt(virtualCPU, 0xaea3) // KVM_GET_TSC_KHZ.
+	// Unstable or unavailable TSC blocks memory migration, not host sync.
+	if errors.Is(err, unix.EIO) || errors.Is(err, unix.ENOTTY) {
+		return 0, scaling > 0, nil
+	}
+	return frequency, scaling > 0, err
+}
 
 type migrationSnapshotCompatibility struct {
 	Host string                    `json:"host"`
