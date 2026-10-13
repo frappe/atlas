@@ -125,7 +125,7 @@ def render_coverage_row(
 	percent, lines = head
 	change = ""
 	if base is not None:
-		delta = percent - base
+		delta = round(percent, 1) - round(base, 1)
 		change = f"{'🟢' if delta >= 0 else '🔴'} {delta:+.1f}%"
 
 	changed = [
