@@ -17,6 +17,7 @@ from atlas.metal_server.usage import (
 	sync_server,
 )
 from atlas.vm.core.metal_client import MetalClientError
+from atlas.vm.core.metal_models import MetalHostCompatibility
 
 CAPACITY = {
 	"total_cpu_millicores": 8000,
@@ -30,6 +31,47 @@ CAPACITY = {
 
 
 class TestServerUsage(UnitTestCase):
+	def test_sync_replaces_or_invalidates_cached_compatibility(self) -> None:
+		report = {
+			"architecture": "amd64",
+			"cpu_profile": "builtin:baseline",
+			"cpu_vendor": "GenuineIntel",
+			"cpu_model": "6/58",
+			"cpu_features": "fpu sse",
+			"snapshot_host": "build",
+			"tsc_khz": 2_500_000,
+			"tsc_scaling": False,
+		}
+		for compatibility in (report, None, {}):
+			with self.subTest(compatibility=compatibility):
+				server = Mock(private_network_mac_address=None)
+				server.name = "server-1"
+				client = Mock()
+				client.sync.return_value = {"capacity": CAPACITY, "compatibility": compatibility}
+				with (
+					patch("atlas.metal_server.usage.frappe.get_doc", return_value=server),
+					patch("atlas.metal_server.usage.MetalClient", return_value=client),
+					patch("atlas.metal_server.usage.get_desired_images", return_value=[]),
+					patch("atlas.metal_server.usage.store_reported_states"),
+					patch("atlas.metal_server.usage.frappe.cache") as cache,
+					patch("atlas.metal_server.usage.frappe.log_error") as log_error,
+				):
+					sync_server("server-1", [], [], False)
+				server.insert.assert_called_once()
+				if compatibility != report:
+					cache.return_value.delete_value.assert_called_once_with(
+						"metal-host-compatibility:server-1"
+					)
+					cache.return_value.set_value.assert_not_called()
+					if compatibility == {}:
+						log_error.assert_called_once()
+				else:
+					cache.return_value.set_value.assert_called_once_with(
+						"metal-host-compatibility:server-1",
+						MetalHostCompatibility.from_dict(report),
+						expires_in_sec=120,
+					)
+
 	def test_sync_logs_a_metal_connection_failure(self) -> None:
 		server = SimpleNamespace(name="server-1")
 		client = Mock()

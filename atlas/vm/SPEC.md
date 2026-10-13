@@ -21,6 +21,7 @@ This file identifies code owners and rules that a code change must preserve. The
 
 ## Rules to preserve
 
+- `MigrationService` compares recent sync facts before the first destination request for a memory snapshot migration. Disk-only migrations do not require compatibility reports. See [migration checks](../../docs/compute/migration.md#compatibility-before-transfer).
 - The VM record name is the Metal VM ID from the `vm-<tenant ID>-.####` series, one counter for each tenant. The number after the last dash is the VM number in the mesh address, from 1 to 65,535 within the tenant. See [address formats](../../docs/networking/address-formats.md). A deleted name is never reused.
 - `VirtualMachineService.create` commits a draft and any public address request before it calls Metal. An uncertain response keeps the draft. Only confirmed Metal absence removes it.
 - Metal is the authority for current host state. `Virtual Machine State` is a cache for lists and image checks. A failed Metal read must not appear as a guest state.

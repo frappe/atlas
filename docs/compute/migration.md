@@ -17,6 +17,24 @@ The flag transfers memory during the final disk copy and restores the destinatio
 
 A stopped VM also moves when a resize does not fit on its host. The migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`, and commits the new host and shape together. On failure, the VM keeps its old host and shape. The tenant API reports `migrating` during the move.
 
+## Compatibility before transfer
+
+Only memory snapshot migrations require compatibility reports from [host sync](../region/host-sync.md). Atlas compares them after destination selection and before the first Metal migration request. Missing or expired reports fail the memory migration and release its Atlas reservation without starting a transfer.
+
+Disk-only migrations skip these reports. Placement checks destination readiness, architecture, memory, and disk capacity for both modes.
+
+| Memory migration check | Required compatibility |
+| --- | --- |
+| Architecture and profile | VM and host architecture match. Source and destination CPU template JSON content matches. |
+| CPU | Same vendor. Native profiles also require matching host CPU model and features. |
+| Runtime | Matching Firecracker binary and host kernel digest. |
+| Shape | The VM shape cannot change. |
+| x86 clock | Stable clock reports. A frequency difference above Firecracker's 250 ppm tolerance requires destination TSC scaling. |
+
+The check uses the runtime's configured CPU profile. Matching configured profiles are the CPU contract. Raw host features do not describe the guest after profile masking, so they do not gate profiled migrations. The snapshot restores the source guest CPU state. Firecracker and KVM still validate the saved state when the destination loads it.
+
+After changing a profile or replacing Firecracker, cold-boot existing VMs before migrating their memory. Atlas does not inspect each running guest's captured CPU configuration. Validate a custom profile on each supported host combination before use. See [CPU templates](cpu-templates.md#migration-validation).
+
 ## Migration sequence
 
 ```mermaid

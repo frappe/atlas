@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -7,6 +8,7 @@ from unittest.mock import Mock, patch
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.vm.core.metal_models import MetalHostCompatibility
 from atlas.vm.core.vm_migration import MigrationService
 
 
@@ -95,6 +97,88 @@ class TestMigrationStatus(UnitTestCase):
 
 
 AFFINITY_RULES = '[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db"}}]'
+HOST_COMPATIBILITY = MetalHostCompatibility(
+	"amd64", "builtin:baseline", "GenuineIntel", "6/58", "fpu sse", "snapshot-build", 2_500_000, False
+)
+
+
+class TestMigrationCompatibility(UnitTestCase):
+	def setUp(self) -> None:
+		super().setUp()
+		self.enterContext(patch("atlas.vm.core.vm_migration._", side_effect=lambda value: value))
+
+	def test_synced_host_comparison(self) -> None:
+		cases = [
+			({}, {}, True),
+			({}, {"architecture": "arm64"}, False),
+			({}, {"cpu_profile": "native"}, False),
+			({}, {"cpu_vendor": "AuthenticAMD"}, False),
+			({"cpu_profile": "native"}, {"cpu_profile": "native", "cpu_model": "6/60"}, False),
+			({}, {"snapshot_host": "other-build"}, False),
+			(
+				{
+					"cpu_profile": "custom:baseline",
+					"cpu_model": "6/60",
+					"cpu_features": "fpu sse avx2 fma bmi1 bmi2",
+				},
+				{"cpu_profile": "custom:baseline"},
+				True,
+			),
+			({"cpu_profile": "native"}, {"cpu_profile": "native", "cpu_features": "sse"}, False),
+			({"cpu_profile": "native"}, {"cpu_profile": "native"}, True),
+			({}, {"tsc_khz": 0}, False),
+			({"tsc_khz": 0}, {}, False),
+			({}, {"tsc_khz": 2_500_625}, True),
+			({}, {"tsc_khz": 2_500_626}, False),
+			({}, {"tsc_khz": 3_000_000, "tsc_scaling": True}, True),
+			({"architecture": "arm64", "tsc_khz": 0}, {"architecture": "arm64", "tsc_khz": 0}, True),
+		]
+		for source_changes, target_changes, compatible in cases:
+			with self.subTest(source=source_changes, target=target_changes):
+				source = replace(HOST_COMPATIBILITY, **source_changes)
+				target = replace(HOST_COMPATIBILITY, **target_changes)
+				service = MigrationService(migration_doc(migrate_memory_snapshot=True))
+				with patch("atlas.vm.core.vm_migration.frappe.cache") as cache:
+					cache.return_value.get_value.side_effect = [source, target]
+					if compatible:
+						service.validate_compatibility("metal-2", source.architecture)
+					else:
+						with self.assertRaises(AtlasUserError):
+							service.validate_compatibility("metal-2", source.architecture)
+
+	def test_missing_or_expired_facts_block_the_request(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled", migrate_memory_snapshot=True))
+		service.update = Mock()
+		service.settle = Mock()
+		service.send_request = Mock()
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
+			patch("atlas.vm.core.vm_migration.frappe.cache") as cache,
+		):
+			cache.return_value.get_value.return_value = None
+			service.run()
+		service.update.assert_called_once()
+		self.assertEqual(service.update.call_args.args[0]["error_code"], "migration_incompatible")
+		self.assertNotIn("commit", service.update.call_args.kwargs)
+		service.settle.assert_called_once_with("failed")
+		service.send_request.assert_not_called()
+
+	def test_memory_resize_is_rejected_before_reading_facts(self) -> None:
+		service = MigrationService(migration_doc(migrate_memory_snapshot=True, target_memory_mib=1024))
+		with patch("atlas.vm.core.vm_migration.frappe.cache") as cache:
+			with self.assertRaisesRegex(AtlasUserError, "cannot resize"):
+				service.validate_compatibility("metal-2", "amd64")
+			cache.assert_not_called()
+
+	def test_disk_only_migration_does_not_read_compatibility_reports(self) -> None:
+		for target_memory_mib in (0, 1024):
+			with self.subTest(target_memory_mib=target_memory_mib):
+				service = MigrationService(migration_doc(target_memory_mib=target_memory_mib))
+				with patch("atlas.vm.core.vm_migration.frappe.cache") as cache:
+					service.validate_compatibility("metal-2", "amd64")
+					cache.assert_not_called()
 
 
 class TestDestinationMetalServerSelection(UnitTestCase):
@@ -181,6 +265,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 
 		with (
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
 			patch(
 				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-2"
 			) as find_server,
