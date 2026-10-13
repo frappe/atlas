@@ -28,6 +28,8 @@ Metal replaces its managed policy sets and wakes the relevant reconcilers. Atlas
 
 When Metal starts, the Firecracker runtime captures architecture, configured CPU profile, CPU vendor/model/features, a Firecracker binary and host kernel digest, and x86 clock frequency and scaling support. It sends the same facts in each sync without running the probes again. Provisioning, host reboot, and daemon restart refresh these facts.
 
+A failed startup probe is logged once and leaves the optional report absent until Metal restarts. Capacity and VM-state sync continue.
+
 Atlas stores the validated JSON in Metal Server's `cpu_compatibility_report` and exposes `tsc_scaling_supported` as a read-only checkbox. Sync updates these fields only when the report changes. Reports have no expiry. A host that omits the optional report clears its stored facts. Only memory snapshot migrations require the report; they do not probe hosts. Placement still requires recent capacity. See [migration checks](../compute/migration.md#compatibility-before-transfer).
 
 ### Why sync sends complete sets

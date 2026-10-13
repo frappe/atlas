@@ -90,24 +90,24 @@ func TestMigrationFingerprintUsesBinaryContents(t *testing.T) {
 	if err := os.Chtimes(second, time.Unix(0, 0), time.Unix(0, 0)); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint, err := migrationHostCompatibility(t.Context(), first)
+	fingerprint, err := hostCompatibility(t.Context(), first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := migrationHostCompatibility(t.Context(), second)
-	if err != nil || fingerprint != other {
+	other, err := hostCompatibility(t.Context(), second)
+	if err != nil || fingerprint.SnapshotHost != other.SnapshotHost {
 		t.Fatalf("same binary rejected: %v", err)
 	}
 	if err := os.WriteFile(second, []byte("build-two"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	other, err = migrationHostCompatibility(t.Context(), second)
-	if err != nil || fingerprint == other {
+	other, err = hostCompatibility(t.Context(), second)
+	if err != nil || fingerprint.SnapshotHost == other.SnapshotHost {
 		t.Fatalf("different binary accepted: %v", err)
 	}
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := migrationHostCompatibility(cancelled, first); !errors.Is(err, context.Canceled) {
+	if _, err := hostCompatibility(cancelled, first); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
@@ -186,12 +186,11 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 				SpecificationGeneration: 2, RestartGeneration: 3,
 				NetworkInterface: vm.NetworkInterface{NetworkNamespacePath: "/run/netns/destination-vm", TapName: "tap0", GuestIPAddress: "172.16.0.2", MACAddress: "06:00:ac:10:00:02"},
 			}
-			compatibility, err := newMigrationSnapshotCompatibility(t.Context(), configuration.FirecrackerBin, input.Specification)
-			if err != nil {
-				t.Fatal(err)
+			compatibility := migrationSnapshotCompatibility{
+				MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4},
 			}
 			compatibility.Host = "different-source-build"
-			compatibility.CPU = migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2"}
+			compatibility.CPU = &migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2"}
 			savedStateFixture(t, configuration, savedStateRequirement{
 				VirtualMachineID: input.ID, UserID: input.UserID + 1, SpecificationGeneration: 2, RestartGeneration: 3,
 				FirecrackerCompatibility: "source-local-marker", MigrationCompatibility: &compatibility,
@@ -283,8 +282,8 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 	}
 }
 
-func TestSavedSnapshotFingerprintsTheRunningJailedBinary(t *testing.T) {
-	configuration := Config{MachinesDir: t.TempDir(), FirecrackerBin: filepath.Join(t.TempDir(), "firecracker")}
+func TestSavedSnapshotCapturesShapeAndGatewayMACWithoutHostProbes(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir(), FirecrackerBin: "/no/such/firecracker"}
 	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid()), Specification: vm.Specification{CPUMillicores: 1000, MemoryMiB: 1, DiskMiB: 4}}
 	input.NetworkInterface = vm.NetworkInterface{NetworkNamespacePath: "/run/netns/source-vm", TapName: "tap0"}
 	commands := t.TempDir()
@@ -292,16 +291,6 @@ func TestSavedSnapshotFingerprintsTheRunningJailedBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", commands+":"+os.Getenv("PATH"))
-	if err := os.WriteFile(configuration.FirecrackerBin, []byte("installed-build"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	jailedBinary := filepath.Join(configuration.chrootRoot(input.ID), "firecracker")
-	if err := os.MkdirAll(filepath.Dir(jailedBinary), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(jailedBinary, []byte("running-build"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	socket := fcSocket(t, func() {
 		pending := configuration.pendingSavedStateDirectory(input.ID)
 		writeSavedStateFile(t, filepath.Join(pending, "state"), 128)
@@ -316,16 +305,9 @@ func TestSavedSnapshotFingerprintsTheRunningJailedBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured, err := migrationHostCompatibility(t.Context(), jailedBinary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	installed, err := migrationHostCompatibility(t.Context(), configuration.FirecrackerBin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Metadata.MigrationCompatibility == nil || snapshot.Metadata.MigrationCompatibility.Host != captured.Host || captured.Host == installed.Host {
-		t.Fatal("snapshot used the installed binary instead of the running build")
+	compatibility := snapshot.Metadata.MigrationCompatibility
+	if compatibility == nil || compatibility.MemorySnapshotConfiguration != (vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4}) || compatibility.Host != "" || compatibility.CPU != nil {
+		t.Fatalf("snapshot metadata = %+v", compatibility)
 	}
 	if snapshot.Metadata.TapMACAddress != "02:11:22:33:44:55" {
 		t.Fatalf("snapshot lost the source TAP MAC: %q", snapshot.Metadata.TapMACAddress)

@@ -33,7 +33,7 @@ The destination downloads `state`, `memory`, and `metadata.json` over the node m
 
 Before restore, Metal verifies that the staged bundle matches the final received disk snapshot GUID. It then validates the VM ID, specification and restart generations, vCPU count, memory, and disk size.
 
-Metal records the source software fingerprint and CPU identity and features but does not compare them with the destination. Firecracker and KVM decide host compatibility when they load the saved state while the guest is paused. A load failure retains the source for rollback.
+Atlas checks the host compatibility reports before starting a memory migration. Snapshot capture records the VM shape without probing the host again. Firecracker and KVM validate the saved state when they load it while the guest is paused. A load failure retains the source for rollback.
 
 A successful load does not prove that every guest instruction is supported by the destination. Cross-model migration needs a verified common [Firecracker CPU template](https://github.com/firecracker-microvm/firecracker/blob/main/docs/cpu_templates/cpu-template-helper.md#custom-cpu-template-creation), applied before the guest first boots. Changing a template during restore cannot change what a running guest already detected. See [Firecracker CPU compatibility](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/versioning.md#cpu-model).
 

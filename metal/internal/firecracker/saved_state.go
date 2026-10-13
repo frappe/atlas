@@ -108,12 +108,6 @@ func loadSavedState(directory string, requirement savedStateRequirement) (savedS
 }
 
 func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.RuntimeMachine) (savedState, error) {
-	// The jailed executable is the build that creates this snapshot.
-	executable := filepath.Join(runtime.configuration.chrootRoot(machine.ID), filepath.Base(runtime.configuration.FirecrackerBin))
-	compatibility, err := newMigrationSnapshotCompatibility(ctx, executable, machine.Specification)
-	if err != nil {
-		return savedState{}, err
-	}
 	tapMAC, err := platform.RunInNetworkNamespace(ctx, filepath.Base(machine.NetworkInterface.NetworkNamespacePath),
 		"cat", filepath.Join("/sys/class/net", machine.NetworkInterface.TapName, "address"))
 	if err != nil {
@@ -147,7 +141,11 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		StateFileSizeBytes:       stateSize,
 		MemoryFileSizeBytes:      memorySize,
 		TapMACAddress:            strings.TrimSpace(tapMAC),
-		MigrationCompatibility:   &compatibility,
+		MigrationCompatibility: &migrationSnapshotCompatibility{
+			MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{
+				VirtualCPUCount: machine.Specification.VirtualCPUCount(), MemoryMiB: machine.Specification.MemoryMiB, DiskMiB: machine.Specification.DiskMiB,
+			},
+		},
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
@@ -203,7 +201,9 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 		if metadata.MigrationCompatibility == nil {
 			return errors.New("saved state has no migration compatibility metadata")
 		}
-		return metadata.MigrationCompatibility.validate(*requirement.MigrationCompatibility)
+		if metadata.MigrationCompatibility.MemorySnapshotConfiguration != requirement.MigrationCompatibility.MemorySnapshotConfiguration {
+			return errors.New("saved state VM shape does not match the destination")
+		}
 	}
 	return nil
 }

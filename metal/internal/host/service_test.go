@@ -2,7 +2,6 @@ package host
 
 import (
 	"context"
-	"errors"
 	"runtime"
 	"testing"
 
@@ -12,14 +11,12 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
 
-func TestCompatibilityProbeFailurePreservesHostSync(t *testing.T) {
-	probeError := errors.New("KVM probe failed")
+func TestMissingCompatibilityPreservesHostSync(t *testing.T) {
 	dependencies := &testHostDependencies{
 		virtualMachines: []vm.Information{{ID: "vm-1", State: vm.StateRunning}},
 	}
 	service, err := NewService(Dependencies{
-		Compatibility: func(context.Context) (vm.HostCompatibility, error) { return vm.HostCompatibility{}, probeError },
-		WireGuard:     dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
 		VirtualMachines: dependencies, Storage: dependencies,
 		Wake: func() { dependencies.wakeCount++ },
 	})
@@ -27,7 +24,7 @@ func TestCompatibilityProbeFailurePreservesHostSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := service.Synchronize(t.Context(), DesiredState{})
-	if err != nil || result.Compatibility != nil || !errors.Is(result.CompatibilityError, probeError) {
+	if err != nil || result.Compatibility != nil {
 		t.Fatalf("sync result = %+v, error = %v", result, err)
 	}
 	if result.Capacity.TotalStorageMiB != 4096 || result.VirtualMachineStates["vm-1"] != vm.StateRunning || dependencies.wakeCount != 1 {
@@ -90,7 +87,7 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning, CPUMillicores: 1500}},
 	}
 	service, err := NewService(Dependencies{
-		Compatibility: func(context.Context) (vm.HostCompatibility, error) { return compatibility, nil },
+		Compatibility: &compatibility,
 		Mesh:          dependencies, WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
 		VirtualMachines: dependencies, Storage: dependencies,
 		Wake: func() { dependencies.wakeCount++ },
