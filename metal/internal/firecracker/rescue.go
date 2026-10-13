@@ -75,23 +75,9 @@ func (runtime *Runtime) inspectRescueBoot(input vm.RuntimeMachine, state vm.Stat
 	if !input.Specification.Rescue.Enabled {
 		return false, nil
 	}
-	data, err := os.ReadFile(runtime.configuration.rescueBootPath(input.ID))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
+	record, err := runtime.readRescueBoot(input)
+	if err != nil || record.ID == "" {
 		return false, err
-	}
-	var record rescueBootRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return false, fmt.Errorf("read rescue boot identity: %w", err)
-	}
-	hostID, err := hostBootID()
-	if err != nil {
-		return false, err
-	}
-	if record.ID == "" || record.HostBootID != hostID || record.RescueGeneration != input.RescueGeneration {
-		return false, nil
 	}
 	if state == vm.StateRunning || state == vm.StatePaused {
 		if err := runtime.ensureRescueListener(input, record); err != nil {
@@ -99,6 +85,28 @@ func (runtime *Runtime) inspectRescueBoot(input vm.RuntimeMachine, state vm.Stat
 		}
 	}
 	return record.RebootRequested, nil
+}
+
+func (runtime *Runtime) readRescueBoot(input vm.RuntimeMachine) (rescueBootRecord, error) {
+	data, err := os.ReadFile(runtime.configuration.rescueBootPath(input.ID))
+	if errors.Is(err, os.ErrNotExist) {
+		return rescueBootRecord{}, nil
+	}
+	if err != nil {
+		return rescueBootRecord{}, err
+	}
+	var record rescueBootRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return rescueBootRecord{}, fmt.Errorf("read rescue boot identity: %w", err)
+	}
+	hostID, err := hostBootID()
+	if err != nil {
+		return rescueBootRecord{}, err
+	}
+	if record.ID == "" || record.HostBootID != hostID || record.RescueGeneration != input.RescueGeneration {
+		return rescueBootRecord{}, nil
+	}
+	return record, nil
 }
 
 func (runtime *Runtime) ensureRescueListener(input vm.RuntimeMachine, record rescueBootRecord) error {
@@ -114,20 +122,8 @@ func (runtime *Runtime) ensureRescueListener(input vm.RuntimeMachine, record res
 		current.close()
 		delete(runtime.rescueListeners, input.ID)
 	}
-	socketPath := filepath.Join(runtime.configuration.chrootRoot(input.ID), fmt.Sprintf("rescue.vsock_%d", rescueVsockPort))
-	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	listener, err := runtime.listenRescueSocket(input)
 	if err != nil {
-		return err
-	}
-	if err := os.Chown(socketPath, int(input.UserID), int(input.GroupID)); err != nil {
-		_ = listener.Close()
-		return err
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		_ = listener.Close()
 		return err
 	}
 	boot := &rescueListener{listener: listener, record: record, path: runtime.configuration.rescueBootPath(input.ID), done: make(chan struct{})}
@@ -135,22 +131,44 @@ func (runtime *Runtime) ensureRescueListener(input vm.RuntimeMachine, record res
 		runtime.rescueListeners = make(map[string]*rescueListener)
 	}
 	runtime.rescueListeners[input.ID] = boot
-	go func() {
-		defer close(boot.done)
-		for {
-			connection, err := listener.AcceptUnix()
-			if err != nil {
-				return
-			}
-			if err := boot.receive(connection); err != nil {
-				runtime.logger.Warn("rescue reboot notification failed", "vm_id", input.ID, "error", err)
-			} else {
-				runtime.logger.Info("rescue reboot intent accepted", "vm_id", input.ID, "rescue_generation", record.RescueGeneration, "boot_id", record.ID)
-			}
-			_ = connection.Close()
-		}
-	}()
+	go runtime.receiveRescueNotifications(input.ID, boot)
 	return nil
+}
+
+func (runtime *Runtime) listenRescueSocket(input vm.RuntimeMachine) (*net.UnixListener, error) {
+	socketPath := filepath.Join(runtime.configuration.chrootRoot(input.ID), fmt.Sprintf("rescue.vsock_%d", rescueVsockPort))
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chown(socketPath, int(input.UserID), int(input.GroupID)); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return listener, nil
+}
+
+func (runtime *Runtime) receiveRescueNotifications(identifier string, boot *rescueListener) {
+	defer close(boot.done)
+	for {
+		connection, err := boot.listener.AcceptUnix()
+		if err != nil {
+			return
+		}
+		if err := boot.receive(connection); err != nil {
+			runtime.logger.Warn("rescue reboot notification failed", "vm_id", identifier, "error", err)
+		} else {
+			runtime.logger.Info("rescue reboot intent accepted", "vm_id", identifier, "rescue_generation", boot.record.RescueGeneration, "boot_id", boot.record.ID)
+		}
+		_ = connection.Close()
+	}
 }
 
 func (boot *rescueListener) receive(connection net.Conn) error {
