@@ -206,6 +206,9 @@ scheduler_events = {
 		"*/5 * * * *": [
 			"atlas.auth.jwks.sync_central_jwks",
 		],
+		"* * * * * */5": [
+			"atlas.operations.doctype.metald_update.metald_update.run_metald_update_steps",
+		],
 		"* * * * * */10": [
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_terminating_virtual_machines",
 			"atlas.metal_server.doctype.public_ip_pool.public_ip_pool.enqueue_pending_pool_reconciliation",

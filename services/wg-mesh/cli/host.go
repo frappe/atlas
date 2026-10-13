@@ -105,7 +105,14 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 		return err
 	}
 
-	if pinned, err := readPinnedConfig(); err == nil {
+	// Patches only move forward. A refused configure keeps the running release.
+	installedVersion := readInstalledMapLayoutVersion()
+	if installedVersion > mapLayoutVersion {
+		return fmt.Errorf("the host runs map layout v%d, newer than v%d of this build", installedVersion, mapLayoutVersion)
+	}
+	installedDirectory := mapDirectory(installedVersion)
+
+	if pinned, err := readPinnedConfigIn(installedDirectory); err == nil {
 		if pinned.UplinkIfIndex != config.UplinkIfIndex {
 			return fmt.Errorf("the mesh runs on %s: reset the host to change the uplink", deviceName(pinned.UplinkIfIndex))
 		}
@@ -115,7 +122,7 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 	}
 
 	// Read the VMs before a new release can recreate local_vms empty.
-	vmInterfaces, err := readVMInterfaces()
+	vmInterfaces, err := readVMInterfaces(installedDirectory)
 	if err != nil {
 		return err
 	}
@@ -124,8 +131,8 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 		return err
 	}
 
-	oldHash, oldHashError := readMap[[32]byte]("build_hash", uint32(0))
-	candidate, err := loadBPF(config)
+	oldHash, oldHashError := readBuildHash(installedDirectory)
+	candidate, err := loadBPF(config, installedVersion)
 	if err != nil {
 		return err
 	}
@@ -139,6 +146,12 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 	if err := replaceHooks(hooks, candidate.hash, oldHash, oldHashError == nil); err != nil {
 		candidate.cleanup()
 		return err
+	}
+
+	if err := candidate.migrateChangedMaps(); err != nil {
+		rollbackError := rollbackHooks(hooks, oldHash, oldHashError == nil)
+		candidate.cleanup()
+		return errors.Join(err, rollbackError)
 	}
 
 	if err := candidate.commit(); err != nil {
@@ -281,11 +294,12 @@ func restoreLocalVMs(created []string, vmInterfaces map[[16]byte]string) error {
 	return nil
 }
 
-// readVMInterfaces maps every local VM to the interface of its host route. It reads keys only, so it works with any value layout.
-func readVMInterfaces() (map[[16]byte]string, error) {
+// readVMInterfaces maps every local VM in one layout directory to its host route interface. It reads keys only,
+// so it works with any value layout.
+func readVMInterfaces(directory string) (map[[16]byte]string, error) {
 	vmInterfaces := make(map[[16]byte]string)
 
-	vms, err := openMap("local_vms")
+	vms, err := openPinnedMap(filepath.Join(directory, "local_vms"))
 	if errors.Is(err, os.ErrNotExist) {
 		return vmInterfaces, nil
 	}
@@ -422,7 +436,7 @@ func showStatus() error {
 }
 
 func showVersion() error {
-	fmt.Printf("CLI version: %s\nEmbedded BPF: %x\n", version, bpfHash())
+	fmt.Printf("CLI version: %s\nEmbedded BPF: %x\nMap layout: v%d\n", version, bpfHash(), mapLayoutVersion)
 
 	path, err := programPath(vmProgram)
 	if err != nil {

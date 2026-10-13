@@ -11,8 +11,8 @@ type Storage interface {
 
 // DiskUsage contains disk size and allocation values.
 type DiskUsage struct {
-	SizeMiB int
-	UsedMiB int
+	SizeMiB int `json:"size_mib"`
+	UsedMiB int `json:"used_mib"`
 }
 
 // Snapshots stages machine image snapshots.

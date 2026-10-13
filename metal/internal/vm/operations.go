@@ -188,8 +188,12 @@ func (manager *Manager) Delete(ctx context.Context, identifier string) error {
 	})
 }
 
-// ConnectSSH opens one guest SSH session.
-func (manager *Manager) ConnectSSH(ctx context.Context, identifier string) (SSHConnection, error) {
+// ConnectSSH opens one guest SSH session, or resumes sessionID when it is set.
+func (manager *Manager) ConnectSSH(ctx context.Context, identifier, sessionID string) (SSHSession, error) {
+	if sessionID != "" {
+		return manager.runtime.ResumeSSH(identifier, sessionID)
+	}
+
 	virtualMachine := manager.newVirtualMachine(identifier)
 	unlock, err := virtualMachine.lock(ctx)
 	if err != nil {

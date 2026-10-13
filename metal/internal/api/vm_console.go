@@ -9,10 +9,17 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/frappe/atlas/metal/internal/console"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// resizeQueueDepth is how many pending resize requests a viewer may have.
-const resizeQueueDepth = 4
+const (
+	// resizeQueueDepth is how many pending resize requests a viewer may have.
+	resizeQueueDepth = 4
+
+	// sshSessionHeader names the SSH session in the upgrade response. A viewer
+	// passes it back as the session parameter to resume the same shell.
+	sshSessionHeader = "Metal-Console-Session"
+)
 
 // consoleControlMessage carries a viewer request sent as a text frame.
 type consoleControlMessage struct {
@@ -28,6 +35,7 @@ type consoleControlMessage struct {
 // @Tags		Virtual machines
 // @Param		id		path	string	true	"Virtual machine identifier"
 // @Param		mode	query	string	false	"Console mode" Enums(tty, ssh) default(tty)
+// @Param		session	query	string	false	"SSH session to resume, from the Metal-Console-Session header"
 // @Success	101	"Switching protocols"
 // @Failure	400	{object}	errorResponse
 // @Failure	401	{object}	errorResponse
@@ -40,18 +48,37 @@ func (s *Server) getVirtualMachineConsole(c echo.Context) error {
 		return err
 	}
 
+	var session vm.SSHSession
+	if c.QueryParam("mode") == "ssh" {
+		session, err = s.virtualMachineManager.ConnectSSH(c.Request().Context(), identifier, c.QueryParam("session"))
+		if err != nil {
+			return err
+		}
+		c.Response().Header().Set(sshSessionHeader, session.ID())
+	}
+
 	// Default options reject cross-origin browsers.
 	connection, acceptError := websocket.Accept(c.Response(), c.Request(), nil)
 	if acceptError != nil {
+		// A resumed session may still have other viewers, so close only a new one.
+		if session != nil && c.QueryParam("session") == "" {
+			_ = session.Close()
+		}
 		return nil
 	}
 	defer connection.CloseNow()
 
+	// The Atlas bridge reconnects to the next metald after this close code.
+	stopOnShutdown := context.AfterFunc(s.consoleShutdown, func() {
+		connection.Close(websocket.StatusServiceRestart, "metald restarts")
+	})
+	defer stopOnShutdown()
+
 	ctx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
 
-	if c.QueryParam("mode") == "ssh" {
-		s.streamSSHConsole(ctx, connection, identifier)
+	if session != nil {
+		s.streamSSHConsole(ctx, connection, session)
 	} else {
 		s.streamTTYConsole(ctx, connection, identifier)
 	}

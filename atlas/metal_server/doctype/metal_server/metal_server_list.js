@@ -413,31 +413,12 @@ class HostRegistrationDialog {
 	}
 }
 
-async function upgradeMetaldOnSelectedServers(listview) {
-	const servers = listview.get_checked_items();
-	const failures = [];
-	for (const server of servers) {
-		try {
-			await frappe.xcall("run_doc_method", {
-				dt: "Metal Server",
-				dn: server.name,
-				method: "upgrade_metald",
-			});
-		} catch {
-			failures.push(server.title || server.name);
-		}
-	}
-
-	const queued = servers.length - failures.length;
-	frappe.show_alert({
-		message: failures.length
-			? __("Queued {0} upgrades. Failed: {1}", [queued, failures.join(", ")])
-			: __("Queued {0} upgrades.", [queued]),
-		indicator: failures.length ? "orange" : "green",
-	});
-	// Empty route options replace any saved list filters.
-	frappe.route_options = {};
-	frappe.set_route("List", "SSH Task");
+function createMetaldUpdate(listview) {
+	frappe
+		.xcall("atlas.operations.doctype.metald_update.metald_update.create_metald_update", {
+			servers: listview.get_checked_items().map((server) => server.name),
+		})
+		.then((name) => frappe.set_route("Form", "Metald Update", name));
 }
 
 function showImportServerDialog(listview) {
@@ -485,13 +466,8 @@ frappe.listview_settings["Metal Server"] = {
 				);
 			}
 		});
-		listview.page.add_actions_menu_item(__("Upgrade Metald"), () =>
-			frappe.confirm(
-				__("Upgrade Metald on {0} selected servers?", [
-					listview.get_checked_items().length,
-				]),
-				() => upgradeMetaldOnSelectedServers(listview)
-			)
+		listview.page.add_actions_menu_item(__("Create Metald Update"), () =>
+			createMetaldUpdate(listview)
 		);
 	},
 	async primary_action() {

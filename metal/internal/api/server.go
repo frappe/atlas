@@ -20,6 +20,8 @@ import (
 // Config contains HTTP server configuration. The TLS listener authenticates the caller.
 type Config struct {
 	Logger *slog.Logger
+	// Versions are read at startup, because a binary upgrade restarts metald.
+	Versions Versions
 }
 
 // SnapshotStore uploads and removes local image staging snapshots.
@@ -55,7 +57,7 @@ type VirtualMachineManager interface {
 	ReplaceMetadata(context.Context, string, map[string]string) (bool, error)
 	Delete(context.Context, string) error
 	CreateSnapshot(context.Context, string) (vm.StagedSnapshot, error)
-	ConnectSSH(context.Context, string) (vm.SSHConnection, error)
+	ConnectSSH(ctx context.Context, id, sessionID string) (vm.SSHSession, error)
 }
 
 // MigrationManager owns this host's migration records and reservations.
@@ -94,6 +96,10 @@ type Server struct {
 	hostService           HostService
 	serialBroker          SerialBroker
 	logger                *slog.Logger
+	versions              Versions
+	// consoleShutdown ends when the HTTP server shuts down. http.Server does not
+	// track a WebSocket after the upgrade, so each console waits for it.
+	consoleShutdown context.Context
 }
 
 // New builds the HTTP router from explicit configuration and dependencies.
@@ -110,6 +116,7 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 		wakeReconciler:        dependencies.WakeReconciler,
 		hostService:           dependencies.HostService,
 		serialBroker:          dependencies.SerialBroker,
+		versions:              configuration.Versions,
 	}
 	if configuration.Logger == nil {
 		configuration.Logger = slog.Default()
@@ -117,6 +124,9 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 	server.logger = configuration.Logger
 
 	router := echo.New()
+	var stopConsoles context.CancelFunc
+	server.consoleShutdown, stopConsoles = context.WithCancel(context.Background())
+	router.Server.RegisterOnShutdown(stopConsoles)
 	router.HideBanner = true
 	router.HTTPErrorHandler = errorHandler
 

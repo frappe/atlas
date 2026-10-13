@@ -7,7 +7,7 @@ Settled facts as of October 2026. Check current code before relying on a detail.
 - Atlas is the VM management plane for one region: bare-metal providers (Scaleway, AWS, Generic), host preparation, placement, migration, networking, proxy, storage, snapshots. Its dependencies (proxy, Cargo, object storage, IPv6 router, gateways) also run as VMs.
 - One Atlas is one region; one region is one provider; no cross-region networking.
 - Central owns teams, tenants, sites, billing and usage sync. Cargo owns usage monitoring and buckets. Pilot manages Frappe benches on a VM.
-- Moving to production with staging and a production region deployed. Every change stays backward compatible.
+- In production, with a staging and a production region. Every change stays backward compatible, and every stored-data change ships its migration patch.
 - Planned: faster migration, topology placement (anti-affinity), network volumes, Liquid VM. Not planned: server-side placement queue, two interfaces on AWS hosts.
 
 ## Ownership
@@ -16,7 +16,7 @@ Settled facts as of October 2026. Check current code before relying on a detail.
 - The Virtual Machine name is the Metal VM ID, so create is idempotent. Draft committed before the Metal call; only a Metal `404` deletes a draft.
 - Runtime VM fields are virtual; `frappe.get_all` cannot select them. Use `get_doc` or `Virtual Machine State`.
 - Metal mutations store desired state, wake the reconciler, return `202`; generations signal completion. Host sets (peers, image policies, privileged addresses) arrive complete via `POST /v1/sync`.
-- Metal records reject unknown fields; schema change and binary ship together.
+- Metal records reject unknown fields. A breaking change ships a metald patch in the same build, and patches only move forward.
 - Memory snapshots and Firecracker state never leave the host.
 
 ## Units and identifiers

@@ -29,6 +29,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network"
 	traffic "github.com/frappe/atlas/metal/internal/network/traffic"
+	"github.com/frappe/atlas/metal/internal/patches"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/reconciler"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -70,12 +71,16 @@ func main() {
 		fmt.Println(version)
 		return
 	}
+	if cmd == "patches" {
+		fmt.Println(strings.Join(patches.Names(), "\n"))
+		return
+	}
 	configPath, err := parseFlags(cmd, args)
 	if err != nil {
 		os.Exit(2)
 	}
 	if cmd != "serve" {
-		fmt.Fprintf(os.Stderr, "usage: metald [serve] [--config path] | metald version\n")
+		fmt.Fprintf(os.Stderr, "usage: metald [serve] [--config path] | metald version | metald patches\n")
 		os.Exit(2)
 	}
 	options, err := load(configPath)
@@ -97,7 +102,8 @@ func parseFlags(cmd string, args []string) (string, error) {
 	return *path, nil
 }
 
-func listen(addr string) (net.Listener, error) {
+// listen opens a Unix socket, or a TCP listener that the systemd descriptor store keeps under name.
+func listen(descriptorStore *platform.FileDescriptorStore, name, addr string) (net.Listener, error) {
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		_ = os.Remove(path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -109,7 +115,7 @@ func listen(addr string) (net.Listener, error) {
 		}
 		return ln, err
 	}
-	return net.Listen("tcp", addr)
+	return descriptorStore.Listen(name, addr)
 }
 
 // transferListenAddress keeps the coordination host and replaces its port. The
@@ -180,12 +186,18 @@ func adoptConsoles(
 	if err != nil {
 		return fmt.Errorf("list virtual machine units: %w", err)
 	}
+	// An SSH session ID is also its console ID.
+	runningSSHSessionIDs, err := units.SSHSessions().List(ctx)
+	if err != nil {
+		return fmt.Errorf("list ssh session units: %w", err)
+	}
 
-	adoptedConsoleCount := serialBroker.Adopt(runningVirtualMachineIDs)
+	runningConsoleIDs := append(runningVirtualMachineIDs, runningSSHSessionIDs...)
+	adoptedConsoleCount := serialBroker.Adopt(runningConsoleIDs)
 	logger.Info(
 		"adopted serial consoles",
 		"adopted_console_count", adoptedConsoleCount,
-		"running_unit_count", len(runningVirtualMachineIDs),
+		"running_unit_count", len(runningConsoleIDs),
 		"descriptor_store_available", descriptorStoreAvailable,
 	)
 
@@ -201,11 +213,11 @@ func adoptConsoles(
 	}
 
 	// A VM without an adopted console has no stored master. Its next metald exit stops it.
-	if adoptedConsoleCount < len(runningVirtualMachineIDs) {
+	if adoptedConsoleCount < len(runningConsoleIDs) {
 		logger.Warn(
 			"running VMs have no adopted console; a metald exit stops them",
 			"adopted_console_count", adoptedConsoleCount,
-			"running_unit_count", len(runningVirtualMachineIDs),
+			"running_unit_count", len(runningConsoleIDs),
 		)
 	}
 
@@ -222,6 +234,17 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		return err
 	}
 
+	// Listen first. A stored listener queues requests while metald starts.
+	descriptorStore := platform.NewFileDescriptorStore()
+	listener, err := listen(descriptorStore, "listener-api", options.listen)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", options.listen, err)
+	}
+	coordinationListener, err := listen(descriptorStore, "listener-coordination", options.coordinationListen)
+	if err != nil {
+		return fmt.Errorf("listen for Metal coordination on %s: %w", options.coordinationListen, err)
+	}
+
 	// Connect required host services.
 	var mesh *network.Mesh
 	if options.mesh.enabled {
@@ -233,6 +256,10 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err := makeDirs(options); err != nil {
 		return err
 	}
+	// Patches change state from an older metald, so they run before anything reads it.
+	if err := patches.Run(options.baseDir, logger); err != nil {
+		return err
+	}
 	units, err := platform.Connect(context.Background())
 	if err != nil {
 		return fmt.Errorf("connect systemd: %w", err)
@@ -241,10 +268,13 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	// Create resources that metald owns.
 	daemonContext, cancelDaemon := context.WithCancel(context.Background())
 	stores := storage.NewStores(daemonContext, options.pool, options.imagesDir, logger)
-	descriptorStore := platform.NewFileDescriptorStore()
-	serialBroker := console.NewSerialBroker(filepath.Join(options.cfg.SocketsDir, "consoles"), descriptorStore)
+	serialBroker := console.NewSerialBroker(options.cfg.ConsolesDir(), descriptorStore)
 	daemon := newDaemon(daemonContext, cancelDaemon, logger, stores.Snapshots, serialBroker, units)
 	defer func() {
+		// The upgrade script waits for "ready <version>", so an old status must not match.
+		if err := descriptorStore.SetStatus("stopping"); err != nil {
+			logger.Warn("could not set the service status", "error", err)
+		}
 		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 		defer cancelShutdown()
 		serveError = errors.Join(serveError, daemon.Shutdown(shutdownContext))
@@ -280,11 +310,13 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	virtualMachineRuntime := firecracker.NewRuntime(
 		options.cfg,
 		units,
+		units.SSHSessions(),
 		stores.VirtualMachines,
 		stores.Images,
 		serialBroker,
 		logger,
 	)
+	virtualMachineRuntime.RecoverSSHSessions()
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,
@@ -397,7 +429,16 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure coordination API: %w", err)
 	}
-	server, err := api.New(api.Config{Logger: logger}, api.Dependencies{
+	versions := api.Versions{MetaldVersion: version}
+	if mesh != nil {
+		if versions.MeshVersion, err = mesh.Version(daemonContext); err != nil {
+			logger.Warn("could not read the Atlas WG Mesh version", "error", err)
+		}
+	}
+	if versions.FirecrackerVersion, err = options.cfg.FirecrackerVersion(daemonContext); err != nil {
+		logger.Warn("could not read the Firecracker version", "error", err)
+	}
+	server, err := api.New(api.Config{Logger: logger, Versions: versions}, api.Dependencies{
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      migrationManager,
 		SnapshotStore:         stores.Snapshots,
@@ -411,25 +452,18 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	}
 
 	// Start workers and serve the API.
-	listener, err := listen(options.listen)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", options.listen, err)
-	}
-	listener = tls.NewListener(listener, tlsConfigurations.api)
-	coordinationListener, err := listen(options.coordinationListen)
-	if err != nil {
-		return fmt.Errorf("listen for Metal coordination on %s: %w", options.coordinationListen, err)
-	}
-	coordinationListener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	logger.Info("metald listening", "version", version, "address", options.listen)
-	server.Listener = listener
-	coordinationServer.Listener = coordinationListener
+	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
+	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
+	}
+	if err := descriptorStore.SetStatus("ready " + version); err != nil {
+		logger.Warn("could not set the service status", "error", err)
 	}
 	return daemon.Serve(server, coordinationServer)
 }

@@ -693,8 +693,8 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
-	def test_upgrade_metald_worker_sends_only_the_download_url_and_digest(self) -> None:
-		"""The upgrade replaces the binary. It does not rewrite host configuration."""
+	def test_upgrade_metald_worker_sends_only_the_download_urls_and_digests(self) -> None:
+		"""The upgrade replaces the binaries. It does not rewrite host configuration."""
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
@@ -718,6 +718,8 @@ class TestServer(UnitTestCase):
 			{
 				"METALD_DOWNLOAD_URL": "https://atlas.test/files/metald-linux-amd64",
 				"METALD_SHA256": "metald-binary-sha256",
+				"WG_MESH_DOWNLOAD_URL": "https://atlas.test/files/metald-linux-amd64",
+				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
 			},
 		)
 

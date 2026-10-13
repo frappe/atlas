@@ -34,7 +34,7 @@ Read the [incident reports](docs/incidents/README.md) before you change a compon
 - Mandatory: Working code is not enough. Write code that a new engineer can read, understand and change easily.
 - Don't repeat yourself. Integrations of one kind, such as server or BMC providers, extend one base class and implement its methods. Give files and classes meaningful names.
 - Follow the existing pattern in the codebase for the same job. Do not add a second way. If a better way exists, change every existing use, or propose that change first.
-- Get user approval before you add a doctype or change a doctype or dialog layout. Keep forms balanced and grouped. Keep field descriptions short and show them on click.
+- Show a mockup and get engineer approval before adding a DocType or changing a DocType or dialog layout. If the engineer is unavailable, follow similar layouts in the module. Group related fields, avoid empty columns, and use one-line descriptions only when labels need explanation.
 - Do not add a dependency when the standard library or an existing repository dependency is sufficient.
 - Do not commit secrets, private keys, tokens, `.env` content, or production credentials.
 - Regenerate checked-in generated artifacts only when their source changes.
@@ -48,7 +48,7 @@ Atlas is in production. Existing clients, hosts and data must keep working after
 - Do not add a new API version. Change the current contract so that old clients keep working.
 - Avoid breaking changes to eBPF programs, maps and wire formats as far as possible. Prefer new maps or fields that old programs ignore.
 - When a break cannot be avoided, explain the break and the upgrade path to the user before you implement it.
-- Add a migration patch when you change stored data or a schema.
+- Add a migration patch when you change stored data or a schema: a Frappe patch for the Atlas database, a [metald patch](docs/develop/metal.md#change-stored-state-with-a-patch) for host state, and a [map layout patch](docs/networking/wg-mesh/operations.md#change-a-map) for a pinned WG Mesh map.
 
 ## Environments
 

@@ -33,6 +33,7 @@ type fakeVirtualMachineManager struct {
 	listError       error
 	services        *fakeRuntimeServices
 	deferMetadata   bool
+	sshSession      vm.SSHSession
 }
 
 func (manager *fakeVirtualMachineManager) Create(_ context.Context, id string, specification vm.Specification) (vm.Information, error) {
@@ -228,7 +229,10 @@ func (manager *fakeVirtualMachineManager) CreateSnapshot(_ context.Context, id s
 	return vm.StagedSnapshot{ID: snapshotID, SourceVirtualMachineID: id, RootfsSizeBytes: 1024, KernelSizeBytes: 512}, nil
 }
 
-func (manager *fakeVirtualMachineManager) ConnectSSH(context.Context, string) (vm.SSHConnection, error) {
+func (manager *fakeVirtualMachineManager) ConnectSSH(context.Context, string, string) (vm.SSHSession, error) {
+	if manager.sshSession != nil {
+		return manager.sshSession, nil
+	}
 	return nil, errors.New("ssh unavailable")
 }
 
@@ -395,8 +399,15 @@ func TestCorrelationHeadersAreGeneratedAndPreserveSafeValues(t *testing.T) {
 
 type stubSerialBroker struct{}
 
-func (stubSerialBroker) Attach(context.Context, string, io.ReadWriter, <-chan console.Winsize) error {
-	return console.ErrConsoleNotFound
+// openConsoleID names the one console that stays attached until its viewer leaves.
+const openConsoleID = "vm-open-console"
+
+func (stubSerialBroker) Attach(ctx context.Context, id string, _ io.ReadWriter, _ <-chan console.Winsize) error {
+	if id != openConsoleID {
+		return console.ErrConsoleNotFound
+	}
+	<-ctx.Done()
+	return nil
 }
 
 const (

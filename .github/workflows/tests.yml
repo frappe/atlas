@@ -198,6 +198,27 @@ jobs:
         if: steps.changes.outputs.matched == 'true'
         run: make bpf
 
+      # configure keeps each unchanged pinned map and converts a changed map through cli/patches.
+      - name: Build the base branch
+        if: steps.changes.outputs.matched == 'true' && github.event_name == 'pull_request'
+        run: |
+          git worktree add --quiet "$RUNNER_TEMP/wg-mesh-baseline" "$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)"
+          make -C "$RUNNER_TEMP/wg-mesh-baseline/services/wg-mesh" bpf
+          go build -C "$RUNNER_TEMP/wg-mesh-baseline/services/wg-mesh/cli" -o "$RUNNER_TEMP/atlas-wg-mesh-baseline" .
+
+      - name: Check that each changed map layout has a patch
+        if: steps.changes.outputs.matched == 'true' && github.event_name == 'pull_request'
+        run: BPF_BASELINE_OBJECT="$RUNNER_TEMP/wg-mesh-baseline/services/wg-mesh/cli/atlas-wg-mesh.bpf.o" go test -C cli -run TestChangedMapLayoutsHavePatches ./...
+
+      - name: Upgrade a host from the base branch
+        if: steps.changes.outputs.matched == 'true' && github.event_name == 'pull_request'
+        run: |
+          # The static release does not depend on a linux-tools package for the runner kernel.
+          curl -fsSL https://github.com/libbpf/bpftool/releases/download/v7.5.0/bpftool-v7.5.0-amd64.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          chmod 0755 "$RUNNER_TEMP/bpftool"
+          go build -C cli -o "$RUNNER_TEMP/atlas-wg-mesh" .
+          sudo env PATH="$RUNNER_TEMP:$PATH" tests/upgrade.sh "$RUNNER_TEMP/atlas-wg-mesh-baseline" "$RUNNER_TEMP/atlas-wg-mesh"
+
       - name: Check formatting
         if: steps.changes.outputs.matched == 'true'
         run: test -z "$(gofmt -l ./cli)" || { gofmt -l ./cli; exit 1; }

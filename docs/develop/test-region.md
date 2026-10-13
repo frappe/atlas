@@ -79,7 +79,7 @@ pilot --site <site> configure-atlas-wireguard
 sudo ATLAS_WIREGUARD_TCP_PORTS="22, 80, 443, 2222, 8000" scripts/install-atlas-wireguard.sh <bench>/sites/<site>/private/wireguard/atlas0.conf
 ```
 
-Start a listener on the Atlas mesh address that sends `Host: <site>` to `127.0.0.1:8000`, for example nginx. Set it as `atlas_internal_url`, for example `http://[fdaa:1::ffff:ffff:ffff:ffff]:8000`. Your machine is outside the provider network, so it needs the [development gateway](../region/host-access.md#development-gateway) before it can reach hosts through WireGuard.
+Then start the development listener, so hosts can download files from your site. [Let hosts reach your site](atlas-app.md#let-hosts-reach-your-site) gives the steps. Your machine is outside the provider network, so it needs the [development gateway](../region/host-access.md#development-gateway) before it can reach hosts through WireGuard.
 
 ## 6. Sync the Metal Server catalog
 

@@ -37,23 +37,29 @@ class TestHostBinaries(UnitTestCase):
 		fields = [binary.settings_field for binary in HOST_BINARIES]
 		fields += [binary.source_hash_field for binary in HOST_BINARIES]
 		fields += [binary.binary_hash_field for binary in HOST_BINARIES]
+		fields += [binary.version_field for binary in HOST_BINARIES]
 		fields += [binary.key for binary in HOST_BINARIES]
 
 		self.assertEqual(len(fields), len(set(fields)))
 
-	def test_a_published_binary_without_its_digest_is_rebuilt(self) -> None:
-		"""A host verifies the digest, so a published binary is useless without it."""
+	def test_a_published_binary_without_its_digest_or_version_is_rebuilt(self) -> None:
+		"""A host verifies the digest and a Metald Update pins the version, so a binary is useless without them."""
 		binary = host_binaries.find_host_binary("metald")
-		settings = SimpleNamespace(
-			get=lambda field: {
+		for missing_field in (binary.binary_hash_field, binary.version_field):
+			values = {
 				binary.settings_field: "metald-file",
 				binary.source_hash_field: "source-digest",
-				binary.binary_hash_field: None,
-			}[field]
-		)
+				binary.binary_hash_field: "binary-digest",
+				binary.version_field: "0.1.0+3f9a1c2e",
+				missing_field: None,
+			}
+			settings = SimpleNamespace(get=values.get)
 
-		with patch.object(host_binaries.frappe, "get_cached_doc", return_value=settings):
-			self.assertFalse(host_binaries.is_published(binary, "source-digest"))
+			with (
+				self.subTest(missing_field=missing_field),
+				patch.object(host_binaries.frappe, "get_cached_doc", return_value=settings),
+			):
+				self.assertFalse(host_binaries.is_published(binary, "source-digest"))
 
 	def test_build_output_is_not_a_source_input(self) -> None:
 		"""A rebuild must not change the digest that decides whether to rebuild."""
@@ -120,7 +126,7 @@ class TestHostBinaries(UnitTestCase):
 			patch.object(host_binaries.subprocess, "run") as run,
 			self.assertRaises(FileNotFoundError) as caught,
 		):
-			host_binaries.build_host_binary(mesh)
+			host_binaries.build_host_binary(mesh, "dev")
 
 		self.assertIn("clang", str(caught.exception))
 		run.assert_not_called()

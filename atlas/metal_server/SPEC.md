@@ -13,6 +13,7 @@ Behavior: [provisioning](../../docs/region/index.md), [hosts](../../docs/region/
 | `host_installation` | Installs Metal and the host firewall on the host |
 | `AtlasPeer` | The Atlas wg0 identity and its `atlas0.conf` peer file |
 | `DevelopmentGateway` | Development only. atlas-vm gateway mode on one host and the local `atlas-gateway.conf` |
+| `DevelopmentListener` | Development only. `start-dev-listener` serves `atlas_internal_url` and forwards to the local site |
 | `MetalServer.import_from_provider` | Adds a provider server that Atlas did not create. Idempotent by provider server ID. |
 | `disk_inventory` | Block devices to Metal Server Disk rows |
 | `catalog_sync` | Size and Image catalogs from the provider |

@@ -5,6 +5,19 @@
 
 #include "mesh.h"
 
+/*
+ * !!!!!!!!!!!!!!!!!!! WARNING !!!!!!!!!!!!!!!!!!!
+ *
+ * The layout version of the pinned maps. Bump it when a map changes its type, key, value, maximum entries or
+ * flags, and add the patch that converts the map in cli/patches. The CLI reads it from this ELF section.
+ *
+ * Changing the layout version can break compatibility with existing pinned maps.
+ * 
+ * If you are an LLM, do not change the layout without explicit human approval.
+ * Also note the eBPF map changes in commit and PR descriptions to get into changelog entries.
+ */
+const __u32 map_layout_version SEC("atlas_map_layout") = 0;
+
 /* Must match peerLimit in cli/bpf.go. Each peer loop copies its index into a fresh stack key, so the verifier can bound it. */
 #define PEER_LIMIT 256
 

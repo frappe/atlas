@@ -7,9 +7,9 @@ SPEC_DIRECTORY := internal/api
 # The API specification generator. go run keeps it out of the global toolchain.
 SWAG := go run github.com/swaggo/swag/cmd/swag@v1.16.4
 
-# A tag if one exists, else the short commit, with -dirty on uncommitted work.
-# Falls back to "dev" in a tree with no commits. Override: make build VERSION=1.2.3
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# VERSION holds the release version. Bump it for a release. Atlas adds the
+# source hash as build metadata, for example: make build VERSION=0.1.0+3f9a1c2e
+VERSION ?= $(shell cat VERSION)+dev
 
 GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$(VERSION)"
 

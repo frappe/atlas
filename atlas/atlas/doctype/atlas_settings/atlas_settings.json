@@ -26,12 +26,14 @@
   "metald_binary_x86_64_file",
   "metald_source_hash",
   "metald_binary_hash",
+  "metald_version",
   "metal_tls_ca_private_key",
   "metal_tls_ca_certificate",
   "column_break_bgjv",
   "wg_mesh_binary_x86_64_file",
   "wg_mesh_source_hash",
   "wg_mesh_binary_hash",
+  "wg_mesh_version",
   "atlas_tls_private_key",
   "atlas_tls_certificate",
   "jwks_data_section",
@@ -416,6 +418,12 @@
    "read_only": 1
   },
   {
+   "fieldname": "metald_version",
+   "fieldtype": "Data",
+   "label": "Metald Version",
+   "read_only": 1
+  },
+  {
    "fieldname": "metal_tls_ca_certificate",
    "fieldtype": "Password",
    "hidden": 1,
@@ -460,6 +468,12 @@
    "fieldname": "wg_mesh_binary_hash",
    "fieldtype": "Data",
    "label": "WG Mesh Binary SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wg_mesh_version",
+   "fieldtype": "Data",
+   "label": "WG Mesh Version",
    "read_only": 1
   },
   {
@@ -960,7 +974,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-05 16:32:57.985752",
+ "modified": "2026-10-13 01:30:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

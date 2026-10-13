@@ -57,15 +57,7 @@ func (d *DBus) Start(ctx context.Context, id string) error {
 
 // Stop deactivates the unit for id. An absent unit is already stopped.
 func (d *DBus) Stop(ctx context.Context, id string) error {
-	err := d.runSystemdJob(ctx, "stop", func(results chan<- string) error {
-		_, err := d.connection.StopUnitContext(ctx, unitName(id), "replace", results)
-		return err
-	})
-	if isUnitNotLoaded(err) {
-		return nil
-	}
-
-	return err
+	return d.stopUnit(ctx, unitName(id))
 }
 
 // Kill sends signal to every process in the unit for id.
@@ -110,39 +102,65 @@ func (d *DBus) Status(ctx context.Context, id string) (Status, error) {
 
 // Wait polls the unit for id until it stops and reports how it stopped.
 func (d *DBus) Wait(ctx context.Context, id string) (Result, error) {
-	unit := unitName(id)
+	if err := d.waitUntilStopped(ctx, unitName(id)); err != nil {
+		return Result{}, err
+	}
+
+	return d.stopResult(ctx, unitName(id))
+}
+
+// List returns the virtual machine IDs that have a unit on this host.
+func (d *DBus) List(ctx context.Context) ([]string, error) {
+	return d.listUnitIDs(ctx, unitPrefix, "")
+}
+
+// stopUnit deactivates one unit. An absent unit is already stopped.
+func (d *DBus) stopUnit(ctx context.Context, unit string) error {
+	err := d.runSystemdJob(ctx, "stop", func(results chan<- string) error {
+		_, err := d.connection.StopUnitContext(ctx, unit, "replace", results)
+		return err
+	})
+	if isUnitNotLoaded(err) {
+		return nil
+	}
+
+	return err
+}
+
+// waitUntilStopped polls one unit until it is inactive or failed.
+func (d *DBus) waitUntilStopped(ctx context.Context, unit string) error {
 	ticker := time.NewTicker(waitPollInterval)
 	defer ticker.Stop()
 
 	for {
 		properties, err := d.connection.GetUnitPropertiesContext(ctx, unit)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		switch asString(properties["ActiveState"]) {
 		case "inactive", "failed":
-			return d.stopResult(ctx, unit)
+			return nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return Result{}, ctx.Err()
+			return ctx.Err()
 		case <-ticker.C:
 		}
 	}
 }
 
-// List returns the virtual machine IDs that have a unit on this host.
-func (d *DBus) List(ctx context.Context) ([]string, error) {
-	pattern := unitPrefix + "*" + unitSuffix
-	units, err := d.connection.ListUnitsByPatternsContext(ctx, nil, []string{pattern})
+// listUnitIDs returns the IDs of the loaded units named prefix, then an ID that
+// starts with idPrefix, then the service suffix.
+func (d *DBus) listUnitIDs(ctx context.Context, prefix, idPrefix string) ([]string, error) {
+	units, err := d.connection.ListUnitsByPatternsContext(ctx, nil, []string{prefix + idPrefix + "*" + unitSuffix})
 	if err != nil {
 		return nil, err
 	}
 
 	ids := make([]string, 0, len(units))
 	for _, unit := range units {
-		ids = append(ids, idFromUnit(unit.Name))
+		ids = append(ids, strings.TrimSuffix(strings.TrimPrefix(unit.Name, prefix), unitSuffix))
 	}
 
 	return ids, nil
@@ -256,11 +274,6 @@ func isUnitNotLoaded(err error) bool {
 
 // unitName builds the template instance name for a virtual machine ID.
 func unitName(id string) string { return unitPrefix + id + unitSuffix }
-
-// idFromUnit recovers the virtual machine ID from a template instance name.
-func idFromUnit(name string) string {
-	return strings.TrimSuffix(strings.TrimPrefix(name, unitPrefix), unitSuffix)
-}
 
 // asString reads a D-Bus property as a string and returns "" for other types.
 func asString(value any) string { text, _ := value.(string); return text }

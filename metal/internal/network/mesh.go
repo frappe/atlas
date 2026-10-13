@@ -109,6 +109,20 @@ func (mesh *Mesh) PrivateNetworkMAC() (string, error) {
 	return mac.String(), nil
 }
 
+// Version returns the version of the Atlas WG Mesh CLI.
+func (mesh *Mesh) Version(ctx context.Context) (string, error) {
+	output, err := platform.Output(ctx, mesh.commandPath, "version")
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.Lines(output) {
+		if version, found := strings.CutPrefix(line, "CLI version: "); found {
+			return strings.TrimSpace(version), nil
+		}
+	}
+	return "", fmt.Errorf("Atlas WG Mesh printed no CLI version: %q", output)
+}
+
 // EnsureHost applies the host configuration and refreshes its BPF programs.
 func (mesh *Mesh) EnsureHost(ctx context.Context) error {
 	return platform.Run(ctx, mesh.commandPath, "configure",

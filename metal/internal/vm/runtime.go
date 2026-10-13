@@ -20,7 +20,8 @@ type Runtime interface {
 	// RefreshDisk applies the machine's disk limits to a live guest. A caller may
 	// lower the limit in the machine specification for a temporary throttle.
 	RefreshDisk(context.Context, RuntimeMachine) error
-	ConnectSSH(context.Context, RuntimeMachine) (SSHConnection, error)
+	ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error)
+	ResumeSSH(virtualMachineID, sessionID string) (SSHSession, error)
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
 }
 

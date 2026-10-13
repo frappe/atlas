@@ -66,6 +66,11 @@ class SSHTask(Document):
 		else:
 			self.execute()
 
+	@property
+	def job_id(self) -> str:
+		"""Return the ID of the background job that runs this task."""
+		return f"atlas||ssh-task||{self.name}"
+
 	def _enqueue(self) -> None:
 		"""Queue this SSH task for execution."""
 		frappe.enqueue_doc(
@@ -74,7 +79,7 @@ class SSHTask(Document):
 			"_run",
 			queue="long",
 			timeout=self.timeout_seconds,
-			job_id=f"atlas||ssh-task||{self.name}",
+			job_id=self.job_id,
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)

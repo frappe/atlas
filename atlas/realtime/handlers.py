@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import json
 import ssl
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import frappe
 import redis.asyncio as redis
@@ -22,6 +24,10 @@ _sessions: dict[str, "ConsoleSession"] = {}
 
 _redis_client: redis.Redis | None = None
 MAXIMUM_CONSOLE_INPUT_BYTES = 64 * 1024
+# metald closes its consoles with this code when it restarts.
+SERVICE_RESTART_CLOSE_CODE = 1012
+RECONNECT_SECONDS = 60
+SSH_SESSION_HEADER = "Metal-Console-Session"
 
 
 def _tls_context(site: str) -> ssl.SSLContext:
@@ -45,18 +51,29 @@ def _cache() -> redis.Redis:
 class ConsoleSession:
 	"""Bridge one browser to one Metal console."""
 
-	def __init__(self, socket: Socket, connection: websockets.ClientConnection):
+	def __init__(self, socket: Socket, connection: websockets.ClientConnection, url: str):
 		self.socket = socket
 		self.connection = connection
+		self.resume_url = url
+		if session_id := connection.response.headers.get(SSH_SESSION_HEADER):
+			# Passing the SSH session back resumes the same shell.
+			parts = urlsplit(url)
+			query = urlencode([*parse_qsl(parts.query), ("session", session_id)])
+			self.resume_url = urlunsplit(parts._replace(query=query))
+		self.size: tuple[int, int] | None = None
 		self.is_closed = False
 		self.stream_task = asyncio.create_task(self.stream_output())
 
 	async def stream_output(self) -> None:
-		"""Forward console output until either side closes, then clean up the session."""
+		"""Forward console output until either side closes. Reconnect after a metald restart."""
 		try:
-			async for message in self.connection:
-				data = message if isinstance(message, bytes) else message.encode()
-				await self.socket.emit("atlas_console_output", base64.b64encode(data).decode())
+			while True:
+				with contextlib.suppress(websockets.ConnectionClosed):
+					async for message in self.connection:
+						data = message if isinstance(message, bytes) else message.encode()
+						await self.socket.emit("atlas_console_output", base64.b64encode(data).decode())
+				if self.connection.close_code != SERVICE_RESTART_CLOSE_CODE or not await self.reconnect():
+					return
 		except websockets.WebSocketException, asyncio.CancelledError:
 			pass
 		except Exception:
@@ -67,13 +84,33 @@ class ConsoleSession:
 		finally:
 			await self.close()
 
+	async def reconnect(self) -> bool:
+		"""Open the console on the next metald, and report whether it opened in time."""
+		deadline = asyncio.get_running_loop().time() + RECONNECT_SECONDS
+		while asyncio.get_running_loop().time() < deadline:
+			try:
+				self.connection = await websockets.connect(
+					self.resume_url, max_size=None, ssl=_tls_context(self.socket.site)
+				)
+			except OSError, websockets.WebSocketException:
+				await asyncio.sleep(1)
+				continue
+
+			if self.size:
+				await self.send_resize(*self.size)
+			return True
+		return False
+
 	async def send_input(self, data: bytes) -> None:
-		"""Send one input frame to Metal."""
-		await self.connection.send(data)
+		"""Send one input frame to Metal. Input during a reconnection is dropped."""
+		with contextlib.suppress(websockets.ConnectionClosed):
+			await self.connection.send(data)
 
 	async def send_resize(self, cols: int, rows: int) -> None:
-		"""Send one resize control message to Metal."""
-		await self.connection.send(json.dumps({"resize": {"cols": cols, "rows": rows}}))
+		"""Send one resize control message to Metal and keep it for a reconnection."""
+		self.size = (cols, rows)
+		with contextlib.suppress(websockets.ConnectionClosed):
+			await self.connection.send(json.dumps({"resize": {"cols": cols, "rows": rows}}))
 
 	async def close(self) -> None:
 		"""Close this session once and remove it from the active session map."""
@@ -137,7 +174,7 @@ async def atlas_console_open(socket: Socket, token: str) -> None:
 			await socket.emit("atlas_console_error", "Could not reach the virtual machine console.")
 			return
 
-		_sessions[socket.sid] = ConsoleSession(socket, metal_connection)
+		_sessions[socket.sid] = ConsoleSession(socket, metal_connection, connection.url)
 		await socket.emit("atlas_console_ready")
 	finally:
 		if _sessions.get(socket.sid) is None:

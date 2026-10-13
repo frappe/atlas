@@ -4,9 +4,9 @@ BPF_HEADERS := $(wildcard bpf/*.h)
 OUTPUT_DIRECTORY := dist
 CLI_NAME := atlas-wg-mesh
 
-# A tag if one exists, else the short commit, with -dirty on uncommitted work.
-# Falls back to "dev" in a tree with no commits. Override: make build VERSION=1.2.3
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# VERSION holds the release version. Bump it for a release. Atlas adds the
+# source hash as build metadata, for example: make build VERSION=0.1.0+3f9a1c2e
+VERSION ?= $(shell cat VERSION)+dev
 GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$(VERSION)"
 
 .PHONY: bpf build clean version

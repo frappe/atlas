@@ -16,6 +16,7 @@ Correct the host fault and let reconciliation retry. Keep record files, saved st
 | Network | Namespace links, routes, firewall, and mesh health. |
 | Storage or sync | `zpool status`, `zfs list`, configured pool, Metal journal. |
 | Snapshot or migration | Status, checkpoint, free storage, and both sides' logs. |
+| Upgrade | The SSH Task of the Metald Update row and the `metal.service` status. |
 
 ## Network setup fails
 
@@ -69,8 +70,8 @@ Firecracker holds the PTY slave as its controlling terminal. A closed PTY master
 
 **Check**
 
-1. Run `systemctl show metal.service -p NFileDescriptorStore`. Expect one descriptor per running VM. `0` means no protected consoles.
-2. Read the startup log. Expect `descriptor_store_available=true` and `adopted_console_count` equal to `running_unit_count`.
+1. Run `systemctl show metal.service -p NFileDescriptorStore`. Expect one descriptor per running VM and SSH console, plus two listeners. `0` means no protected consoles.
+2. Read the startup log. Expect `descriptor_store_available=true` and `adopted_console_count` equal to `running_unit_count`. Both counts include VM and SSH console units.
 3. Confirm `NotifyAccess=main`, `FileDescriptorStoreMax`, and `FileDescriptorStorePreserve=yes` in the unit.
 
 If descriptors disappear, use this diagnostic sequence:
@@ -83,6 +84,20 @@ If descriptors disappear, use this diagnostic sequence:
 **Recover:** Correct the unit settings and run `systemctl daemon-reload`. Start each VM again through the API. A running VM keeps its unprotected console until it starts again.
 
 Do not start or restart `metal-vm@<id>.service` by hand.
+
+## A Metald Update pauses
+
+A Metald Update is Paused and a server row is Failed.
+
+**Check**
+
+1. Read the Failed row's Status Reason. If the upgrade failed, read the end of its SSH Task output.
+2. On the host, run `systemctl show metal.service -p StatusText` and `metald version`.
+3. Run `journalctl -u metal.service --since "1 hour ago"`.
+
+**Recover:** Fix the cause, then resume, cancel, or roll back as [When a server fails](roll-out-metald.md#when-a-server-fails) explains.
+
+Do not replace `/usr/bin/metald` by hand during a rollout.
 
 ## Disk usage or ZFS inspection fails
 

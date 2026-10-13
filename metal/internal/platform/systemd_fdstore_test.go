@@ -138,3 +138,90 @@ func newDescriptorFile(t *testing.T, contents string) *os.File {
 
 	return file
 }
+
+// A new listener goes into the store, so the next process can take it.
+func TestListenStoresANewListener(t *testing.T) {
+	receiver, address := newNotificationReceiver(t)
+	t.Setenv(notificationSocketEnvironmentVariable, address)
+
+	listener, err := NewFileDescriptorStore().Listen("listener-api", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	message, descriptors := readNotification(t, receiver)
+	if message != "FDSTORE=1\nFDNAME=listener-api" || len(descriptors) != 1 {
+		t.Fatalf("got message %q with %d descriptors", message, len(descriptors))
+	}
+	syscall.Close(descriptors[0])
+}
+
+// A stored listener on the configured address is used again and not stored twice.
+func TestListenTakesTheStoredListener(t *testing.T) {
+	_, address := newNotificationReceiver(t)
+	t.Setenv(notificationSocketEnvironmentVariable, address)
+
+	stored, storedFile := newStoredListener(t)
+	store := &FileDescriptorStore{
+		notificationSocketAddress: address,
+		storedFiles:               map[string][]*os.File{"listener-api": {storedFile}, "vm-00010": {os.Stdin}},
+	}
+
+	listener, err := store.Listen("listener-api", stored.Addr().String())
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	if listener.Addr().String() != stored.Addr().String() {
+		t.Fatalf("listener uses %s, want %s", listener.Addr(), stored.Addr())
+	}
+	if files := store.TakeFiles(); len(files) != 1 || files["vm-00010"] == nil {
+		t.Fatalf("TakeFiles returned %v, want only the console", files)
+	}
+}
+
+// A stored listener on another address is removed from the store.
+func TestListenReplacesAListenerOnAnotherAddress(t *testing.T) {
+	receiver, address := newNotificationReceiver(t)
+	t.Setenv(notificationSocketEnvironmentVariable, address)
+
+	_, storedFile := newStoredListener(t)
+	store := &FileDescriptorStore{
+		notificationSocketAddress: address,
+		storedFiles:               map[string][]*os.File{"listener-api": {storedFile}},
+	}
+
+	listener, err := store.Listen("listener-api", "127.0.0.2:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	if message, _ := readNotification(t, receiver); message != "FDSTOREREMOVE=1\nFDNAME=listener-api" {
+		t.Fatalf("first message %q, want the removal", message)
+	}
+	message, descriptors := readNotification(t, receiver)
+	if message != "FDSTORE=1\nFDNAME=listener-api" || len(descriptors) != 1 {
+		t.Fatalf("got message %q with %d descriptors", message, len(descriptors))
+	}
+	syscall.Close(descriptors[0])
+}
+
+func newStoredListener(t *testing.T) (net.Listener, *os.File) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+
+	file, err := listener.(*net.TCPListener).File()
+	if err != nil {
+		t.Fatalf("read listener descriptor: %v", err)
+	}
+
+	return listener, file
+}

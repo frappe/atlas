@@ -125,3 +125,51 @@ class TestConsoleHandlers(IsolatedAsyncioTestCase):
 		self.assertTrue(stream_task.cancelled())
 		connection.close.assert_awaited_once()
 		socket.emit.assert_awaited_once_with("atlas_console_closed")
+
+	async def test_a_metald_restart_resumes_the_same_ssh_session(self) -> None:
+		socket = SimpleNamespace(sid="socket-1", site="test.local", emit=AsyncMock())
+		restarted = FakeMetalConnection(
+			[b"before"], close_code=handlers.SERVICE_RESTART_CLOSE_CODE, session_id="ssh-0123456789abcdef"
+		)
+		reconnected = FakeMetalConnection([b"after"], close_code=1000)
+
+		with (
+			patch.object(handlers, "_tls_context", return_value=Mock()),
+			patch.object(handlers.websockets, "connect", AsyncMock(return_value=reconnected)) as connect,
+			patch.dict(handlers._sessions, {}, clear=True),
+		):
+			session = handlers.ConsoleSession(
+				socket, restarted, "wss://metal.test/v1/vms/vm-1/console?mode=ssh"
+			)
+			session.size = (120, 40)
+			await session.stream_task
+
+		self.assertEqual(
+			connect.await_args.args[0],
+			"wss://metal.test/v1/vms/vm-1/console?mode=ssh&session=ssh-0123456789abcdef",
+		)
+		self.assertEqual(reconnected.sent, [json.dumps({"resize": {"cols": 120, "rows": 40}})])
+		outputs = [base64.b64decode(call.args[1]) for call in socket.emit.await_args_list[:-1]]
+		self.assertEqual(outputs, [b"before", b"after"])
+		socket.emit.assert_awaited_with("atlas_console_closed")
+
+
+class FakeMetalConnection:
+	"""A Metal console connection that sends its messages and then reports its close code."""
+
+	def __init__(self, messages: list[bytes], close_code: int, session_id: str | None = None) -> None:
+		self.messages = messages
+		self.close_code = close_code
+		headers = {handlers.SSH_SESSION_HEADER: session_id} if session_id else {}
+		self.response = SimpleNamespace(headers=headers)
+		self.sent: list[str | bytes] = []
+
+	async def __aiter__(self):
+		for message in self.messages:
+			yield message
+
+	async def send(self, data: str | bytes) -> None:
+		self.sent.append(data)
+
+	async def close(self) -> None:
+		pass

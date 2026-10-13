@@ -25,11 +25,15 @@ The token is valid for **30 seconds** and works **once**. A reload cannot reuse 
 | Mode | What you get | When it helps |
 | --- | --- | --- |
 | TTY, the default | The VM's shared serial console. Recent output replays when you attach. Several viewers can watch. | Inspect boot output or use the guest's serial login. |
-| SSH | One new interactive session as `root`. It ends when this browser connection closes. | Get a normal shell in a running guest that supports Atlas SSH access. |
+| SSH | One new interactive session as `root`. It ends when this browser connection closes or the shell exits. | Get a normal shell in a running guest that supports Atlas SSH access. |
 
 TTY output is collected while the VM runs, even with no viewer. A slow viewer is disconnected so it cannot block the guest.
 
 A TTY session stays open when the VM stops or restarts. It shows the output of the next boot. Metal discards input that you type while the VM is stopped.
+
+A `metald` restart closes the WebSocket with code `1012`. Atlas reconnects to the same console for up to 60 seconds. Both modes keep the guest shell, but input sent during the restart is lost.
+
+The SSH client runs in a separate systemd unit, and systemd keeps its console open during the restart. The session ends when the viewer leaves, the shell exits, or no viewer reconnects within 2 minutes.
 
 SSH needs a reachable guest and its SSH service. Metal creates a temporary key for that session, adds it through the guest metadata service, and removes it when the session ends. [SSH key changes](ssh-keys.md) explains the guest's key lookup.
 

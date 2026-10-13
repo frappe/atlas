@@ -49,7 +49,7 @@ Before each host call, Metal saves the phase. On failure, it records a caller-sa
 
 Destruction saves separate runtime, network, and storage checkpoints. Later passes resume unfinished cleanup. VM records disappear only after all cleanup completes.
 
-**Invalid records stop manager startup.** This includes corrupt data, unknown fields, unsupported schema versions, and invalid generations.
+**Invalid records stop manager startup.** This includes corrupt data, unknown fields, unsupported schema versions, and invalid generations. [Patches](../develop/metal.md#change-stored-state-with-a-patch) convert state from an older build before startup reads it.
 
 ## Limits and recovery
 

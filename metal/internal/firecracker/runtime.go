@@ -5,14 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -42,21 +45,25 @@ type imageStore interface {
 	RecordImageUse(imageReference string, usedAt time.Time) error
 }
 
-// serialBroker manages each VM's serial console PTY.
+// serialBroker manages the console PTY of each VM and each SSH session.
 type serialBroker interface {
 	Open(id string) error
 	Persist(id string) error
 	Close(id string) error
+	IsOpen(id string) bool
+	Attach(ctx context.Context, id string, client io.ReadWriter, resize <-chan console.Winsize) error
 }
 
 // Runtime manages Firecracker virtual machines on one host.
 type Runtime struct {
 	configuration         Config
 	units                 platform.UnitManager
+	sshUnits              sshSessionUnits
 	virtualMachineStorage virtualMachineStorage
 	imageStore            imageStore
 	serialBroker          serialBroker
-	sshSlots              chan struct{}
+	sshMutex              sync.Mutex
+	sshSessions           map[string]*sshSession
 	logger                *slog.Logger
 }
 
@@ -66,6 +73,7 @@ var _ vm.Runtime = (*Runtime)(nil)
 func NewRuntime(
 	configuration Config,
 	units platform.UnitManager,
+	sshUnits sshSessionUnits,
 	virtualMachineStorage virtualMachineStorage,
 	imageStore imageStore,
 	serialBroker serialBroker,
@@ -78,10 +86,11 @@ func NewRuntime(
 	return &Runtime{
 		configuration:         configuration,
 		units:                 units,
+		sshUnits:              sshUnits,
 		virtualMachineStorage: virtualMachineStorage,
 		imageStore:            imageStore,
 		serialBroker:          serialBroker,
-		sshSlots:              make(chan struct{}, maxConcurrentSSHSessions),
+		sshSessions:           make(map[string]*sshSession),
 		logger:                logger,
 	}
 }

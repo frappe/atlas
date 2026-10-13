@@ -51,11 +51,38 @@ Each method checks permissions and local state before delegating long work.
 | Action | Behavior |
 | --- | --- |
 | `install_metald` | Writes configuration and units. Installs missing binaries. Does not replace a running daemon. |
-| `upgrade_metald` | Downloads the build from Atlas Settings, saves `/usr/bin/metald.previous`, installs the build, and restarts `metal.service`. |
+| `upgrade_metald` | Upgrades one server to the latest build in Atlas Settings. |
+| Metald Update | Upgrades many servers to one pinned build in batches. Use it for every fleet rollout. |
 
-The upgrade script reports the descriptor count before restart. It checks the new service **five times**. On failure, it restores the previous binary, restarts the service, and reports the error.
+### Roll out a build
 
-If it reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
+A Metald Update moves Metal Servers to one pinned metald and Atlas WG Mesh build. [Roll out metald and WG Mesh](../operate/roll-out-metald.md) gives the steps with screenshots. This section explains how the update works.
+
+A new update pins the versions, binaries, and hashes from Atlas Settings, so later builds do not change it.
+
+| Status | What happens |
+| --- | --- |
+| Draft | You change the servers and the rollout fields. **Plan Rollout** starts the planning. |
+| Planning | Reads host versions through `GET /v1/versions`. A server that already runs the build or is not Running becomes Skipped. A failed read becomes Failed. If all servers are Skipped, the update becomes Completed. |
+| Planned | You review the versions. **Start Rollout** assigns batches in row order. **Edit Plan** returns to Draft. |
+| Running | Upgrades and checks one batch at a time. |
+| Paused | Waits for **Resume Rollout**, which retries the Failed servers, or **Cancel Rollout**. |
+| Completed, Cancelled | The rollout has ended. |
+
+Only one update can be Running or Paused. A step runs every 5 seconds and continues from the stored row statuses after a restart. During Running, it:
+
+1. Starts one upgrade SSH Task per server in the current batch.
+2. Waits **Wait Minutes** after the last upgrade.
+3. Checks current and earlier batches. Each server must report the pinned `metald` and Atlas WG Mesh versions and must have synchronized within 2 minutes.
+4. Starts the next batch or completes the update.
+
+A failed upgrade or check pauses the update. [When a server fails](../operate/roll-out-metald.md#when-a-server-fails) explains how to continue or go back to an earlier build.
+
+### Upgrade on one host
+
+`upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. It keeps the new binaries when the new build has a [metald patch](../develop/metal.md#change-stored-state-with-a-patch) that the host has not applied, because the previous build cannot read the patched state. A repeated upgrade to the running build changes nothing.
+
+If the script reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
 
 ## Capacity and state reports
 

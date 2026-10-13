@@ -6,13 +6,13 @@ For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-
 
 ## Purpose
 
-The `console` package accepts VM serial output at all times, keeps the recent part, and replays it to each new viewer. SSH sessions on the same endpoint go to `vm.Manager.ConnectSSH`, not this package.
+The `console` package keeps recent VM serial output and replays it to new viewers. It also handles SSH session PTYs, whose IDs start with `ssh-`. `firecracker` owns their lifecycle.
 
 ## Types
 
 | Type | Responsibility |
 |---|---|
-| `SerialBroker` | Maps each running VM ID to its console. |
+| `SerialBroker` | Maps VM and SSH session IDs to consoles. |
 | `DescriptorStore` | Keeps PTY masters open across a metald restart. |
 | `console` | Owns one PTY master, its scrollback, and its viewers. |
 | `ringBuffer` | Holds recent output for replay. |
@@ -55,7 +55,7 @@ Do not close a master while its VM runs. Linux then sends SIGHUP to Firecracker 
 
 ## Lifecycle
 
-A console lives from VM launch to VM stop. The runtime calls `Open`, `Persist`, and `Close`. metald calls `Adopt` and `Shutdown`.
+A VM console lives from VM launch to VM stop. An SSH session console lives from session start to session end. The runtime calls `Open`, `Persist`, and `Close`. metald calls `Adopt` and `Shutdown`.
 
 A viewer lives until it disconnects or is dropped. `Attach` owns its input goroutine, so input goes to the current console and a restart does not leave a second reader on the viewer.
 
