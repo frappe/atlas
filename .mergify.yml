@@ -44,7 +44,6 @@ pull_request_rules:
 
           Still working on it? Add the `keep-open` label and reopen it, or leave a comment and we'll help.
 
-
   - name: Label area atlas
     conditions:
       - 'files~=^(atlas|realtime)/|^pyproject\.toml$'
@@ -148,14 +147,6 @@ pull_request_rules:
       label:
         toggle:
           - "domain: storage"
-
-  - name: Label domain region
-    conditions:
-      - 'files~=^metal/(cmd|internal/(host|platform|metrics|patches))/|^atlas/(metal_server|operations)/|^atlas/atlas/core/(server_providers/|(test_)?host_binaries)|^services/control-cluster/|^atlas/service/doctype/cargo_server/'
-    actions:
-      label:
-        toggle:
-          - "domain: region"
 
   - name: Label risk migration
     conditions:
