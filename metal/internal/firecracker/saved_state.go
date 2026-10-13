@@ -172,6 +172,19 @@ func (runtime *Runtime) removeSavedState(id string) error {
 }
 
 func (metadata savedStateMetadata) validate(requirement savedStateRequirement) error {
+	if err := metadata.validateIdentity(requirement); err != nil {
+		return err
+	}
+	if err := metadata.validateBundle(); err != nil {
+		return err
+	}
+	if err := metadata.validateNetwork(requirement); err != nil {
+		return err
+	}
+	return metadata.validateMigration(requirement)
+}
+
+func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequirement) error {
 	switch {
 	case metadata.VirtualMachineID != requirement.VirtualMachineID:
 		return fmt.Errorf("saved state VM ID %q does not match %q", metadata.VirtualMachineID, requirement.VirtualMachineID)
@@ -183,6 +196,12 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
 	case requirement.MigrationCompatibility == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
 		return fmt.Errorf("saved state Firecracker compatibility %q does not match %q", metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
+	}
+	return nil
+}
+
+func (metadata savedStateMetadata) validateBundle() error {
+	switch {
 	case metadata.StateFileName != memorySnapshotStateFileName || metadata.MemoryFileName != memorySnapshotMemoryFileName:
 		return errors.New("saved state metadata has unexpected file names")
 	case metadata.StateFileSizeBytes <= 0 || metadata.MemoryFileSizeBytes <= 0:
@@ -190,16 +209,24 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 	case metadata.CreatedAt.IsZero():
 		return errors.New("saved state metadata has no creation time")
 	}
+	return nil
+}
+
+func (metadata savedStateMetadata) validateNetwork(requirement savedStateRequirement) error {
 	if metadata.TapMACAddress != "" {
 		address, err := net.ParseMAC(metadata.TapMACAddress)
 		if err != nil || len(address) != 6 || address[0]&1 != 0 {
 			return errors.New("saved state has an invalid TAP MAC address")
 		}
 	}
+	if requirement.MigrationCompatibility != nil && metadata.TapMACAddress == "" {
+		return errors.New("saved state has no TAP MAC address")
+	}
+	return nil
+}
+
+func (metadata savedStateMetadata) validateMigration(requirement savedStateRequirement) error {
 	if requirement.MigrationCompatibility != nil {
-		if metadata.TapMACAddress == "" {
-			return errors.New("saved state has no TAP MAC address")
-		}
 		if metadata.MigrationCompatibility == nil {
 			return errors.New("saved state has no migration compatibility metadata")
 		}
