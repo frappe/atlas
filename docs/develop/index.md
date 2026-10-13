@@ -67,7 +67,7 @@ Mergify labels each pull request. The labels change when you push or edit the ti
 
 | Label | Shows | Example |
 | --- | --- | --- |
-| `area:` | The changed component or feature | `area: metal`, `area: placement` |
+| `area:` | The changed service or feature | `area: wg-mesh`, `area: placement` |
 | `domain:` | The handbook section that the change affects | `domain: networking` |
 | `kind:` | The type in the Conventional Commit title | `kind: fix`, `kind: breaking` |
 | `risk:` | A change that needs careful review | `risk: migration`, `risk: ebpf` |
