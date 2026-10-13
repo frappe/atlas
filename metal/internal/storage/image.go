@@ -21,10 +21,6 @@ import (
 )
 
 const (
-	// rootFileSystemSlackMiB is added to the volume that receives an image, so a
-	// sparse write has room for file system overhead.
-	rootFileSystemSlackMiB = 64
-
 	// imageVolumeBlockSize matches the guest file system block size, so a write
 	// inside the guest does not turn into a read and rewrite on the host.
 	imageVolumeBlockSize = "16k"
@@ -315,10 +311,14 @@ type volumeDestination struct {
 	device         *os.File
 }
 
+// imageVolumeSizeMiB is the smallest whole MiB that holds an image. The import writes only the image bytes.
+func imageVolumeSizeMiB(sizeBytes int64) int64 {
+	return (sizeBytes + (1 << bytesToMiBShift) - 1) >> bytesToMiBShift
+}
+
 func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64) (io.Writer, error) {
-	sizeMiB := (sizeBytes+(1<<bytesToMiBShift)-1)>>bytesToMiBShift + rootFileSystemSlackMiB
 	dataset := destination.store.pool.baseDataset(destination.imageReference)
-	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", sizeMiB), "-o", "volblocksize="+imageVolumeBlockSize, dataset); err != nil {
+	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, dataset); err != nil {
 		return nil, err
 	}
 	devicePath := destination.store.baseImageDevicePath(destination.imageReference)
