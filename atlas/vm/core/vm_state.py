@@ -90,3 +90,6 @@ def has_live_virtual_machine_for_image(image_name: str) -> bool:
 		.limit(1)
 	)
 	return bool(query.run())
+
+
+# Test change for the pull request stats comment.

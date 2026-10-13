@@ -171,3 +171,5 @@ func (r *ImageReconciler) logFailure(ctx context.Context, operation string, err 
 
 	r.logger.Error("image reconciliation failed", "operation", operation, "error", err)
 }
+
+// Test change for the pull request stats comment.
