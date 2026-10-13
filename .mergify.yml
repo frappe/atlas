@@ -29,3 +29,17 @@ pull_request_rules:
       - "#commits-behind>0"
     actions:
       update:
+
+  - name: Close pull requests open for more than a month
+    conditions:
+      - -closed
+      - created-at<30 days ago
+      - author!=mergify[bot]
+      - label!=keep-open
+    actions:
+      close:
+      comment:
+        message: |
+          Hey @{{author}}, thanks for this pull request! It has been open for over a month, so we're closing it automatically to keep things tidy.
+
+          Still working on it? Add the `keep-open` label and reopen it, or leave a comment and we'll help.

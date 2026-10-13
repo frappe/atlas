@@ -61,6 +61,8 @@ Mergify closes other pull requests to `master`. For a manual backport, add the `
 
 Mergify merges the base branch into an open pull request that is behind it. It skips drafts and pull requests with conflicts.
 
+Mergify closes a pull request that is open for more than 30 days. To keep it open, add the `keep-open` label.
+
 ## Release
 
 A release manager runs the **Release** workflow on `master` from the GitHub Actions tab. The workflow tags the `master` head and creates a GitHub Release with notes from the merged pull requests.
