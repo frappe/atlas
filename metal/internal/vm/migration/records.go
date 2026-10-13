@@ -192,6 +192,7 @@ type DestinationProgress struct {
 	Phase                Phase
 	MemorySnapshotStatus string
 	Intervals            []TransferProgress
+	MemoryTransfer       *TransferProgress
 	Error                *vm.OperationError
 }
 
@@ -208,6 +209,7 @@ type destinationRecord struct {
 	SourceObservedState   vm.State                  `json:"source_observed_state,omitempty"`
 	CopyStartedAt         time.Time                 `json:"copy_started_at,omitempty"`
 	Intervals             []TransferProgress        `json:"intervals,omitempty"`
+	MemoryTransfer        *TransferProgress         `json:"memory_transfer,omitempty"`
 	SourceStopped         bool                      `json:"source_stopped,omitempty"`
 
 	Error      *vm.OperationError `json:"error,omitempty"`
@@ -230,6 +232,7 @@ func (record destinationRecord) progress() DestinationProgress {
 		Phase:                phase,
 		MemorySnapshotStatus: record.memorySnapshotStatus(),
 		Intervals:            record.Intervals,
+		MemoryTransfer:       record.MemoryTransfer,
 		Error:                record.Error,
 	}
 }

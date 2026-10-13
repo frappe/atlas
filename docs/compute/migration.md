@@ -82,6 +82,8 @@ Metal hides the incoming VM from normal reads until the move finishes.
 
 `progress_percent` estimates the whole lifecycle, not copied bytes. Use the transfer rows for copied MiB.
 
+The transfer table labels each row as `Disk` or `Memory`. Memory migrations add one row for the saved-state bundle alongside the final disk transfer. The row records transfer timing and completion. Its total starts with the VM memory size and becomes the verified combined size of state, memory, and metadata when the copy completes. Transferred bytes update at completion, as they do for disk transfers. Retries update the same row.
+
 `memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `is_memory_snapshot` checkbox is checked. This checkbox reflects `migrate_memory_snapshot`.
 
 Metal reports `not_started` during disk precopy, `creating` while it captures and stops the source, `transferring` during the final copy, and `restoring` during destination setup. The snapshot is `completed` when the destination is loaded paused and ready. Migration finish still controls guest activation.

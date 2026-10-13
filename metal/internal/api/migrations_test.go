@@ -256,6 +256,10 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 			{Sequence: 1, StartedAt: time.Date(2026, time.September, 20, 12, 0, 0, 0, time.UTC), FinishedAt: finishedAt, DurationSeconds: 42, BytesTransferred: 1024, TotalBytes: 1024, Completed: true},
 			{Sequence: 2, BytesTransferred: 256, TotalBytes: 1024, ThroughputMiBps: 64},
 		},
+		MemoryTransfer: &migration.TransferProgress{
+			Sequence: 3, StartedAt: finishedAt.Add(-2 * time.Second), FinishedAt: finishedAt,
+			DurationSeconds: 2, BytesTransferred: 512 << 20, TotalBytes: 512 << 20, Completed: true,
+		},
 	}}
 	server := newMigrationTestServer(t, stub)
 
@@ -264,7 +268,7 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Transfers) != 2 {
+	if len(response.Transfers) != 3 {
 		t.Fatalf("response = %+v", response)
 	}
 	if response.MemorySnapshotStatus != "transferring" {
@@ -283,6 +287,13 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	// The throttle step is visible per interval, so an operator sees it decrease.
 	if response.Transfers[1].ThroughputMiBps != 64 {
 		t.Fatalf("transfer 1 throughput = %d, want 64", response.Transfers[1].ThroughputMiBps)
+	}
+	memory := response.Transfers[2]
+	if memory.SnapshotType != "memory" || memory.Sequence != 3 || memory.TotalMiB != 512 || memory.TransferredMiB != 512 || memory.DurationSeconds != 2 || !memory.Completed {
+		t.Fatalf("memory transfer = %+v", memory)
+	}
+	if response.Transfers[0].SnapshotType != "" {
+		t.Fatal("disk transfer contract changed")
 	}
 }
 

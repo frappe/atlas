@@ -101,6 +101,11 @@ func (m *Manager) receiveFinalSnapshots(ctx context.Context, record destinationR
 	if !record.MigrateMemorySnapshot {
 		return m.receiveSnapshot(ctx, record, final, 0)
 	}
+	// Reserve the final disk row before the parallel memory row becomes visible.
+	record, err := m.beginInterval(ctx, record, final, 0)
+	if err != nil {
+		return err
+	}
 	transferContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	memoryResult := make(chan error, 1)
@@ -139,8 +144,23 @@ func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationR
 		return err
 	}
 	defer os.RemoveAll(pending)
+	if _, err := m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
+		destination.MemoryTransfer = &TransferProgress{
+			Sequence: final.Sequence + 1, StartedAt: m.now(), TotalBytes: int64(desired.Specification.MemoryMiB) << 20,
+		}
+	}); err != nil {
+		return err
+	}
 	if err := m.source.ReceiveMemorySnapshot(ctx, record.Source, record.ID, record.VirtualMachineID, final.Sequence, pending, desired.Specification.MemoryMiB); err != nil {
 		return err
+	}
+	var totalBytes int64
+	for _, name := range []string{"state", "memory", "metadata.json"} {
+		information, err := os.Stat(filepath.Join(pending, name))
+		if err != nil {
+			return err
+		}
+		totalBytes += information.Size()
 	}
 	if err := writeMigrationRecord(filepath.Join(pending, "disk-snapshot.json"), final); err != nil {
 		return err
@@ -153,6 +173,11 @@ func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationR
 	}
 	_, err = m.mutateDestination(context.WithoutCancel(ctx), record.VirtualMachineID, func(destination *destinationRecord) {
 		destination.MemorySnapshotGUID = final.GUID
+		transfer := destination.MemoryTransfer
+		transfer.FinishedAt = m.now()
+		transfer.DurationSeconds = int(transfer.FinishedAt.Sub(transfer.StartedAt).Seconds())
+		transfer.TotalBytes, transfer.BytesTransferred = totalBytes, totalBytes
+		transfer.Completed = true
 	})
 	return err
 }

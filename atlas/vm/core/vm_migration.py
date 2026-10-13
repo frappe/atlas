@@ -539,6 +539,7 @@ class MigrationService:
 			row = rows.get(sequence)
 			if row is None:
 				row = migration.append("transfers", {"idx": sequence})
+			row.snapshot_type = "Memory" if transfer.get("snapshot_type") == "memory" else "Disk"
 			row.started_at = timestamp_field(transfer, "started_at")
 			row.finished_at = timestamp_field(transfer, "finished_at")
 			row.duration_seconds = transfer.get("duration_seconds", 0)

@@ -386,6 +386,7 @@ class TestMigrationTransfers(UnitTestCase):
 						"total_mib": 100,
 						"completed": False,
 					},
+					{"sequence": 3, "snapshot_type": "memory", "total_mib": 512, "completed": False},
 				],
 			)
 			self.assertIsNone(migration.transfers[1].finished_at)
@@ -399,13 +400,23 @@ class TestMigrationTransfers(UnitTestCase):
 						"transferred_mib": 100,
 						"total_mib": 100,
 						"completed": True,
-					}
+					},
+					{
+						"sequence": 3,
+						"snapshot_type": "memory",
+						"transferred_mib": 512,
+						"total_mib": 512,
+						"completed": True,
+					},
 				],
 			)
 
-		self.assertEqual(len(migration.transfers), 2)
-		self.assertEqual([row.idx for row in migration.transfers], [1, 2])
+		self.assertEqual(len(migration.transfers), 3)
+		self.assertEqual([row.idx for row in migration.transfers], [1, 2, 3])
+		self.assertEqual([row.snapshot_type for row in migration.transfers], ["Disk", "Disk", "Memory"])
 		self.assertEqual(migration.transfers[0].finished_at, datetime(2026, 9, 20, 12, 0, 42, 26755))
 		self.assertEqual(migration.transfers[1].finished_at, datetime(2026, 9, 20, 12, 1, 10))
 		self.assertEqual(migration.transfers[1].transferred_mib, 100)
 		self.assertTrue(migration.transfers[1].completed)
+		self.assertEqual(migration.transfers[2].transferred_mib, 512)
+		self.assertTrue(migration.transfers[2].completed)

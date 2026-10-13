@@ -20,6 +20,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 - A transfer holds no VM lock while bytes move. The source retains the last acknowledged snapshot as the next incremental base. A received interval counts only when its GUID matches.
 - Each external cutover step is checkpointed before the next step. The source removes its network before the final snapshot. An optional saved memory bundle is bound to the final disk GUID and restored paused before `ready`.
 - Snapshot status is derived from destination checkpoints. The optional API field adds no stored state. Disk-only progress omits it.
+- `MemoryTransfer` uses `TransferProgress` for the saved-state bundle and stays separate from disk intervals. Its sequence follows the final disk row, so retries keep one controller row. The API identifies it with optional `snapshot_type: "memory"`.
 - Memory migrations activate only during `finishing`, after Atlas commits ownership. Activation retries inspect the existing process and never replay the original snapshot after guest execution.
 - Finish and abort are mutually exclusive. The first request wins. Finish requires a destination in `ready`.
 - A rollback failure keeps both records, locks, and the source disk. The source ends an active stream before unlock or destruction. Two hosts must never own one disk.

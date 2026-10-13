@@ -82,7 +82,7 @@ func TestFinalTransfersOverlapAndCheckpointIndependently(t *testing.T) {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		return os.WriteFile(filepath.Join(directory, "memory"), []byte("guest memory"), 0o600)
+		return nil
 	}
 	disks.receive = func(ctx context.Context) error {
 		close(diskStarted)
@@ -104,6 +104,10 @@ func TestFinalTransfersOverlapAndCheckpointIndependently(t *testing.T) {
 			t.Fatal("transfers did not overlap")
 		}
 	}
+	active, err := store.readDestination("vm-1")
+	if err != nil || active.MemoryTransfer == nil || active.MemoryTransfer.Sequence != 2 || active.MemoryTransfer.Completed || len(active.Intervals) != 1 {
+		t.Fatalf("parallel transfer progress = %+v, error = %v", active, err)
+	}
 	close(releaseDisk)
 	select {
 	case <-finished:
@@ -116,12 +120,16 @@ func TestFinalTransfersOverlapAndCheckpointIndependently(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("transfers did not finish")
 	}
-	record, err := store.readDestination("vm-1")
+	record, err = store.readDestination("vm-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if record.State != destinationReady || record.MemorySnapshotGUID != "disk-guid" || !source.stopMemorySnapshot {
 		t.Fatalf("record = %+v, memory requested = %v", record, source.stopMemorySnapshot)
+	}
+	transfer := record.MemoryTransfer
+	if transfer == nil || !transfer.Completed || transfer.StartedAt.IsZero() || transfer.FinishedAt.Before(transfer.StartedAt) || transfer.BytesTransferred != 24 || transfer.TotalBytes != 24 {
+		t.Fatalf("memory transfer = %+v", transfer)
 	}
 	if _, err := os.Stat(filepath.Join(store.memorySnapshotDirectory("vm-1"), "disk-snapshot.json")); err != nil {
 		t.Fatal(err)
@@ -134,6 +142,10 @@ func TestFinalTransfersOverlapAndCheckpointIndependently(t *testing.T) {
 	manager.runTransfer(ctx, "vm-1")
 	if disks.received != 1 {
 		t.Fatalf("disk received %d times", disks.received)
+	}
+	retried, err := store.readDestination("vm-1")
+	if err != nil || retried.MemoryTransfer == nil || *retried.MemoryTransfer != *transfer {
+		t.Fatal("completed memory transfer was replaced on retry")
 	}
 }
 
