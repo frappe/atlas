@@ -100,38 +100,6 @@ pull_request_rules:
         toggle:
           - "area: control-cluster"
 
-  - name: Label area clients
-    conditions:
-      - files~=^clients/
-    actions:
-      label:
-        toggle:
-          - "area: clients"
-
-  - name: Label area docs
-    conditions:
-      - files~=^(docs|\.vitepress)/|\.md$
-    actions:
-      label:
-        toggle:
-          - "area: docs"
-
-  - name: Label area ci
-    conditions:
-      - files~=^(\.github|scripts)/|^\.mergify\.yml$|^\.pre-commit-config\.yaml$
-    actions:
-      label:
-        toggle:
-          - "area: ci"
-
-  - name: Label area agent-tooling
-    conditions:
-      - files~=^(llm|\.claude|\.agents|\.greptile)/|^(CLAUDE|AGENTS)\.md$
-    actions:
-      label:
-        toggle:
-          - "area: agent-tooling"
-
   - name: Label risk migration
     conditions:
       - files~=^atlas/patches(/|\.txt$)|^metal/internal/patches/|^services/wg-mesh/cli/patches/
