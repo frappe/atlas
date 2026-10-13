@@ -7,7 +7,7 @@ from typing import Any
 
 import click
 import frappe
-from frappe.commands import pass_context
+from frappe.commands import get_site, pass_context
 from frappe.exceptions import SiteNotSpecifiedError
 from frappe.utils.bench_helper import CliCtxObj
 
@@ -23,6 +23,7 @@ from atlas.atlas.core.setup import AtlasSetup, AtlasSetupConfiguration
 from atlas.atlas.object_storage import ObjectStorageError
 from atlas.metal_server.core.atlas_peer import AtlasPeer
 from atlas.metal_server.core.development_gateway import DevelopmentGateway
+from atlas.metal_server.core.development_listener import DevelopmentListener, DevelopmentListenerError
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 from atlas.service.core.service_package import SERVICE_PACKAGES
 from atlas.vm.core.image_builder import build_ubuntu_image, publish_ubuntu_image
@@ -247,6 +248,23 @@ def deploy_dev_gateway(context: CliCtxObj, metal_server: str, ssh_host: str | No
 			frappe.destroy()
 
 
+@click.command("start-dev-listener")
+@pass_context
+def start_dev_listener(context: CliCtxObj) -> None:
+	"""Development only: serve atlas_internal_url on this machine, so hosts can reach the site."""
+	site = get_site(context)
+	try:
+		frappe.init(site)
+		frappe.connect()
+		listener = DevelopmentListener(site)
+		click.echo(f"Forward {listener.url.geturl()} to {site} on 127.0.0.1:{listener.web_port}")
+		listener.serve()
+	except DevelopmentListenerError as error:
+		raise click.ClickException(str(error)) from error
+	finally:
+		frappe.destroy()
+
+
 @click.command("import-metal-server")
 @click.argument("provider_server_id")
 @click.option("--storage-pool-device", help="Device or disk image file for the storage pool.")
@@ -275,5 +293,6 @@ commands = [
 	build_ubuntu_base_image,
 	configure_atlas_wireguard,
 	deploy_dev_gateway,
+	start_dev_listener,
 	import_metal_server,
 ]
