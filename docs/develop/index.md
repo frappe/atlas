@@ -59,6 +59,8 @@ Put a new page in reading order in `.vitepress/sidebar.mts`. Keep source-code li
 
 Mergify closes other pull requests to `master`. For a manual backport, add the `manual-backport-pr` label and reopen the pull request.
 
+Mergify merges the base branch into an open pull request that is behind it. It skips drafts and pull requests with conflicts.
+
 ## Release
 
 A release manager runs the **Release** workflow on `master` from the GitHub Actions tab. The workflow tags the `master` head and creates a GitHub Release with notes from the merged pull requests.

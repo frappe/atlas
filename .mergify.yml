@@ -21,3 +21,11 @@ pull_request_rules:
           - master
         assignees:
           - "{{ author }}"
+
+  - name: Keep pull requests up to date
+    conditions:
+      - -draft
+      - -conflict
+      - "#commits-behind>0"
+    actions:
+      update:
