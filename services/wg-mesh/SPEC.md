@@ -26,7 +26,7 @@ The module path is `github.com/frappe/atlas/services/wg-mesh/cli`. Run Go comman
 
 ## Validation
 
-From this directory, run `make bpf` and `make build`. Run `go vet ./...` from `cli/`. The [design page](../../docs/networking/wg-mesh/index.md#hooks-and-state) maps each file to its hook.
+From this directory, run `make bpf` and `make build`. Run `go vet ./...` from `cli/`. `TestPinnedMapsKeepTheirLayout` compares map layouts with `BPF_BASELINE_OBJECT`, which CI builds from the base branch. See the [design page](../../docs/networking/wg-mesh/index.md#hooks-and-state) for hooks.
 
 ## Documentation
 

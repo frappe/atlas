@@ -30,13 +30,15 @@ The uplink needs IPv4, IPv6, and an Ethernet MAC address.
 
 The WireGuard interface needs an address in `fdab::/16`.
 
-Run the same command after you install a new binary.
+`metald` runs this command on each start.
 
 The command loads the candidate programs before it replaces any hook.
 
 If a hook replacement fails, the command restores the old programs.
 
 The command rejects an incompatible map layout and keeps the active release.
+
+Keep pinned map types, keys, values, and maximum entries stable. Add new maps under new names, and make their data rebuildable from `metald` sync. CI rejects map layout changes against the base branch.
 
 ## Synchronize peers
 

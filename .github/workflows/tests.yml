@@ -198,6 +198,15 @@ jobs:
         if: steps.changes.outputs.matched == 'true'
         run: make bpf
 
+      # A host upgrade reuses pinned maps and stops on a changed map layout.
+      - name: Compare the pinned map layouts with the base branch
+        if: steps.changes.outputs.matched == 'true' && github.event_name == 'pull_request'
+        run: |
+          baseline="$RUNNER_TEMP/bpf-baseline"
+          git worktree add --quiet "$baseline" "$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)"
+          make -C "$baseline/services/wg-mesh" bpf
+          BPF_BASELINE_OBJECT="$baseline/services/wg-mesh/cli/atlas-wg-mesh.bpf.o" go test -C cli -run TestPinnedMapsKeepTheirLayout ./...
+
       - name: Check formatting
         if: steps.changes.outputs.matched == 'true'
         run: test -z "$(gofmt -l ./cli)" || { gofmt -l ./cli; exit 1; }
