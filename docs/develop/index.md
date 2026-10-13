@@ -59,6 +59,15 @@ Put a new page in reading order in `.vitepress/sidebar.mts`. Keep source-code li
 
 Mergify closes other pull requests to `master`. For a manual backport, add the `manual-backport-pr` label and reopen the pull request.
 
+<<<<<<< HEAD
+=======
+Mergify merges the base branch into an open pull request that is behind it. It skips drafts and pull requests with conflicts.
+
+Mergify closes a pull request that is open for more than 30 days. To keep it open, add the `keep-open` label.
+
+Mergify labels a pull request by its changed files. An `area:` label shows the component, such as `area: metal`. A `risk:` label shows a change that needs careful review: `risk: migration`, `risk: ebpf`, `risk: api` or `risk: dependencies`. The rules are in `.mergify.yml`.
+
+>>>>>>> afa1939 (build(atlas): Label pull requests by changed files)
 ## Release
 
 A release manager runs the **Release** workflow on `master` from the GitHub Actions tab. The workflow tags the `master` head and creates a GitHub Release with notes from the merged pull requests.
