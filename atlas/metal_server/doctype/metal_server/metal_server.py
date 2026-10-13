@@ -26,6 +26,7 @@ from atlas.metal_server.core.host_installation import (
 	METALD_SETUP_TIMEOUT_SECONDS,
 	WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
 	HostInstallation,
+	throw_script_failure,
 )
 from atlas.metal_server.core.provisioning import ServerProvisioner
 from atlas.metal_server.usage import enqueue_server_sync
@@ -504,8 +505,10 @@ class MetalServer(Document):
 		HostInstallation(self).install_tls_credentials()
 
 	def _upgrade_metald(self) -> None:
-		"""Replace the metald binary and restart its daemon."""
-		HostInstallation(self).upgrade_metald()
+		"""Replace metald and Atlas WG Mesh with the latest build and restart the daemon."""
+		result = HostInstallation(self).upgrade_metald().result
+		if not result or not result.is_success:
+			throw_script_failure(_("Could not upgrade metald on server {0}.").format(self.name), result)
 
 	def _configure_wireguard(self) -> None:
 		"""Configure WireGuard and store its public key."""

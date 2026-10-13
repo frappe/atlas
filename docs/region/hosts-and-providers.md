@@ -51,11 +51,13 @@ Each method checks permissions and local state before delegating long work.
 | Action | Behavior |
 | --- | --- |
 | `install_metald` | Writes configuration and units. Installs missing binaries. Does not replace a running daemon. |
-| `upgrade_metald` | Downloads the build from Atlas Settings, saves `/usr/bin/metald.previous`, installs the build, and restarts `metal.service`. |
+| `upgrade_metald` | Upgrades one server to the latest build in Atlas Settings. |
 
-The upgrade script reports the descriptor count before restart. It checks the new service **five times**. On failure, it restores the previous binary, restarts the service, and reports the error.
+### Upgrade on one host
 
-If it reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
+`upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. A repeated upgrade to the running build changes nothing.
+
+If the script reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
 
 ## Capacity and state reports
 

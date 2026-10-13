@@ -14,6 +14,8 @@ from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.atlas_peer import WIREGUARD_KEY
 
 if TYPE_CHECKING:
+	from frappe.model.document import Document
+
 	from atlas.atlas.core.ssh import SSHResult
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
@@ -167,27 +169,25 @@ class HostInstallation:
 				result,
 			)
 
-	def upgrade_metald(self) -> None:
-		"""Replace the metald binary and restart its daemon."""
-		settings = self.server.settings
-		if not settings.metald_binary_x86_64_file:
-			frappe.throw(_("Atlas Settings needs the metald binary."))
+	def upgrade_metald(self, build: Document | None = None, run_in_background: bool = False) -> SSHTask:
+		"""Install a build of metald and Atlas WG Mesh, by default the latest one, and restart metald."""
+		build = build or self.server.settings
+		if not build.metald_binary_x86_64_file or not build.wg_mesh_binary_x86_64_file:
+			frappe.throw(_("The build has no metald or Atlas WG Mesh binary."))
 
-		result = SSHTask.create_for_script_file(
+		return SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,
 			script_path="upgrade-metald.sh",
 			environment={
-				"METALD_DOWNLOAD_URL": get_download_url(settings.metald_binary_x86_64_file),
-				"METALD_SHA256": settings.metald_binary_hash,
+				"METALD_DOWNLOAD_URL": get_download_url(build.metald_binary_x86_64_file),
+				"METALD_SHA256": build.metald_binary_hash,
+				"WG_MESH_DOWNLOAD_URL": get_download_url(build.wg_mesh_binary_x86_64_file),
+				"WG_MESH_SHA256": build.wg_mesh_binary_hash,
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
-			run_in_background=False,
-		).result
-		if not result or not result.is_success:
-			throw_script_failure(
-				_("Could not upgrade metald on server {0}.").format(self.server.name), result
-			)
+			run_in_background=run_in_background,
+		)
 
 	def set_wireguard_ip_address(self) -> None:
 		"""Set the WireGuard IP address if it is empty."""

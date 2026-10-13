@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
-# Replace the metald binary on a provisioned host.
+# Replace metald and atlas-wg-mesh on a provisioned host.
 
 set -eu
+# A failed command inside $(...) also stops the script.
+shopt -s inherit_errexit
 
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
 : "${METALD_SHA256:?METALD_SHA256 is required}"
+: "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
+: "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
 
-installed_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
-previous_binary=$installed_binary.previous
+metald_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
+mesh_binary=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
 service=metal.service
+ready_timeout_seconds=120
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
 	exit 1
 fi
 
-if [ ! -x "$installed_binary" ]; then
-	echo "$installed_binary is not installed; run install-metald.sh first" >&2
-	exit 1
-fi
+for binary in "$metald_binary" "$mesh_binary"; do
+	if [ ! -x "$binary" ]; then
+		echo "$binary is not installed; run install-metald.sh first" >&2
+		exit 1
+	fi
+done
 
 step() { echo "==> $*"; }
 
@@ -35,6 +42,10 @@ unit_property() {
 	systemctl show "$service" -p "$1" --value 2>/dev/null || echo ""
 }
 
+active_virtual_machine_count() {
+	systemctl list-units "metal-vm@*" --state=active --no-legend --plain | wc -l
+}
+
 # service_is_stable checks that the service stays active.
 service_is_stable() {
 	local checks_remaining=5
@@ -48,70 +59,127 @@ service_is_stable() {
 	return 0
 }
 
-staged_binary=$(mktemp "$installed_binary.staged.XXXXXX")
-trap 'rm -f "$staged_binary"' EXIT
+# service_is_ready waits until metald reports "ready <version>" after its startup.
+# A unit without NotifyAccess=main cannot report a status, so only stability counts.
+service_is_ready() {
+	local expected_status="ready $1" waited_seconds=0
 
-step "download metald"
-curl -fsSL -o "$staged_binary" "$METALD_DOWNLOAD_URL"
+	if [ "$(unit_property NotifyAccess)" != "main" ]; then
+		echo "    warning: $service has no NotifyAccess=main; checking only that it stays active"
+		service_is_stable
+		return
+	fi
 
-# The version command below runs this file, so check it before that.
-staged_hash=$(sha256sum "$staged_binary" | cut -d' ' -f1)
-if [ "$staged_hash" != "$METALD_SHA256" ]; then
-	echo "the file at $METALD_DOWNLOAD_URL has hash $staged_hash, expected $METALD_SHA256" >&2
-	exit 1
+	while [ "$waited_seconds" -lt "$ready_timeout_seconds" ]; do
+		if [ "$(unit_property StatusText)" = "$expected_status" ] && systemctl is-active --quiet "$service"; then
+			return 0
+		fi
+		sleep 1
+		waited_seconds=$((waited_seconds + 1))
+	done
+
+	echo "    $service did not report \"$expected_status\" within $ready_timeout_seconds seconds" >&2
+	return 1
+}
+
+# stage downloads one binary next to its destination and checks it.
+stage() {
+	local url=$1 expected_hash=$2 destination=$3 staged staged_hash
+
+	staged=$(mktemp "$destination.staged.XXXXXX")
+	if ! curl -fsSL -o "$staged" "$url"; then
+		rm -f "$staged"
+		exit 1
+	fi
+
+	# The version command runs this file, so check it before that.
+	staged_hash=$(sha256sum "$staged" | cut -d' ' -f1)
+	if [ "$staged_hash" != "$expected_hash" ]; then
+		rm -f "$staged"
+		echo "the file at $url has hash $staged_hash, expected $expected_hash" >&2
+		exit 1
+	fi
+	chmod 0755 "$staged"
+
+	if [ "$(reported_version "$staged")" = unknown ]; then
+		rm -f "$staged"
+		echo "the file at $url has no version command" >&2
+		exit 1
+	fi
+	echo "$staged"
+}
+
+# restore_previous puts back the binaries that this upgrade replaced.
+restore_previous() {
+	mv -f "$metald_binary.previous" "$metald_binary"
+	mv -f "$mesh_binary.previous" "$mesh_binary"
+	systemctl reset-failed "$service" 2>/dev/null || true
+	if ! systemctl restart "$service" || ! service_is_stable; then
+		echo "    $service did not start with the previous build" >&2
+	fi
+}
+
+step "download metald and atlas-wg-mesh"
+staged_metald=""
+staged_mesh=""
+trap 'rm -f "$staged_metald" "$staged_mesh"' EXIT
+staged_metald=$(stage "$METALD_DOWNLOAD_URL" "$METALD_SHA256" "$metald_binary")
+staged_mesh=$(stage "$WG_MESH_DOWNLOAD_URL" "$WG_MESH_SHA256" "$mesh_binary")
+
+new_version=$(reported_version "$staged_metald")
+current_version=$(reported_version "$metald_binary")
+
+# A repeated upgrade after a success changes nothing.
+if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" &&
+	[ "$(unit_property StatusText)" = "ready $new_version" ]; then
+	step "metald $new_version and atlas-wg-mesh are already installed and running"
+	exit 0
 fi
-chmod 0755 "$staged_binary"
 
-# Run the new binary before it replaces the running one.
-new_version=$(reported_version "$staged_binary")
-if [ "$new_version" = unknown ]; then
-	echo "the downloaded binary has no version command; it is not a metald build" >&2
-	exit 1
-fi
-
-current_version=$(reported_version "$installed_binary")
 step "upgrade metald from $current_version to $new_version"
 
 # A restart keeps the console descriptors that systemd holds, so the virtual
 # machines stay up. An empty store means that this metald never stored them.
-stored_console_count=$(unit_property NFileDescriptorStore)
-if [ "${stored_console_count:-0}" = "0" ]; then
-	echo "    systemd holds no console descriptor; running virtual machines stop during the restart"
+stored_descriptor_count=$(unit_property NFileDescriptorStore)
+if [ "${stored_descriptor_count:-0}" = "0" ]; then
+	echo "    systemd holds no descriptor; running virtual machines stop during the restart"
 else
-	echo "    systemd holds $stored_console_count console descriptors; the virtual machines stay up"
+	echo "    systemd holds $stored_descriptor_count descriptors; the virtual machines stay up"
 fi
+virtual_machine_count=$(active_virtual_machine_count)
 
-# Keep the running binary before anything changes, so every later step can undo.
-step "back up $current_version to $previous_binary"
-cp -a "$installed_binary" "$previous_binary"
+# Keep the running binaries before anything changes, so every later step can undo.
+step "back up the running binaries"
+cp -a "$metald_binary" "$metald_binary.previous"
+cp -a "$mesh_binary" "$mesh_binary.previous"
 
 # Rename instead of overwrite. The running process keeps its own inode.
-step "install $installed_binary"
-if ! mv -f "$staged_binary" "$installed_binary"; then
-	echo "could not install $installed_binary; the running binary is unchanged" >&2
-	exit 1
-fi
+step "install the new binaries"
+mv -f "$staged_mesh" "$mesh_binary"
+mv -f "$staged_metald" "$metald_binary"
 
 # Restart rather than stop and start. systemd keeps its descriptor store across a
 # restart even when the unit does not set FileDescriptorStorePreserve=yes.
 step "restart $service"
-if ! systemctl restart "$service" || ! service_is_stable; then
-	echo "    $service did not start; restoring $current_version" >&2
-	mv -f "$previous_binary" "$installed_binary"
-	if ! systemctl restart "$service" || ! service_is_stable; then
-		echo "    $service did not start with $current_version" >&2
-	fi
+if ! systemctl restart "$service" || ! service_is_ready "$new_version"; then
+	echo "    restoring $current_version" >&2
+	journalctl -u "$service" -n 20 --no-pager -o cat >&2 || true
+	restore_previous
 	exit 1
 fi
 
-step "running metald $(reported_version "$installed_binary")"
-echo "    previous binary: $previous_binary"
+remaining_virtual_machine_count=$(active_virtual_machine_count)
+if [ "$remaining_virtual_machine_count" -lt "$virtual_machine_count" ]; then
+	echo "    $virtual_machine_count virtual machines ran before the restart and $remaining_virtual_machine_count run now; restoring $current_version" >&2
+	restore_previous
+	exit 1
+fi
+
+step "running metald $new_version and atlas-wg-mesh $(reported_version "$mesh_binary")"
+echo "    $remaining_virtual_machine_count virtual machines run"
 
 if [ "$(unit_property FileDescriptorStorePreserve)" != "yes" ]; then
 	echo "    warning: $service has no FileDescriptorStorePreserve=yes"
 	echo "    a stop of $service still stops every virtual machine"
 	echo "    run the Metal Server action Re-configure Metald to update the unit"
 fi
-
-step "virtual machines on this host"
-systemctl list-units "metal-vm@*" --all --no-legend --no-pager | cat
