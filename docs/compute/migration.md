@@ -70,6 +70,24 @@ Metal reports `not_started` during disk precopy, `creating` while it captures an
 
 Rollback reports `failed` or `aborted`. Atlas stores the optional `memory_snapshot_status` response field and sets the terminal result when the migration settles. Hosts that omit this field report no intermediate snapshot progress.
 
+## Measure SSH downtime
+
+Run [benchmark_migration.py](../../atlas/vm/scripts/benchmark_migration.py) from the Frappe bench directory with its Python environment. One round runs memory migration in both directions, then disk-only migration in both directions. Disk-only migration cold-boots the guest. The VM must start running on one of the specified hosts, without an active migration.
+
+```sh
+env/bin/python apps/atlas/atlas/vm/scripts/benchmark_migration.py run \
+  --site development.localhost --virtual-machine VM_ID \
+  --host-a METAL_SERVER_A --host-b METAL_SERVER_B \
+  --observer root@OBSERVER_HOST --guest-address STABLE_VM_IP \
+  --output migration-timing.jsonl
+```
+
+The observer stays on one host and probes the same guest address throughout each move. Use a public or other stable address reachable from the observer on both hosts. Each probe opens a new SSH connection. The default checks SSH key exchange without guest credentials. For authenticated `ssh true` probes, pass `--identity-file` with an existing guest key path on the observer. That mode requires a matching entry in the observer's known-hosts file. The script does not install guest keys.
+
+The JSONL output records each migration ID, mode, direction, migration duration, and every SSH outage window. `ssh_gap_seconds` measures the gap from the last successful SSH response before failure to the first successful response after recovery. Durations use the observer's monotonic clock. UTC timestamps identify the first failed probe and recovery. The control connection's latency does not enter these durations.
+
+The default probe interval is 0.25 seconds and the probe timeout is one second. Gaps include polling and SSH handshake time; they are availability observations rather than exact guest stop/resume times. The output keeps each window separately and sums the gaps. Zero means no outage was observed. Use `--rounds` for repeated comparisons. The comparison stops after a migration failure, lost observer, timeout, or unrecovered guest. It does not cancel an unfinished migration. Temporary observer files are removed after each case.
+
 ## Failure and recovery
 
 | Event | Behavior |
