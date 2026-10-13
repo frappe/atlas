@@ -67,7 +67,7 @@ At startup, before it reads any state, metald runs each patch that `base_dir/pat
 
 1. Choose one name that says what the patch changes, such as `rename_status_keys_to_snake_case`. Use it for the patch name, the file, and the function.
 2. Write the function in `internal/patches/<name>.go`. It gets the base directory and changes the files under it.
-3. Add the patch at the end of `All` in `internal/patches/patches.go`.
+3. Add the patch at the end of `all` in `internal/patches/patches.go`.
 4. Add a test that writes the old state, runs the patch, and checks that metald reads the result with every value.
 
 ```go
@@ -80,7 +80,7 @@ func renameStatusKeysToSnakeCase(baseDirectory string) error {
 
 ```go
 // patches.go
-var All = []Patch{
+var all = []Patch{
 	{Name: "rename_status_keys_to_snake_case", Apply: renameStatusKeysToSnakeCase},
 }
 ```
