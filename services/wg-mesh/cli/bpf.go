@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 
 	"github.com/cilium/ebpf"
+
+	"github.com/frappe/atlas/services/wg-mesh/cli/patches"
 )
 
 const pinDirectory = "/sys/fs/bpf/atlas-wg-mesh"
@@ -90,20 +92,33 @@ func programPath(program string) (string, error) {
 }
 
 type bpfCandidate struct {
-	hash           [32]byte
-	createdMaps    []string
-	createdRelease bool
-	maps           map[string]bool
+	hash             [32]byte
+	installedVersion uint32
+	createdMaps      []string
+	repinnedMaps     []string
+	createdRelease   bool
+	maps             map[string]bool
 }
 
-// loadBPF loads a candidate release without changing the active release.
-func loadBPF(config hostConfig) (bpfCandidate, error) {
-	candidate := bpfCandidate{hash: bpfHash(), maps: make(map[string]bool)}
+// loadBPF loads a candidate release without changing the active release. From an older layout, it pins the
+// unchanged maps again and fills the changed ones through the patches, while the old programs keep the old maps.
+func loadBPF(config hostConfig, installedVersion uint32) (bpfCandidate, error) {
+	candidate := bpfCandidate{hash: bpfHash(), installedVersion: installedVersion, maps: make(map[string]bool)}
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(bpfObject))
 	if err != nil {
 		return candidate, fmt.Errorf("read the embedded BPF object: %w", err)
 	}
+	// A migration that did not commit leaves no state that a host uses, so build its layout again.
+	if installedVersion != mapLayoutVersion {
+		if err := os.RemoveAll(mapDirectory(mapLayoutVersion)); err != nil {
+			return candidate, err
+		}
+	}
+	if err := os.MkdirAll(mapDirectory(mapLayoutVersion), 0755); err != nil {
+		return candidate, err
+	}
 
+	changed := patches.ChangedMaps(installedVersion, mapLayoutVersion)
 	kept := make(map[string]*ebpf.Map)
 	defer func() {
 		for _, bpfMap := range kept {
@@ -112,7 +127,11 @@ func loadBPF(config hostConfig) (bpfCandidate, error) {
 	}()
 	for name, mapSpec := range spec.Maps {
 		candidate.maps[name] = true
-		bpfMap, openError := openMap(name)
+		if changed[name] {
+			continue
+		}
+
+		bpfMap, openError := openPinnedMap(filepath.Join(mapDirectory(installedVersion), name))
 		if openError != nil {
 			if !errors.Is(openError, os.ErrNotExist) {
 				return candidate, openError
@@ -121,7 +140,7 @@ func loadBPF(config hostConfig) (bpfCandidate, error) {
 		}
 		if err := mapSpec.Compatible(bpfMap); err != nil {
 			bpfMap.Close()
-			return candidate, fmt.Errorf("map %s changed layout; reset is required: %w", name, err)
+			return candidate, fmt.Errorf("map %s changed layout without a patch in cli/patches: %w", name, err)
 		}
 		kept[name] = bpfMap
 	}
@@ -133,16 +152,30 @@ func loadBPF(config hostConfig) (bpfCandidate, error) {
 	defer collection.Close()
 
 	for name, bpfMap := range collection.Maps {
+		path := filepath.Join(mapDirectory(mapLayoutVersion), name)
 		if kept[name] != nil {
+			if installedVersion == mapLayoutVersion {
+				continue
+			}
+
+			if err := pinAgain(kept[name], path); err != nil {
+				candidate.cleanup()
+				return candidate, err
+			}
+			candidate.repinnedMaps = append(candidate.repinnedMaps, name)
 			continue
 		}
 
-		path := filepath.Join(pinDirectory, name)
 		if err := bpfMap.Pin(path); err != nil {
 			candidate.cleanup()
 			return candidate, err
 		}
 		candidate.createdMaps = append(candidate.createdMaps, name)
+	}
+
+	if err := candidate.migrateChangedMaps(); err != nil {
+		candidate.cleanup()
+		return candidate, err
 	}
 
 	release := releaseDirectory(candidate.hash)
@@ -176,8 +209,8 @@ func (candidate bpfCandidate) commit() error {
 }
 
 func (candidate bpfCandidate) cleanup() {
-	for _, name := range candidate.createdMaps {
-		_ = os.Remove(filepath.Join(pinDirectory, name))
+	for _, name := range append(candidate.createdMaps, candidate.repinnedMaps...) {
+		_ = os.Remove(filepath.Join(mapDirectory(mapLayoutVersion), name))
 	}
 	if candidate.createdRelease {
 		_ = os.RemoveAll(releaseDirectory(candidate.hash))
@@ -203,30 +236,30 @@ func removeOldReleases() error {
 	return nil
 }
 
-// removeObsoleteMaps removes pins that no program in the active object uses.
-func removeObsoleteMaps(active map[string]bool) error {
-	entries, err := os.ReadDir(pinDirectory)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || active[entry.Name()] {
-			continue
-		}
-		if err := os.Remove(filepath.Join(pinDirectory, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
+func openMap(name string) (*ebpf.Map, error) {
+	return openPinnedMap(filepath.Join(mapDirectory(mapLayoutVersion), name))
 }
 
-func openMap(name string) (*ebpf.Map, error) {
-	bpfMap, err := ebpf.LoadPinnedMap(filepath.Join(pinDirectory, name), nil)
+func openPinnedMap(path string) (*ebpf.Map, error) {
+	bpfMap, err := ebpf.LoadPinnedMap(path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("open pinned map %s: %w", name, err)
+		return nil, fmt.Errorf("open pinned map %s: %w", path, err)
 	}
 
 	return bpfMap, nil
+}
+
+// readBuildHash reads the installed release hash from one layout directory.
+func readBuildHash(directory string) ([32]byte, error) {
+	var hash [32]byte
+
+	buildHash, err := openPinnedMap(filepath.Join(directory, "build_hash"))
+	if err != nil {
+		return hash, err
+	}
+	defer buildHash.Close()
+
+	return hash, buildHash.Lookup(uint32(0), &hash)
 }
 
 func readMap[Value any](name string, key any) (Value, error) {
@@ -286,12 +319,22 @@ func readMapEntries[Key comparable, Value any](name string) (map[Key]Value, erro
 	return entries, iterator.Err()
 }
 
-// readPinnedConfig reads the pinned host configuration. It tolerates the layout of an older release, so configure can compare the uplink.
 func readPinnedConfig() (hostConfig, error) {
+	return readPinnedConfigIn(mapDirectory(mapLayoutVersion))
+}
+
+// readPinnedConfigIn reads the host configuration in one layout directory. It tolerates an older value layout.
+func readPinnedConfigIn(directory string) (hostConfig, error) {
 	var config hostConfig
 
-	raw, err := readMap[[]byte]("config", uint32(0))
+	configMap, err := openPinnedMap(filepath.Join(directory, "config"))
 	if err != nil {
+		return config, err
+	}
+	defer configMap.Close()
+
+	raw := make([]byte, configMap.ValueSize())
+	if err := configMap.Lookup(uint32(0), raw); err != nil {
 		return config, err
 	}
 

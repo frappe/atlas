@@ -13,6 +13,7 @@ It uses eBPF, WireGuard, Linux NDP with proxy NDP, and NOT_HERE recovery. It ser
 ```text
 bpf/                         eBPF hooks and maps
 cli/                         Go CLI, one file per command group
+cli/patches/                 Map layout patches, one file per version
 Makefile                     Build targets
 ```
 

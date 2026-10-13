@@ -36,9 +36,41 @@ The command loads the candidate programs before it replaces any hook.
 
 If a hook replacement fails, the command restores the old programs.
 
-The command rejects an incompatible map layout and keeps the active release.
+Each build has a map layout version, `map_layout_version` in `bpf/maps.h`. Version 0 pins its maps in `/sys/fs/bpf/atlas-wg-mesh/`. A later version pins them in `/sys/fs/bpf/atlas-wg-mesh/maps/v<version>/`. `atlas-wg-mesh version` shows the layout of a build.
 
-Keep pinned map types, keys, values, and maximum entries stable. Add new maps under new names, and make their data rebuildable from `metald` sync. CI rejects map layout changes against the base branch.
+When the host runs an older layout, the command moves the maps to the new layout before it replaces any hook:
+
+1. An unchanged map gets a second pin. The old and new programs share it, so no entry is lost.
+2. A changed map gets a new map, which the patches in `cli/patches` fill from the old map.
+3. After the hook switch, the command copies the changed maps again. This adds the entries that the old programs learned during the switch.
+4. The command removes the pins of the old layout.
+
+If a step fails, the old programs keep the old maps. The command refuses a build with an older layout than the host runs, so a failed upgrade keeps the running release.
+
+A build from before the layout versions recreates its maps empty when it replaces a newer layout. Local VMs come back from their interfaces, peers from the next `metald` sync, and remote VMs from NDP.
+
+## Change a map
+
+A map keeps its type, key, value, maximum entries, and flags for the life of its pin. To change one of them:
+
+1. Change the map in `bpf/maps.h`, and increase `map_layout_version` by one.
+2. Add `cli/patches/v<version>.go`, and list the patch at the end of `Patches`. The patch names each changed map and converts one entry. A nil key drops the entry.
+
+```go
+// v1.go: remote_vms stores the time of the last advertisement after the host address.
+var addAdvertisementTime = Patch{
+	Maps: []string{"remote_vms"},
+	Convert: func(_ string, key, value []byte) ([]byte, []byte, error) {
+		return key, append(value, make([]byte, 8)...), nil
+	},
+}
+```
+
+3. Never change a released patch. A host that skips versions runs every patch in order.
+
+`upgrade-metald.sh` installs the new `atlas-wg-mesh` before it restarts `metald`. A VM command that the old `metald` runs in that moment fails, because the new layout has no pins yet. The `metald` reconciler applies the VM network again within 5 seconds.
+
+If a migration stops before it commits, the next `configure` builds the new layout again from the old maps.
 
 ## Synchronize peers
 
