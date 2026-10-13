@@ -43,3 +43,123 @@ pull_request_rules:
           Hey @{{author}}, thanks for this pull request! It has been open for over a month, so we're closing it automatically to keep things tidy.
 
           Still working on it? Add the `keep-open` label and reopen it, or leave a comment and we'll help.
+
+  - name: Label area atlas
+    conditions:
+      - files~=^(atlas|realtime)/|^pyproject\.toml$
+    actions:
+      label:
+        toggle:
+          - "area: atlas"
+
+  - name: Label area metal
+    conditions:
+      - files~=^metal/
+    actions:
+      label:
+        toggle:
+          - "area: metal"
+
+  - name: Label area http-proxy
+    conditions:
+      - files~=^services/http-proxy/
+    actions:
+      label:
+        toggle:
+          - "area: http-proxy"
+
+  - name: Label area ipv6-router
+    conditions:
+      - files~=^services/ipv6-router/
+    actions:
+      label:
+        toggle:
+          - "area: ipv6-router"
+
+  - name: Label area wg-mesh
+    conditions:
+      - files~=^services/wg-mesh/
+    actions:
+      label:
+        toggle:
+          - "area: wg-mesh"
+
+  - name: Label area wg-gateway
+    conditions:
+      - files~=^services/wg-gateway/
+    actions:
+      label:
+        toggle:
+          - "area: wg-gateway"
+
+  - name: Label area control-cluster
+    conditions:
+      - files~=^services/control-cluster/
+    actions:
+      label:
+        toggle:
+          - "area: control-cluster"
+
+  - name: Label area clients
+    conditions:
+      - files~=^clients/
+    actions:
+      label:
+        toggle:
+          - "area: clients"
+
+  - name: Label area docs
+    conditions:
+      - files~=^(docs|\.vitepress)/|\.md$
+    actions:
+      label:
+        toggle:
+          - "area: docs"
+
+  - name: Label area ci
+    conditions:
+      - files~=^(\.github|scripts)/|^\.mergify\.yml$|^\.pre-commit-config\.yaml$
+    actions:
+      label:
+        toggle:
+          - "area: ci"
+
+  - name: Label area agent-tooling
+    conditions:
+      - files~=^(llm|\.claude|\.agents|\.greptile)/|^(CLAUDE|AGENTS)\.md$
+    actions:
+      label:
+        toggle:
+          - "area: agent-tooling"
+
+  - name: Label risk migration
+    conditions:
+      - files~=^atlas/patches(/|\.txt$)|^metal/internal/patches/|^services/wg-mesh/cli/patches/
+    actions:
+      label:
+        toggle:
+          - "risk: migration"
+
+  - name: Label risk ebpf
+    conditions:
+      - files~=/bpf/
+    actions:
+      label:
+        toggle:
+          - "risk: ebpf"
+
+  - name: Label risk api
+    conditions:
+      - files~=^(atlas/api|metal/internal/api|clients/openapi)/
+    actions:
+      label:
+        toggle:
+          - "risk: api"
+
+  - name: Label risk dependencies
+    conditions:
+      - files~=(^|/)(uv\.lock|package-lock\.json|go\.mod|go\.sum)$
+    actions:
+      label:
+        toggle:
+          - "risk: dependencies"

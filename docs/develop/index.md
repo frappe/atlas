@@ -63,6 +63,8 @@ Mergify merges the base branch into an open pull request that is behind it. It s
 
 Mergify closes a pull request that is open for more than 30 days. To keep it open, add the `keep-open` label.
 
+Mergify labels a pull request by its changed files. An `area:` label shows the component, such as `area: metal`. A `risk:` label shows a change that needs careful review: `risk: migration`, `risk: ebpf`, `risk: api` or `risk: dependencies`. The rules are in `.mergify.yml`.
+
 ## Release
 
 A release manager runs the **Release** workflow on `master` from the GitHub Actions tab. The workflow tags the `master` head and creates a GitHub Release with notes from the merged pull requests.
