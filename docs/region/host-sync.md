@@ -32,7 +32,9 @@ It sends the same facts in each sync without running the probes again. Provision
 
 A failed startup probe is logged once and leaves the optional report absent until Metal restarts. Capacity and VM-state sync continue.
 
-Atlas stores the validated JSON in Metal Server's `cpu_compatibility_report` and exposes `tsc_scaling_supported` as a read-only checkbox. Sync updates these fields only when the report changes. Reports have no expiry. A host that omits the optional report clears its stored facts. Only memory snapshot migrations require the report; they do not probe hosts. Placement still requires recent capacity. See [migration checks](../compute/migration.md#compatibility-before-transfer).
+Atlas stores the validated JSON in Metal Server's `cpu_compatibility_report` and exposes `tsc_scaling_supported` as a read-only checkbox. Sync updates these fields only when the report changes and leaves the server's edit timestamp unchanged. A document save preserves the latest synced facts from the locked server row.
+
+Reports have no expiry. A host that omits the optional report clears its stored facts. Only memory snapshot migrations require the report; they do not probe hosts. Placement still requires recent capacity. See [migration checks](../compute/migration.md#compatibility-before-transfer).
 
 ### Why sync sends complete sets
 

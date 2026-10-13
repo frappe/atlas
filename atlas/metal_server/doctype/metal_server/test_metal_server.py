@@ -132,6 +132,29 @@ class TestServer(UnitTestCase):
 		self.assertEqual((tags[0].key, tags[0].value), ("env", "local"))
 		server._set_wireguard_ip_address_if_not_set.assert_called_once_with()
 
+	def test_before_save_preserves_synced_host_facts(self) -> None:
+		for previous in (
+			None,
+			SimpleNamespace(cpu_compatibility_report="new report", tsc_scaling_supported=1),
+			SimpleNamespace(cpu_compatibility_report=None, tsc_scaling_supported=0),
+		):
+			with self.subTest(previous=previous):
+				server = SimpleNamespace(
+					cpu_compatibility_report="old report",
+					tsc_scaling_supported=0,
+					get_doc_before_save=lambda: previous,
+				)
+
+				MetalServer.before_save(server)
+
+				self.assertEqual(
+					server.cpu_compatibility_report,
+					previous.cpu_compatibility_report if previous else "old report",
+				)
+				self.assertEqual(
+					server.tsc_scaling_supported, previous.tsc_scaling_supported if previous else 0
+				)
+
 	def test_validate_rejects_a_repeated_tag_key(self) -> None:
 		tags = [SimpleNamespace(key="env", value="local"), SimpleNamespace(key="env", value="dev")]
 		server = SimpleNamespace(
