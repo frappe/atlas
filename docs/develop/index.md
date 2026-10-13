@@ -49,6 +49,25 @@ Explain behavior, reasons, and recovery once in the matching handbook section un
 
 Put a new page in reading order in `.vitepress/sidebar.mts`. Keep source-code links in a `details` block at the end of the page. The `docs-build/internal/` files are background research and are excluded from the site.
 
+<<<<<<< HEAD
+=======
+## Choose a target branch
+
+`develop` gets all new work. `master` is the stable branch and gets only backports from `develop`.
+
+1. Raise the pull request on `develop`.
+2. Add the `backport master` label when the change must go to `master`. After the merge, Mergify opens the backport pull request and assigns it to you.
+3. Resolve conflicts in the backport pull request if Mergify reports them, then merge it.
+
+Mergify closes other pull requests to `master`. For a manual backport, add the `manual-backport-pr` label and reopen the pull request.
+
+## Release
+
+A release manager runs the **Release** workflow on `master` from the GitHub Actions tab. The workflow tags the `master` head and creates a GitHub Release with notes from the merged pull requests.
+
+The version starts at `v1.0.0`. A breaking change, marked with `!` such as `feat(metal)!: Remove a field`, increases the minor version. Other changes increase the patch version. The workflow fails when `master` has no commits after the last release.
+
+>>>>>>> 23065d5 (build(atlas): Release master with an automatic version)
 ## Before you submit a change
 
 - Read the nearest component `SPEC.md` before a structural change.
