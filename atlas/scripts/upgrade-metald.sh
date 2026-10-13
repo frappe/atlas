@@ -14,9 +14,17 @@ metald_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
 mesh_binary=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
 service=metal.service
 ready_timeout_seconds=120
+patches_file=/var/lib/metal/patches.json
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
+	exit 1
+fi
+
+# One metald install or upgrade at a time on a host, whichever path starts it.
+exec 9>/run/lock/metald-install.lock
+if ! flock -n 9; then
+	echo "another metald install or upgrade runs on this host" >&2
 	exit 1
 fi
 
@@ -32,7 +40,7 @@ step() { echo "==> $*"; }
 # reported_version returns a tool version or "unknown".
 reported_version() {
 	local tool_version
-	tool_version=$("$1" version 2>/dev/null | head -1) || tool_version=""
+	tool_version=$("$1" version 2>/dev/null | head -1 | sed 's/^CLI version: //') || tool_version=""
 	[ -n "$tool_version" ] || tool_version=unknown
 	echo "$tool_version"
 }
@@ -109,8 +117,13 @@ stage() {
 	echo "$staged"
 }
 
-# restore_previous puts back the binaries that this upgrade replaced.
+# restore_previous puts back the binaries that this upgrade replaced. After the new metald applies a patch, the
+# previous build cannot read the patched state, so the new build stays and the fix is a new build.
 restore_previous() {
+	if [ "$(cat "$patches_file" 2>/dev/null || true)" != "$applied_patches" ]; then
+		echo "    the new metald applied a patch that $current_version cannot read; keeping $new_version" >&2
+		return
+	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
 	systemctl reset-failed "$service" 2>/dev/null || true
@@ -147,6 +160,7 @@ else
 	echo "    systemd holds $stored_descriptor_count descriptors; the virtual machines stay up"
 fi
 virtual_machine_count=$(active_virtual_machine_count)
+applied_patches=$(cat "$patches_file" 2>/dev/null || true)
 
 # Keep the running binaries before anything changes, so every later step can undo.
 step "back up the running binaries"

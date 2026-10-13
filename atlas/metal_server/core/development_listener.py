@@ -124,6 +124,11 @@ class ForwardingHandler(BaseHTTPRequestHandler):
 	server: ForwardingServer
 
 	def forward(self) -> None:
+		# The forwarder passes a body by its length only, so it refuses a streamed one instead of dropping it.
+		if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+			self.send_error(411, "Send the request body with a Content-Length")
+			return
+
 		length = int(self.headers.get("Content-Length") or 0)
 		body = self.rfile.read(length) if length else None
 		headers = {

@@ -232,6 +232,34 @@ class TestMetaldUpdate(IntegrationTestCase):
 		update.reload()
 		self.assertEqual((update.status, update.servers[0].status), ("Running", "Pending"))
 
+	def test_a_failed_server_stops_the_upgrades_that_have_not_started(self) -> None:
+		update = self.start_planned(
+			[insert_server("test-stop-failed"), insert_server("test-stop-held")], canary_size=2
+		)
+		update.servers[0].db_set({"status": "Failed", "status_reason": "test failure"})
+
+		with patch(f"{MODULE}.HostInstallation") as host_installation:
+			update.run_next_step()
+
+		update.reload()
+		self.assertEqual((update.status, update.servers[1].status), ("Paused", "Pending"))
+		host_installation.assert_not_called()
+
+	def test_a_read_from_an_older_plan_leaves_the_row_alone(self) -> None:
+		update = self.create_update([insert_server("test-read-old")])
+		update.plan()
+		row = update.servers[0]
+		replacement = insert_server("test-read-new")
+
+		def replan_during_the_read(server):
+			frappe.db.set_value("Metald Update Server", row.name, "server", replacement)
+			return OLD
+
+		with patch(f"{MODULE}.get_host_versions", side_effect=replan_during_the_read):
+			read_server_versions(update.name, row.name)
+
+		self.assertEqual(frappe.db.get_value("Metald Update Server", row.name, "status"), "Planning")
+
 	def test_after_the_wait_every_upgraded_server_is_checked_again(self) -> None:
 		earlier = insert_server("test-update-earlier")
 		later = insert_server("test-update-later")

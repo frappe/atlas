@@ -55,7 +55,7 @@ class MetaldUpdate(Document):
 	def before_insert(self) -> None:
 		# A duplicate keeps its pinned build, so it can roll the servers back.
 		if not self.metald_binary_x86_64_file:
-			self.pin_latest_build()
+			self._pin_latest_build()
 		if not self.servers:
 			for server in frappe.get_all(
 				"Metal Server", filters={"status": "Running"}, pluck="name", order_by="title asc"
@@ -74,33 +74,11 @@ class MetaldUpdate(Document):
 		if len(servers) != len(set(servers)):
 			frappe.throw(_("Each server can be in the update only once."))
 
-	def pin_latest_build(self) -> None:
-		"""Copy the latest build from Atlas Settings."""
-		settings = frappe.get_single("Atlas Settings")
-		if not (
-			settings.metald_version
-			and settings.metald_binary_x86_64_file
-			and settings.wg_mesh_binary_x86_64_file
-		):
-			frappe.throw(
-				_("Atlas Settings has no versioned metald and Atlas WG Mesh build. Run build-metald.")
-			)
-
-		for field in (
-			"metald_version",
-			"metald_binary_x86_64_file",
-			"metald_binary_hash",
-			"wg_mesh_version",
-			"wg_mesh_binary_x86_64_file",
-			"wg_mesh_binary_hash",
-		):
-			self.set(field, settings.get(field))
-
 	@frappe.whitelist(methods=["POST"])
 	def plan(self) -> None:
 		"""Start reading the versions of each server."""
 		frappe.only_for("System Manager")
-		self.lock_status("Draft")
+		self._lock_status("Draft")
 		for row in self.servers:
 			row.db_set({"status": "Planning", "status_reason": None, "batch": 0})
 		self.db_set("status", "Planning")
@@ -110,7 +88,7 @@ class MetaldUpdate(Document):
 	def edit_plan(self) -> None:
 		"""Return the update to Draft, so its servers and settings can change."""
 		frappe.only_for("System Manager")
-		self.lock_status("Planning", "Planned")
+		self._lock_status("Planning", "Planned")
 		self.db_set("status", "Draft")
 
 	@frappe.whitelist(methods=["POST"])
@@ -126,7 +104,7 @@ class MetaldUpdate(Document):
 			for_update=True,
 			pluck=True,
 		)
-		self.lock_status("Planned")
+		self._lock_status("Planned")
 		if any(row.status == "Failed" for row in self.servers):
 			frappe.throw(_("Some server versions could not be read. Edit the plan and plan again."))
 		if "Running" in statuses or "Paused" in statuses:
@@ -143,14 +121,14 @@ class MetaldUpdate(Document):
 	def pause(self) -> None:
 		"""Stop new upgrades. Running SSH Tasks finish."""
 		frappe.only_for("System Manager")
-		self.lock_status("Running")
+		self._lock_status("Running")
 		self.db_set("status", "Paused")
 
 	@frappe.whitelist(methods=["POST"])
 	def resume(self) -> None:
 		"""Upgrade the failed servers again and continue."""
 		frappe.only_for("System Manager")
-		self.lock_status("Paused")
+		self._lock_status("Paused")
 		for row in self.servers:
 			if row.status == "Failed":
 				row.db_set({"status": "Pending", "status_reason": None})
@@ -161,101 +139,17 @@ class MetaldUpdate(Document):
 	def cancel(self) -> None:
 		"""Stop the rollout for good. Running SSH Tasks finish."""
 		frappe.only_for("System Manager")
-		self.lock_status("Running", "Paused")
+		self._lock_status("Running", "Paused")
 		self.db_set("status", "Cancelled")
-
-	def lock(self) -> str:
-		"""Lock and reload this update, and return its status."""
-		status = frappe.db.get_value(self.doctype, self.name, "status", for_update=True)
-		self.load_from_db()
-		return status
-
-	def lock_status(self, *allowed_statuses: str) -> None:
-		"""Lock and reload this update, and check that its status allows the action."""
-		if (status := self.lock()) not in allowed_statuses:
-			frappe.throw(_("Metald Update {0} is {1}.").format(self.name, status))
 
 	def run_next_step(self) -> None:
 		"""Run one step of the plan or the rollout. A step only touches the database and queues jobs."""
 		# A Desk action can change the status after the scheduler listed the update.
-		status = self.lock()
+		status = self._lock()
 		if status == "Planning":
-			self.run_planning_step()
+			self._run_planning_step()
 		elif status == "Running":
-			self.run_rollout_step()
-
-	def run_planning_step(self) -> None:
-		"""Queue the version reads, then mark the update Planned, or Completed when no server needs the build."""
-		planning_rows = [row for row in self.servers if row.status == "Planning"]
-		if planning_rows:
-			queue_version_reads(planning_rows)
-		elif all(row.status == "Skipped" for row in self.servers):
-			self.db_set("status", "Completed")
-		else:
-			self.db_set("status", "Planned")
-
-	def run_rollout_step(self) -> None:
-		"""Move the batches up to the current one."""
-		# Earlier batches stay in scope, so a check also finds a host that failed after its own batch.
-		rows = [row for row in self.servers if 0 < row.batch <= self.current_batch]
-		self.collect_upgrades(rows)
-		statuses = {row.status for row in rows}
-
-		if "Upgrading" in statuses or "Checking" in statuses:
-			queue_version_reads([row for row in rows if row.status == "Checking"])
-		elif "Pending" in statuses:
-			self.start_upgrades([row for row in rows if row.status == "Pending"])
-		elif "Failed" in statuses:
-			self.db_set("status", "Paused")
-		elif "Upgraded" in statuses:
-			self.check_after_wait(rows)
-		elif self.current_batch == max(row.batch for row in self.servers):
-			self.db_set({"status": "Completed", "wait_until": None})
-		else:
-			self.db_set({"current_batch": self.current_batch + 1, "wait_until": None})
-
-	def start_upgrades(self, rows: list[MetaldUpdateServer]) -> None:
-		"""Start one upgrade SSH Task for each running server and link it to the row."""
-		for row in rows:
-			server: MetalServer = frappe.get_doc("Metal Server", row.server)
-			if server.status != "Running":
-				row.db_set(
-					{"status": "Skipped", "status_reason": _("The server is {0}.").format(server.status)}
-				)
-				continue
-			# Another metald operation from Desk runs on this server.
-			if is_job_enqueued(server.metald_job_id):
-				continue
-
-			task = HostInstallation(server).upgrade_metald(self, run_in_background=True)
-			row.db_set({"status": "Upgrading", "ssh_task": task.name, "status_reason": None})
-
-	def collect_upgrades(self, rows: list[MetaldUpdateServer]) -> None:
-		"""Copy the result of each finished upgrade SSH Task into its row."""
-		for row in rows:
-			if row.status != "Upgrading":
-				continue
-			if not row.ssh_task:
-				row.db_set({"status": "Failed", "status_reason": _("The upgrade has no SSH Task.")})
-				continue
-
-			task: SSHTask = frappe.get_doc("SSH Task", row.ssh_task)
-			if task.status == "Success":
-				row.db_set("status", "Upgraded")
-			elif task.status == "Failed":
-				row.db_set({"status": "Failed", "status_reason": get_failure_reason(task.output)})
-			elif task.status == "Pending" and not is_job_enqueued(task.job_id):
-				row.db_set({"status": "Failed", "status_reason": _("The SSH Task did not start.")})
-
-	def check_after_wait(self, rows: list[MetaldUpdateServer]) -> None:
-		"""Start the wait, and after it check every upgraded server again."""
-		if not self.wait_until:
-			self.db_set("wait_until", add_to_date(now_datetime(), minutes=self.wait_minutes))
-		elif now_datetime() >= get_datetime(self.wait_until):
-			checked_rows = [row for row in rows if row.status in ("Upgraded", "Verified")]
-			for row in checked_rows:
-				row.db_set({"status": "Checking", "status_reason": None})
-			queue_version_reads(checked_rows)
+			self._run_rollout_step()
 
 	def get_version_problem(self, versions: dict[str, str | None]) -> str | None:
 		"""Return why the versions on a server differ from the pinned build, or None."""
@@ -280,6 +174,113 @@ class MetaldUpdate(Document):
 				SYNCHRONIZATION_LIMIT_MINUTES
 			)
 		return None
+
+	def _pin_latest_build(self) -> None:
+		"""Copy the latest build from Atlas Settings."""
+		settings = frappe.get_single("Atlas Settings")
+		if not (
+			settings.metald_version
+			and settings.metald_binary_x86_64_file
+			and settings.wg_mesh_binary_x86_64_file
+		):
+			frappe.throw(
+				_("Atlas Settings has no versioned metald and Atlas WG Mesh build. Run build-metald.")
+			)
+
+		for field in (
+			"metald_version",
+			"metald_binary_x86_64_file",
+			"metald_binary_hash",
+			"wg_mesh_version",
+			"wg_mesh_binary_x86_64_file",
+			"wg_mesh_binary_hash",
+		):
+			self.set(field, settings.get(field))
+
+	def _lock(self) -> str:
+		"""Lock and reload this update, and return its status."""
+		status = frappe.db.get_value(self.doctype, self.name, "status", for_update=True)
+		self.load_from_db()
+		return status
+
+	def _lock_status(self, *allowed_statuses: str) -> None:
+		"""Lock and reload this update, and check that its status allows the action."""
+		if (status := self._lock()) not in allowed_statuses:
+			frappe.throw(_("Metald Update {0} is {1}.").format(self.name, status))
+
+	def _run_planning_step(self) -> None:
+		"""Queue the version reads, then mark the update Planned, or Completed when no server needs the build."""
+		planning_rows = [row for row in self.servers if row.status == "Planning"]
+		if planning_rows:
+			queue_version_reads(planning_rows)
+		elif all(row.status == "Skipped" for row in self.servers):
+			self.db_set("status", "Completed")
+		else:
+			self.db_set("status", "Planned")
+
+	def _run_rollout_step(self) -> None:
+		"""Move the batches up to the current one."""
+		# Earlier batches stay in scope, so a check also finds a host that failed after its own batch.
+		rows = [row for row in self.servers if 0 < row.batch <= self.current_batch]
+		self._collect_upgrades(rows)
+		statuses = {row.status for row in rows}
+
+		# A failure stops new upgrades. Upgrades and checks that already run finish first.
+		if "Upgrading" in statuses or "Checking" in statuses:
+			queue_version_reads([row for row in rows if row.status == "Checking"])
+		elif "Failed" in statuses:
+			self.db_set("status", "Paused")
+		elif "Pending" in statuses:
+			self._start_upgrades([row for row in rows if row.status == "Pending"])
+		elif "Upgraded" in statuses:
+			self._check_after_wait(rows)
+		elif self.current_batch == max(row.batch for row in self.servers):
+			self.db_set({"status": "Completed", "wait_until": None})
+		else:
+			self.db_set({"current_batch": self.current_batch + 1, "wait_until": None})
+
+	def _start_upgrades(self, rows: list[MetaldUpdateServer]) -> None:
+		"""Start one upgrade SSH Task for each running server and link it to the row."""
+		for row in rows:
+			server: MetalServer = frappe.get_doc("Metal Server", row.server)
+			if server.status != "Running":
+				row.db_set(
+					{"status": "Skipped", "status_reason": _("The server is {0}.").format(server.status)}
+				)
+				continue
+			# Another metald operation from Desk runs on this server.
+			if is_job_enqueued(server.metald_job_id):
+				continue
+
+			task = HostInstallation(server).upgrade_metald(self, run_in_background=True)
+			row.db_set({"status": "Upgrading", "ssh_task": task.name, "status_reason": None})
+
+	def _collect_upgrades(self, rows: list[MetaldUpdateServer]) -> None:
+		"""Copy the result of each finished upgrade SSH Task into its row."""
+		for row in rows:
+			if row.status != "Upgrading":
+				continue
+			if not row.ssh_task:
+				row.db_set({"status": "Failed", "status_reason": _("The upgrade has no SSH Task.")})
+				continue
+
+			task: SSHTask = frappe.get_doc("SSH Task", row.ssh_task)
+			if task.status == "Success":
+				row.db_set("status", "Upgraded")
+			elif task.status == "Failed":
+				row.db_set({"status": "Failed", "status_reason": get_failure_reason(task.output)})
+			elif task.status == "Pending" and not is_job_enqueued(task.job_id):
+				row.db_set({"status": "Failed", "status_reason": _("The SSH Task did not start.")})
+
+	def _check_after_wait(self, rows: list[MetaldUpdateServer]) -> None:
+		"""Start the wait, and after it check every upgraded server again."""
+		if not self.wait_until:
+			self.db_set("wait_until", add_to_date(now_datetime(), minutes=self.wait_minutes))
+		elif now_datetime() >= get_datetime(self.wait_until):
+			checked_rows = [row for row in rows if row.status in ("Upgraded", "Verified")]
+			for row in checked_rows:
+				row.db_set({"status": "Checking", "status_reason": None})
+			queue_version_reads(checked_rows)
 
 
 def get_host_versions(server: MetalServer) -> dict[str, str | None]:
@@ -352,17 +353,23 @@ def read_server_versions(update_name: str, row_name: str) -> None:
 		# A failed read must end in the row, or the step queues it again forever.
 		if not isinstance(error, MetalClientError):
 			frappe.log_error(f"Metald Update {update_name}: could not read the versions of {server.name}")
-		row.db_set({"status": "Failed", "status_reason": str(error)})
-		return
-
-	if row.status == "Planning":
-		problem = metald_update.get_version_problem(versions)
-		status = "Pending" if problem else "Skipped"
-		reason = None if problem else _("The server already runs the build.")
+		values = {"status": "Failed", "status_reason": str(error)}
 	else:
-		reason = metald_update.get_health_problem(row.server, versions)
-		status = "Failed" if reason else "Verified"
-	row.db_set({**versions, "status": status, "status_reason": reason})
+		if row.status == "Planning":
+			problem = metald_update.get_version_problem(versions)
+			status = "Pending" if problem else "Skipped"
+			reason = None if problem else _("The server already runs the build.")
+		else:
+			reason = metald_update.get_health_problem(row.server, versions)
+			status = "Failed" if reason else "Verified"
+		values = {**versions, "status": status, "status_reason": reason}
+
+	# The plan can change during the host call, so write only into the row that asked for this read.
+	current = frappe.db.get_value(
+		"Metald Update Server", row_name, ["server", "status"], as_dict=True, for_update=True
+	)
+	if current and (current.server, current.status) == (row.server, row.status):
+		row.db_set(values)
 
 
 @frappe.whitelist(methods=["POST"])

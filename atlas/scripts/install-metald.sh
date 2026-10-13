@@ -30,6 +30,13 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
+# One metald install or upgrade at a time on a host, whichever path starts it.
+exec 9>/run/lock/metald-install.lock
+if ! flock -n 9; then
+	echo "another metald install or upgrade runs on this host" >&2
+	exit 1
+fi
+
 step() { echo "==> $*"; }
 skip() { echo "    $* is already installed"; }
 
