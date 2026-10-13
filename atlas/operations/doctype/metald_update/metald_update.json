@@ -1,0 +1,219 @@
+{
+ "actions": [],
+ "autoname": "metald-update-.#####",
+ "creation": "2026-10-13 01:30:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "column_break_progress",
+  "current_batch",
+  "column_break_wait_until",
+  "wait_until",
+  "binaries_section",
+  "metald_version",
+  "metald_binary_x86_64_file",
+  "metald_binary_hash",
+  "column_break_binaries",
+  "wg_mesh_version",
+  "wg_mesh_binary_x86_64_file",
+  "wg_mesh_binary_hash",
+  "rollout_section",
+  "canary_size",
+  "column_break_batch",
+  "batch_size",
+  "column_break_wait",
+  "wait_minutes",
+  "servers_section",
+  "servers"
+ ],
+ "fields": [
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nPlanning\nPlanned\nRunning\nPaused\nCompleted\nCancelled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_progress",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:![\"Draft\", \"Planning\", \"Planned\"].includes(doc.status)",
+   "fieldname": "current_batch",
+   "fieldtype": "Int",
+   "label": "Current Batch",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_wait_until",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wait_until",
+   "fieldtype": "Datetime",
+   "label": "Wait Until",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "metald_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Metald Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wg_mesh_version",
+   "fieldtype": "Data",
+   "label": "WG Mesh Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "binaries_section",
+   "fieldtype": "Section Break",
+   "label": "Binaries"
+  },
+  {
+   "fieldname": "metald_binary_x86_64_file",
+   "fieldtype": "Link",
+   "label": "Metald Binary (x86_64)",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "metald_binary_hash",
+   "fieldtype": "Data",
+   "label": "Metald Binary SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_binaries",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wg_mesh_binary_x86_64_file",
+   "fieldtype": "Link",
+   "label": "WG Mesh Binary (x86_64)",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wg_mesh_binary_hash",
+   "fieldtype": "Data",
+   "label": "WG Mesh Binary SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rollout_section",
+   "fieldtype": "Section Break",
+   "label": "Rollout Config"
+  },
+  {
+   "default": "1",
+   "description": "Servers in the first batch.",
+   "fieldname": "canary_size",
+   "fieldtype": "Int",
+   "label": "Canary Size",
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_batch",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "5",
+   "description": "Servers in each later batch.",
+   "fieldname": "batch_size",
+   "fieldtype": "Int",
+   "label": "Batch Size",
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_wait",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "10",
+   "description": "Minutes to watch a batch before its check.",
+   "fieldname": "wait_minutes",
+   "fieldtype": "Int",
+   "label": "Wait Minutes",
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
+   "reqd": 1
+  },
+  {
+   "fieldname": "servers_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "Empty adds every running server.",
+   "fieldname": "servers",
+   "fieldtype": "Table",
+   "label": "Servers",
+   "options": "Metald Update Server",
+   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-13 12:18:59.914017",
+ "modified_by": "Administrator",
+ "module": "Operations",
+ "name": "Metald Update",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Draft"
+  },
+  {
+   "color": "Blue",
+   "title": "Planning"
+  },
+  {
+   "color": "Yellow",
+   "title": "Planned"
+  },
+  {
+   "color": "Blue",
+   "title": "Running"
+  },
+  {
+   "color": "Orange",
+   "title": "Paused"
+  },
+  {
+   "color": "Green",
+   "title": "Completed"
+  },
+  {
+   "color": "Gray",
+   "title": "Cancelled"
+  }
+ ],
+ "track_changes": 1
+}

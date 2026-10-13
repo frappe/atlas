@@ -1,0 +1,114 @@
+{
+ "actions": [],
+ "creation": "2026-10-13 01:30:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "server",
+  "batch",
+  "status",
+  "metald_version",
+  "wg_mesh_version",
+  "firecracker_version",
+  "ssh_task",
+  "status_reason",
+  "column_break_hjun",
+  "section_break_eylo"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Server",
+   "options": "Metal Server",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "batch",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Batch",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Pending\nPlanning\nUpgrading\nUpgraded\nChecking\nVerified\nFailed\nSkipped",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "metald_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Metald Version",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "wg_mesh_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "WG Mesh Version",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "firecracker_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Firecracker Version",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "ssh_task",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "SSH Task",
+   "no_copy": 1,
+   "options": "SSH Task",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_reason",
+   "fieldtype": "Small Text",
+   "label": "Status Reason",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hjun",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_eylo",
+   "fieldtype": "Section Break"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-13 13:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Operations",
+ "name": "Metald Update Server",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

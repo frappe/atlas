@@ -52,6 +52,31 @@ Each method checks permissions and local state before delegating long work.
 | --- | --- |
 | `install_metald` | Writes configuration and units. Installs missing binaries. Does not replace a running daemon. |
 | `upgrade_metald` | Upgrades one server to the latest build in Atlas Settings. |
+| Metald Update | Upgrades many servers to one pinned build in batches. Use it for every fleet rollout. |
+
+### Roll out a build
+
+Select servers in the Metal Server list and use **Create Metald Update**. An update with an empty server table includes all running servers. A new update pins the versions, binaries, and hashes from Atlas Settings, so later builds do not change it.
+
+| Status | What happens |
+| --- | --- |
+| Draft | You change the servers and the rollout fields. **Plan Rollout** starts the planning. |
+| Planning | Reads host versions through `GET /v1/versions`. A server that already runs the build or is not Running becomes Skipped. A failed read becomes Failed. If all servers are Skipped, the update becomes Completed. |
+| Planned | You review the versions. **Start Rollout** assigns batches in row order. **Edit Plan** returns to Draft. |
+| Running | Upgrades and checks one batch at a time. |
+| Paused | Waits for **Resume Rollout**, which retries the Failed servers, or **Cancel Rollout**. |
+| Completed, Cancelled | The rollout has ended. |
+
+Only one update can be Running or Paused. A step runs every 5 seconds and continues from the stored row statuses after a restart. During Running, it:
+
+1. Starts one upgrade SSH Task per server in the current batch.
+2. Waits **Wait Minutes** after the last upgrade.
+3. Checks current and earlier batches. Each server must report the pinned `metald` and Atlas WG Mesh versions and must have synchronized within 2 minutes.
+4. Starts the next batch or completes the update.
+
+A failed upgrade or check pauses the update. Read the Status Reason of the Failed row and its SSH Task.
+
+To restore an earlier build, duplicate its Metald Update, then plan and start the duplicate.
 
 ### Upgrade on one host
 

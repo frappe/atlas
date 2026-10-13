@@ -129,6 +129,8 @@ pilot --site SITE build-metald
 pilot --site SITE build-wg-mesh
 ```
 
+A build only publishes the binary. A [Metald Update](../region/hosts-and-providers.md#roll-out-a-build) installs it on the servers.
+
 ## Limits and recovery
 
 Unit tests cannot validate provider reachability or Firecracker behavior. Full host checks need:

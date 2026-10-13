@@ -56,7 +56,7 @@ The Atlas app sends signed multipart URLs and an `upload_id` for each artifact. 
 
 ## Host versions
 
-`GET /v1/versions` returns `metald_version`, `wg_mesh_version`, and `firecracker_version`. `metald` reads them at startup. An empty value means that `metald` could not read it.
+`GET /v1/versions` returns `metald_version`, `wg_mesh_version`, and `firecracker_version`. `metald` reads them at startup. An empty value means that `metald` could not read it. A [Metald Update](../region/hosts-and-providers.md#roll-out-a-build) uses this route.
 
 ## Console
 

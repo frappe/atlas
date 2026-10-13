@@ -30,7 +30,7 @@ The uplink needs IPv4, IPv6, and an Ethernet MAC address.
 
 The WireGuard interface needs an address in `fdab::/16`.
 
-`metald` runs this command on each start.
+`metald` runs this command on each start. A [Metald Update](../../region/hosts-and-providers.md#roll-out-a-build) installs a new binary.
 
 The command loads the candidate programs before it replaces any hook.
 

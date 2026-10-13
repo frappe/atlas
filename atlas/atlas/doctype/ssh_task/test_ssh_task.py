@@ -82,6 +82,7 @@ class TestSSHTask(UnitTestCase):
 		log = SimpleNamespace(
 			doctype="SSH Task",
 			name="SSH-00001",
+			job_id="atlas||ssh-task||SSH-00001",
 			timeout_seconds=120,
 		)
 

@@ -76,10 +76,18 @@ def get_unlinked_files() -> list[str]:
 
 
 def get_linked_files() -> set[str]:
-	"""Return files linked from Atlas Settings."""
+	"""Return files linked from Atlas Settings and from the builds that Metald Updates pin."""
 	settings = frappe.get_single("Atlas Settings")
 	link_fields = settings.meta.get("fields", {"fieldtype": "Link", "options": "File"})
-	return {value for field in link_fields if (value := settings.get(field.fieldname))}
+	linked_files = {value for field in link_fields if (value := settings.get(field.fieldname))}
+
+	for metald_update in frappe.get_all(
+		"Metald Update", fields=["metald_binary_x86_64_file", "wg_mesh_binary_x86_64_file"]
+	):
+		linked_files.update(
+			(metald_update.metald_binary_x86_64_file, metald_update.wg_mesh_binary_x86_64_file)
+		)
+	return linked_files
 
 
 def get_download_url(file_name: str) -> str:

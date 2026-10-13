@@ -16,6 +16,7 @@ Correct the host fault and let reconciliation retry. Keep record files, saved st
 | Network | Namespace links, routes, firewall, and mesh health. |
 | Storage or sync | `zpool status`, `zfs list`, configured pool, Metal journal. |
 | Snapshot or migration | Status, checkpoint, free storage, and both sides' logs. |
+| Upgrade | The SSH Task of the Metald Update row and the `metal.service` status. |
 
 ## Network setup fails
 
@@ -83,6 +84,20 @@ If descriptors disappear, use this diagnostic sequence:
 **Recover:** Correct the unit settings and run `systemctl daemon-reload`. Start each VM again through the API. A running VM keeps its unprotected console until it starts again.
 
 Do not start or restart `metal-vm@<id>.service` by hand.
+
+## A Metald Update pauses
+
+A Metald Update is Paused and a server row is Failed.
+
+**Check**
+
+1. Read the Failed row's Status Reason. If the upgrade failed, read the end of its SSH Task output.
+2. On the host, run `systemctl show metal.service -p StatusText` and `metald version`.
+3. Run `journalctl -u metal.service --since "1 hour ago"`.
+
+**Recover:** Fix the cause, then resume, cancel, or roll back as [Roll out a build](../region/hosts-and-providers.md#roll-out-a-build) explains.
+
+Do not replace `/usr/bin/metald` by hand during a rollout.
 
 ## Disk usage or ZFS inspection fails
 
