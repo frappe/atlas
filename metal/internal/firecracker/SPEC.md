@@ -12,6 +12,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 | `machine` | One VM operation, unit, and API client. |
 | `Config` | Host directories and executable paths. |
 | `Config.CPUTemplate` | Immutable custom CPU template applied before cold boot. |
+| `DefaultCPUTemplate` | Embedded Intel, AMD, or ARM64 guest baseline selected from host CPU information. See [CPU templates](../../../docs/compute/cpu-templates.md). |
 | `firecracker/api.Client` | One VM Unix socket and serialized Firecracker requests. |
 | `firecracker/api.Error` | Non-2xx status and fault message. |
 | `sshSession` | Owns an SSH unit, console PTY, MMDS key, and session files. |
@@ -27,6 +28,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - Firecracker gets whole vCPUs rounded up from millicores. systemd applies the exact CPU quota. The API limit is 32000 millicores.
 - A VM-local memory snapshot requires a matching Firecracker build. Binary size and modification time identify that build. Migration delegates build compatibility to Firecracker.
 - Shared warm images and VM-local snapshot matching include the configured CPU template digest.
+- `cpu_templates_test.go` checks profile selection, required host features, and instruction masks. Native Firecracker verification is required for each supported hardware combination.
 - `SaveAndStop` writes VM-local state to temporary files, publishes it with one atomic rename, then stops Firecracker. A running VM with an existing valid snapshot conflicts. A paused VM with one terminates Firecracker. A stopped VM with one is complete.
 - VM-local snapshots record the source TAP gateway MAC. Local and migration restores apply it before snapshot load so restored ARP and NDP caches remain valid. Migration requires this field; local snapshots without it keep the existing TAP MAC.
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.

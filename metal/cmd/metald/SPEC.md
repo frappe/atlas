@@ -58,7 +58,7 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 | `tls.atlas_common_name` | none | Atlas client name. Required. |
 | `firecracker.binary_path` | `/usr/bin/firecracker` | Firecracker binary. |
 | `firecracker.sockets_dir` | `/run/metal` | API socket links. |
-| `firecracker.cpu_template_file` | none | Custom Firecracker CPU template JSON, loaded at startup. |
+| `firecracker.cpu_template_file` | built-in host profile | Explicit CPU template JSON override. See [CPU templates](../../../docs/compute/cpu-templates.md). |
 | `jailer.binary_path` | `/usr/bin/jailer` | Jailer binary. |
 | `zfs.pool` | `metal` | ZFS pool name. |
 | `wireguard.interface` | `wg0` | Underlay interface. |
