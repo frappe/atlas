@@ -57,6 +57,11 @@ class VirtualMachineImageTransferService:
 			VirtualMachineService.raise_metal_error(error)
 
 		snapshot_id = self.get_snapshot_id(snapshot)
+		image_size_mib = self.get_positive_size(snapshot, "rootfs")
+		# A VM disk never shrinks, so its volume can be larger than disk_mib. The warm image must hold the rootfs.
+		if memory_snapshot and "disk_mib" not in (memory_snapshot_configuration or {}):
+			shape["disk_mib"] = max(shape["disk_mib"], image_size_mib)
+
 		image = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Image",
@@ -74,7 +79,7 @@ class VirtualMachineImageTransferService:
 				"memory_snapshot_memory_mib": shape.get("memory_mib", 0),
 				"memory_snapshot_disk_mib": shape.get("disk_mib", 0),
 				"image_object_key": f"images/{snapshot_id}/rootfs.img",
-				"image_size_mib": self.get_positive_size(snapshot, "rootfs"),
+				"image_size_mib": image_size_mib,
 				"kernel_object_key": f"images/{snapshot_id}/kernel",
 				"kernel_size_mib": self.get_positive_size(snapshot, "kernel"),
 				"source_virtual_machine": virtual_machine.name,
