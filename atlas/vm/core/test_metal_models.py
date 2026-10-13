@@ -163,6 +163,27 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertEqual(machine.observed.state, "unknown")
 		self.assertIsNone(machine.observed.error)
 
+	def test_older_metal_response_defaults_to_inactive_rescue(self) -> None:
+		response = complete_response()
+		for group in ("desired", "observed"):
+			del response[group]["rescue"]
+			del response[group]["rescue_generation"]
+		machine = MetalVirtualMachine.from_dict(response)
+		for state in (machine.desired, machine.observed):
+			self.assertFalse(state.rescue.enabled)
+			self.assertIsNone(state.rescue.image)
+			self.assertEqual(state.rescue_generation, 0)
+		self.assertEqual(machine.desired.recovery.generation, 0)
+
+	def test_malformed_rescue_fields_are_rejected(self) -> None:
+		for group in ("desired", "observed"):
+			for field, value in (("rescue", None), ("rescue", {}), ("rescue_generation", "0")):
+				with self.subTest(group=group, field=field, value=value):
+					response = complete_response()
+					response[group][field] = value
+					with self.assertRaises(ValueError):
+						MetalVirtualMachine.from_dict(response)
+
 	def test_an_omitted_public_ipv4_is_tolerated(self) -> None:
 		"""Metal omits public_ipv4 when no address is attached."""
 		response = new_virtual_machine_response()

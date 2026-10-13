@@ -48,11 +48,26 @@ class MigrationService:
 		resize: VirtualMachineShape | None = None,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
+		from atlas.vm.core.vm_service import VirtualMachineService
+
+		source = frappe.get_doc("Virtual Machine", virtual_machine.name)
+		source.check_permission("write")
+		cls.validate_source(source)
+		service = VirtualMachineService(source)
+		information = service.require_information()
+		service.ensure_rescue_inactive(information)
+		if information.observed.state not in LIVE_STATES:
+			frappe.throw(
+				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(source.name),
+				exc=AtlasUserError,
+			)
 		locked = cast(
 			"VirtualMachine", frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
 		)
 		locked.check_permission("write")
 		cls.validate_source(locked)
+		if locked.server != source.server:
+			frappe.throw(_("The Virtual Machine host changed. Retry the migration."), exc=AtlasUserError)
 		migration = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Migration",
@@ -88,7 +103,7 @@ class MigrationService:
 
 	@staticmethod
 	def validate_source(virtual_machine: VirtualMachine) -> None:
-		"""Reject a VM that cannot start a migration."""
+		"""Check stored migration eligibility without contacting Metal under the row lock."""
 		if virtual_machine.active_migration:
 			frappe.throw(
 				_("Virtual Machine {0} is already migrating.").format(virtual_machine.name),
@@ -109,18 +124,6 @@ class MigrationService:
 				),
 				exc=AtlasUserError,
 			)
-		if virtual_machine.current_state not in LIVE_STATES:
-			frappe.throw(
-				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(
-					virtual_machine.name
-				),
-				exc=AtlasUserError,
-			)
-
-		from atlas.vm.core.vm_service import VirtualMachineService
-
-		service = VirtualMachineService(virtual_machine)
-		service.ensure_rescue_inactive(service.require_information())
 
 	def destination_shape(self, virtual_machine: VirtualMachine) -> VirtualMachineShape:
 		"""Return the shape the VM has on the destination."""

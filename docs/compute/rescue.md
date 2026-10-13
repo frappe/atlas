@@ -1,90 +1,97 @@
-# Repair a VM in rescue mode
+# Rescue mode
 
-Rescue mode boots a repair system in the same VM. The original disk is attached as a second writable drive. Its filesystem stays unmounted until you mount it. Repairs to that disk persist after rescue ends.
+Rescue boots a separate Ubuntu image and attaches the original VM disk as `/dev/vdb`. The original disk starts unmounted. Use rescue when the installed system cannot boot, SSH access fails, the filesystem needs repair, or files must be copied before a rebuild.
 
-## Prepare the image
+The [Atlas VM bootstrap](../../scripts/atlas-vm/README.md) builds and publishes the rescue image, then selects it if Atlas Settings has no rescue image. It preserves an existing selection. For another installation, run `pilot frappe --site SITE build-ubuntu-rescue-image --storage site-file --skip-existing --set-default-if-missing`. The bench user needs sudo access to the rescue-image builder. The command rejects an ambiguous image title instead of choosing a build silently.
 
-Build an Ubuntu 24.04 rescue image on an amd64 Linux build host. The builder includes filesystem tools, SSH access through the VM's keys, and a reboot notification hook.
+## Enter rescue
 
-```sh
-pilot --site SITE build-ubuntu-rescue-image
-```
+A VM administrator or operator selects **Rescue Mode** on the VM page. Site-scoped access does not grant a VM console or disk repair access. The VM must be running or stopped. Entry preserves that desired power state. A stopped VM stays stopped until Start is selected.
 
-In Atlas Settings, select **Rescue Virtual Machine Image**. It must be an enabled, Available System image tagged `purpose=rescue` without a memory snapshot. Its architecture must match the VM. The supplied builder supports amd64.
+Choose one access mode:
 
-Use the dedicated rescue builder. The standard base image build is independent and does not include rescue tools. Atlas validates the image record, but cannot inspect whether a custom image contains the tools and reboot hook. The guest kernel must support virtio-vsock. The builder installs an Ubuntu kernel with its matching modules and loads `vmw_vsock_virtio_transport`. Package installation uses the configured Ubuntu repositories. Published image hashes identify the resulting artifacts.
+| Mode | Original disk | Protection |
+| --- | --- | --- |
+| Protected | Writable | Requires a local ZFS checkpoint before the rescue guest starts. This is the default. |
+| Read only | Firecracker rejects writes | No new checkpoint. Use inspection and copy-out tools. |
+| Unprotected | Writable | Requires separate acknowledgement. There is no new undo baseline. |
 
-The rescue image disables Snap services. Snap initialization can wait for Internet access and delay cloud-init. The installed repair tools and SSH access through metadata work without Internet access.
+Metal checks checkpoint capacity when accepting protected entry, before stopping the original guest, and before creating the checkpoint. A failed check does not grant unprotected writes. Select read only or explicitly acknowledge unprotected access. The check does not reserve future pool capacity.
 
-Publishing creates a protected System image tagged `purpose=rescue`. Base image selection excludes it. A rebuild does not retire previous rescue builds or change Atlas Settings. Select a new build explicitly after validation. Keep previous images protected until their sessions have ended.
+The rescue image is pinned for the session. Stop and Start preserve its temporary disk and the selected access mode. To change access mode, exit and enter again. A retained checkpoint requires protected re-entry until it is resolved.
 
-Each session keeps its selected image. Changing the setting affects new sessions. Repeating an enable request does not replace an active session.
+Object-storage download URLs expire after 24 hours. To renew expired URLs, repeat the rescue entry request through the API with the same access mode. Atlas renews URLs for the pinned image, even if the default changed.
 
-## Enter and use rescue
+The pinned image must still be enabled and Available in Atlas. URL renewal does not start a stopped VM.
 
-Open the VM's **Actions > Rescue Mode** dialog, then select **Enter Rescue**. Tenant clients can send `PUT /api/atlas/virtual-machines/{id}/rescue` with `{"enabled": true}`.
+## Connect and repair
 
-The dialog remains available when the VM reports a failed state, so you can exit after a failed rescue boot. Metal still validates each requested transition. The action is unavailable during migration.
+Open the VM console or connect by SSH with a configured VM key. SSH password authentication is disabled.
 
-| Current power state | Result |
+The serial login banner shows a random root password for the current rescue boot. It remains available to a viewer who connects after boot. It changes on the next boot. Only root can read the banner file inside the guest.
+
+For browser console access through a site alias, deploy the Pilot commit linked in [realtime proxy configuration](console.md#configure-the-realtime-proxy) and regenerate nginx configuration.
+
+For an SSH public-key denial, use the serial console to run `journalctl -b --grep=atlas-ssh-metadata`. Metadata failures report the token, key-list, or key request stage and the exception type. HTTP failures also report the status code. Tokens, keys, response bodies, and exception text are not logged. Successful requests and an empty key list are silent. The shared helper supplies these diagnostics in both normal and rescue images.
+
+Interactive serial login opens the repair menu. `atlas-rescue-menu` opens it again. `atlas-rescue status` reports disk access, mounts, and the latest managed operation. The CLI and menu use the same tools.
+
+| Tool | Operation |
 | --- | --- |
-| Running | Metal stops the guest and boots rescue. |
-| Stopped | Metal selects rescue and leaves the VM stopped. Start boots rescue. |
-| Paused | Stop the VM before changing rescue mode. |
+| Mount | Mount the original disk at `/mnt/original`. Read-only mounts use `ro,noload` to avoid journal replay. |
+| Filesystem check | Inspect with `atlas-rescue fsck`. Use `--repair` to request automatic safe ext4 repairs. The disk must be unmounted. A failed mount inspection blocks the operation. |
+| Chroot | Bind runtime filesystems and open the installed system shell. Bind mounts are removed when the shell exits. |
+| Linux password reset | Run `atlas-rescue passwd USER`. A locked account requires an explicit `--unlock`. This does not reset a Frappe password or change SSH policy. |
+| SSH keys | Add current VM keys to an explicitly selected installed account. Existing keys remain. |
+| Logs | Read the installed persistent journal or recent text logs. |
+| Filesystem growth | Run `atlas-rescue resize` on an unmounted ext4 disk after its block device has already grown. |
+| Disk usage | Inspect both byte and inode usage. |
+| Copy out | Discover Frappe sites and copy recovery material to a selected destination. |
+| Expert shell | Run manual recovery commands with root access. |
+| Exit | Keep disk changes and return to the original system. Use Atlas for rollback. |
 
-Connect with a configured VM SSH key. The rescue image uses its own initialization. It does not run the original VM user data. The TTY console shows boot output; SSH supplies the authenticated repair shell.
+Run `atlas-rescue umount` before switching between writable repair tools and read-only logs, disk usage, or copy-out. Guided tools refuse an existing mount with a different access mode.
 
-Inspect the original disk before mounting it:
+Guided modification supports standard Atlas whole-disk ext4 volumes. Other layouts require manual inspection. LVM, encryption, RAID, partitioned disks, XFS, and Btrfs do not have guided repair workflows.
 
-```sh
-sudo lsblk -f /dev/vdb
-sudo mkdir -p /mnt/original
-# Use /dev/vdb for a filesystem on the whole disk.
-# Use its filesystem partition instead if the disk has partitions.
-sudo mount /dev/vdb /mnt/original
-```
+Filesystem checks, growth, and copy-out run as managed systemd jobs. They survive terminal disconnects. Reconnect and run `atlas-rescue status` for the log and result. Managed tools serialize their operations. An arbitrary command in the expert shell can bypass that coordination. Do not reboot or change mounts during an active operation.
 
-Unmount a filesystem before an offline repair such as `fsck`. Rescue does not mount or repair the disk automatically.
+Password input is hidden and passed to the password tool over standard input. Passwords are not placed in command arguments or operation logs. Password reset refuses accounts with a non-login shell.
 
-## Keep or end the session
+## Copy out Frappe data
 
-| Action | Result |
-| --- | --- |
-| Stop, then Start | Keep rescue selection and the rescue disk. RAM and running processes are lost. |
-| Crash or host restart | Keep rescue selection and the rescue disk. |
-| Atlas Reboot | End rescue and boot the original disk. |
-| Ordinary `sudo reboot` in rescue | Report reboot intent to Metal, then end rescue and boot the original disk. |
-| Exit Rescue while running | Stop rescue, delete its detached disk, and boot the original disk. |
-| Exit Rescue while stopped | Delete the rescue disk and keep the VM stopped. |
+Run `atlas-rescue copy-out` to inspect the offline inventory. Discovery reads paths without executing installed application code. It identifies site configuration, public and private files, backups, app code, bench configuration, migration artifacts, and standard local database directories.
 
-Copy any needed notes or tools off the rescue disk before leaving. A new session starts from a fresh image clone. The original disk is not discarded.
+Run `atlas-rescue copy-out --destination PATH` to start a managed export. The destination must be empty and outside the original disk. Use a separate mounted disk or remote filesystem, or pull files directly with SSH from a workstation. Files stored on the rescue disk are temporary and disappear on exit.
 
-Metal must receive reboot intent before the guest stops. A forced reset that bypasses the hook preserves rescue. A failed notification can also preserve rescue. Use Exit Rescue if needed. A recorded intent remains authoritative if the acknowledgement is lost.
+The private export directory includes a manifest with present and missing components, file sizes, and SHA-256 hashes for regular files. It lists symbolic links and special files separately. It does not read FIFOs or device nodes to compute hashes. Export refuses a source whose parent links escape the original filesystem. An interrupted export remains marked incomplete. Configuration files can contain credentials. Keep the export private.
 
-## Restrictions and limits
+Raw database files are preservation copies, not validated portable backups. External databases, external volumes, and nonstandard data locations require separate recovery. Rescue does not start a database, repair a Frappe site, run migrations, or change a site's configuration automatically.
 
-Automatic idle sleep is disabled while rescue is selected. Migration, snapshots, and CPU, memory, or disk resizing are blocked. Exit rescue and wait for the change to complete before those operations.
+## Keep, undo, and finish
 
-Each drive receives half the configured disk throughput and IOPS limit. A zero limit remains unlimited. For an odd IOPS limit, each drive uses a two-second refill period to preserve the exact average. Initial boot and live limit changes use the same split.
+**Keep changes** returns to a cold boot of the original disk and retains the checkpoint for 12 hours. The deadline starts when Metal applies the first keep exit. The checkpoint includes the entire original disk. Rolling back also discards writes made after returning to normal boot.
 
-The VM detail response includes `rescue.enabled`, `observed_enabled`, `pending`, and `image_ref`. Metal exposes the corresponding desired and observed rescue generations. An accepted request can still fail during image download, shutdown, storage work, or boot. Inspect the operation error and host logs. Failed boots retain rescue selection and the session disk for retry.
+Re-entering rescue during this window reuses the first checkpoint and its original deadline. If the deadline passes during an active rescue session, protection remains until that session ends. Keep changes then deletes the expired checkpoint. Rollback remains available while that active session continues.
 
-## Reboot notification
+**Roll back** stops the guest, verifies the checkpoint identity, restores the original disk, records restore completion, and removes the checkpoint. It then cold boots only if the desired power state is running. A missing or replaced checkpoint is an error. A restore failure leaves the guest stopped for retry. It never becomes a keep exit.
 
-The rescue image uses systemd's final shutdown hook. Only the `reboot` action sends a notification. It connects through Firecracker vsock to host CID 2, port 187. The host listener belongs to that VM's jail.
+**Finish recovery** deletes a retained checkpoint early and keeps disk changes. Automatic expiry does the same. Expiry never rolls back a disk. An accepted disposition is durable; a competing request cannot replace an unfinished action. Rollback and finish requests include `recovery_generation` from the displayed checkpoint. Metal rejects a confirmation for another session.
 
-Metal writes the intent before sending `ok`. Its record contains a guest boot ID, rescue generation, and Linux host boot ID. A daemon restart can adopt the record and listener. A different host boot or rescue session cannot reuse the intent. A host-directed Stop closes the listener and removes intent before it signals the guest.
+The local checkpoint is not an independent backup. It cannot undo external database changes, email, payment operations, network configuration outside the disk, or loss of the storage pool. Copy important data off the host before risky repair.
 
-Metal controls boot selection locally. Lifecycle logs are diagnostic output. No telemetry service is required for rescue transitions. This branch emits structured logs; the separate Datum exporter work must be integrated before those events reach ClickHouse.
+## Restrictions and failures
 
-See the [Firecracker vsock protocol](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/vsock.md) and [systemd shutdown hooks](https://www.freedesktop.org/software/systemd/man/254/systemd-halt.service.html).
+Migration, snapshots, and CPU, memory, or disk resizing remain blocked until recovery is complete. Automatic idle sleep is disabled while rescue is selected. Entry, exit, and rollback invalidate saved guest memory.
+
+The dialog reports the requested and observed rescue state, access mode, recorded checkpoint, expiry, and operation errors. If a state read fails, polling stops and actions stay disabled. Select **Retry status** to read the state again and resume polling. An accepted request can fail while downloading an image, stopping the guest, preparing storage, or booting. Correct the cause and retry the same action. Do not substitute a different exit action after a rollback failure.
+
+A normal rescue reboot sends a durable keep-exit notification through vsock. A forced reset that bypasses the hook preserves rescue. If notification fails, use Keep changes in Atlas. Host-directed Stop preserves the rescue selection.
 
 ## Code and validation
 
-- [VM manager](../../metal/internal/vm/SPEC.md) owns desired selection, restrictions, and stop-before-delete ordering.
-- [Firecracker runtime](../../metal/internal/firecracker/SPEC.md) owns cold boot and reboot intent.
-- [Storage](../../metal/internal/storage/SPEC.md) owns the session clone in `<pool>/rescue/<vm>`.
-- [Atlas VM service](../../atlas/vm/core/vm_service.py) owns image selection and controller calls.
-- [Rescue tests](../../metal/internal/vm/rescue_test.go) cover power behavior, retention, cleanup retry, and snapshot restrictions. [Listener tests](../../metal/internal/firecracker/rescue_test.go) cover intent lifetime.
+The [VM manager](../../metal/internal/vm/SPEC.md) owns the durable recovery record under the VM operation lock. The [storage package](../../metal/internal/storage/SPEC.md) owns tagged ZFS checkpoints and GUID verification. The [Firecracker runtime](../../metal/internal/firecracker/SPEC.md) owns drive access, cold boot, console, and guest reboot intent. [Atlas](../../atlas/vm/core/vm_service.py) owns image selection and controller calls.
 
-A live validation must check SSH access, the unmounted original disk, repair persistence, Stop/Start, both reboot paths, and daemon and host restarts. Unit tests cannot establish these guest and ZFS behaviors.
+Validation must cover real ZFS rollback with closed disk descriptors, read-only enforcement inside Firecracker, both power states, keep and rollback retries, retained re-entry, active expiry, lost checkpoints, SSH access, password reset, and managed jobs after disconnect. Unit tests alone cannot establish guest and storage behavior.
+
+Use the expert shell for network and cloud-init repair.

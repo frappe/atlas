@@ -5,6 +5,7 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.vm.core.metal_client import MetalClientError
+from atlas.vm.core.metal_models import MetalRecovery
 from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import CurrentPlacement
 from atlas.vm.core.vm_resize import VirtualMachineResize
@@ -17,6 +18,7 @@ def build_information(state: str = "stopped") -> SimpleNamespace:
 		desired=SimpleNamespace(
 			rescue=SimpleNamespace(enabled=False),
 			rescue_generation=0,
+			recovery=MetalRecovery(),
 			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),

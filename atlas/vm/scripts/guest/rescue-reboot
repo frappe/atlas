@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-"""Report a normal reboot during systemd's final shutdown phase."""
 import socket
 import sys
 

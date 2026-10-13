@@ -121,10 +121,10 @@ def sync_detailed(
 ) -> Response[ApiErrorResponse | VirtualMachineResponse]:
     """ Set rescue mode
 
-     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first.
-    The original disk is writable and unmounted. Stop/Start preserves the rescue disk.
-    Reboot or explicit exit ends the session and discards the rescue disk.
-    Poll the VM detail route for rescue progress.
+     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
+    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
+    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
+    progress.
 
     Args:
         virtual_machine_id (str):
@@ -163,10 +163,10 @@ def sync(
 ) -> ApiErrorResponse | VirtualMachineResponse | None:
     """ Set rescue mode
 
-     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first.
-    The original disk is writable and unmounted. Stop/Start preserves the rescue disk.
-    Reboot or explicit exit ends the session and discards the rescue disk.
-    Poll the VM detail route for rescue progress.
+     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
+    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
+    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
+    progress.
 
     Args:
         virtual_machine_id (str):
@@ -200,10 +200,10 @@ async def asyncio_detailed(
 ) -> Response[ApiErrorResponse | VirtualMachineResponse]:
     """ Set rescue mode
 
-     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first.
-    The original disk is writable and unmounted. Stop/Start preserves the rescue disk.
-    Reboot or explicit exit ends the session and discards the rescue disk.
-    Poll the VM detail route for rescue progress.
+     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
+    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
+    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
+    progress.
 
     Args:
         virtual_machine_id (str):
@@ -242,10 +242,10 @@ async def asyncio(
 ) -> ApiErrorResponse | VirtualMachineResponse | None:
     """ Set rescue mode
 
-     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first.
-    The original disk is writable and unmounted. Stop/Start preserves the rescue disk.
-    Reboot or explicit exit ends the session and discards the rescue disk.
-    Poll the VM detail route for rescue progress.
+     Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
+    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
+    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
+    progress.
 
     Args:
         virtual_machine_id (str):

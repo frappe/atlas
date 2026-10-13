@@ -8,8 +8,11 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 from typing import cast
 
+if TYPE_CHECKING:
+  from ..models.virtual_machine_recovery import VirtualMachineRecovery
 
 
 
@@ -27,13 +30,17 @@ class VirtualMachineRescue:
             enabled (bool): Requested rescue mode.
             image_ref (None | str): Image pinned to this rescue session, or null.
             observed_enabled (bool): Last successfully applied rescue mode.
-            pending (bool): Whether the host has an unapplied rescue selection.
+            pending (bool): Whether the host has an unapplied rescue selection or recovery action.
+            access (str | Unset):  Default: ''.
+            recovery (None | Unset | VirtualMachineRecovery):
      """
 
     enabled: bool
     image_ref: None | str
     observed_enabled: bool
     pending: bool
+    access: str | Unset = ''
+    recovery: None | Unset | VirtualMachineRecovery = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -41,6 +48,7 @@ class VirtualMachineRescue:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.virtual_machine_recovery import VirtualMachineRecovery # noqa: PLC0415
         enabled = self.enabled
 
         image_ref: None | str
@@ -49,6 +57,16 @@ class VirtualMachineRescue:
         observed_enabled = self.observed_enabled
 
         pending = self.pending
+
+        access = self.access
+
+        recovery: dict[str, Any] | None | Unset
+        if isinstance(self.recovery, Unset):
+            recovery = UNSET
+        elif isinstance(self.recovery, VirtualMachineRecovery):
+            recovery = self.recovery.to_dict()
+        else:
+            recovery = self.recovery
 
 
         field_dict: dict[str, Any] = {}
@@ -59,6 +77,10 @@ class VirtualMachineRescue:
             "observed_enabled": observed_enabled,
             "pending": pending,
         })
+        if access is not UNSET:
+            field_dict["access"] = access
+        if recovery is not UNSET:
+            field_dict["recovery"] = recovery
 
         return field_dict
 
@@ -66,6 +88,7 @@ class VirtualMachineRescue:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.virtual_machine_recovery import VirtualMachineRecovery # noqa: PLC0415
         d = dict(src_dict)
         enabled = d.pop("enabled")
 
@@ -81,11 +104,35 @@ class VirtualMachineRescue:
 
         pending = d.pop("pending")
 
+        access = d.pop("access", UNSET)
+
+        def _parse_recovery(data: object) -> None | Unset | VirtualMachineRecovery:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                recovery_type_0 = VirtualMachineRecovery.from_dict(data)
+
+
+
+                return recovery_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | VirtualMachineRecovery, data)
+
+        recovery = _parse_recovery(d.pop("recovery", UNSET))
+
+
         virtual_machine_rescue = cls(
             enabled=enabled,
             image_ref=image_ref,
             observed_enabled=observed_enabled,
             pending=pending,
+            access=access,
+            recovery=recovery,
         )
 
 

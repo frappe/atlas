@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Build the standalone Ubuntu rescue image for Metal.
 set -euo pipefail
 
 output=""
@@ -33,6 +32,41 @@ rootfs_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/ubun
 rootfs_sha256="bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
 
 install_rescue_tools() {
+	install -D -m 0755 "$script_directory/guest/atlas-rescue" "$rootfs_directory/usr/local/sbin/atlas-rescue"
+	install -D -m 0755 "$script_directory/guest/atlas-rescue-menu" "$rootfs_directory/usr/local/sbin/atlas-rescue-menu"
+	install -D -m 0755 "$script_directory/guest/rescue.py" "$rootfs_directory/usr/local/lib/atlas/rescue.py"
+	install -D -m 0755 "$script_directory/guest/rescue-console-password" "$rootfs_directory/usr/local/lib/atlas/rescue-console-password"
+	cat > "$rootfs_directory/etc/systemd/system/atlas-rescue-console.service" <<'SERVICE'
+[Unit]
+Description=Prepare rescue console credentials
+After=cloud-config.service
+Wants=cloud-config.service
+Before=serial-getty@ttyS0.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/atlas/rescue-console-password
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+SERVICE
+	mkdir -p "$rootfs_directory/etc/systemd/system/serial-getty@ttyS0.service.d"
+	cat > "$rootfs_directory/etc/systemd/system/serial-getty@ttyS0.service.d/atlas-rescue.conf" <<'SERVICE'
+[Unit]
+Requires=atlas-rescue-console.service
+After=atlas-rescue-console.service
+SERVICE
+	ln -sf /etc/systemd/system/atlas-rescue-console.service "$rootfs_directory/etc/systemd/system/multi-user.target.wants/atlas-rescue-console.service"
+	cat > "$rootfs_directory/etc/ssh/sshd_config.d/00-atlas-rescue.conf" <<'SSH'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+SSH
+	cat > "$rootfs_directory/etc/profile.d/atlas-rescue.sh" <<'PROFILE'
+if [ -t 0 ] && [ -t 1 ] && [ -z "${ATLAS_RESCUE_MENU_SHOWN:-}" ]; then
+  export ATLAS_RESCUE_MENU_SHOWN=1
+  /usr/local/sbin/atlas-rescue-menu
+fi
+PROFILE
 	install -D -m 0755 "$script_directory/guest/rescue-reboot" \
 		"$rootfs_directory/usr/lib/systemd/system-shutdown/atlas-rescue"
 	install -D -m 0644 "$script_directory/guest/rescue-motd" "$rootfs_directory/etc/motd"
@@ -53,7 +87,7 @@ EOF
 	cp /etc/resolv.conf "$rootfs_directory/etc/resolv.conf"
 	chroot "$rootfs_directory" env TMPDIR=/tmp apt-get update
 	chroot "$rootfs_directory" env TMPDIR=/tmp DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-		python3 e2fsprogs xfsprogs btrfs-progs util-linux parted lvm2 mdadm \
+		python3 whiptail rsync ncdu dnsutils tcpdump e2fsprogs xfsprogs btrfs-progs util-linux parted lvm2 mdadm \
 		cryptsetup-bin curl ca-certificates openssh-server vim-tiny linux-image-virtual
 	chroot "$rootfs_directory" env TMPDIR=/tmp apt-get clean
 	# Snap seeding can block cloud-final without Internet access.

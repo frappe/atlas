@@ -34,7 +34,7 @@ from atlas.atlas.core.tags import (
 	MAXIMUM_TAG_VALUE_LENGTH,
 	MAXIMUM_TAGS,
 )
-from atlas.vm.core.metal_models import MetalFirewall, MetalFirewallRule
+from atlas.vm.core.metal_models import MetalFirewall, MetalFirewallRule, MetalRecovery
 from atlas.vm.core.models import DEFAULT_ROUTES, Route
 from atlas.vm.core.placement import OutOfCapacity
 from atlas.vm.core.placement.affinity import MAXIMUM_AFFINITY_RULES
@@ -84,7 +84,8 @@ def build_metal_information() -> SimpleNamespace:
 	"""Return one Metal record with a desired and an observed half."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
-			rescue=SimpleNamespace(enabled=False, image=None),
+			rescue=SimpleNamespace(enabled=False, image=None, access=""),
+			recovery=MetalRecovery(),
 			rescue_generation=0,
 			state="running",
 			disk=SimpleNamespace(throughput_mibps=100, iops=500),

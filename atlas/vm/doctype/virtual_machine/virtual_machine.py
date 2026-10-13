@@ -600,7 +600,14 @@ class VirtualMachine(Document):
 		return VirtualMachineService(self).require_information().as_dict()
 
 	@frappe.whitelist(methods=["POST"])
-	def set_rescue(self, enabled: bool) -> dict[str, Any]:
+	def set_rescue(
+		self,
+		enabled: bool,
+		access: str = "protected",
+		allow_unprotected: bool = False,
+		action: str = "",
+		recovery_generation: int = 0,
+	) -> dict[str, Any]:
 		"""Enter or exit rescue without starting a stopped VM."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
@@ -608,7 +615,20 @@ class VirtualMachine(Document):
 			frappe.throw(
 				_("Wait until the Virtual Machine is ready before changing rescue mode."), exc=AtlasUserError
 			)
-		return VirtualMachineService(self).set_rescue(strict_bool(enabled, "enabled"))
+		enabled = strict_bool(enabled, "enabled")
+		allow_unprotected = strict_bool(allow_unprotected, "allow_unprotected")
+		if access not in {"protected", "read_only", "unprotected"} or action not in {
+			"",
+			"rollback",
+			"finish",
+		}:
+			frappe.throw(_("Invalid recovery action or access mode."), exc=AtlasUserError)
+		self._validate_recovery_action(enabled, action, recovery_generation)
+		if enabled and ((access == "unprotected") != allow_unprotected):
+			frappe.throw(_("Unprotected writes require explicit acknowledgement."), exc=AtlasUserError)
+		return VirtualMachineService(self).set_rescue(
+			enabled, access, allow_unprotected, action, recovery_generation
+		)
 
 	@frappe.whitelist(methods=["POST"])
 	def reboot(self) -> None:
@@ -620,13 +640,24 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def get_console_token(self, mode: str = "tty") -> dict[str, str]:
 		"""Issue a one-time token to open this VM console in tty or ssh mode."""
-		self.check_permission("read")
+		self.check_permission("write")
 		if mode not in {"tty", "ssh"}:
 			frappe.throw(_("Console mode must be tty or ssh."))
 		from atlas.vm.core.console_token import issue_console_token
 
 		connection = VirtualMachineService(self).get_console_connection(mode)
 		return {"token": issue_console_token(connection)}
+
+	def _validate_recovery_action(self, enabled: bool, action: str, recovery_generation: int) -> None:
+		"""Require a valid checkpoint session for recovery actions."""
+		if type(recovery_generation) is not int or recovery_generation < 0 or recovery_generation > 2**64 - 1:
+			frappe.throw(_("Invalid recovery session."), exc=AtlasUserError)
+		if bool(action) != bool(recovery_generation):
+			frappe.throw(
+				_("Select the current recovery checkpoint before confirming this action."), exc=AtlasUserError
+			)
+		if enabled and action:
+			frappe.throw(_("A recovery action cannot enable rescue mode."), exc=AtlasUserError)
 
 
 @frappe.whitelist(methods=["POST"])

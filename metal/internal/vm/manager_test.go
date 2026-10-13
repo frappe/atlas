@@ -279,6 +279,43 @@ func TestCreateFingerprintAcceptsChangedSignedURLs(t *testing.T) {
 	}
 }
 
+func TestCreateRetryAcceptsAPreRescueFingerprint(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	specification := testSpecification()
+	if _, err := manager.Create(t.Context(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CreateFingerprint = "488af3295651cbd08a132b744b566fe059f4315101a6b3efefb61b715a560a31"
+	if err := manager.store.writeDesired(record); err != nil {
+		t.Fatal(err)
+	}
+
+	specification.Image.RootfsURL += "&renewed=true"
+	specification.Image.KernelURL += "&renewed=true"
+	if _, err := manager.Create(t.Context(), "machine-1", specification); err != nil {
+		t.Fatalf("retry against a persisted pre-rescue fingerprint: %v", err)
+	}
+	retried, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Generation != record.Generation || retried.UserID != record.UserID || retried.CreateFingerprint != record.CreateFingerprint {
+		t.Fatal("create retry changed the existing reservation")
+	}
+	if retried.Specification.Image != specification.Image {
+		t.Fatal("create retry did not refresh the image URLs")
+	}
+
+	specification.MemoryMiB++
+	if _, err := manager.Create(t.Context(), "machine-1", specification); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different request against a pre-rescue fingerprint: %v", err)
+	}
+}
+
 func TestCreateFingerprintRejectsDifferentFirstRequest(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	specification := testSpecification()

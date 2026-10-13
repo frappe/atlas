@@ -20,7 +20,7 @@ type Specification struct {
 	Hostname              string               `json:"hostname"`
 	UserData              string               `json:"user_data"`
 	Metadata              map[string]string    `json:"metadata"`
-	Rescue                Rescue               `json:"rescue,omitempty"`
+	Rescue                Rescue               `json:"rescue,omitzero"`
 }
 
 // Rescue is the requested rescue mode for one VM. Enabling it boots the

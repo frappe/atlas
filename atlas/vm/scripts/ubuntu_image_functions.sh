@@ -1,15 +1,13 @@
-# Shared artifact and guest setup functions for the Ubuntu image recipes.
-
 fetch() {
 	local url=$1
 	local checksum=$2
 	local path=$3
+	[[ -n $checksum ]] || { echo "no checksum for $(basename "$path")" >&2; return 1; }
 	step "download $url"
 	curl -fL --progress-bar --output "$path" "$url"
 	echo "$checksum  $path" | sha256sum --check --status
 	step "verified $(basename "$path")"
 }
-
 
 extract_vmlinux() {
 	local image=$1 output=$2

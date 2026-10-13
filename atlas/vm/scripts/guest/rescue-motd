@@ -1,15 +1,11 @@
-Atlas rescue mode
+Atlas Rescue
 
-Your original disk is attached as /dev/vdb and is NOT mounted.
-Inspect it first: sudo lsblk -f /dev/vdb
-For a filesystem on the whole disk:
-  sudo mkdir -p /mnt/original
-  sudo mount /dev/vdb /mnt/original
-For a partitioned disk, mount the appropriate partition instead.
-Unmount a filesystem before running fsck or other offline repair tools.
+Run sudo atlas-rescue-menu for guided repair, or sudo atlas-rescue status.
+The original disk is /dev/vdb. Inspect actual mounts before repair.
+Protected sessions have a recovery checkpoint. Read-only sessions refuse disk writes.
+Unprotected sessions have no undo. Check the access mode before changing files.
 
-Repairs written to the original disk persist after rescue ends.
-Stop/Start keeps this rescue disk. Reboot or Exit Rescue discards it.
-Copy any tools or notes you need before you leave rescue.
-Ordinary sudo reboot reports exit to Metal and boots the original disk.
-A forced reset or failed notification can leave rescue selected; use Exit Rescue.
+Long managed repair/export jobs survive terminal disconnection. Read their result with atlas-rescue status. Arbitrary expert-shell commands are not managed jobs.
+
+Use Atlas for rollback or Finish recovery. Keep-exit discards the rescue disk; copy notes and exports elsewhere first. The original disk is preserved.
+SSH authentication remains keys-only. The console shows a boot-local password.

@@ -49,7 +49,11 @@ This file identifies code owners and rules that a code change must preserve. The
 
 ## Rescue
 
-`VirtualMachineService.set_rescue` selects the Atlas Settings image for a new session. The image must have `purpose=rescue`. Metal pins the image for the session. Publishing a rescue build does not retire older builds or select it in Atlas Settings. `MetalRescue` and rescue generations preserve requested and applied state in typed responses. The DocType and tenant API keep tenant and write permissions at their existing boundaries. See [rescue mode](../../docs/compute/rescue.md).
+`VirtualMachineService.set_rescue` selects the configured image for a new session and resolves the pinned artifact identity for URL renewal. `MetalRescue` and `MetalRecovery` carry host state. The DocType and tenant API enforce permissions. See [rescue mode](../../docs/compute/rescue.md) for image selection and recovery behavior.
+
+Responses from older Metal hosts can omit rescue fields. The parser defaults missing fields to inactive rescue and rejects malformed values.
+
+`scripts/guest/rescue.py` owns guided operations and offline inventory. The menu invokes that CLI. Managed operations share a systemd unit and file lock; the expert shell bypasses that lock. `core/test_rescue_tools.py` covers disk access, password input, discovery, and job completion.
 
 ## Validation
 

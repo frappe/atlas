@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..models.virtual_machine_detail_response_architecture import VirtualMachineDetailResponseArchitecture
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
@@ -47,9 +48,10 @@ class VirtualMachineDetailResponse:
             network (VirtualMachineNetwork): The addresses, internet access, and network limits of one virtual machine.
             public_ipv4 (None | PublicIPResponse): Attached public IPv4 allocation, or null.
             public_ipv6 (None | PublicIPResponse): Attached public IPv6 allocation, or null.
-            rescue (None | VirtualMachineRescue): Rescue selection and progress, or null when host state is unavailable.
             tags (VirtualMachineDetailResponseTags): Resource tags as key-value pairs.
             tenant_id (int): Tenant that owns the virtual machine.
+            rescue (None | Unset | VirtualMachineRescue): Rescue selection and progress, or null when host state is
+                unavailable.
      """
 
     architecture: VirtualMachineDetailResponseArchitecture
@@ -66,9 +68,9 @@ class VirtualMachineDetailResponse:
     network: VirtualMachineNetwork
     public_ipv4: None | PublicIPResponse
     public_ipv6: None | PublicIPResponse
-    rescue: None | VirtualMachineRescue
     tags: VirtualMachineDetailResponseTags
     tenant_id: int
+    rescue: None | Unset | VirtualMachineRescue = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -121,15 +123,17 @@ class VirtualMachineDetailResponse:
         else:
             public_ipv6 = self.public_ipv6
 
-        rescue: dict[str, Any] | None
-        if isinstance(self.rescue, VirtualMachineRescue):
-            rescue = self.rescue.to_dict()
-        else:
-            rescue = self.rescue
-
         tags = self.tags.to_dict()
 
         tenant_id = self.tenant_id
+
+        rescue: dict[str, Any] | None | Unset
+        if isinstance(self.rescue, Unset):
+            rescue = UNSET
+        elif isinstance(self.rescue, VirtualMachineRescue):
+            rescue = self.rescue.to_dict()
+        else:
+            rescue = self.rescue
 
 
         field_dict: dict[str, Any] = {}
@@ -149,10 +153,11 @@ class VirtualMachineDetailResponse:
             "network": network,
             "public_ipv4": public_ipv4,
             "public_ipv6": public_ipv6,
-            "rescue": rescue,
             "tags": tags,
             "tenant_id": tenant_id,
         })
+        if rescue is not UNSET:
+            field_dict["rescue"] = rescue
 
         return field_dict
 
@@ -255,8 +260,17 @@ class VirtualMachineDetailResponse:
         public_ipv6 = _parse_public_ipv6(d.pop("public_ipv6"))
 
 
-        def _parse_rescue(data: object) -> None | VirtualMachineRescue:
+        tags = VirtualMachineDetailResponseTags.from_dict(d.pop("tags"))
+
+
+
+
+        tenant_id = d.pop("tenant_id")
+
+        def _parse_rescue(data: object) -> None | Unset | VirtualMachineRescue:
             if data is None:
+                return data
+            if isinstance(data, Unset):
                 return data
             try:
                 if not isinstance(data, dict):
@@ -268,17 +282,10 @@ class VirtualMachineDetailResponse:
                 return rescue_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(None | VirtualMachineRescue, data)
+            return cast(None | Unset | VirtualMachineRescue, data)
 
-        rescue = _parse_rescue(d.pop("rescue"))
+        rescue = _parse_rescue(d.pop("rescue", UNSET))
 
-
-        tags = VirtualMachineDetailResponseTags.from_dict(d.pop("tags"))
-
-
-
-
-        tenant_id = d.pop("tenant_id")
 
         virtual_machine_detail_response = cls(
             architecture=architecture,
@@ -295,9 +302,9 @@ class VirtualMachineDetailResponse:
             network=network,
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,
-            rescue=rescue,
             tags=tags,
             tenant_id=tenant_id,
+            rescue=rescue,
         )
 
 

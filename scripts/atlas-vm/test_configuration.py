@@ -327,6 +327,31 @@ class ConfigurationTest(unittest.TestCase):
 		run_setup.assert_not_called()
 
 
+class TestRescueBootstrap(unittest.TestCase):
+	def test_bootstrap_builds_and_selects_rescue_without_base_images(self) -> None:
+		configuration = setup.Configuration(
+			site="atlas.test", bootstrap_password="unused", admin_domain="admin.test"
+		)
+		installer = setup.Setup(configuration)
+		with patch.object(installer, "pilot") as pilot:
+			installer.build_images()
+		pilot.assert_called_once_with(
+			"frappe --site atlas.test build-ubuntu-rescue-image --storage site-file --skip-existing --set-default-if-missing"
+		)
+
+	def test_both_image_builders_receive_scoped_sudo(self) -> None:
+		configuration = setup.Configuration(
+			site="atlas.test", bootstrap_password="unused", admin_domain="admin.test"
+		)
+		installer = setup.Setup(configuration)
+		with patch.object(installer, "install_grant") as grant:
+			installer.grant_image_builder_sudo()
+		content = grant.call_args.args[1]
+		self.assertIn("build_ubuntu_server_image.sh *", content)
+		self.assertIn("build_ubuntu_rescue_image.sh *", content)
+		self.assertNotIn("NOPASSWD: ALL", content)
+
+
 class TestNetworkRules(unittest.TestCase):
 	"""Run the generated host network script against a stubbed ip command."""
 
