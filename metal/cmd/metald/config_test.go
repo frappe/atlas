@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -20,7 +22,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options != defaultOptions() {
+	if !reflect.DeepEqual(options, defaultOptions()) {
 		t.Fatalf("got %+v, want defaults %+v", options, defaultOptions())
 	}
 }
@@ -92,6 +94,28 @@ func TestLoadMigrationTransferPort(t *testing.T) {
 	}
 	if options.migration.transferPort != 9100 {
 		t.Errorf("transfer_port = %d, want the file value", options.migration.transferPort)
+	}
+}
+
+func TestLoadCPUTemplate(t *testing.T) {
+	for _, body := range []string{"\n{\"cpuid_modifiers\": []}\n", "[]", "null", "{", ""} {
+		t.Run(body, func(t *testing.T) {
+			template := filepath.Join(t.TempDir(), "cpu.json")
+			if err := os.WriteFile(template, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			options, err := load(writeConfig(t, fmt.Sprintf("[firecracker]\ncpu_template_file = %q\n", template)))
+			if body == "\n{\"cpuid_modifiers\": []}\n" {
+				if err != nil || string(options.cfg.CPUTemplate) != "{\"cpuid_modifiers\": []}" {
+					t.Fatalf("load template: %v, configuration %+v", err, options.cfg)
+				}
+			} else if err == nil {
+				t.Fatal("accepted invalid CPU template")
+			}
+		})
+	}
+	if _, err := load(writeConfig(t, "[firecracker]\ncpu_template_file = \"/no/such/cpu.json\"\n")); err == nil {
+		t.Fatal("accepted missing CPU template")
 	}
 }
 

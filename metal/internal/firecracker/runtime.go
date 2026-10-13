@@ -2,6 +2,7 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,6 +80,7 @@ func NewRuntime(
 	serialBroker serialBroker,
 	logger *slog.Logger,
 ) *Runtime {
+	configuration.CPUTemplate = bytes.Clone(configuration.CPUTemplate)
 	if logger == nil {
 		logger = slog.Default()
 	}
