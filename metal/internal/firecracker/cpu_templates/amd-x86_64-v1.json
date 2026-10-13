@@ -1,0 +1,94 @@
+{
+  "cpuid_modifiers": [
+    {
+      "leaf": "0x1",
+      "subleaf": "0x0",
+      "flags": 0,
+      "modifiers": [
+        {
+          "register": "ecx",
+          "bitmap": "0bx000xx0xx00xx00000x000x00000000x"
+        },
+        {
+          "register": "edx",
+          "bitmap": "0b000x0xxxx000x0xxx0x0x0xx0xxxxxxx"
+        }
+      ]
+    },
+    {
+      "leaf": "0x7",
+      "subleaf": "0x0",
+      "flags": 1,
+      "modifiers": [
+        {
+          "register": "eax",
+          "bitmap": "0b00000000000000000000000000000000"
+        },
+        {
+          "register": "ebx",
+          "bitmap": "0b000000000000000000x000000x000000"
+        },
+        {
+          "register": "ecx",
+          "bitmap": "0b00000000000000000000000000000000"
+        },
+        {
+          "register": "edx",
+          "bitmap": "0bxxxxxx000000000000000x0000000000"
+        }
+      ]
+    },
+    {
+      "leaf": "0xd",
+      "subleaf": "0x0",
+      "flags": 1,
+      "modifiers": [
+        {
+          "register": "eax",
+          "bitmap": "0b000000000000000000000000000000xx"
+        },
+        {
+          "register": "edx",
+          "bitmap": "0b00000000000000000000000000000000"
+        }
+      ]
+    },
+    {
+      "leaf": "0xd",
+      "subleaf": "0x1",
+      "flags": 1,
+      "modifiers": [
+        {
+          "register": "eax",
+          "bitmap": "0b00000000000000000000000000000000"
+        }
+      ]
+    },
+    {
+      "leaf": "0x80000001",
+      "subleaf": "0x0",
+      "flags": 0,
+      "modifiers": [
+        {
+          "register": "ecx",
+          "bitmap": "0b000000000x000000000000000000000x"
+        },
+        {
+          "register": "edx",
+          "bitmap": "0b00xx000xx0xxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ]
+    },
+    {
+      "leaf": "0x80000008",
+      "subleaf": "0x0",
+      "flags": 0,
+      "modifiers": [
+        {
+          "register": "ebx",
+          "bitmap": "0bxxxxxxxxxxxxxxxxxxxxxx0xxxxxxxx0"
+        }
+      ]
+    }
+  ]
+}
