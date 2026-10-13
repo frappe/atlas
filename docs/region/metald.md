@@ -26,11 +26,13 @@ Disk snapshots use a separate stream because they carry ZFS data rather than API
 
 Run `metald serve` with `/var/lib/metal/metald.toml`, or pass `--config` for another file. Startup runs in this order:
 
-1. Load TLS credentials and validate the snapshot bind address.
+1. Load TLS credentials, validate the snapshot bind address, and open the control and coordination listeners.
 2. Prepare WG Mesh when enabled, create host directories, and connect to systemd.
 3. Open storage and adopt serial consoles for running VM units.
 4. Create the VM, host, migration, network, and API services.
-5. Start the control and coordination listeners and background workers.
+5. Serve the listeners, start the background workers, and set the systemd status to `ready <version>`.
+
+systemd keeps the control and coordination sockets open during a restart. The kernel queues new connections until `metald` accepts them.
 
 The VM and migration workers check for work every five seconds. The image worker checks every hour. Relevant requests also wake workers. The [reconciliation guide](../compute/reconciliation.md) explains why a saved request can still be in progress.
 

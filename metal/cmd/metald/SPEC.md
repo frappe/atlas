@@ -28,13 +28,15 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 
 `main.go` starts services in this order:
 
-1. Configuration, TLS credentials, and directories.
-2. systemd, storage stores, and the WireGuard manager.
+1. Configuration, TLS credentials, and the control and coordination listeners.
+2. Directories, systemd, storage stores, and the WireGuard manager.
 3. WG Mesh and the optional traffic monitor.
 4. Firecracker runtime, record validation, and the VM manager.
 5. Host service and reconcilers.
 6. Atlas trusted keys, then the Atlas and coordination APIs.
 
+- The control and coordination listeners come from the systemd descriptor store as `listener-api` and `listener-coordination`. Take them before the consoles, because `TakeFiles` returns every other descriptor.
+- After startup, metald sets the systemd status to `ready <version>`. Shutdown sets it to `stopping`. `upgrade-metald.sh` waits for the ready status.
 - The mesh and traffic monitor services are optional and can be nil.
 - `connectMesh` runs on every start when `wg_mesh.enabled` is true.
 - `wg_mesh.enabled = false` does not disable managed WireGuard peers.

@@ -97,7 +97,8 @@ func parseFlags(cmd string, args []string) (string, error) {
 	return *path, nil
 }
 
-func listen(addr string) (net.Listener, error) {
+// listen opens a Unix socket, or a TCP listener that the systemd descriptor store keeps under name.
+func listen(descriptorStore *platform.FileDescriptorStore, name, addr string) (net.Listener, error) {
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		_ = os.Remove(path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -109,7 +110,7 @@ func listen(addr string) (net.Listener, error) {
 		}
 		return ln, err
 	}
-	return net.Listen("tcp", addr)
+	return descriptorStore.Listen(name, addr)
 }
 
 // transferListenAddress keeps the coordination host and replaces its port. The
@@ -222,6 +223,17 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		return err
 	}
 
+	// Listen first. A stored listener queues requests while metald starts.
+	descriptorStore := platform.NewFileDescriptorStore()
+	listener, err := listen(descriptorStore, "listener-api", options.listen)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", options.listen, err)
+	}
+	coordinationListener, err := listen(descriptorStore, "listener-coordination", options.coordinationListen)
+	if err != nil {
+		return fmt.Errorf("listen for Metal coordination on %s: %w", options.coordinationListen, err)
+	}
+
 	// Connect required host services.
 	var mesh *network.Mesh
 	if options.mesh.enabled {
@@ -241,10 +253,13 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	// Create resources that metald owns.
 	daemonContext, cancelDaemon := context.WithCancel(context.Background())
 	stores := storage.NewStores(daemonContext, options.pool, options.imagesDir, logger)
-	descriptorStore := platform.NewFileDescriptorStore()
 	serialBroker := console.NewSerialBroker(filepath.Join(options.cfg.SocketsDir, "consoles"), descriptorStore)
 	daemon := newDaemon(daemonContext, cancelDaemon, logger, stores.Snapshots, serialBroker, units)
 	defer func() {
+		// The upgrade script waits for "ready <version>", so an old status must not match.
+		if err := descriptorStore.SetStatus("stopping"); err != nil {
+			logger.Warn("could not set the service status", "error", err)
+		}
 		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
 		defer cancelShutdown()
 		serveError = errors.Join(serveError, daemon.Shutdown(shutdownContext))
@@ -411,25 +426,18 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	}
 
 	// Start workers and serve the API.
-	listener, err := listen(options.listen)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", options.listen, err)
-	}
-	listener = tls.NewListener(listener, tlsConfigurations.api)
-	coordinationListener, err := listen(options.coordinationListen)
-	if err != nil {
-		return fmt.Errorf("listen for Metal coordination on %s: %w", options.coordinationListen, err)
-	}
-	coordinationListener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	logger.Info("metald listening", "version", version, "address", options.listen)
-	server.Listener = listener
-	coordinationServer.Listener = coordinationListener
+	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
+	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
+	}
+	if err := descriptorStore.SetStatus("ready " + version); err != nil {
+		logger.Warn("could not set the service status", "error", err)
 	}
 	return daemon.Serve(server, coordinationServer)
 }
