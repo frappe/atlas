@@ -149,3 +149,16 @@ func TestSparseVolumeWriterSkipsZeroChunks(t *testing.T) {
 		t.Fatalf("stored = %v", stored)
 	}
 }
+
+func TestImageVolumeHoldsTheImageExactly(t *testing.T) {
+	for sizeBytes, wantMiB := range map[int64]int64{
+		4 << 20:       4,
+		4<<20 + 1:     5,
+		5<<20 - 1:     5,
+		25600<<20 + 1: 25601,
+	} {
+		if got := imageVolumeSizeMiB(sizeBytes); got != wantMiB {
+			t.Errorf("imageVolumeSizeMiB(%d) = %d, want %d", sizeBytes, got, wantMiB)
+		}
+	}
+}
