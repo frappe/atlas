@@ -44,22 +44,6 @@ pull_request_rules:
 
           Still working on it? Add the `keep-open` label and reopen it, or leave a comment and we'll help.
 
-  - name: Label area atlas
-    conditions:
-      - 'files~=^(atlas|realtime)/|^pyproject\.toml$'
-    actions:
-      label:
-        toggle:
-          - "area: atlas"
-
-  - name: Label area metal
-    conditions:
-      - 'files~=^metal/'
-    actions:
-      label:
-        toggle:
-          - "area: metal"
-
   - name: Label area http-proxy
     conditions:
       - 'files~=^services/http-proxy/'
