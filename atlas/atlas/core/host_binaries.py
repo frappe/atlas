@@ -156,7 +156,8 @@ def is_published(binary: HostBinary, digest: str) -> bool:
 	file_name = settings.get(binary.settings_field)
 	if not file_name or settings.get(binary.source_hash_field) != digest:
 		return False
-	if not settings.get(binary.binary_hash_field):
+	# A site from before versioned builds has no version, so its first migrate rebuilds.
+	if not settings.get(binary.binary_hash_field) or not settings.get(binary.version_field):
 		return False
 	return bool(frappe.db.exists("File", file_name))
 
