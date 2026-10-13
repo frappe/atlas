@@ -134,16 +134,12 @@ func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationR
 	if err != nil {
 		return err
 	}
-	published := m.store.memorySnapshotDirectory(record.VirtualMachineID)
-	pending := published + "-pending"
-	// ponytail: incomplete bundles restart; add byte ranges if retry cost matters.
-	if err := os.RemoveAll(pending); err != nil {
-		return err
-	}
-	if err := os.Mkdir(pending, 0o700); err != nil {
+	pending, err := m.store.prepareMemorySnapshot(record.VirtualMachineID)
+	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(pending)
+
 	if _, err := m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
 		destination.MemoryTransfer = &TransferProgress{
 			Sequence: final.Sequence + 1, StartedAt: m.now(), TotalBytes: int64(desired.Specification.MemoryMiB) << 20,
@@ -154,25 +150,51 @@ func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationR
 	if err := m.source.ReceiveMemorySnapshot(ctx, record.Source, record.ID, record.VirtualMachineID, final.Sequence, pending, desired.Specification.MemoryMiB); err != nil {
 		return err
 	}
+	totalBytes, err := m.store.publishMemorySnapshot(record.VirtualMachineID, pending, final)
+	if err != nil {
+		return err
+	}
+	return m.completeMemoryTransfer(ctx, record.VirtualMachineID, final.GUID, totalBytes)
+}
+
+func (store *migrationStore) prepareMemorySnapshot(virtualMachineID string) (string, error) {
+	pending := store.memorySnapshotDirectory(virtualMachineID) + "-pending"
+	// ponytail: incomplete bundles restart; add byte ranges if retry cost matters.
+	if err := os.RemoveAll(pending); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(pending, 0o700); err != nil {
+		return "", err
+	}
+	return pending, nil
+}
+
+func (store *migrationStore) publishMemorySnapshot(virtualMachineID, pending string, final SourceSnapshot) (int64, error) {
 	var totalBytes int64
 	for _, name := range []string{"state", "memory", "metadata.json"} {
 		information, err := os.Stat(filepath.Join(pending, name))
 		if err != nil {
-			return err
+			return 0, err
 		}
 		totalBytes += information.Size()
 	}
 	if err := writeMigrationRecord(filepath.Join(pending, "disk-snapshot.json"), final); err != nil {
-		return err
+		return 0, err
 	}
+
+	published := store.memorySnapshotDirectory(virtualMachineID)
 	if err := os.RemoveAll(published); err != nil {
-		return err
+		return 0, err
 	}
 	if err := os.Rename(pending, published); err != nil {
-		return err
+		return 0, err
 	}
-	_, err = m.mutateDestination(context.WithoutCancel(ctx), record.VirtualMachineID, func(destination *destinationRecord) {
-		destination.MemorySnapshotGUID = final.GUID
+	return totalBytes, nil
+}
+
+func (m *Manager) completeMemoryTransfer(ctx context.Context, virtualMachineID, guid string, totalBytes int64) error {
+	_, err := m.mutateDestination(context.WithoutCancel(ctx), virtualMachineID, func(destination *destinationRecord) {
+		destination.MemorySnapshotGUID = guid
 		transfer := destination.MemoryTransfer
 		transfer.FinishedAt = m.now()
 		transfer.DurationSeconds = int(transfer.FinishedAt.Sub(transfer.StartedAt).Seconds())
