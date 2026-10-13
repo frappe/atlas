@@ -50,6 +50,7 @@ jobs:
               --jq "[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == \"$base_branch\" and .workflow_run.head_repository_id == $REPOSITORY_ID)][0].id // empty")
             if [ -n "$artifact" ]; then
               gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/$name.zip"
+              mkdir -p "$RUNNER_TEMP/coverage/base"
               unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$RUNNER_TEMP/coverage/base/$name"
             fi
           done
