@@ -2,6 +2,18 @@ package vm
 
 import "context"
 
+// HostCompatibility contains runtime facts reported during controller sync.
+type HostCompatibility struct {
+	Architecture string
+	CPUProfile   string
+	CPUVendor    string
+	CPUModel     string
+	CPUFeatures  string
+	SnapshotHost string
+	TSCKHz       int
+	TSCScaling   bool
+}
+
 // Runtime controls virtual machine processes and guest-facing operations.
 type Runtime interface {
 	Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error)

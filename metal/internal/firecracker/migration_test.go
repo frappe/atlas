@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,69 @@ import (
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
+
+func TestCPUProfileCompatibility(t *testing.T) {
+	profiles := make(map[string]bool)
+	for _, name := range []string{"intel-x86_64", "amd-x86_64", "arm64"} {
+		content, err := cpuTemplates.ReadFile("cpu_templates/" + name + "-v1.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		service := &Runtime{configuration: Config{CPUTemplate: content}}
+		profile, err := service.cpuProfile()
+		if err != nil || !strings.HasPrefix(profile, "custom:") {
+			t.Fatalf("%s profile = %q, error = %v", name, profile, err)
+		}
+		if profiles[profile] {
+			t.Fatal("different built-in templates share a profile digest")
+		}
+		profiles[profile] = true
+	}
+	first := &Runtime{configuration: Config{CPUTemplate: json.RawMessage(`{"a":1,"b":2}`)}}
+	second := &Runtime{configuration: Config{CPUTemplate: json.RawMessage(`{ "b":2, "a":1 }`)}}
+	left, err := first.cpuProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := second.cpuProfile()
+	if err != nil || left != right || !strings.HasPrefix(left, "custom:") {
+		t.Fatalf("equivalent custom profiles differ: %q, %q, %v", left, right, err)
+	}
+	second.configuration.CPUTemplate = json.RawMessage(`{"a":2,"b":2}`)
+	right, err = second.cpuProfile()
+	if err != nil || left == right {
+		t.Fatal("different custom profiles match")
+	}
+	profile, err := (&Runtime{}).cpuProfile()
+	if err != nil || profile != "native" {
+		t.Fatalf("native profile = %q, error = %v", profile, err)
+	}
+}
+
+func TestHostCompatibilityProbe(t *testing.T) {
+	if runtime.GOARCH == "amd64" {
+		kvm, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+		if err != nil {
+			t.Skipf("KVM is unavailable: %v", err)
+		}
+		kvm.Close()
+	}
+	configuration := Config{FirecrackerBin: filepath.Join(t.TempDir(), "firecracker")}
+	if err := os.WriteFile(configuration.FirecrackerBin, []byte("test executable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := &Runtime{configuration: configuration}
+	report, err := service.HostCompatibility(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Architecture != runtime.GOARCH || report.CPUProfile != "native" || report.SnapshotHost == "" || report.CPUFeatures == "" {
+		t.Fatalf("incomplete compatibility report: %+v", report)
+	}
+	if runtime.GOARCH == "amd64" && report.TSCKHz <= 0 {
+		t.Fatal("KVM did not report a CPU clock")
+	}
+}
 
 func TestMigrationFingerprintUsesBinaryContents(t *testing.T) {
 	first, second := filepath.Join(t.TempDir(), "firecracker"), filepath.Join(t.TempDir(), "firecracker")

@@ -367,6 +367,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		return migrationManager.DestinationReservations(ctx)
 	}
 	hostDependencies := host.Dependencies{
+		Compatibility:         virtualMachineRuntime.HostCompatibility,
 		WireGuard:             wireGuardManager,
 		Images:                stores.Images,
 		GatewayRoutes:         virtualMachineManager,
