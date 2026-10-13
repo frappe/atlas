@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasUserError
@@ -138,15 +139,15 @@ class TestMigrationCompatibility(UnitTestCase):
 				source = replace(HOST_COMPATIBILITY, **source_changes)
 				target = replace(HOST_COMPATIBILITY, **target_changes)
 				service = MigrationService(migration_doc(migrate_memory_snapshot=True))
-				with patch("atlas.vm.core.vm_migration.frappe.cache") as cache:
-					cache.return_value.get_value.side_effect = [source, target]
+				with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
+					read_report.side_effect = [frappe.as_json(asdict(source)), frappe.as_json(asdict(target))]
 					if compatible:
 						service.validate_compatibility("metal-2", source.architecture)
 					else:
 						with self.assertRaises(AtlasUserError):
 							service.validate_compatibility("metal-2", source.architecture)
 
-	def test_missing_or_expired_facts_block_the_request(self) -> None:
+	def test_missing_facts_block_the_request(self) -> None:
 		service = MigrationService(migration_doc(status="scheduled", migrate_memory_snapshot=True))
 		service.update = Mock()
 		service.settle = Mock()
@@ -155,9 +156,9 @@ class TestMigrationCompatibility(UnitTestCase):
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
 			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
 			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
-			patch("atlas.vm.core.vm_migration.frappe.cache") as cache,
+			patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report,
 		):
-			cache.return_value.get_value.return_value = None
+			read_report.return_value = None
 			service.run()
 		service.update.assert_called_once()
 		self.assertEqual(service.update.call_args.args[0]["error_code"], "migration_incompatible")
@@ -167,18 +168,18 @@ class TestMigrationCompatibility(UnitTestCase):
 
 	def test_memory_resize_is_rejected_before_reading_facts(self) -> None:
 		service = MigrationService(migration_doc(migrate_memory_snapshot=True, target_memory_mib=1024))
-		with patch("atlas.vm.core.vm_migration.frappe.cache") as cache:
+		with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
 			with self.assertRaisesRegex(AtlasUserError, "cannot resize"):
 				service.validate_compatibility("metal-2", "amd64")
-			cache.assert_not_called()
+			read_report.assert_not_called()
 
 	def test_disk_only_migration_does_not_read_compatibility_reports(self) -> None:
 		for target_memory_mib in (0, 1024):
 			with self.subTest(target_memory_mib=target_memory_mib):
 				service = MigrationService(migration_doc(target_memory_mib=target_memory_mib))
-				with patch("atlas.vm.core.vm_migration.frappe.cache") as cache:
+				with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
 					service.validate_compatibility("metal-2", "amd64")
-					cache.assert_not_called()
+					read_report.assert_not_called()
 
 
 class TestDestinationMetalServerSelection(UnitTestCase):

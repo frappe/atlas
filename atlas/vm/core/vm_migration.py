@@ -244,15 +244,14 @@ class MigrationService:
 			raise AtlasUserError(_("A memory migration cannot resize the VM."))
 		reports = []
 		for server in (self.migration.source_metal_server, destination):
-			report = frappe.cache().get_value(
-				f"metal-host-compatibility:{server}", expires=True, use_local_cache=False
-			)
-			if not isinstance(report, MetalHostCompatibility):
-				raise AtlasUserError(
-					_("Metal Server {0} has no recent compatibility report. Wait for host sync.").format(
-						server
-					)
+			try:
+				report = MetalHostCompatibility.from_dict(
+					frappe.parse_json(frappe.db.get_value("Metal Server", server, "cpu_compatibility_report"))
 				)
+			except ValueError as error:
+				raise AtlasUserError(
+					_("Metal Server {0} has no CPU compatibility report. Wait for host sync.").format(server)
+				) from error
 			reports.append(report)
 		source, target = reports
 		if source.architecture != architecture:

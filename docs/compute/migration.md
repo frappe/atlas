@@ -19,9 +19,9 @@ A stopped VM also moves when a resize does not fit on its host. The migration st
 
 ## Compatibility before transfer
 
-Only memory snapshot migrations require compatibility reports from [host sync](../region/host-sync.md). Atlas compares them after destination selection and before the first Metal migration request. Missing or expired reports fail the memory migration and release its Atlas reservation without starting a transfer.
+Only memory snapshot migrations require the compatibility reports stored on Metal Server by [host sync](../region/host-sync.md). Atlas compares them after destination selection and before the first Metal migration request. Missing or invalid reports fail the memory migration and release its Atlas reservation without starting a transfer.
 
-Disk-only migrations skip these reports. Placement checks destination readiness, architecture, memory, and disk capacity for both modes.
+Disk-only migrations skip these reports. Placement checks destination readiness, recent capacity, architecture, memory, and disk capacity for both modes.
 
 | Memory migration check | Required compatibility |
 | --- | --- |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -102,7 +103,6 @@ def sync_server(
 	if mac_address and mac_address != server.private_network_mac_address:
 		frappe.db.set_value("Metal Server", server.name, "private_network_mac_address", mac_address)
 
-	key = f"metal-host-compatibility:{server_name}"
 	compatibility = response.get("compatibility")
 	try:
 		if compatibility is not None:
@@ -112,10 +112,14 @@ def sync_server(
 			frappe.get_traceback(), f"Invalid host compatibility report from Server {server.name}"
 		)
 		compatibility = None
-	if compatibility is None:
-		frappe.cache().delete_value(key)
-	else:
-		frappe.cache().set_value(key, compatibility, expires_in_sec=120)
+	report = frappe.as_json(asdict(compatibility)) if compatibility else None
+	scaling = bool(compatibility and compatibility.tsc_scaling)
+	if server.cpu_compatibility_report != report or bool(server.tsc_scaling_supported) != scaling:
+		frappe.db.set_value(
+			"Metal Server",
+			server.name,
+			{"cpu_compatibility_report": report, "tsc_scaling_supported": scaling},
+		)
 
 
 def get_desired_images() -> list[dict[str, Any]]:
