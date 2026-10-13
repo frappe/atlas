@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/frappe/atlas/metal/internal/firecracker"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -22,8 +24,13 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(options, defaultOptions()) {
-		t.Fatalf("got %+v, want defaults %+v", options, defaultOptions())
+	want := defaultOptions()
+	want.cfg.CPUTemplate, err = firecracker.DefaultCPUTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(options, want) {
+		t.Fatalf("got %+v, want defaults %+v", options, want)
 	}
 }
 

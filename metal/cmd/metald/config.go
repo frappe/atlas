@@ -162,6 +162,13 @@ func load(path string) (options, error) {
 	if err := applyFile(&resolvedOptions, path); err != nil {
 		return options{}, err
 	}
+	if len(resolvedOptions.cfg.CPUTemplate) == 0 {
+		template, err := firecracker.DefaultCPUTemplate()
+		if err != nil {
+			return options{}, fmt.Errorf("select default CPU template: %w", err)
+		}
+		resolvedOptions.cfg.CPUTemplate = template
+	}
 	resolvedOptions.deriveDirs()
 	return resolvedOptions, nil
 }

@@ -23,11 +23,7 @@ Firecracker receives guest CPUs rounded up from the millicore entitlement. syste
 
 ### Common CPU configuration
 
-Set `firecracker.cpu_template_file` in `metald.toml` to a custom Firecracker CPU template JSON file. Metal reads the file at startup and applies it through `/cpu-config` before each cold boot. An absent setting uses Firecracker's default CPU configuration. Invalid JSON or an unreadable file stops daemon startup. Firecracker validates the template schema before guest boot.
-
-Use Firecracker's [CPU template helper](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/cpu_templates/cpu-template-helper.md) to compare guest CPUID and model-specific registers on every target CPU, kernel, and Firecracker combination. Verify the resulting template on each host, then test the guest and memory migration in both directions. Matching template files alone do not prove migration compatibility.
-
-Changing the template requires a daemon restart and a cold boot of each VM that needs the new CPU configuration. Existing running and restored guests keep the CPU configuration in their memory state. Shared warm images and VM-local snapshots include the template digest in their compatibility marker.
+Metal selects a built-in Intel x86-64, AMD x86-64, or ARM64 CPU template at startup and applies it before every cold boot. `firecracker.cpu_template_file` overrides this selection with an explicit JSON file. See [guest CPU templates](cpu-templates.md) for the profiles, migration limits, validation, and snapshot upgrade requirements.
 
 ## Stop, pause, and restore a guest
 
