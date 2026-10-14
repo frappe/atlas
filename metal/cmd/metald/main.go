@@ -33,6 +33,7 @@ import (
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/reconciler"
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
@@ -267,6 +268,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 
 	// Create resources that metald owns.
 	daemonContext, cancelDaemon := context.WithCancel(context.Background())
+	registry := telemetry.NewRegistry(logger)
 	stores := storage.NewStores(daemonContext, options.pool, options.imagesDir, logger)
 	serialBroker := console.NewSerialBroker(options.cfg.ConsolesDir(), descriptorStore)
 	daemon := newDaemon(daemonContext, cancelDaemon, logger, stores.Snapshots, serialBroker, units)
@@ -459,6 +461,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
+	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions).Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -16,12 +17,15 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	options, err := load(writeConfig(t, ""))
+	path := writeConfig(t, "")
+	options, err := load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options != defaultOptions() {
-		t.Fatalf("got %+v, want defaults %+v", options, defaultOptions())
+	want := defaultOptions()
+	want.configFile = path
+	if !reflect.DeepEqual(options, want) {
+		t.Fatalf("got %+v, want defaults %+v", options, want)
 	}
 }
 

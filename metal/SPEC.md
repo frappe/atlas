@@ -34,12 +34,13 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | [storage](internal/storage/SPEC.md) | ZFS pool, disks, images, and snapshots. |
 | [network](internal/network/SPEC.md) | VM networks and WireGuard peers. |
 | [platform](internal/platform/SPEC.md) | Host files, commands, systemd. |
+| [telemetry](internal/telemetry/SPEC.md) | Metrics push to Datum and the host collector. |
 
 ## Package imports
 
 | Package | Imports |
 | --- | --- |
-| `cmd/metald` | api, host, reconciler, firecracker, storage, network, vm/migration, network/traffic |
+| `cmd/metald` | api, host, reconciler, firecracker, storage, network, vm/migration, network/traffic, telemetry |
 | `api` | vm, host, console, vm/migration |
 | `host` | vm, network, storage, vm/migration |
 | `reconciler` | vm, storage, vm/migration |
@@ -48,6 +49,7 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | `network` | vm, platform, network/traffic |
 | `vm/migration` | vm, storage, platform |
 | `network/traffic` | cilium eBPF |
+| `telemetry/system` | telemetry, platform |
 
 `vm` must not import `vm/migration`. It reads migration locks through an injected guard.
 
