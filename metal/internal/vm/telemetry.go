@@ -27,26 +27,27 @@ func (manager *Manager) recordOperation(phase string, startedAt time.Time, err e
 }
 
 // Request correlation is in memory; after a restart, use VM ID and generation.
-func (manager *Manager) noteRequest(ctx context.Context, record DesiredRecord) {
-	requestID := telemetry.RequestID(ctx)
-	if requestID == "" {
-		return
-	}
+func (manager *Manager) noteRequest(ctx context.Context, record DesiredRecord, isNetworkChange bool) {
 	manager.requestsMutex.Lock()
 	defer manager.requestsMutex.Unlock()
-	manager.requests[record.ID] = notedRequest{id: requestID, generation: record.Generation, restartGeneration: record.RestartGeneration}
+	manager.requests[record.ID] = notedRequest{
+		id:                telemetry.RequestID(ctx),
+		generation:        record.Generation,
+		restartGeneration: record.RestartGeneration,
+		isNetworkChange:   isNetworkChange,
+	}
 }
 
 // Discard requests for generations applied outside reconciliation.
-func (manager *Manager) takeRequest(desired DesiredRecord) string {
+func (manager *Manager) takeRequest(desired DesiredRecord) notedRequest {
 	manager.requestsMutex.Lock()
 	defer manager.requestsMutex.Unlock()
 	noted := manager.requests[desired.ID]
 	delete(manager.requests, desired.ID)
 	if noted.generation != desired.Generation || noted.restartGeneration != desired.RestartGeneration {
-		return ""
+		return notedRequest{}
 	}
-	return noted.id
+	return noted
 }
 
 // Action duration includes the wait between the API write and reconciliation.
@@ -57,7 +58,8 @@ func (manager *Manager) recordAction(desired DesiredRecord, before ObservedRecor
 		return
 	}
 
-	action := completedAction(desired, before, after, removed)
+	request := manager.takeRequest(desired)
+	action := completedAction(desired, before, after, removed, request.isNetworkChange)
 	if action == "" {
 		return
 	}
@@ -71,12 +73,12 @@ func (manager *Manager) recordAction(desired DesiredRecord, before ObservedRecor
 	if action != "sleep" {
 		duration := time.Since(acceptedAt)
 		manager.telemetry.Observe("metal_vm_action_duration_seconds", duration.Seconds(), telemetry.Labels{"action": action})
-		attributes = append(attributes, "duration", duration, "request_id", manager.takeRequest(desired))
+		attributes = append(attributes, "duration", duration, "request_id", request.id)
 	}
 	manager.logger.Info("virtual machine action completed", attributes...)
 }
 
-func completedAction(desired DesiredRecord, before, after ObservedRecord, removed bool) string {
+func completedAction(desired DesiredRecord, before, after ObservedRecord, removed, isNetworkChange bool) string {
 	switch {
 	case removed:
 		return "terminate"
@@ -84,6 +86,8 @@ func completedAction(desired DesiredRecord, before, after ObservedRecord, remove
 		return "create"
 	case after.RestartGeneration > before.RestartGeneration:
 		return "restart"
+	case after.SpecificationGeneration > before.SpecificationGeneration && isNetworkChange:
+		return "update"
 	case after.SpecificationGeneration > before.SpecificationGeneration:
 		return "resize"
 	case after.State != before.State && after.State == StateStopped && desired.State == StateRunning:

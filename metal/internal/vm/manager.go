@@ -77,6 +77,7 @@ type notedRequest struct {
 	id                string
 	generation        uint64
 	restartGeneration uint64
+	isNetworkChange   bool
 }
 
 // NewManager validates all records and returns one host VM manager.
@@ -192,7 +193,7 @@ func (manager *Manager) Create(ctx context.Context, identifier string, specifica
 	if err := manager.store.writeObserved(identifier, observed); err != nil {
 		return Information{}, errors.Join(err, manager.store.remove(identifier))
 	}
-	manager.noteRequest(ctx, desired)
+	manager.noteRequest(ctx, desired, false)
 	return informationFromRecords(desired, observed, DiskUsage{}), nil
 }
 

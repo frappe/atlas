@@ -16,20 +16,22 @@ func TestCompletedActionNamesTheUserVisibleChange(t *testing.T) {
 		before   ObservedRecord
 		after    ObservedRecord
 		removed  bool
+		network  bool
 		expected string
 	}{
-		{"first boot", desiredRunning, ObservedRecord{State: StateUnknown}, running, false, "create"},
-		{"restart", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 1, RestartGeneration: 2}, false, "restart"},
-		{"shape change", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 2, RestartGeneration: 1}, false, "resize"},
-		{"idle sleep", desiredRunning, running, ObservedRecord{State: StateStopped, Generation: 2, SpecificationGeneration: 1, RestartGeneration: 1}, false, "sleep"},
-		{"stop", DesiredRecord{State: StateStopped}, running, ObservedRecord{State: StateStopped, Generation: 3, SpecificationGeneration: 1, RestartGeneration: 1}, false, "stop"},
-		{"metadata", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 1, RestartGeneration: 1}, false, "update"},
-		{"no change", desiredRunning, running, running, false, ""},
-		{"terminate", DesiredRecord{State: StateDestroyed}, running, ObservedRecord{}, true, "terminate"},
+		{"first boot", desiredRunning, ObservedRecord{State: StateUnknown}, running, false, false, "create"},
+		{"restart", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 1, RestartGeneration: 2}, false, false, "restart"},
+		{"shape change", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 2, RestartGeneration: 1}, false, false, "resize"},
+		{"idle sleep", desiredRunning, running, ObservedRecord{State: StateStopped, Generation: 2, SpecificationGeneration: 1, RestartGeneration: 1}, false, false, "sleep"},
+		{"stop", DesiredRecord{State: StateStopped}, running, ObservedRecord{State: StateStopped, Generation: 3, SpecificationGeneration: 1, RestartGeneration: 1}, false, false, "stop"},
+		{"network change", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 2, RestartGeneration: 1}, false, true, "update"},
+		{"metadata", desiredRunning, running, ObservedRecord{State: StateRunning, Generation: 3, SpecificationGeneration: 1, RestartGeneration: 1}, false, false, "update"},
+		{"no change", desiredRunning, running, running, false, false, ""},
+		{"terminate", DesiredRecord{State: StateDestroyed}, running, ObservedRecord{}, true, false, "terminate"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if action := completedAction(testCase.desired, testCase.before, testCase.after, testCase.removed); action != testCase.expected {
+			if action := completedAction(testCase.desired, testCase.before, testCase.after, testCase.removed, testCase.network); action != testCase.expected {
 				t.Fatalf("action = %q, want %q", action, testCase.expected)
 			}
 		})
@@ -39,15 +41,15 @@ func TestCompletedActionNamesTheUserVisibleChange(t *testing.T) {
 func TestTakeRequestIgnoresARequestForAnotherGeneration(t *testing.T) {
 	manager := &Manager{requests: make(map[string]notedRequest)}
 	ctx := telemetry.WithRequestID(context.Background(), "request-1")
-	manager.noteRequest(ctx, DesiredRecord{ID: "vm-1-0001", Generation: 2, RestartGeneration: 1})
+	manager.noteRequest(ctx, DesiredRecord{ID: "vm-1-0001", Generation: 2, RestartGeneration: 1}, false)
 
 	// The API applied generation 2 itself, so a later pass applies generation 3.
-	if requestID := manager.takeRequest(DesiredRecord{ID: "vm-1-0001", Generation: 3, RestartGeneration: 1}); requestID != "" {
+	if requestID := manager.takeRequest(DesiredRecord{ID: "vm-1-0001", Generation: 3, RestartGeneration: 1}).id; requestID != "" {
 		t.Fatalf("request ID = %q, want none for another generation", requestID)
 	}
 
-	manager.noteRequest(ctx, DesiredRecord{ID: "vm-1-0001", Generation: 3, RestartGeneration: 1})
-	if requestID := manager.takeRequest(DesiredRecord{ID: "vm-1-0001", Generation: 3, RestartGeneration: 1}); requestID != "request-1" {
+	manager.noteRequest(ctx, DesiredRecord{ID: "vm-1-0001", Generation: 3, RestartGeneration: 1}, false)
+	if requestID := manager.takeRequest(DesiredRecord{ID: "vm-1-0001", Generation: 3, RestartGeneration: 1}).id; requestID != "request-1" {
 		t.Fatalf("request ID = %q, want request-1", requestID)
 	}
 }
