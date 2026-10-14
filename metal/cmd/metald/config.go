@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -120,8 +123,9 @@ type metaldFile struct {
 }
 
 type firecrackerFile struct {
-	BinaryPath string `toml:"binary_path"`
-	SocketsDir string `toml:"sockets_dir"`
+	BinaryPath      string `toml:"binary_path"`
+	SocketsDir      string `toml:"sockets_dir"`
+	CPUTemplateFile string `toml:"cpu_template_file"`
 }
 
 type jailerFile struct {
@@ -148,14 +152,22 @@ type trafficFile struct {
 }
 
 type migrationFile struct {
-	FinalDeltaMiB *int `toml:"final_delta_mib"`
-	TransferPort  *int `toml:"transfer_port"`
+	FinalDeltaMiB   *int  `toml:"final_delta_mib"`
+	TransferPort    *int  `toml:"transfer_port"`
+	RequireGuestSSH *bool `toml:"require_guest_ssh"`
 }
 
 func load(path string) (options, error) {
 	resolvedOptions := defaultOptions()
 	if err := applyFile(&resolvedOptions, path); err != nil {
 		return options{}, err
+	}
+	if len(resolvedOptions.cfg.CPUTemplate) == 0 {
+		template, err := firecracker.DefaultCPUTemplate()
+		if err != nil {
+			return options{}, fmt.Errorf("select default CPU template: %w", err)
+		}
+		resolvedOptions.cfg.CPUTemplate = template
 	}
 	resolvedOptions.deriveDirs()
 	return resolvedOptions, nil
@@ -180,6 +192,17 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.coordinationListen, fc.Metald.CoordinationListen)
 	overlay(&resolvedOptions.cfg.FirecrackerBin, fc.Firecracker.BinaryPath)
 	overlay(&resolvedOptions.cfg.SocketsDir, fc.Firecracker.SocketsDir)
+	if fc.Firecracker.CPUTemplateFile != "" {
+		template, err := os.ReadFile(fc.Firecracker.CPUTemplateFile)
+		if err != nil {
+			return fmt.Errorf("read CPU template: %w", err)
+		}
+		template = bytes.TrimSpace(template)
+		if len(template) == 0 || !json.Valid(template) || template[0] != '{' {
+			return fmt.Errorf("CPU template %s must be a JSON object", fc.Firecracker.CPUTemplateFile)
+		}
+		resolvedOptions.cfg.CPUTemplate = template
+	}
 	overlay(&resolvedOptions.cfg.JailerBin, fc.Jailer.BinaryPath)
 	overlay(&resolvedOptions.pool, fc.ZFS.Pool)
 	overlay(&resolvedOptions.wireGuardName, fc.WireGuard.Interface)
@@ -190,6 +213,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlayBool(&resolvedOptions.trafficMonitor.enabled, fc.Traffic.Enabled)
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)
+	overlayBool(&resolvedOptions.cfg.RequireMigratedGuestSSH, fc.Migration.RequireGuestSSH)
 	overlay(&resolvedOptions.tls.caFile, fc.TLS.CAFile)
 	overlay(&resolvedOptions.tls.certificateFile, fc.TLS.CertificateFile)
 	overlay(&resolvedOptions.tls.privateKeyFile, fc.TLS.PrivateKeyFile)

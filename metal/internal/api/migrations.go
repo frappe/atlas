@@ -16,9 +16,10 @@ var errInvalidMigrationRequest = errors.New("virtual_machine_id and source are r
 
 // createMigrationRequest is Atlas's destination-pull request.
 type createMigrationRequest struct {
-	VirtualMachineID string                  `json:"virtual_machine_id"`
-	Source           string                  `json:"source"`
-	Resize           *migrationResizeRequest `json:"resize,omitempty"`
+	VirtualMachineID  string                  `json:"virtual_machine_id"`
+	Source            string                  `json:"source"`
+	Resize            *migrationResizeRequest `json:"resize,omitempty"`
+	HasMemorySnapshot bool                    `json:"has_memory_snapshot,omitempty" default:"false"`
 }
 
 // migrationResizeRequest is the CPU, memory, and disk size the destination gives the VM.
@@ -60,16 +61,18 @@ func (r createMigrationRequest) resize() *migration.Resize {
 
 // migrationResponse is the public migration view.
 type migrationResponse struct {
-	ID               string                  `json:"id"`
-	VirtualMachineID string                  `json:"virtual_machine_id"`
-	Status           string                  `json:"status"`
-	Phase            string                  `json:"phase"`
-	Transfers        []migrationTransfer     `json:"transfers,omitempty"`
-	Error            *migrationErrorResponse `json:"error,omitempty"`
+	ID                   string                  `json:"id"`
+	VirtualMachineID     string                  `json:"virtual_machine_id"`
+	Status               string                  `json:"status"`
+	Phase                string                  `json:"phase"`
+	MemorySnapshotStatus string                  `json:"memory_snapshot_status,omitempty"`
+	Transfers            []migrationTransfer     `json:"transfers,omitempty"`
+	Error                *migrationErrorResponse `json:"error,omitempty"`
 }
 
 // migrationTransfer reports one migration data transfer.
 type migrationTransfer struct {
+	SnapshotType    string     `json:"snapshot_type,omitempty"`
 	Sequence        int        `json:"sequence"`
 	StartedAt       time.Time  `json:"started_at"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`
@@ -100,7 +103,7 @@ func (s *Server) createMigration(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize())
+	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize(), request.HasMemorySnapshot)
 	if err != nil {
 		return err
 	}
@@ -151,31 +154,41 @@ func (s *Server) abortMigration(c echo.Context) error {
 // toMigration maps migration progress to its public response.
 func toMigration(record migration.DestinationProgress) migrationResponse {
 	response := migrationResponse{
-		ID:               record.ID,
-		VirtualMachineID: record.VirtualMachineID,
-		Status:           string(record.Status),
-		Phase:            string(record.Phase),
+		ID:                   record.ID,
+		VirtualMachineID:     record.VirtualMachineID,
+		Status:               string(record.Status),
+		Phase:                string(record.Phase),
+		MemorySnapshotStatus: record.MemorySnapshotStatus,
 	}
 	for _, interval := range record.Intervals {
-		var finishedAt *time.Time
-		if !interval.FinishedAt.IsZero() {
-			finishedAt = &interval.FinishedAt
-		}
-		response.Transfers = append(response.Transfers, migrationTransfer{
-			Sequence:        interval.Sequence,
-			StartedAt:       interval.StartedAt,
-			FinishedAt:      finishedAt,
-			DurationSeconds: interval.DurationSeconds,
-			TransferredMiB:  bytesToMiB(interval.BytesTransferred),
-			TotalMiB:        bytesToMiB(interval.TotalBytes),
-			ThroughputMiBps: interval.ThroughputMiBps,
-			Completed:       interval.Completed,
-		})
+		response.Transfers = append(response.Transfers, toMigrationTransfer(interval))
+	}
+	if record.MemoryTransfer != nil {
+		transfer := toMigrationTransfer(*record.MemoryTransfer)
+		transfer.SnapshotType = "memory"
+		response.Transfers = append(response.Transfers, transfer)
 	}
 	if record.Error != nil {
 		response.Error = &migrationErrorResponse{Code: record.Error.Code, Message: record.Error.Message}
 	}
 	return response
+}
+
+func toMigrationTransfer(progress migration.TransferProgress) migrationTransfer {
+	var finishedAt *time.Time
+	if !progress.FinishedAt.IsZero() {
+		finishedAt = &progress.FinishedAt
+	}
+	return migrationTransfer{
+		Sequence:        progress.Sequence,
+		StartedAt:       progress.StartedAt,
+		FinishedAt:      finishedAt,
+		DurationSeconds: progress.DurationSeconds,
+		TransferredMiB:  bytesToMiB(progress.BytesTransferred),
+		TotalMiB:        bytesToMiB(progress.TotalBytes),
+		ThroughputMiBps: progress.ThroughputMiBps,
+		Completed:       progress.Completed,
+	}
 }
 
 func bytesToMiB(bytes int64) int {

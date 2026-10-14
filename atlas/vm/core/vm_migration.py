@@ -11,7 +11,7 @@ from frappe.utils import get_datetime, now_datetime
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
-from atlas.vm.core.metal_models import timestamp_field
+from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
 from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import AffinityRules, PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
@@ -46,8 +46,16 @@ class MigrationService:
 		virtual_machine: VirtualMachine,
 		destination_metal_server: str | None = None,
 		resize: VirtualMachineShape | None = None,
+		has_memory_snapshot: bool = False,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
+		if virtual_machine.current_state not in LIVE_STATES:
+			frappe.throw(
+				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(
+					virtual_machine.name
+				),
+				exc=AtlasUserError,
+			)
 		locked = cast(
 			"VirtualMachine", frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
 		)
@@ -59,6 +67,7 @@ class MigrationService:
 				"virtual_machine": locked.name,
 				"source_metal_server": locked.server,
 				"destination_metal_server": destination_metal_server,
+				"has_memory_snapshot": has_memory_snapshot,
 			}
 		)
 		if resize:
@@ -109,13 +118,6 @@ class MigrationService:
 				),
 				exc=AtlasUserError,
 			)
-		if virtual_machine.current_state not in LIVE_STATES:
-			frappe.throw(
-				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(
-					virtual_machine.name
-				),
-				exc=AtlasUserError,
-			)
 
 	def destination_shape(self, virtual_machine: VirtualMachine) -> VirtualMachineShape:
 		"""Return the shape the VM has on the destination."""
@@ -143,6 +145,7 @@ class MigrationService:
 		if self.migration.status == "scheduled":
 			if not self.select_destination_metal_server():
 				return
+			frappe.db.commit()  # nosemgrep
 
 		if self.is_canceling:
 			self.request_destination_abort()
@@ -208,6 +211,19 @@ class MigrationService:
 				self.settle("failed")
 			return False
 
+		try:
+			self.validate_compatibility(destination, virtual_machine.architecture)
+		except AtlasUserError as error:
+			self.update(
+				{
+					"error_code": "migration_incompatible",
+					"error_message": str(error),
+					"error_at": now_datetime(),
+				}
+			)
+			self.settle("failed")
+			return False
+
 		started_at = now_datetime()
 		self.update(
 			{
@@ -218,7 +234,19 @@ class MigrationService:
 				"progress_percent": 5,
 			}
 		)
-		return True
+		return self.migration.status not in TERMINAL_STATUSES and not self.is_canceling
+
+	def validate_compatibility(self, destination: str, architecture: str) -> None:
+		"""Check synced host facts before a memory snapshot migration."""
+		if not self.migration.has_memory_snapshot:
+			return
+		if self.has_target_shape:
+			raise AtlasUserError(_("A memory snapshot migration cannot resize the VM."))
+
+		source = self._load_compatibility_report(self.migration.source_metal_server)
+		target = self._load_compatibility_report(destination)
+		self._validate_cpu_compatibility(source, target, architecture)
+		self._validate_clock_compatibility(source, target)
 
 	def record_destination_metal_server_selection_failure(self, error: Exception) -> None:
 		"""Record one unsuccessful destination selection attempt."""
@@ -236,6 +264,8 @@ class MigrationService:
 
 	def advance(self, status: dict[str, Any]) -> bool:
 		"""Apply one Metal response. Return True after a terminal transition."""
+		if self.migration.status in TERMINAL_STATUSES:
+			return True
 		state = status.get("status")
 		if state == "completed":
 			self.settle("completed")
@@ -250,9 +280,6 @@ class MigrationService:
 				str(error.get("message") or "Metal failed migration."),
 			)
 			self.request_destination_abort()
-			if self.is_expired:
-				self.settle("failed")
-				return True
 			return False
 		if state == "missing":
 			return self.handle_missing_destination()
@@ -260,8 +287,8 @@ class MigrationService:
 			self.request_destination_abort()
 			return False
 		if state == "ready":
-			self.commit_destination()
-			self.finish()
+			if self.commit_destination():
+				self.finish()
 		return False
 
 	def handle_missing_destination(self) -> bool:
@@ -289,7 +316,11 @@ class MigrationService:
 			)
 			resize = self.destination_shape(virtual_machine).migration_resize
 		self.destination_client.put_migration(
-			self.migration.name, self.migration.virtual_machine, source_coordination_url, resize
+			self.migration.name,
+			self.migration.virtual_machine,
+			source_coordination_url,
+			resize,
+			has_memory_snapshot=bool(self.migration.has_memory_snapshot),
 		)
 
 	def poll(self) -> dict[str, Any]:
@@ -320,6 +351,8 @@ class MigrationService:
 		if status:
 			values["status"] = status
 			values["progress_percent"] = self.progress_percent(status, transfers)
+		if self.migration.has_memory_snapshot and response.get("memory_snapshot_status"):
+			values["memory_snapshot_status"] = response["memory_snapshot_status"]
 		self.update(values, transfers=transfers, commit=True)
 
 	def status_from_response(self, response: dict[str, Any]) -> str | None:
@@ -354,16 +387,13 @@ class MigrationService:
 			status, int(self.migration.progress_percent or 0)
 		)
 
-	def commit_destination(self) -> None:
+	def commit_destination(self) -> bool:
 		"""Commit the VM server, a resized shape, and finalizing status in one transaction."""
-		virtual_machine = cast(
-			"VirtualMachine",
-			frappe.get_doc("Virtual Machine", self.migration.virtual_machine, for_update=True),
-		)
-		migration = cast(
-			"VirtualMachineMigration",
-			frappe.get_doc("Virtual Machine Migration", self.migration.name, for_update=True),
-		)
+		virtual_machine, migration = self._lock_records()
+		if migration.status == "canceling" or migration.status in TERMINAL_STATUSES:
+			self.migration = migration
+			frappe.db.commit()  # nosemgrep
+			return False
 		if virtual_machine.server != migration.destination_metal_server:
 			virtual_machine.db_set("server", migration.destination_metal_server)
 		if migration.target_memory_mib:
@@ -379,7 +409,7 @@ class MigrationService:
 		frappe.db.commit()  # nosemgrep
 		self.migration = migration
 
-		# The VM already runs on the destination. The scheduled reconcile retries a failed move.
+		# Public IP moves retry without undoing the committed destination.
 		for allocation in frappe.get_all(
 			"Public IP Allocation",
 			filters={"virtual_machine": virtual_machine.name, "status": "Attached"},
@@ -393,6 +423,7 @@ class MigrationService:
 				frappe.log_error(
 					title=f"Move public allocation {allocation} to {migration.destination_metal_server}"
 				)
+		return True
 
 	def finish(self) -> None:
 		"""Tell the destination that Atlas committed the VM."""
@@ -400,19 +431,33 @@ class MigrationService:
 
 	def request_abort(self) -> None:
 		"""Cancel a scheduled migration or request cleanup from its destination."""
+		virtual_machine, self.migration = self._lock_records()
+		if self.migration.status in TERMINAL_STATUSES:
+			frappe.throw(_("This migration is already finished."), exc=AtlasUserError)
+		if virtual_machine.server == self.migration.destination_metal_server:
+			frappe.throw(
+				_("This migration has committed its destination. It must finish."), exc=AtlasUserError
+			)
 		if self.migration.status == "scheduled":
 			self.settle("aborted")
 			return
 
 		if not self.is_canceling:
-			self.update({"status": "canceling"}, commit=True)
+			self.update({"status": "canceling"})
+		frappe.db.commit()  # nosemgrep
 		if self.migration.destination_metal_server:
 			self.request_destination_abort()
 
 	def request_destination_abort(self) -> None:
-		"""Ask Metal to clean up a selected destination."""
+		"""Roll back before ownership changes; retry finish after the commit."""
 		try:
-			self.destination_client.abort_migration(self.migration.name)
+			if (
+				frappe.db.get_value("Virtual Machine", self.migration.virtual_machine, "server")
+				== self.migration.destination_metal_server
+			):
+				self.finish()
+			else:
+				self.destination_client.abort_migration(self.migration.name)
 		except MetalClientError as error:
 			self.record_error(error)
 
@@ -438,8 +483,15 @@ class MigrationService:
 		}
 		if status == "completed":
 			values["progress_percent"] = 100
+		if self.migration.has_memory_snapshot:
+			values["memory_snapshot_status"] = status
 		self.update(values)
-		frappe.db.set_value("Virtual Machine", self.migration.virtual_machine, "active_migration", None)
+		frappe.db.set_value(
+			"Virtual Machine",
+			{"name": self.migration.virtual_machine, "active_migration": self.migration.name},
+			"active_migration",
+			None,
+		)
 		frappe.db.commit()  # nosemgrep
 
 	def record_error(self, error: Exception) -> None:
@@ -457,9 +509,20 @@ class MigrationService:
 		self, values: dict[str, Any], *, transfers: list[dict[str, Any]] | None = None, commit: bool = False
 	) -> None:
 		"""Write fresh migration fields and upsert typed transfer rows."""
-		migration = cast(
-			"VirtualMachineMigration", frappe.get_doc("Virtual Machine Migration", self.migration.name)
-		)
+		virtual_machine, migration = self._lock_records()
+		if migration.status in TERMINAL_STATUSES:
+			self.migration = migration
+			if commit:
+				frappe.db.commit()  # nosemgrep
+			return
+		# Polling cannot undo cancellation or roll back committed ownership.
+		if (
+			values.get("status") == "canceling"
+			and virtual_machine.server == migration.destination_metal_server
+		):
+			values = {**values, "status": "finalizing"}
+		elif migration.status == "canceling" and values.get("status") not in TERMINAL_STATUSES:
+			values = {**values, "status": "canceling"}
 		for fieldname, value in values.items():
 			setattr(migration, fieldname, value)
 		if transfers is not None:
@@ -470,6 +533,18 @@ class MigrationService:
 			frappe.db.commit()  # nosemgrep
 		self.migration = migration
 
+	def _lock_records(self) -> tuple[VirtualMachine, VirtualMachineMigration]:
+		"""Lock the VM before its migration for every controller write."""
+		virtual_machine = cast(
+			"VirtualMachine",
+			frappe.get_doc("Virtual Machine", self.migration.virtual_machine, for_update=True),
+		)
+		migration = cast(
+			"VirtualMachineMigration",
+			frappe.get_doc("Virtual Machine Migration", self.migration.name, for_update=True),
+		)
+		return virtual_machine, migration
+
 	@staticmethod
 	def upsert_transfers(migration: VirtualMachineMigration, transfers: list[dict[str, Any]]) -> None:
 		"""Copy Metal transfer values into their matching child rows."""
@@ -479,6 +554,7 @@ class MigrationService:
 			row = rows.get(sequence)
 			if row is None:
 				row = migration.append("transfers", {"idx": sequence})
+			row.snapshot_type = "Memory" if transfer.get("snapshot_type") == "memory" else "Disk"
 			row.started_at = timestamp_field(transfer, "started_at")
 			row.finished_at = timestamp_field(transfer, "finished_at")
 			row.duration_seconds = transfer.get("duration_seconds", 0)
@@ -527,6 +603,48 @@ class MigrationService:
 	def source_metal_server(self) -> MetalServer:
 		"""Return the source Metal Server record."""
 		return cast("MetalServer", frappe.get_doc("Metal Server", self.migration.source_metal_server))
+
+	@staticmethod
+	def _load_compatibility_report(server: str) -> MetalHostCompatibility:
+		"""Load and validate one synced host report."""
+		try:
+			return MetalHostCompatibility.from_dict(
+				frappe.parse_json(frappe.db.get_value("Metal Server", server, "cpu_compatibility_report"))
+			)
+		except ValueError as error:
+			raise AtlasUserError(
+				_("Metal Server {0} has no CPU compatibility report. Wait for host sync.").format(server)
+			) from error
+
+	@staticmethod
+	def _validate_cpu_compatibility(
+		source: MetalHostCompatibility, target: MetalHostCompatibility, architecture: str
+	) -> None:
+		"""Check the VM architecture and host CPU contract."""
+		if source.architecture != architecture:
+			raise AtlasUserError(_("The source CPU architecture does not match the VM."))
+
+		fields = ("architecture", "cpu_profile", "cpu_vendor", "snapshot_host")
+		if source.cpu_profile == "native":
+			fields += ("cpu_model", "cpu_features")
+		for field in fields:
+			if getattr(source, field) != getattr(target, field):
+				raise AtlasUserError(_("Migration hosts have different {0}.").format(field.replace("_", " ")))
+
+	@staticmethod
+	def _validate_clock_compatibility(source: MetalHostCompatibility, target: MetalHostCompatibility) -> None:
+		"""Check stable x86 clocks and destination scaling support."""
+		if source.architecture != "amd64":
+			return
+		if not source.tsc_khz or not target.tsc_khz:
+			raise AtlasUserError(_("The migration hosts did not report a stable CPU clock."))
+
+		# Firecracker accepts boot-time clock calibration differences up to 250 ppm.
+		if (
+			abs(source.tsc_khz - target.tsc_khz) > source.tsc_khz * 250 // 1_000_000
+			and not target.tsc_scaling
+		):
+			raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
 
 
 def reconcile_migration(migration_name: str) -> None:

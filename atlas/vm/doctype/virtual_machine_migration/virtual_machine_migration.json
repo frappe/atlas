@@ -8,10 +8,12 @@
   "section_break_overview",
   "virtual_machine",
   "status",
+  "memory_snapshot_status",
   "progress_percent",
   "column_break_overview",
   "source_metal_server",
   "destination_metal_server",
+  "has_memory_snapshot",
   "section_break_time",
   "scheduled_at",
   "column_break_timing",
@@ -69,6 +71,16 @@
    "search_index": 1
   },
   {
+   "default": "not_started",
+   "depends_on": "eval:doc.has_memory_snapshot",
+   "fieldname": "memory_snapshot_status",
+   "fieldtype": "Select",
+   "label": "Memory Snapshot Status",
+   "options": "not_started\ncreating\ntransferring\nrestoring\ncompleted\nfailed\naborted",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
    "default": "0",
    "fieldname": "progress_percent",
    "fieldtype": "Int",
@@ -102,6 +114,14 @@
    "options": "Metal Server",
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_memory_snapshot",
+   "fieldtype": "Check",
+   "label": "Memory Snapshot",
+   "read_only": 1,
+   "set_only_once": 1
   },
   {
    "collapsible": 1,
@@ -263,7 +283,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-22 18:17:10.027876",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Migration",

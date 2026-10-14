@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -11,6 +12,7 @@ from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server imp
 	get_wireguard_gateway_routes,
 )
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.metal_models import MetalHostCompatibility
 from atlas.vm.core.vm_state import store_reported_states
 
 if TYPE_CHECKING:
@@ -100,6 +102,25 @@ def sync_server(
 	mac_address = response.get("private_network_mac_address")
 	if mac_address and mac_address != server.private_network_mac_address:
 		frappe.db.set_value("Metal Server", server.name, "private_network_mac_address", mac_address)
+
+	compatibility = response.get("compatibility")
+	try:
+		if compatibility is not None:
+			compatibility = MetalHostCompatibility.from_dict(compatibility)
+	except ValueError:
+		frappe.log_error(
+			frappe.get_traceback(), f"Invalid host compatibility report from Server {server.name}"
+		)
+		compatibility = None
+	report = frappe.as_json(asdict(compatibility)) if compatibility else None
+	scaling = bool(compatibility and compatibility.tsc_scaling)
+	if server.cpu_compatibility_report != report or bool(server.tsc_scaling_supported) != scaling:
+		frappe.db.set_value(
+			"Metal Server",
+			server.name,
+			{"cpu_compatibility_report": report, "tsc_scaling_supported": scaling},
+			update_modified=False,
+		)
 
 
 def get_desired_images() -> list[dict[str, Any]]:

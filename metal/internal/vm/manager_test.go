@@ -35,6 +35,13 @@ type fakeRuntime struct {
 	coldStartError error
 	usage          RuntimeUsage
 	usageError     error
+
+	migrationRestores  int
+	migrationDirectory string
+	metadataError      error
+	diskError          error
+	guestCheckError    error
+	guestChecks        int
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
@@ -94,6 +101,16 @@ func (runtime *fakeRuntime) RestorePaused(context.Context, RuntimeMachine) error
 	return nil
 }
 
+func (runtime *fakeRuntime) RestorePausedFrom(_ context.Context, _ RuntimeMachine, directory string) error {
+	runtime.migrationRestores++
+	runtime.migrationDirectory = directory
+	if runtime.restoreError != nil {
+		return runtime.restoreError
+	}
+	runtime.state = StatePaused
+	return nil
+}
+
 func (runtime *fakeRuntime) DeleteSavedState(context.Context, RuntimeMachine) error {
 	runtime.deletes++
 	if runtime.deleteError != nil {
@@ -117,19 +134,19 @@ func (runtime *fakeRuntime) Resume(context.Context, RuntimeMachine) error {
 
 func (runtime *fakeRuntime) Remove(context.Context, RuntimeMachine) error {
 	runtime.removes++
-	runtime.state = StateDestroyed
+	runtime.state = StateStopped
 	return nil
 }
 
 func (runtime *fakeRuntime) RefreshMetadata(context.Context, RuntimeMachine) error {
 	runtime.metadata++
-	return nil
+	return runtime.metadataError
 }
 
 func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachine) error {
 	runtime.diskRefresh++
 	runtime.diskLimitMiBps = machine.Specification.Disk.ThroughputMiBps
-	return nil
+	return runtime.diskError
 }
 
 func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error) {
@@ -138,6 +155,11 @@ func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSess
 
 func (runtime *fakeRuntime) ResumeSSH(string, string) (SSHSession, error) {
 	return nil, nil
+}
+
+func (runtime *fakeRuntime) CheckMigratedGuestSSH(context.Context, RuntimeMachine) error {
+	runtime.guestChecks++
+	return runtime.guestCheckError
 }
 
 func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error) {

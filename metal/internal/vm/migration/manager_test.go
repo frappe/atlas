@@ -27,10 +27,12 @@ type fakeMigrationHost struct {
 	operationCalls  chan string
 
 	normalizeCalls      int
+	saveMemoryCalls     int
 	removeNetworkCalls  int
 	ensureNetworkCalls  int
 	applyStateCalls     int
 	restoreCalls        int
+	restoreMemory       bool
 	removeRuntimeCalls  int
 	releaseStorageCalls int
 	refreshDiskCalls    int
@@ -38,6 +40,12 @@ type fakeMigrationHost struct {
 	limitDiskValue      int
 
 	applyStateError error
+
+	restoreMemoryCalls  int
+	activateMemoryCalls int
+	restoreMemoryError  error
+	activateMemoryError error
+	activateMemory      func() error
 }
 
 func newFakeMigrationHost(t *testing.T) *fakeMigrationHost {
@@ -149,8 +157,22 @@ func (f *fakeMigrationHost) ApplyMigratedDestinationState(context.Context, strin
 	return f.applyStateError
 }
 
-func (f *fakeMigrationHost) RestoreRuntimeState(context.Context, string, vm.State) error {
+func (f *fakeMigrationHost) RestoreMigratedMemorySnapshot(context.Context, string, string) error {
+	f.restoreMemoryCalls++
+	return f.restoreMemoryError
+}
+
+func (f *fakeMigrationHost) ActivateMigratedDestination(context.Context, string) error {
+	f.activateMemoryCalls++
+	if f.activateMemory != nil {
+		return f.activateMemory()
+	}
+	return f.activateMemoryError
+}
+
+func (f *fakeMigrationHost) RestoreRuntimeState(_ context.Context, _ string, _ vm.State, fromSavedState bool) error {
 	f.restoreCalls++
+	f.restoreMemory = fromSavedState
 	return nil
 }
 
@@ -193,6 +215,7 @@ type fakeMigrationStorage struct {
 	aborts        int
 	sendErr       error
 	receiveErr    error
+	receive       func(context.Context) error
 	abortErr      error
 	sendHang      bool
 	sendStarted   chan struct{}
@@ -251,8 +274,11 @@ func (f *fakeMigrationStorage) StartSnapshotServer(ctx context.Context, _, name,
 	return stream, nil
 }
 
-func (f *fakeMigrationStorage) ReceiveSnapshotTLS(_ context.Context, _ string, _ string) error {
+func (f *fakeMigrationStorage) ReceiveSnapshotTLS(ctx context.Context, _ string, _ string) error {
 	f.received++
+	if f.receive != nil {
+		return f.receive(ctx)
+	}
 	return f.receiveErr
 }
 
@@ -284,6 +310,9 @@ type fakeSourceOperations struct {
 	startError        error
 	finishCalls       int
 	finishError       error
+
+	stopMemorySnapshot bool
+	memoryReceive      func(context.Context, string) error
 }
 
 func (c *fakeSourceOperations) PrepareSource(context.Context, string, string, string) (VirtualMachineDefinition, vm.State, error) {
@@ -316,8 +345,9 @@ func (c *fakeSourceOperations) StartSnapshotStream(ctx context.Context, _, _, _ 
 	return c.streamError
 }
 
-func (c *fakeSourceOperations) StopSource(_ context.Context, _, _, _ string, receivedSequence int) (SourceSnapshot, error) {
+func (c *fakeSourceOperations) StopSource(_ context.Context, _, _, _ string, receivedSequence int, memorySnapshot bool) (SourceSnapshot, error) {
 	c.stopCalls++
+	c.stopMemorySnapshot = memorySnapshot
 	c.stopReceived = receivedSequence
 	return c.stopSnapshot, c.stopError
 }
@@ -391,7 +421,7 @@ func TestCreateDestinationReservesAndAcceptsARetry(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
 	ctx := context.Background()
 
-	record, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil)
+	record, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +432,7 @@ func TestCreateDestinationReservesAndAcceptsARetry(t *testing.T) {
 		t.Fatal("VM ID was not reserved")
 	}
 
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatalf("idempotent retry = %v", err)
 	}
 }
@@ -415,7 +445,7 @@ func TestCreateDestinationSerializesOneMigrationID(t *testing.T) {
 	for _, virtualMachineID := range []string{"vm-1", "vm-2"} {
 		go func() {
 			<-start
-			_, err := migrationManager.CreateDestination(t.Context(), "mig-1", virtualMachineID, "https://10.0.0.3:9000", nil)
+			_, err := migrationManager.CreateDestination(t.Context(), "mig-1", virtualMachineID, "https://10.0.0.3:9000", nil, false)
 			results <- err
 		}()
 	}
@@ -440,7 +470,7 @@ func TestCreateDestinationSerializesOneMigrationID(t *testing.T) {
 func TestCreateDestinationRejectsAPlaintextSource(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
 
-	_, err := migrationManager.CreateDestination(context.Background(), "mig-1", "vm-1", "http://10.0.0.3:9001", nil)
+	_, err := migrationManager.CreateDestination(context.Background(), "mig-1", "vm-1", "http://10.0.0.3:9001", nil, false)
 	if !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("plaintext source = %v, want ErrConflict", err)
 	}
@@ -449,17 +479,17 @@ func TestCreateDestinationRejectsAPlaintextSource(t *testing.T) {
 func TestCreateDestinationRejectsChangedValues(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.9:9000", nil); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.9:9000", nil, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("changed source = %v, want ErrConflict", err)
 	}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-2", "vm-1", "https://10.0.0.3:9000", nil); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-2", "vm-1", "https://10.0.0.3:9000", nil, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("changed migration ID = %v, want ErrConflict", err)
 	}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-2", "https://10.0.0.3:9000", nil); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-2", "https://10.0.0.3:9000", nil, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("reused migration ID for another VM = %v, want ErrConflict", err)
 	}
 }
@@ -469,7 +499,7 @@ func TestCreateDestinationRejectsALiveVirtualMachineID(t *testing.T) {
 	ctx := context.Background()
 	machines.create("vm-1", testSpecification())
 
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("reserve a live VM ID = %v, want ErrConflict", err)
 	}
 }
@@ -477,7 +507,7 @@ func TestCreateDestinationRejectsALiveVirtualMachineID(t *testing.T) {
 func TestDestinationStatusResolvesTheMigrationID(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -496,7 +526,7 @@ func TestDestinationStatusResolvesTheMigrationID(t *testing.T) {
 func TestAbortDestinationUnlocksTheSourceAndClearsTheReservation(t *testing.T) {
 	migrationManager, _, source := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -520,7 +550,7 @@ func TestAbortDestinationKeepsRecordsWhenRollbackFails(t *testing.T) {
 	migrationManager, _, source := newMigrationManager(t)
 	source.removeError = errors.New("source unreachable")
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -577,7 +607,7 @@ func TestUnlockSourceStopsAnInFlightStream(t *testing.T) {
 func TestDestinationReservationsCountOnlyMigrationsWithConfig(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -607,4 +637,23 @@ func TestDestinationReservationsCountOnlyMigrationsWithConfig(t *testing.T) {
 	if len(reservations) != 1 || reservations[0].CPUMillicores != 3000 || reservations[0].MemoryMiB != 3072 {
 		t.Fatalf("reservations = %+v", reservations)
 	}
+}
+
+func (f *fakeMigrationHost) SaveAndStopSource(context.Context, string) error {
+	f.saveMemoryCalls++
+	return nil
+}
+
+func (c *fakeSourceOperations) ReceiveMemorySnapshot(ctx context.Context, _, _, _ string, _ int, directory string, _ int) error {
+	if c.memoryReceive != nil {
+		if err := c.memoryReceive(ctx, directory); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"state", "memory", "metadata.json"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
