@@ -527,9 +527,14 @@ def get_correlation_headers() -> dict[str, str]:
 	return {"X-Request-ID": trace_id} if trace_id else {}
 
 
+def get_metal_route(path: str) -> str:
+	"""Return the route of a Metal path, with the VM, migration, or snapshot ID as :id."""
+	return METAL_ROUTE_IDENTIFIER.sub(r"\1:id", path.partition("?")[0])
+
+
 def record_metal_request(method: str, path: str, status: str, started_at: float) -> None:
 	"""Count Metal calls and observe mutation latency, except frequent host syncs."""
-	route = METAL_ROUTE_IDENTIFIER.sub(r"\1:id", path.partition("?")[0])
+	route = get_metal_route(path)
 	duration = time.perf_counter() - started_at
 	count("atlas_metal_requests_total", method=method, route=route, status=status)
 	count("atlas_metal_request_duration_seconds_total", duration, method=method, route=route)

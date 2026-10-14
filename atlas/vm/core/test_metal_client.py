@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import requests
 from frappe.tests import UnitTestCase
 
-from atlas.vm.core.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.metal_client import MetalClient, MetalClientError, get_metal_route
 
 
 def build_client() -> MetalClient:
@@ -617,3 +617,11 @@ class TestMetalClientMigrations(UnitTestCase):
 		server.name = "metal-1"
 
 		self.assertEqual(MetalClient.get_coordination_url(server), "https://[fdab::12]:9001")
+
+
+class TestMetalRoute(UnitTestCase):
+	def test_a_resource_id_becomes_one_route_so_metrics_get_no_series_per_vm(self) -> None:
+		self.assertEqual(get_metal_route("/v1/vms/vm-1-0001/actions?wait=1"), "/v1/vms/:id/actions")
+		self.assertEqual(get_metal_route("/v1/migrations/mig-7"), "/v1/migrations/:id")
+		self.assertEqual(get_metal_route("/v1/snapshots/01a1/upload"), "/v1/snapshots/:id/upload")
+		self.assertEqual(get_metal_route("/v1/sync"), "/v1/sync")
