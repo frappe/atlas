@@ -145,7 +145,8 @@ FROM latest AS l LEFT JOIN titles AS t ON t.server = l.resource_id
 LEFT JOIN growth AS g ON g.resource_id = l.resource_id
 LEFT JOIN links AS n ON n.resource_id = l.resource_id
 LEFT JOIN arrays AS a ON a.resource_id = l.resource_id
-LEFT JOIN disks AS d ON d.resource_id = l.resource_id"""
+LEFT JOIN disks AS d ON d.resource_id = l.resource_id
+WHERE problems > 0"""
 
 # Pressure is the share of the last 15 minutes that some tasks waited for a resource.
 STRESS = f"""WITH {TITLES},
@@ -189,7 +190,8 @@ SELECT {HOST.format(alias="u")} AS host, u.cpu_busy AS cpu_busy, u.load_per_core
     + toUInt8(load_per_core > 1.5) + toUInt8(cpu_allocated > 100) + toUInt8(memory_allocated > 100) AS stress_signals
 FROM usage AS u LEFT JOIN titles AS t ON t.server = u.resource_id
 LEFT JOIN pressure AS p ON p.resource_id = u.resource_id
-LEFT JOIN allocation AS a ON a.server = u.resource_id"""
+LEFT JOIN allocation AS a ON a.server = u.resource_id
+WHERE stress_signals > 0"""
 
 # Migrations whose newest step in the last day is not completed or aborted.
 ACTIVE_MIGRATIONS = f"""WITH {TITLES}

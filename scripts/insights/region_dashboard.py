@@ -273,7 +273,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 			order="Problems",
 			scale="Problems",
 		),
-		"Hosts with hardware faults first. A rising ECC corrected count warns of a failing DIMM; CPU above 85 °C counts as a problem.",
+		"Only hosts with a hardware fault. A rising ECC corrected count warns of a failing DIMM; CPU above 85 °C counts as a problem.",
 	)
 	stress = folder.add_chart(
 		"stress",
@@ -296,7 +296,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 			order="Stress Signals",
 			scale="Stress Signals",
 		),
-		"The last 15 minutes. Pressure is the share of time some tasks waited for CPU, memory, or IO. A signal is CPU pressure over 10%, "
+		"Only hosts with a stress signal in the last 15 minutes. Pressure is the share of time some tasks waited for CPU, memory, or IO. A signal is CPU pressure over 10%, "
 		"memory pressure over 5%, IO pressure over 10%, RAM used over 90%, load over 1.5 per core, or allocation over 100%.",
 	)
 	active_migrations = folder.add_chart(
@@ -397,10 +397,10 @@ def add_region_dashboard(workbook: Workbook) -> None:
 	layout.chart(hosts_table, 20, 12)
 	layout.chart(hardware, 20, 12)
 	layout.chart(stress, 20, 12)
-	layout.heading("Migrations and Problems")
-	layout.chart(active_migrations, 20, 12)
-	layout.chart(problems, 20, 16)
 	layout.heading("VM Actions")
 	layout.readings(actions, [action.title() for action in ACTION_NAMES])
 	layout.chart(migrations)
 	layout.chart(placement)
+	layout.heading("Migrations and Problems")
+	layout.chart(active_migrations, 20, 12)
+	layout.chart(problems, 20, 16)

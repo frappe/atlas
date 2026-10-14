@@ -23,11 +23,11 @@ Read it from the top. Each table sorts its worst row first.
 | SLA | VM uptime and Atlas API availability this month. |
 | Platform Services, Fleet, Atlas, Signals, Capacity, Public IPs | The newest minute or hour of each value, with its trend. |
 | Hosts | Each host's push age, use, allocation, and VMs. |
-| Hardware | Unhealthy disks, degraded RAID, ZFS errors, ECC errors, temperatures, thermal throttles, NIC links and errors, and failed units. |
-| Hosts Under Stress | CPU, memory, and IO pressure, load, RAM use, and allocation over the last 15 minutes. |
+| Hardware | Hosts with a hardware fault: unhealthy disks, degraded RAID, ZFS errors, ECC errors, high temperatures, thermal throttles, NIC links and errors, or failed units. |
+| Hosts Under Stress | Hosts with a stress signal in the last 15 minutes: CPU, memory, or IO pressure, load, RAM use, or allocation. |
+| VM Actions | The 95th percentile duration of each VM action. |
 | Migrations in Progress | Each migration whose newest step is not completed or aborted. |
 | Recent Problems | Unhandled Atlas errors, host error lines, and failed migrations of the last day. |
-| VM Actions | The 95th percentile duration of each VM action. |
 
 ## SLA and SLOs
 
