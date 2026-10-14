@@ -67,20 +67,22 @@ class RedfishClient:
 		"""Read all collection pages within the member limit."""
 		page = self.read(link)
 		count = page.get("Members@odata.count")
+		self.check_member_limit(link, count or 0)
 		members = page.get("Members") or []
-		while True:
-			if max(count or 0, len(members)) > MAXIMUM_MEMBERS:
-				raise RedfishError(f"{link} has more than {MAXIMUM_MEMBERS} members")
-
-			# Some BMCs return all members with a next-page link. Stop at the reported count.
-			next_link = page.get("Members@odata.nextLink")
-			if not next_link or (count is not None and len(members) >= count):
-				return members
-
-			page = self.read(next_link)
+		# Some BMCs return all members with a next-page link. Stop at the reported count.
+		while page.get("Members@odata.nextLink") and (count is None or len(members) < count):
+			page = self.read(page["Members@odata.nextLink"])
 			if not page.get("Members"):
-				return members
+				break
 			members += page["Members"]
+			self.check_member_limit(link, len(members))
+		return members
+
+	@staticmethod
+	def check_member_limit(link: str, size: int) -> None:
+		"""Refuse a collection that costs too many reads."""
+		if size > MAXIMUM_MEMBERS:
+			raise RedfishError(f"{link} has more than {MAXIMUM_MEMBERS} members")
 
 	def read_log_links(self, resource: dict) -> list[str]:
 		"""List a resource's log service links."""
@@ -93,6 +95,17 @@ class RedfishClient:
 		entries_link = self.get_link(service.get("Entries"))
 		return self.get_name(service), self.read_members(entries_link) if entries_link else []
 
+	def get_timeout(self, is_read: bool) -> float:
+		"""Return the request timeout, cut to the time left before the deadline."""
+		timeout = READ_TIMEOUT_SECONDS if is_read else ACTION_TIMEOUT_SECONDS
+		if self.deadline is None:
+			return timeout
+
+		timeout = min(timeout, self.deadline - time.monotonic())
+		if timeout <= 0:
+			raise RedfishError(f"No request to {self.url} starts after the BMC time limit")
+		return timeout
+
 	def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
 		"""Return the JSON object of one Redfish request to the BMC host."""
 		# A BMC response must not send the credentials to another host.
@@ -101,11 +114,7 @@ class RedfishClient:
 
 		# The outcome of a failed action is unknown, and repeating it is not safe.
 		is_read = method == "GET"
-		timeout = READ_TIMEOUT_SECONDS if is_read else ACTION_TIMEOUT_SECONDS
-		if self.deadline is not None:
-			timeout = min(timeout, self.deadline - time.monotonic())
-			if timeout <= 0:
-				raise RedfishError(f"{method} {url} was not sent because the BMC time limit passed")
+		timeout = self.get_timeout(is_read)
 
 		try:
 			response = requests.request(

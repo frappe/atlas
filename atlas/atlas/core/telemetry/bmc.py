@@ -163,8 +163,7 @@ class BMCCollector:
 
 	def add_thermal(self, chassis: dict) -> None:
 		"""Add present temperature sensors and fans."""
-		link = RedfishClient.get_link(chassis.get("Thermal"))
-		thermal = self.client.read(link) if link else {}
+		thermal = self.read_linked_resource(chassis.get("Thermal"))
 		for sensor in thermal.get("Temperatures") or []:
 			if RedfishClient.is_present(sensor):
 				name = RedfishClient.get_name(sensor)
@@ -181,8 +180,7 @@ class BMCCollector:
 
 	def add_power(self, chassis: dict) -> None:
 		"""Add power use, present power supplies, and voltage readings."""
-		link = RedfishClient.get_link(chassis.get("Power"))
-		power = self.client.read(link) if link else {}
+		power = self.read_linked_resource(chassis.get("Power"))
 		for control in power.get("PowerControl") or []:
 			name = RedfishClient.get_name(control)
 			metrics = control.get("PowerMetrics") or {}
@@ -190,6 +188,15 @@ class BMCCollector:
 			self.add_sample("bmc_power_watts", metrics.get("AverageConsumedWatts"), name=name, kind="average")
 			self.add_sample("bmc_power_watts", metrics.get("MaxConsumedWatts"), name=name, kind="maximum")
 
+		self.add_power_supplies(power)
+		for rail in power.get("Voltages") or []:
+			if RedfishClient.is_present(rail):
+				self.add_sample(
+					"bmc_voltage_volts", rail.get("ReadingVolts"), name=RedfishClient.get_name(rail)
+				)
+
+	def add_power_supplies(self, power: dict) -> None:
+		"""Add the health, input voltage, and output power of each present power supply."""
 		for supply in power.get("PowerSupplies") or []:
 			if RedfishClient.is_present(supply):
 				name = RedfishClient.get_name(supply)
@@ -197,12 +204,6 @@ class BMCCollector:
 				self.add_sample("bmc_power_supply_input_volts", supply.get("LineInputVoltage"), name=name)
 				self.add_sample(
 					"bmc_power_supply_output_watts", supply.get("LastPowerOutputWatts"), name=name
-				)
-
-		for rail in power.get("Voltages") or []:
-			if RedfishClient.is_present(rail):
-				self.add_sample(
-					"bmc_voltage_volts", rail.get("ReadingVolts"), name=RedfishClient.get_name(rail)
 				)
 
 	def add_logs(self, resource: dict) -> None:
@@ -219,27 +220,39 @@ class BMCCollector:
 		"""Add new or updated events by ID and timestamp."""
 		is_first_read = link not in self.seen_entries
 		seen_keys = set(self.seen_entries.get(link, []))
-		keys = [f"{entry.get('Id')}|{entry.get('Updated') or entry.get('Created')}" for entry in entries]
+		keys = [f"{entry.get('Id')}|{self.get_change_time(entry)}" for entry in entries]
 		for entry, key in zip(entries, keys, strict=True):
-			if key in seen_keys or entry.get("Severity") not in ("Warning", "Critical"):
+			if key in seen_keys or not self.is_reportable(entry):
 				continue
 
-			# BMCs can copy events from another log.
-			origin = RedfishClient.get_link((entry.get("Links") or {}).get("OriginOfCondition")) or ""
-			if "/LogServices/" in origin:
+			event_time = self.parse_time(self.get_change_time(entry))
+			if event_time:
+				event_time -= self.clock_offset
+			if is_first_read and not self.is_recent(event_time):
 				continue
-
-			created = self.parse_time(entry.get("Created"))
-			created = created - self.clock_offset if created else None
-			if is_first_read and (not created or created < self.now - LOG_LOOKBACK):
-				continue
-			self.lines.append(self.to_log_line(log, entry, created))
+			self.lines.append(self.to_log_line(log, entry, event_time))
 		self.current_entries[link] = keys
 
-	def to_log_line(self, log: str, entry: dict, created: datetime | None) -> dict:
+	def is_recent(self, event_time: datetime | None) -> bool:
+		"""Return whether an event happened inside the lookback period."""
+		return bool(event_time and event_time >= self.now - LOG_LOOKBACK)
+
+	@staticmethod
+	def get_change_time(entry: dict) -> str | None:
+		"""Return when the BMC last changed an entry. iLO updates a repeated event in place."""
+		return entry.get("Updated") or entry.get("Created")
+
+	@staticmethod
+	def is_reportable(entry: dict) -> bool:
+		"""Return whether an entry is a Warning or Critical event that no other log holds."""
+		# BMCs can copy events from another log.
+		origin = RedfishClient.get_link((entry.get("Links") or {}).get("OriginOfCondition")) or ""
+		return entry.get("Severity") in ("Warning", "Critical") and "/LogServices/" not in origin
+
+	def to_log_line(self, log: str, entry: dict, event_time: datetime | None) -> dict:
 		"""Build a log line with the corrected event time or read time."""
 		earliest = self.now - LOG_LOOKBACK
-		is_created_valid = created and earliest < created < self.now + timedelta(minutes=5)
+		is_event_time_valid = event_time and earliest < event_time < self.now + timedelta(minutes=5)
 		attributes = {
 			"log": log,
 			"entry_id": entry.get("Id"),
@@ -249,7 +262,7 @@ class BMCCollector:
 			"created": entry.get("Created"),
 		}
 		return {
-			"ts": (created if is_created_valid else self.now).isoformat(),
+			"ts": (event_time if is_event_time_valid else self.now).isoformat(),
 			"product": "metal",
 			"source": "bmc",
 			"service": "bmc",

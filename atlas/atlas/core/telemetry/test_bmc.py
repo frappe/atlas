@@ -61,7 +61,8 @@ class TestBMCLogEntries(UnitTestCase):
 		# A clock reset can give a new event an old timestamp.
 		entries = [{**first, "Updated": datetime.now(UTC).isoformat()}, entry("2", age=timedelta(days=40))]
 
-		self.assertEqual(self.read_entry_ids(entries), ["1", "2"])
+		updated, _ = self.read(entries)
+		self.assertEqual(updated["ts"], entries[0]["Updated"])
 		self.assertEqual(self.read_entry_ids(entries), [])
 
 	def test_an_entry_time_is_corrected_by_the_bmc_clock_offset(self) -> None:
