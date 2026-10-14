@@ -20,11 +20,13 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	options, err := load(writeConfig(t, ""))
+	path := writeConfig(t, "")
+	options, err := load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := defaultOptions()
+	want.configFile = path
 	want.cfg.CPUTemplate, err = firecracker.DefaultCPUTemplate()
 	if err != nil {
 		t.Fatal(err)

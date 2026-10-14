@@ -41,6 +41,8 @@ def issue_token(
 	scope: str,
 	tenant: str | None = None,
 	constraints: dict[str, dict[str, str | list[str]]] | None = None,
+	resource_id: str | None = None,
+	access: list[str] | None = None,
 	lifetime: timedelta = TOKEN_LIFETIME,
 ) -> str:
 	"""Return one token that carries the audience, subject, and authority the caller asks for."""
@@ -59,6 +61,10 @@ def issue_token(
 		claims["tenant"] = tenant
 	if constraints:
 		claims["constraints"] = constraints
+	if resource_id is not None:
+		claims["resource_id"] = resource_id
+	if access is not None:
+		claims["access"] = access
 
 	private_key = settings.get_password("jwt_signing_private_key", raise_exception=False)
 	if not private_key or not settings.jwt_signing_key_id:

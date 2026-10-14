@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/network/traffic"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type testWarmImageStore struct {
@@ -43,7 +45,7 @@ func TestWarmImageBuilderUsesManagerOwnedTemporaryMachine(t *testing.T) {
 	runtime := &testWarmRuntime{fakeRuntime: baseRuntime}
 	manager, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir()},
-		ManagerDependencies{Runtime: runtime, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}},
+		ManagerDependencies{Runtime: runtime, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +74,7 @@ func TestWarmImageBuilderBuildsWhileOldWarmDiskIsInUse(t *testing.T) {
 	runtime := &testWarmRuntime{fakeRuntime: baseRuntime}
 	manager, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir()},
-		ManagerDependencies{Runtime: runtime, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}},
+		ManagerDependencies{Runtime: runtime, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil)},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 const (
@@ -25,6 +27,8 @@ type VirtualMachineManager interface {
 
 // VirtualMachineConfig controls reconciliation work within one pass.
 type VirtualMachineConfig struct {
+	// Telemetry counts passes and failures. It is required.
+	Telemetry *telemetry.Registry
 	// Logger receives reconciliation errors.
 	Logger *slog.Logger
 	// MaxConcurrentOperations limits active VM operations in one pass.
@@ -60,7 +64,7 @@ func NewVirtualMachineReconciler(
 	}
 
 	return &VirtualMachineReconciler{
-		passScheduler:           newPassScheduler(interval),
+		passScheduler:           newPassScheduler("virtual_machine", interval, configuration.Telemetry),
 		manager:                 manager,
 		maxConcurrentOperations: configuration.MaxConcurrentOperations,
 		operationTimeout:        configuration.OperationTimeout,
@@ -132,5 +136,6 @@ func (r *VirtualMachineReconciler) logFailure(ctx context.Context, message strin
 		return
 	}
 
+	r.countFailure()
 	r.logger.Error(message, append([]any{"error", err}, fields...)...)
 }

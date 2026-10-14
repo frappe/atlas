@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"time"
 )
 
 // RequestRestart stores durable restart intent.
@@ -25,7 +26,11 @@ func (manager *Manager) RequestRestart(ctx context.Context, identifier string) e
 		return ErrConflict
 	}
 	record.RestartGeneration++
-	return manager.store.writeDesired(record)
+	if err := manager.store.writeDesired(record); err != nil {
+		return err
+	}
+	manager.noteRequest(ctx, record, false)
+	return nil
 }
 
 // SetCompute stores the complete requested compute configuration.
@@ -144,7 +149,11 @@ func (manager *Manager) SetNetwork(ctx context.Context, identifier string, confi
 	}
 	record.SpecificationGeneration++
 	record.Generation++
-	return manager.store.writeDesired(record)
+	if err := manager.store.writeDesired(record); err != nil {
+		return err
+	}
+	manager.noteRequest(ctx, record, true)
+	return nil
 }
 
 // ReplaceSSHKeys stores the complete desired SSH key list.
@@ -245,6 +254,7 @@ func (manager *Manager) CreateSnapshot(ctx context.Context, identifier string) (
 		return StagedSnapshot{}, ErrConflict
 	}
 	var snapshot StagedSnapshot
+	startedAt := time.Now()
 	err = manager.runOperation(ctx, identifier, &observed, operationID, phaseSnapshot, func() (operationError error) {
 		resume := status.State == StateRunning
 		if resume {
@@ -264,6 +274,7 @@ func (manager *Manager) CreateSnapshot(ctx context.Context, identifier string) (
 	if err != nil {
 		return StagedSnapshot{}, err
 	}
+	manager.telemetry.Observe("metal_snapshot_create_duration_seconds", time.Since(startedAt).Seconds(), nil)
 	observed.State = status.State
 	observed.completeOperation()
 	if err := manager.store.writeObserved(identifier, observed); err != nil {
@@ -343,6 +354,7 @@ func (manager *Manager) mutateAndReport(ctx context.Context, identifier string, 
 	if err := manager.store.writeDesired(record); err != nil {
 		return false, err
 	}
+	manager.noteRequest(ctx, record, false)
 
 	return true, nil
 }

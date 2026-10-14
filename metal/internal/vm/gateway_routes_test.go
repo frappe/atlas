@@ -3,6 +3,8 @@ package vm
 import (
 	"slices"
 	"testing"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 func TestOnlyAnOptedInVMReceivesTheWireGuardGatewayRoutes(t *testing.T) {
@@ -36,6 +38,7 @@ func TestWireGuardGatewayRoutesSurviveARestart(t *testing.T) {
 
 	restarted, err := NewManager(manager.configuration, ManagerDependencies{
 		Runtime: manager.runtime, Network: manager.network, Storage: manager.storage, Snapshots: manager.snapshots,
+		Telemetry: telemetry.NewRegistry(nil),
 	})
 	if err != nil {
 		t.Fatal(err)

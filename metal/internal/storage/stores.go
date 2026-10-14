@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/frappe/atlas/metal/internal/platform"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -60,6 +61,7 @@ type ImageStore struct {
 	httpClient   *http.Client
 	imageLocks   sync.Map
 	logger       *slog.Logger
+	telemetry    *telemetry.Registry
 }
 
 // SnapshotStore manages staged image snapshots.
@@ -78,6 +80,7 @@ type SnapshotStore struct {
 	uploadsWaitGroup sync.WaitGroup
 	closed           bool
 	logger           *slog.Logger
+	telemetry        *telemetry.Registry
 	runner           stagingCommandRunner
 }
 
@@ -97,7 +100,7 @@ type Stores struct {
 }
 
 // NewStores returns storage services for one ZFS pool.
-func NewStores(parentContext context.Context, poolName, imagesDirectory string, logger *slog.Logger) Stores {
+func NewStores(parentContext context.Context, poolName, imagesDirectory string, logger *slog.Logger, registry *telemetry.Registry) Stores {
 	rootContext, rootCancel := context.WithCancel(parentContext)
 	if logger == nil {
 		logger = slog.Default()
@@ -110,6 +113,7 @@ func NewStores(parentContext context.Context, poolName, imagesDirectory string, 
 		policiesFile: filepath.Join(baseDirectory, "image-policies.json"),
 		httpClient:   newImageHTTPClient(),
 		logger:       logger,
+		telemetry:    registry,
 	}
 
 	return Stores{
@@ -125,6 +129,7 @@ func NewStores(parentContext context.Context, poolName, imagesDirectory string, 
 			rootContext: rootContext,
 			rootCancel:  rootCancel,
 			logger:      logger,
+			telemetry:   registry,
 			runner:      platform.HostRunner{},
 		},
 	}

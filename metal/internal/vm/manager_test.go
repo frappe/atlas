@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/network/traffic"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type fakeRuntime struct {
@@ -33,6 +35,7 @@ type fakeRuntime struct {
 	saveError      error
 	deleteError    error
 	coldStartError error
+	pingError      error
 	usage          RuntimeUsage
 	usageError     error
 
@@ -157,6 +160,10 @@ func (runtime *fakeRuntime) ResumeSSH(string, string) (SSHSession, error) {
 	return nil, nil
 }
 
+func (runtime *fakeRuntime) Ping(context.Context, RuntimeMachine) error {
+	return runtime.pingError
+}
+
 func (runtime *fakeRuntime) CheckMigratedGuestSSH(context.Context, RuntimeMachine) error {
 	runtime.guestChecks++
 	return runtime.guestCheckError
@@ -220,6 +227,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 			Storage:   storage,
 			Snapshots: fakeSnapshots{},
 			Traffic:   &traffic.Monitor{},
+			Telemetry: telemetry.NewRegistry(nil),
 		},
 	)
 	if err != nil {
@@ -231,7 +239,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 func TestNewManagerAllowsTrafficMonitoringToBeDisabled(t *testing.T) {
 	_, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir()},
-		ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}},
+		ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Telemetry: telemetry.NewRegistry(nil)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -478,7 +486,7 @@ func TestNewManagerRejectsUnknownAndTrailingRecordData(t *testing.T) {
 		}
 		_, err := NewManager(
 			ManagerConfig{MachinesDirectory: directory},
-			ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}},
+			ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil)},
 		)
 		if err == nil {
 			t.Fatalf("NewManager accepted record %s", data)
@@ -586,7 +594,7 @@ func TestRestartIntentSurvivesManagerRecreation(t *testing.T) {
 	}
 	recreated, err := NewManager(manager.configuration, ManagerDependencies{
 		Runtime: runtime, Network: network, Storage: storage, Snapshots: fakeSnapshots{},
-		Traffic: &traffic.Monitor{},
+		Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil),
 	})
 	if err != nil {
 		t.Fatal(err)

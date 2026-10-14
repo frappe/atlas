@@ -15,6 +15,7 @@ This package schedules convergence work. It owns no VM, image, snapshot, or traf
 | `VirtualMachineReconciler` | Runs VM reconciliation passes. |
 | `ImageReconciler` | Caches images, prunes unused images and staged snapshots. |
 | `MigrationReconciler` | Advances each active destination migration. |
+| `GuestChecker` | Pings running guests every minute, so a silent guest counts as unavailable. |
 | `passScheduler` | Runs a pass at startup, on an interval, and on request. |
 
 ## Pass model

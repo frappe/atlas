@@ -12,6 +12,8 @@ import (
 	"github.com/frappe/atlas/metal/internal/host"
 	"github.com/frappe/atlas/metal/internal/vm"
 	"github.com/frappe/atlas/metal/internal/vm/migration"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type stubMigrationManager struct {
@@ -127,7 +129,7 @@ func newMigrationTestServerWithWake(t *testing.T, migrations MigrationManager, w
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := New(Config{}, Dependencies{
+	server, err := New(Config{Telemetry: telemetry.NewRegistry(nil)}, Dependencies{
 		MetricsStore:          newTestMetricsStore(t),
 		VirtualMachineManager: manager,
 		MigrationManager:      migrations,
@@ -144,7 +146,7 @@ func newMigrationTestServerWithWake(t *testing.T, migrations MigrationManager, w
 
 func newCoordinationTestServer(t *testing.T, migrations MigrationManager) http.Handler {
 	t.Helper()
-	server, err := NewCoordination(nil, migrations)
+	server, err := NewCoordination(nil, telemetry.NewRegistry(nil), migrations)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +471,7 @@ func TestCoordinationMemoryStreamCarriesChecksum(t *testing.T) {
 		t.Fatal(err)
 	}
 	stub := &stubMigrationManager{memoryPath: path}
-	router, err := NewCoordination(nil, stub)
+	router, err := NewCoordination(nil, telemetry.NewRegistry(nil), stub)
 	if err != nil {
 		t.Fatal(err)
 	}

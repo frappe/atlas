@@ -10,6 +10,7 @@ from frappe.utils import get_datetime, now_datetime
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.telemetry.events import count, observe
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
 from atlas.vm.core.models import VirtualMachineShape
@@ -493,6 +494,9 @@ class MigrationService:
 			None,
 		)
 		frappe.db.commit()  # nosemgrep
+
+		count("atlas_migrations_total", result=status)
+		observe("atlas_migration_duration_seconds", values["duration_seconds"], result=status)
 
 	def record_error(self, error: Exception) -> None:
 		"""Store a nonterminal client error for operators."""
