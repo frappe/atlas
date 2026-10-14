@@ -55,7 +55,7 @@ Put a new page in reading order in `.vitepress/sidebar.mts`. Keep source-code li
 
 1. Raise the pull request on `develop`.
 2. Add the `backport master` label when the change must go to `master`. After the merge, Mergify opens the backport pull request and assigns it to you.
-3. Resolve conflicts in the backport pull request if Mergify reports them, then merge it.
+3. Mergify queues the backport pull request and merges it after the required checks pass. Backports merge in the order that their source pull requests merged on `develop`. Resolve conflicts if Mergify reports them.
 
 Mergify closes other pull requests to `master`. For a manual backport, add the `manual-backport-pr` label and reopen the pull request.
 
