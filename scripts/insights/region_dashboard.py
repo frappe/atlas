@@ -103,31 +103,31 @@ LEFT JOIN growth AS g ON g.minute = h.minute
 LEFT JOIN log_minutes AS l ON l.minute = h.minute
 WHERE h.minute < toStartOfMinute(now())"""
 
-# Name, column, color, and number format of each fleet card, in reading order.
+# Name, column, and number format of each fleet card, in reading order.
 FLEET_READINGS = [
-	("Hosts Reporting", "hosts_reporting", "#2563eb", COUNT),
-	("Running VMs", "running_vms", "#16a34a", COUNT),
-	("Pending Changes", "pending", "#f59e0b", COUNT),
-	("Failing VMs", "failing", "#dc2626", COUNT),
-	("Queued Jobs", "queued_jobs", "#7c3aed", COUNT),
-	("CPU Allocated", "cpu_allocated", "#2563eb", PERCENT),
-	("Memory Allocated", "memory_allocated", "#0d9488", PERCENT),
-	("Storage Allocated", "storage_allocated", "#f59e0b", PERCENT),
-	("Worst Pool Used", "worst_pool_used", "#7c3aed", PERCENT),
-	("IPv4 Total", "ipv4_total", "#64748b", COUNT),
-	("IPv4 In Use", "ipv4_attached", "#2563eb", COUNT),
-	("IPv4 Free", "ipv4_available", "#16a34a", COUNT),
+	("Hosts Reporting", "hosts_reporting", COUNT),
+	("Running VMs", "running_vms", COUNT),
+	("Pending Changes", "pending", COUNT),
+	("Failing VMs", "failing", COUNT),
+	("Queued Jobs", "queued_jobs", COUNT),
+	("CPU Allocated", "cpu_allocated", PERCENT),
+	("Memory Allocated", "memory_allocated", PERCENT),
+	("Storage Allocated", "storage_allocated", PERCENT),
+	("Worst Pool Used", "worst_pool_used", PERCENT),
+	("IPv4 Total", "ipv4_total", COUNT),
+	("IPv4 In Use", "ipv4_attached", COUNT),
+	("IPv4 Free", "ipv4_available", COUNT),
 ]
 # Errors read per hour: a minute is too short to show a trend.
 HOURLY_READINGS = [
-	("Atlas Errors/hour", "errors", "#dc2626"),
-	("Failed Jobs/hour", "failed_jobs", "#be185d"),
-	("Metal Call Errors/hour", "metal_call_errors", "#ea580c"),
-	("Unhandled Errors/hour", "unhandled_errors", "#dc2626"),
-	("Host Errors/hour", "host_errors", "#be185d"),
-	("API 5xx/hour", "api_server_errors", "#ea580c"),
+	("Atlas Errors/hour", "errors"),
+	("Failed Jobs/hour", "failed_jobs"),
+	("Metal Call Errors/hour", "metal_call_errors"),
+	("Unhandled Errors/hour", "unhandled_errors"),
+	("Host Errors/hour", "host_errors"),
+	("API 5xx/hour", "api_server_errors"),
 ]
-ERROR_TREND = f"""SELECT toStartOfHour(ts) AS ts, {", ".join(f"sum({column}) AS {column}" for _, column, _ in HOURLY_READINGS)}
+ERROR_TREND = f"""SELECT toStartOfHour(ts) AS ts, {", ".join(f"sum({column}) AS {column}" for _, column in HOURLY_READINGS)}
 FROM ({FLEET_TREND})
 WHERE ts < toStartOfHour(now())
 GROUP BY ts"""
@@ -159,11 +159,10 @@ def add_region_dashboard(workbook: Workbook) -> None:
 		"Number",
 		{
 			**numbers(
-				[measure(name, column, "avg") for name, column, _, _ in FLEET_READINGS],
-				colors=[color for _, _, color, _ in FLEET_READINGS],
+				[measure(name, column, "avg") for name, column, _ in FLEET_READINGS],
 				trend_grain="minute",
 			),
-			"number_formats": {name: number_format for name, _, _, number_format in FLEET_READINGS},
+			"number_formats": {name: number_format for name, _, number_format in FLEET_READINGS},
 		},
 		"The last complete minute of the fleet, with its trend over the period.",
 	)
@@ -173,8 +172,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 		ERROR_TREND,
 		"Number",
 		numbers(
-			[measure(name, column, "sum") for name, column, _ in HOURLY_READINGS],
-			colors=[color for _, _, color in HOURLY_READINGS],
+			[measure(name, column, "sum") for name, column in HOURLY_READINGS],
 			trend_grain="hour",
 		),
 		"The last complete hour, with its trend over the period.",
@@ -379,7 +377,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 	layout.heading("SLA")
 	layout.chart(SLA_CHART, 20, 10)
 	layout.heading("Platform Services")
-	layout.readings(SERVICE_STATUS_CHART, [name for name, *_ in STATUS_READINGS])
+	layout.readings(SERVICE_STATUS_CHART, [name for name, _ in STATUS_READINGS])
 	for heading, names in (
 		("Fleet", ["Hosts Reporting", "Running VMs", "Pending Changes", "Failing VMs"]),
 		("Atlas", ["Atlas Errors/hour", "Failed Jobs/hour", "Queued Jobs", "Metal Call Errors/hour"]),

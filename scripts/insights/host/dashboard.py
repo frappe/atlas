@@ -94,12 +94,11 @@ def add_host_dashboard(workbook: Workbook) -> None:
 		"Number",
 		{
 			**numbers(
-				[measure(name, column, "avg") for name, column, _ in TREND_READINGS],
-				colors=[color for _, _, color in TREND_READINGS],
+				[measure(name, column, "avg") for name, column in TREND_READINGS],
 				trend_grain="minute",
 			),
 			"number_formats": {
-				name: {"decimals": 0} if name == "Running VMs" else PERCENT for name, _, _ in TREND_READINGS
+				name: {"decimals": 0} if name == "Running VMs" else PERCENT for name, _ in TREND_READINGS
 			},
 		},
 		"The newest minute of each reading, with its trend over the period. Load is the load average per CPU core. "
@@ -221,7 +220,7 @@ def add_host_dashboard(workbook: Workbook) -> None:
 		default_value=DEFAULT_HOST or None,
 	)
 	layout.heading("Quick CPU / Mem / Disk")
-	layout.readings(trend, [name for name, _, _ in TREND_READINGS])
+	layout.readings(trend, [name for name, _ in TREND_READINGS])
 	layout.readings(quick, QUICK_READINGS, height=4)
 	for heading, charts in sections:
 		layout.heading(heading)

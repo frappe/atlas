@@ -255,14 +255,13 @@ def table(
 
 def numbers(
 	readings: list[dict],
-	colors: list[str] | None = None,
 	trend_grain: str | None = None,
 	is_latest: bool = True,
 ) -> dict:
 	"""Build number cards with optional trends and latest-bucket values."""
 	config = {
 		"number_columns": readings,
-		"number_column_options": [{"color": color} for color in colors] if colors else [{} for _ in readings],
+		"number_column_options": [{} for _ in readings],
 		"number_formats": {reading["measure_name"]: {"decimals": 0, "shorten": True} for reading in readings},
 	}
 	if trend_grain:

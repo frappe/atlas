@@ -139,14 +139,14 @@ FROM pushes AS p LEFT JOIN titles AS t ON t.server = p.resource_id
 LEFT JOIN disks AS d ON d.ts = p.ts AND d.resource_id = p.resource_id"""
 
 TREND_READINGS = [
-	("CPU Busy", "cpu_busy", "#2563eb"),
-	("RAM Used", "ram_used", "#0d9488"),
-	("Storage Pool Used", "pool_used", "#dc2626"),
-	("Root FS Used", "root_used", "#f59e0b"),
-	("Sys Load 5m", "load5_percent", "#7c3aed"),
-	("Sys Load 15m", "load15_percent", "#a78bfa"),
-	("Disk Busy", "disk_busy", "#be185d"),
-	("Running VMs", "running_vms", "#16a34a"),
+	("CPU Busy", "cpu_busy"),
+	("RAM Used", "ram_used"),
+	("Storage Pool Used", "pool_used"),
+	("Root FS Used", "root_used"),
+	("Sys Load 5m", "load5_percent"),
+	("Sys Load 15m", "load15_percent"),
+	("Disk Busy", "disk_busy"),
+	("Running VMs", "running_vms"),
 ]
 # VM counts at each host's newest push, so a state that drops to zero reads zero.
 VMS_NOW = f"""WITH {TITLES},

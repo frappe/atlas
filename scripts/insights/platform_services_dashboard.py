@@ -61,10 +61,10 @@ LEFT JOIN downtime AS d ON d.vm = n.vm
 LEFT JOIN measured AS m ON m.resource_id = n.server"""
 
 STATUS_READINGS = [
-	("Proxy Ready", "proxy_ready", "#2563eb"),
-	("WG Gateway Ready", "gateway_ready", "#16a34a"),
-	("IPv6 Router Up", "router_up", "#7c3aed"),
-	("Cargo Ready", "cargo_ready", "#f59e0b"),
+	("Proxy Ready", "proxy_ready"),
+	("WG Gateway Ready", "gateway_ready"),
+	("IPv6 Router Up", "router_up"),
+	("Cargo Ready", "cargo_ready"),
 ]
 
 READINESS_DAILY = f"""SELECT toDate(ts) AS day, labels['node'] AS series, avg(value) * 100 AS value
@@ -89,10 +89,9 @@ def add_platform_services_dashboard(workbook: Workbook) -> None:
 		"Number",
 		{
 			**numbers(
-				[measure(name, column, "max") for name, column, _ in STATUS_READINGS],
-				colors=[color for _, _, color in STATUS_READINGS],
+				[measure(name, column, "max") for name, column in STATUS_READINGS],
 			),
-			"number_formats": {name: {"decimals": 0, "suffix": "%"} for name, _, _ in STATUS_READINGS},
+			"number_formats": {name: {"decimals": 0, "suffix": "%"} for name, _ in STATUS_READINGS},
 		},
 		"The share of each service's nodes that answer their readiness URL now. The IPv6 router has none, so it "
 		"shows the share of its VMs that are up.",
@@ -142,7 +141,7 @@ def add_platform_services_dashboard(workbook: Workbook) -> None:
 
 	layout = Layout(workbook, "d-platform-services", "Atlas - Platform Services")
 	layout.heading("Now")
-	layout.readings(status, [name for name, *_ in STATUS_READINGS])
+	layout.readings(status, [name for name, _ in STATUS_READINGS])
 	layout.heading("This Month")
 	layout.chart(nodes, 20, 12)
 	layout.heading("Trend")
