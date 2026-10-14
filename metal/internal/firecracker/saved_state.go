@@ -32,7 +32,7 @@ type savedStateRequirement struct {
 	SpecificationGeneration  uint64
 	RestartGeneration        uint64
 	FirecrackerCompatibility string
-	MigrationCompatibility   *migrationSnapshotCompatibility
+	MigratedShape            *vm.MemorySnapshotConfiguration
 }
 
 type savedStateMetadata struct {
@@ -47,7 +47,7 @@ type savedStateMetadata struct {
 	StateFileSizeBytes       int64                           `json:"state_file_size_bytes"`
 	MemoryFileSizeBytes      int64                           `json:"memory_file_size_bytes"`
 	TapMACAddress            string                          `json:"tap_mac_address,omitempty"`
-	MigrationCompatibility   *migrationSnapshotCompatibility `json:"migration_compatibility,omitempty"`
+	Shape                    *vm.MemorySnapshotConfiguration `json:"shape,omitempty"`
 }
 
 type savedState struct {
@@ -141,12 +141,10 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		StateFileSizeBytes:       stateSize,
 		MemoryFileSizeBytes:      memorySize,
 		TapMACAddress:            strings.TrimSpace(tapMAC),
-		MigrationCompatibility: &migrationSnapshotCompatibility{
-			MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{
-				VirtualCPUCount: machine.Specification.VirtualCPUCount(),
-				MemoryMiB:       machine.Specification.MemoryMiB,
-				DiskMiB:         machine.Specification.DiskMiB,
-			},
+		Shape: &vm.MemorySnapshotConfiguration{
+			VirtualCPUCount: machine.Specification.VirtualCPUCount(),
+			MemoryMiB:       machine.Specification.MemoryMiB,
+			DiskMiB:         machine.Specification.DiskMiB,
 		},
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
@@ -188,13 +186,13 @@ func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequir
 	switch {
 	case metadata.VirtualMachineID != requirement.VirtualMachineID:
 		return fmt.Errorf("saved state VM ID %q does not match %q", metadata.VirtualMachineID, requirement.VirtualMachineID)
-	case requirement.MigrationCompatibility == nil && metadata.UserID != requirement.UserID:
+	case requirement.MigratedShape == nil && metadata.UserID != requirement.UserID:
 		return fmt.Errorf("saved state user ID %d does not match %d", metadata.UserID, requirement.UserID)
 	case metadata.SpecificationGeneration != requirement.SpecificationGeneration:
 		return fmt.Errorf("saved state specification generation %d does not match %d", metadata.SpecificationGeneration, requirement.SpecificationGeneration)
 	case metadata.RestartGeneration != requirement.RestartGeneration:
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
-	case requirement.MigrationCompatibility == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
+	case requirement.MigratedShape == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
 		return fmt.Errorf("saved state Firecracker compatibility %q does not match %q", metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
 	}
 	return nil
@@ -219,18 +217,18 @@ func (metadata savedStateMetadata) validateNetwork(requirement savedStateRequire
 			return errors.New("saved state has an invalid TAP MAC address")
 		}
 	}
-	if requirement.MigrationCompatibility != nil && metadata.TapMACAddress == "" {
+	if requirement.MigratedShape != nil && metadata.TapMACAddress == "" {
 		return errors.New("saved state has no TAP MAC address")
 	}
 	return nil
 }
 
 func (metadata savedStateMetadata) validateMigration(requirement savedStateRequirement) error {
-	if requirement.MigrationCompatibility != nil {
-		if metadata.MigrationCompatibility == nil {
-			return errors.New("saved state has no migration compatibility metadata")
+	if requirement.MigratedShape != nil {
+		if metadata.Shape == nil {
+			return errors.New("saved state has no VM shape")
 		}
-		if metadata.MigrationCompatibility.MemorySnapshotConfiguration != requirement.MigrationCompatibility.MemorySnapshotConfiguration {
+		if *metadata.Shape != *requirement.MigratedShape {
 			return errors.New("saved state VM shape does not match the destination")
 		}
 	}

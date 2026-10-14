@@ -82,32 +82,22 @@ func probeTSC() (int, bool, error) {
 	return frequency, scaling > 0, err
 }
 
-type migrationSnapshotCompatibility struct {
-	// Host and CPU preserve the metadata schema of existing snapshots.
-	Host string   `json:"host,omitempty"`
-	CPU  *hostCPU `json:"cpu,omitempty"`
-	vm.MemorySnapshotConfiguration
-}
-
 type hostCPU struct {
-	Vendor   string `json:"vendor"`
-	Model    string `json:"model"`
-	Features string `json:"features"`
+	Vendor   string
+	Model    string
+	Features string
 }
 
 // RestorePausedFrom validates transferred state and loads it paused into a new jail.
 func (runtime *Runtime) RestorePausedFrom(ctx context.Context, input vm.RuntimeMachine, directory string) error {
-	compatibility := migrationSnapshotCompatibility{
-		MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{
-			VirtualCPUCount: input.Specification.VirtualCPUCount(),
-			MemoryMiB:       input.Specification.MemoryMiB,
-			DiskMiB:         input.Specification.DiskMiB,
-		},
-	}
 	machine := runtime.newMachine(input)
 	requirement := machine.savedStateRequirement()
 	// Host user IDs change during migration; guest identity and generations do not.
-	requirement.MigrationCompatibility = &compatibility
+	requirement.MigratedShape = &vm.MemorySnapshotConfiguration{
+		VirtualCPUCount: input.Specification.VirtualCPUCount(),
+		MemoryMiB:       input.Specification.MemoryMiB,
+		DiskMiB:         input.Specification.DiskMiB,
+	}
 	snapshot, err := loadSavedState(directory, requirement)
 	if err != nil {
 		return fmt.Errorf("validate migrated snapshot: %w", err)
