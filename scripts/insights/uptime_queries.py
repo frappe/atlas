@@ -51,15 +51,19 @@ VM_DOWNTIME_THIS_MONTH = f"""measured AS (
   GROUP BY resource_id
 ),
 downtime AS (
-  SELECT attributes['virtual_machine_id'] AS vm, argMax(resource_id, ts) AS resource_id,
-    argMax(message, ts) = 'virtual machine unavailable' AS is_down_now, argMax(attributes['reason'], ts) AS last_reason,
-    maxIf(ts, message = 'virtual machine available again') AS last_recovered,
-    sumIf(least(toInt64OrZero(attributes['duration']) / 1e9, toFloat64(dateDiff('second', {MONTH_START}, ts))),
+  SELECT vm, argMax(resource_id, ts) AS resource_id,
+    argMax(message, ts) = 'virtual machine unavailable' AS is_down_now, argMax(reason, ts) AS last_reason,
+    sumIf(least(toInt64OrZero(duration) / 1e9, toFloat64(dateDiff('second', {MONTH_START}, ts))),
       message = 'virtual machine available again' AND ts > {MONTH_START})
-      + if(is_down_now, dateDiff('second', greatest(arrayMin(arrayFilter((t, m) -> m = 'virtual machine unavailable' AND t > last_recovered, groupArray(ts), groupArray(message))), {MONTH_START}), now()), 0) AS seconds,
+      + if(is_down_now, dateDiff('second', greatest(minIf(ts, message = 'virtual machine unavailable' AND ts > last_recovered), {MONTH_START}), now()), 0) AS seconds,
     countIf(message = 'virtual machine available again' AND ts > {MONTH_START}) + is_down_now AS periods
-  FROM logs
-  WHERE message IN ('virtual machine unavailable', 'virtual machine available again') AND ts > {MONTH_START} - {OUTAGE_LOOKBACK}
+  FROM (
+    SELECT attributes['virtual_machine_id'] AS vm, resource_id, ts, message, attributes['reason'] AS reason,
+      attributes['duration'] AS duration,
+      maxIf(ts, message = 'virtual machine available again') OVER (PARTITION BY attributes['virtual_machine_id']) AS last_recovered
+    FROM logs
+    WHERE message IN ('virtual machine unavailable', 'virtual machine available again') AND ts > {MONTH_START} - {OUTAGE_LOOKBACK}
+  )
   GROUP BY vm
   HAVING seconds > 0
 )"""
