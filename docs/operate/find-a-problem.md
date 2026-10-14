@@ -2,7 +2,7 @@
 
 Start with the first failed step. Find its owning component before you retry. Keep uncertain records until that owner confirms the result. A timeout can leave an accepted request in progress. Keep the operation ID, fix the cause, and let the owner retry.
 
-Each component has a runbook with detailed checks: [Atlas](atlas.md), [Metal](metal.md), [HTTP proxy recovery](../networking/http-proxy/high-availability.md), and [WG Mesh operations](../networking/wg-mesh/operations.md). Read the [incident reports](../incidents/) before you change recovery behavior.
+Each component has a runbook with detailed checks: [Atlas](atlas.md), [Metal](metal.md), [Telemetry](telemetry.md), [HTTP proxy recovery](../networking/http-proxy/high-availability.md), and [WG Mesh operations](../networking/wg-mesh/operations.md). Read the [incident reports](../incidents/) before you change recovery behavior.
 
 ## Find your symptom
 
@@ -24,7 +24,7 @@ Each component has a runbook with detailed checks: [Atlas](atlas.md), [Metal](me
 | Component | Logs and state |
 | --- | --- |
 | Atlas app | Error Log, SSH Tasks, and the latest `Metal Server Usage` timestamp. |
-| Metal | VM records under its base directory. JSON logs in the host journal. |
+| Metal | VM records under its base directory. JSON logs in the host journal and in Datum. |
 | VM host resources | `metal-vm@<id>.service`, `metal-<id>` namespace, and ZFS disk. |
 | HTTP proxy | `/var/lib/nginx/cluster-state.json`. |
 | WG Mesh | eBPF forwarding maps. |
