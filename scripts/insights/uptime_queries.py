@@ -15,13 +15,19 @@ VM_UPTIME_TARGET = 0.999
 OUTAGE_LOOKBACK = "INTERVAL 90 DAY"
 
 
+def running_minutes_sql(start: str) -> str:
+	"""The finished minutes since start in which Atlas reported each host as Running."""
+	return f"""running AS (
+  SELECT DISTINCT toStartOfMinute(ts) AS minute, labels['server'] AS server FROM samples
+  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running'
+    AND ts > {start} AND ts < toStartOfMinute(now())
+)"""
+
+
 def vm_downtime_minutes_sql(start: str) -> str:
 	"""One row per host and minute since start: VMs wanted running and VMs down."""
 	return f"""WITH
-running AS (
-  SELECT DISTINCT toStartOfMinute(ts) AS minute, labels['server'] AS server FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running' AND ts > {start}
-),
+{running_minutes_sql(start)},
 pushes AS (
   SELECT toStartOfMinute(ts) AS minute, resource_id,
     maxIf(value, metric = 'metal_vm_wanted_running') AS wanted, sumIf(value, metric = 'metal_vm_unavailable') AS down

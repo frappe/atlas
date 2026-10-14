@@ -1,4 +1,3 @@
-# The Insights data source that reads the Datum ClickHouse database.
 DATA_SOURCE = "datum"
 LOOKBACK = "INTERVAL 14 DAY"
 

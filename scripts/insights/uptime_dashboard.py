@@ -5,6 +5,7 @@ from uptime_queries import (
 	VM_DOWNTIME_THIS_MONTH,
 	VM_UPTIME_TARGET,
 	daily_lines,
+	running_minutes_sql,
 	vm_downtime_minutes_sql,
 )
 from workbook import TITLES, UPTIME_PERCENT, Layout, Workbook, dimension, measure, table
@@ -15,10 +16,7 @@ TITLE = "if(t.title = '', u.server, t.title)"
 def host_minutes_sql(start: str) -> str:
 	"""Report host-minutes after the first report, excluding fleet-wide telemetry gaps."""
 	return f"""WITH
-running AS (
-  SELECT DISTINCT toStartOfMinute(ts) AS minute, labels['server'] AS server FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running' AND ts > {start}
-),
+{running_minutes_sql(start)},
 reports AS (
   SELECT DISTINCT toStartOfMinute(ts) AS minute, resource_id FROM samples
   WHERE metric = 'metal_vm_pending' AND ts > {start}
