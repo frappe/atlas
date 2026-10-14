@@ -150,6 +150,9 @@ func (m *machine) restoreSavedState(ctx context.Context, resume bool) (bool, err
 	if err != nil {
 		return false, err
 	}
+	if err := snapshot.restoreNetwork(ctx, m.input.NetworkInterface); err != nil {
+		return false, err
+	}
 
 	metadata := m.input.Specification.MetadataServiceData(
 		m.input.ID, m.input.NetworkInterface.GuestIPAddress, m.input.NetworkInterface.MACAddress,

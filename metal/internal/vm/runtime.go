@@ -2,6 +2,18 @@ package vm
 
 import "context"
 
+// HostCompatibility contains runtime facts reported during controller sync.
+type HostCompatibility struct {
+	Architecture string
+	CPUProfile   string
+	CPUVendor    string
+	CPUModel     string
+	CPUFeatures  string
+	SnapshotHost string
+	TSCKHz       int
+	TSCScaling   bool
+}
+
 // Runtime controls virtual machine processes and guest-facing operations.
 type Runtime interface {
 	Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error)
@@ -12,6 +24,8 @@ type Runtime interface {
 	SaveAndStop(context.Context, RuntimeMachine) error
 	Restore(context.Context, RuntimeMachine) error
 	RestorePaused(context.Context, RuntimeMachine) error
+	// RestorePausedFrom loads a transferred memory snapshot with the guest paused.
+	RestorePausedFrom(ctx context.Context, machine RuntimeMachine, directory string) error
 	DeleteSavedState(context.Context, RuntimeMachine) error
 	Pause(context.Context, RuntimeMachine) error
 	Resume(context.Context, RuntimeMachine) error
@@ -22,6 +36,8 @@ type Runtime interface {
 	RefreshDisk(context.Context, RuntimeMachine) error
 	ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error)
 	ResumeSSH(virtualMachineID, sessionID string) (SSHSession, error)
+	// CheckMigratedGuestSSH verifies guest responsiveness when configured on the host.
+	CheckMigratedGuestSSH(context.Context, RuntimeMachine) error
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
 	// Ping returns nil when the guest answers one ICMP echo.
 	Ping(context.Context, RuntimeMachine) error

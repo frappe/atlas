@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func savedStateFixture(t *testing.T, configuration Config, requirement savedStateRequirement) savedStateMetadata {
@@ -25,6 +27,10 @@ func savedStateFixture(t *testing.T, configuration Config, requirement savedStat
 		CreatedAt:                time.Now().UTC(), StateFileName: memorySnapshotStateFileName,
 		MemoryFileName: memorySnapshotMemoryFileName, StateFileSizeBytes: stateSize,
 		MemoryFileSizeBytes: memorySize,
+		Shape:               requirement.MigratedShape,
+	}
+	if requirement.MigratedShape != nil {
+		metadata.TapMACAddress = "02:11:22:33:44:55"
 	}
 	data, err := json.Marshal(metadata)
 	if err != nil {
@@ -147,5 +153,56 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
+	shape := vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigratedShape: &shape}
+	configuration := Config{MachinesDir: t.TempDir()}
+	metadata := savedStateFixture(t, configuration, requirement)
+	metadata.UserID = 2002
+	metadata.FirecrackerCompatibility = "source-only-build-marker"
+	if err := metadata.validate(requirement); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"cpu", "memory", "disk", "generation", "restart", "vm", "missing_metadata", "missing_mac", "invalid_mac", "multicast_mac", "extended_mac"} {
+		t.Run(field, func(t *testing.T) {
+			candidate := metadata
+			changed := shape
+			candidate.Shape = &changed
+			switch field {
+			case "cpu":
+				changed.VirtualCPUCount++
+			case "memory":
+				changed.MemoryMiB++
+			case "disk":
+				changed.DiskMiB++
+			case "generation":
+				candidate.SpecificationGeneration++
+			case "restart":
+				candidate.RestartGeneration++
+			case "vm":
+				candidate.VirtualMachineID = "another-vm"
+			case "missing_metadata":
+				candidate.Shape = nil
+			case "missing_mac":
+				candidate.TapMACAddress = ""
+			case "invalid_mac":
+				candidate.TapMACAddress = "not-a-mac"
+			case "multicast_mac":
+				candidate.TapMACAddress = "33:33:00:00:00:01"
+			case "extended_mac":
+				candidate.TapMACAddress = "02:11:22:33:44:55:66:77"
+			}
+			if err := candidate.validate(requirement); err == nil {
+				t.Fatal("incompatible migration metadata accepted")
+			}
+		})
+	}
+	// The host-specific user ID remains enforced for ordinary local restores.
+	requirement.MigratedShape = nil
+	if err := metadata.validate(requirement); err == nil {
+		t.Fatal("local restore ignored its host user ID")
 	}
 }

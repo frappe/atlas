@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -68,14 +69,15 @@ type VirtualMachineManager interface {
 
 // MigrationManager owns this host's migration records and reservations.
 type MigrationManager interface {
-	CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize) (migration.DestinationProgress, error)
+	CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, hasMemorySnapshot bool) (migration.DestinationProgress, error)
 	DestinationStatus(ctx context.Context, migrationID string) (migration.DestinationProgress, error)
 	RequestFinish(ctx context.Context, migrationID string) error
 	AbortDestination(ctx context.Context, migrationID string) error
 	LockSource(ctx context.Context, migrationID, virtualMachineID string) (migration.SourceDescription, error)
 	NextSourceSnapshot(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
 	StartSourceStream(ctx context.Context, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
-	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
+	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (migration.SourceSnapshot, error)
+	OpenSourceMemorySnapshotFile(ctx context.Context, migrationID, virtualMachineID string, sequence int, name string) (*os.File, error)
 	StartSourceRollback(ctx context.Context, migrationID, virtualMachineID string) error
 	DestroySource(ctx context.Context, migrationID, virtualMachineID string) error
 	UnlockSource(ctx context.Context, migrationID, virtualMachineID string) error

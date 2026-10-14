@@ -11,6 +11,27 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
 
+func TestMissingCompatibilityPreservesHostSync(t *testing.T) {
+	dependencies := &testHostDependencies{
+		virtualMachines: []vm.Information{{ID: "vm-1", State: vm.StateRunning}},
+	}
+	service, err := NewService(Dependencies{
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		VirtualMachines: dependencies, Storage: dependencies,
+		Wake: func() { dependencies.wakeCount++ },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Synchronize(t.Context(), DesiredState{})
+	if err != nil || result.Compatibility != nil {
+		t.Fatalf("sync result = %+v, error = %v", result, err)
+	}
+	if result.Capacity.TotalStorageMiB != 4096 || result.VirtualMachineStates["vm-1"] != vm.StateRunning || dependencies.wakeCount != 1 {
+		t.Fatalf("probe failure interrupted host sync: %+v", result)
+	}
+}
+
 type testHostDependencies struct {
 	privilegedAddresses []string
 	wireGuardPeers      []network.WireGuardPeer
@@ -61,11 +82,13 @@ func (dependencies *testHostDependencies) Capacity(context.Context) (storage.Cap
 }
 
 func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
+	compatibility := vm.HostCompatibility{Architecture: "amd64", CPUProfile: "builtin:baseline"}
 	dependencies := &testHostDependencies{
 		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning, CPUMillicores: 1500}},
 	}
 	service, err := NewService(Dependencies{
-		Mesh: dependencies, WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		Compatibility: &compatibility,
+		Mesh:          dependencies, WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
 		VirtualMachines: dependencies, Storage: dependencies,
 		Wake: func() { dependencies.wakeCount++ },
 	})
@@ -97,6 +120,9 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 	}
 	if result.VirtualMachineStates["vm-00001"] != vm.StateRunning {
 		t.Fatalf("virtual machine states = %+v", result.VirtualMachineStates)
+	}
+	if result.Compatibility == nil || *result.Compatibility != compatibility {
+		t.Fatalf("compatibility = %+v", result.Compatibility)
 	}
 }
 

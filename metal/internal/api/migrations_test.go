@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -44,11 +46,16 @@ type stubMigrationManager struct {
 	startErr          error
 	destroyArgs       []string
 	destroyErr        error
+
+	createMemorySnapshot bool
+	stopMemorySnapshot   bool
+	memoryPath           string
 }
 
-func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize) (migration.DestinationProgress, error) {
+func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, hasMemorySnapshot bool) (migration.DestinationProgress, error) {
 	m.createArgs = []string{migrationID, virtualMachineID, source}
 	m.createResize = resize
+	m.createMemorySnapshot = hasMemorySnapshot
 	return m.record, m.createErr
 }
 
@@ -85,9 +92,10 @@ func (m *stubMigrationManager) StartSourceStream(_ context.Context, migrationID,
 	return m.startErr
 }
 
-func (m *stubMigrationManager) StopSource(_ context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error) {
+func (m *stubMigrationManager) StopSource(_ context.Context, migrationID, virtualMachineID string, receivedSequence int, memorySnapshot bool) (migration.SourceSnapshot, error) {
 	m.stopArgs = []string{migrationID, virtualMachineID}
 	m.stopReceived = receivedSequence
+	m.stopMemorySnapshot = memorySnapshot
 	return m.snapshot, m.stopErr
 }
 
@@ -162,6 +170,30 @@ func TestCreateMigrationDrivesTheDestination(t *testing.T) {
 	if response.ID != "mig-1" || response.Status != "running" {
 		t.Fatalf("response = %+v", response)
 	}
+	if stub.createMemorySnapshot {
+		t.Fatal("an omitted memory snapshot flag must default to false")
+	}
+}
+
+func TestCreateMigrationDecodesTheMemorySnapshotFlag(t *testing.T) {
+	for _, flag := range []struct {
+		value string
+		want  bool
+	}{{"false", false}, {"true", true}} {
+		stub := &stubMigrationManager{}
+		server := newMigrationTestServer(t, stub)
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","has_memory_snapshot":` + flag.value + `}`
+		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusAccepted)
+		if stub.createMemorySnapshot != flag.want {
+			t.Fatalf("memory snapshot flag = %v, want %v", stub.createMemorySnapshot, flag.want)
+		}
+	}
+
+	server := newMigrationTestServer(t, &stubMigrationManager{})
+	for _, flag := range []string{`"true"`, `1`} {
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","has_memory_snapshot":` + flag + `}`
+		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusBadRequest)
+	}
 }
 
 func TestCreateMigrationPassesTheResize(t *testing.T) {
@@ -221,9 +253,14 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	finishedAt := time.Date(2026, time.September, 20, 12, 0, 42, 0, time.UTC)
 	stub := &stubMigrationManager{record: migration.DestinationProgress{
 		ID: "mig-1", VirtualMachineID: "vm-1", Status: migration.StatusRunning, Phase: migration.PhaseCopying,
+		MemorySnapshotStatus: "transferring",
 		Intervals: []migration.TransferProgress{
 			{Sequence: 1, StartedAt: time.Date(2026, time.September, 20, 12, 0, 0, 0, time.UTC), FinishedAt: finishedAt, DurationSeconds: 42, BytesTransferred: 1024, TotalBytes: 1024, Completed: true},
 			{Sequence: 2, BytesTransferred: 256, TotalBytes: 1024, ThroughputMiBps: 64},
+		},
+		MemoryTransfer: &migration.TransferProgress{
+			Sequence: 3, StartedAt: finishedAt.Add(-2 * time.Second), FinishedAt: finishedAt,
+			DurationSeconds: 2, BytesTransferred: 512 << 20, TotalBytes: 512 << 20, Completed: true,
 		},
 	}}
 	server := newMigrationTestServer(t, stub)
@@ -233,8 +270,11 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Transfers) != 2 {
+	if len(response.Transfers) != 3 {
 		t.Fatalf("response = %+v", response)
+	}
+	if response.MemorySnapshotStatus != "transferring" {
+		t.Fatalf("snapshot status = %q", response.MemorySnapshotStatus)
 	}
 	transfer := response.Transfers[0]
 	if transfer.Sequence != 1 || transfer.StartedAt.IsZero() || transfer.FinishedAt == nil {
@@ -249,6 +289,13 @@ func TestGetMigrationReportsTransferProgress(t *testing.T) {
 	// The throttle step is visible per interval, so an operator sees it decrease.
 	if response.Transfers[1].ThroughputMiBps != 64 {
 		t.Fatalf("transfer 1 throughput = %d, want 64", response.Transfers[1].ThroughputMiBps)
+	}
+	memory := response.Transfers[2]
+	if memory.SnapshotType != "memory" || memory.Sequence != 3 || memory.TotalMiB != 512 || memory.TransferredMiB != 512 || memory.DurationSeconds != 2 || !memory.Completed {
+		t.Fatalf("memory transfer = %+v", memory)
+	}
+	if response.Transfers[0].SnapshotType != "" {
+		t.Fatal("disk transfer contract changed")
 	}
 }
 
@@ -409,4 +456,34 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func (m *stubMigrationManager) OpenSourceMemorySnapshotFile(context.Context, string, string, int, string) (*os.File, error) {
+	if m.memoryPath != "" {
+		return os.Open(m.memoryPath)
+	}
+	return nil, vm.ErrNotFound
+}
+
+func TestCoordinationMemoryStreamCarriesChecksum(t *testing.T) {
+	path := t.TempDir() + "/snapshot"
+	if err := os.WriteFile(path, []byte("guest snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := &stubMigrationManager{memoryPath: path}
+	router, err := NewCoordination(nil, telemetry.NewRegistry(nil), stub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(router)
+	defer server.Close()
+	tlsConfiguration := server.Client().Transport.(*http.Transport).TLSClientConfig
+	client := migration.NewSourceClient(0, tlsConfiguration)
+	if err := client.ReceiveMemorySnapshot(t.Context(), server.URL, "mig-1", "vm-1", 1, t.TempDir(), 1); err != nil {
+		t.Fatal(err)
+	}
+	do(t, router, http.MethodPost, "/v1/migrations/mig-1/stop?virtual_machine_id=vm-1", `{"has_memory_snapshot":true}`, http.StatusOK)
+	if !stub.stopMemorySnapshot {
+		t.Fatal("stop did not preserve the memory request")
+	}
 }

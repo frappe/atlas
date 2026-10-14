@@ -24,12 +24,38 @@ func virtualMachineDefinition(virtualMachineID string) VirtualMachineDefinition 
 	}
 }
 
+func TestCreateDestinationPreservesTheMemorySnapshotFlag(t *testing.T) {
+	for _, flag := range []bool{false, true} {
+		manager, machines, _ := newMigrationManager(t)
+		ctx := t.Context()
+		const source = "https://10.0.0.3:9000"
+		if _, err := manager.CreateDestination(ctx, "mig-1", "vm-1", source, nil, flag); err != nil {
+			t.Fatal(err)
+		}
+
+		store := newMigrationStore(machines.VirtualMachineRecordsDirectory())
+		record, err := store.readDestination("vm-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.HasMemorySnapshot != flag {
+			t.Fatalf("stored memory snapshot flag = %v, want %v", record.HasMemorySnapshot, flag)
+		}
+		if _, err := manager.CreateDestination(ctx, "mig-1", "vm-1", source, nil, flag); err != nil {
+			t.Fatalf("repeat request: %v", err)
+		}
+		if _, err := manager.CreateDestination(ctx, "mig-1", "vm-1", source, nil, !flag); !errors.Is(err, vm.ErrConflict) {
+			t.Fatalf("changed memory snapshot flag: %v, want ErrConflict", err)
+		}
+	}
+}
+
 func TestAdvanceDestinationPreparesTheSource(t *testing.T) {
 	migrationManager, machines, source := newMigrationManager(t)
 	source.prepareDefinition = virtualMachineDefinition("vm-1")
 	source.prepareState = vm.StateRunning
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,7 +89,7 @@ func TestAdvanceDestinationAppliesTheResize(t *testing.T) {
 	source.prepareState = vm.StateRunning
 	ctx := context.Background()
 	resize := &Resize{CPUMillicores: 4000, MemoryMiB: 8192, DiskMiB: 8192}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +125,7 @@ func TestAdvanceDestinationRejectsAResizeThatShrinksTheDisk(t *testing.T) {
 	source.prepareDefinition = virtualMachineDefinition("vm-1")
 	ctx := context.Background()
 	resize := &Resize{CPUMillicores: 4000, MemoryMiB: 8192, DiskMiB: 1024}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,7 +153,7 @@ func TestAdvanceDestinationChecksCapacityForTheResize(t *testing.T) {
 	}
 	ctx := context.Background()
 	resize := &Resize{CPUMillicores: 2000, MemoryMiB: 4096, DiskMiB: 4096}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,15 +166,15 @@ func TestCreateDestinationRejectsARetryWithAnotherResize(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
 	ctx := context.Background()
 	resize := &Resize{CPUMillicores: 2000, MemoryMiB: 4096, DiskMiB: 4096}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", resize, false); err != nil {
 		t.Fatal(err)
 	}
 
 	sameResize := *resize
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", &sameResize); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", &sameResize, false); err != nil {
 		t.Fatalf("retry with the same resize = %v", err)
 	}
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("retry without the resize = %v, want ErrConflict", err)
 	}
 }
@@ -157,7 +183,7 @@ func TestAdvanceDestinationIsANoOpWhileCopying(t *testing.T) {
 	migrationManager, _, source := newMigrationManager(t)
 	source.prepareDefinition = virtualMachineDefinition("vm-1")
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrationManager.AdvanceDestination(ctx, "vm-1"); err != nil {
@@ -178,7 +204,7 @@ func TestAdvanceDestinationIsANoOpWhileCopying(t *testing.T) {
 func TestAdvanceDestinationExpiresAStaleReservation(t *testing.T) {
 	migrationManager, machines, source := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	store := newMigrationStore(machines.VirtualMachineRecordsDirectory())
@@ -208,7 +234,7 @@ func TestAdvanceDestinationRecordsSourcePreparationErrors(t *testing.T) {
 	migrationManager, _, source := newMigrationManager(t)
 	source.prepareError = errors.New("source unreachable")
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -228,7 +254,7 @@ func TestAdvanceDestinationRejectsAWrongConfig(t *testing.T) {
 	migrationManager, _, source := newMigrationManager(t)
 	source.prepareDefinition = virtualMachineDefinition("vm-other")
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,7 +272,7 @@ func TestAdvanceDestinationRejectsInsufficientCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -278,7 +304,7 @@ func TestDestinationCapacityCheckAndReservationAreSerialized(t *testing.T) {
 
 	records := make([]destinationRecord, 2)
 	for index, virtualMachineID := range []string{"vm-1", "vm-2"} {
-		_, err := migrationManager.CreateDestination(ctx, "mig-"+virtualMachineID, virtualMachineID, "https://10.0.0.3:9000", nil)
+		_, err := migrationManager.CreateDestination(ctx, "mig-"+virtualMachineID, virtualMachineID, "https://10.0.0.3:9000", nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -321,7 +347,7 @@ func TestDestinationCapacityCheckAndReservationAreSerialized(t *testing.T) {
 func TestActiveDestinationVirtualMachineIDsListsRunningDestinations(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -494,7 +520,7 @@ func TestRunTransferKeepsLockedWhenRollbackFails(t *testing.T) {
 func TestAdvanceDestinationRollsBackAnAbandonedDestination(t *testing.T) {
 	migrationManager, machines, source := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	store := newMigrationStore(machines.VirtualMachineRecordsDirectory())
@@ -525,7 +551,7 @@ func TestAdvanceDestinationRollsBackAnAbandonedDestination(t *testing.T) {
 func TestAdvanceDestinationKeepsAReadyDestination(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	ctx := context.Background()
-	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil); err != nil {
+	if _, err := migrationManager.CreateDestination(ctx, "mig-1", "vm-1", "https://10.0.0.3:9000", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	store := newMigrationStore(machines.VirtualMachineRecordsDirectory())
@@ -584,7 +610,7 @@ func TestCreateDestinationReplacesACleanAbortedRemnant(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	writeTerminalDestination(t, machines, destinationAborted)
 
-	record, err := migrationManager.CreateDestination(context.Background(), "mig-2", "vm-1", "https://10.0.0.9:9000", nil)
+	record, err := migrationManager.CreateDestination(context.Background(), "mig-2", "vm-1", "https://10.0.0.9:9000", nil, false)
 	if err != nil {
 		t.Fatalf("replace a clean aborted remnant = %v", err)
 	}
@@ -597,7 +623,7 @@ func TestCreateDestinationRefusesReplacingACompletedRecord(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	writeTerminalDestination(t, machines, destinationCompleted)
 
-	if _, err := migrationManager.CreateDestination(context.Background(), "mig-2", "vm-1", "https://10.0.0.9:9000", nil); err == nil {
+	if _, err := migrationManager.CreateDestination(context.Background(), "mig-2", "vm-1", "https://10.0.0.9:9000", nil, false); err == nil {
 		t.Fatal("a completed migration must not be replaced")
 	}
 }

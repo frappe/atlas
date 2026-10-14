@@ -381,6 +381,12 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		MigrationReservations: migrationReservations,
 		Wake:                  notifyReconcilers,
 	}
+	compatibility, compatibilityError := virtualMachineRuntime.HostCompatibility(daemonContext)
+	if compatibilityError != nil {
+		logger.WarnContext(daemonContext, "Host compatibility probe failed", "error", compatibilityError)
+	} else {
+		hostDependencies.Compatibility = &compatibility
+	}
 	// A nil *network.Mesh in the interface would not compare equal to nil.
 	if mesh != nil {
 		hostDependencies.Mesh = mesh

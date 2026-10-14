@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,12 +10,14 @@ import (
 	platform "github.com/frappe/atlas/metal/internal/platform"
 )
 
-// Config contains Firecracker host and binary paths.
+// Config contains Firecracker host paths and guest configuration.
 type Config struct {
-	MachinesDir    string
-	SocketsDir     string
-	JailerBin      string
-	FirecrackerBin string
+	MachinesDir             string
+	SocketsDir              string
+	JailerBin               string
+	FirecrackerBin          string
+	CPUTemplate             json.RawMessage
+	RequireMigratedGuestSSH bool
 }
 
 // DefaultConfig returns the standard Firecracker host paths.

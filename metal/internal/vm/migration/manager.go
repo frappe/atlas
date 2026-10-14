@@ -26,7 +26,8 @@ type sourceOperations interface {
 	StartSnapshotStream(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
 	// StopSource acknowledges the last received snapshot, stops the source, and
 	// returns its final snapshot.
-	StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int) (SourceSnapshot, error)
+	StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (SourceSnapshot, error)
+	ReceiveMemorySnapshot(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, directory string, memoryMiB int) error
 	// StartSource restores the source during rollback.
 	StartSource(ctx context.Context, address, migrationID, virtualMachineID string) error
 	// FinishSource destroys the stopped source and migration state.
@@ -63,10 +64,13 @@ type migrationHost interface {
 	ReleaseStorage(ctx context.Context, virtualMachineID string) error
 	VirtualMachineRecordsDirectory() string
 	NormalizeSourceToStopped(ctx context.Context, virtualMachineID string) error
+	SaveAndStopSource(ctx context.Context, virtualMachineID string) error
 	RemoveMigrationNetwork(ctx context.Context, virtualMachineID string) error
 	EnsureMigrationNetwork(ctx context.Context, virtualMachineID string) error
 	ApplyMigratedDestinationState(ctx context.Context, virtualMachineID string) error
-	RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState vm.State) error
+	RestoreMigratedMemorySnapshot(ctx context.Context, virtualMachineID, directory string) error
+	ActivateMigratedDestination(ctx context.Context, virtualMachineID string) error
+	RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState vm.State, fromSavedState bool) error
 	RemoveMigratedRuntime(ctx context.Context, virtualMachineID string) error
 	RefreshSourceDisk(ctx context.Context, virtualMachineID string) error
 	LimitSourceDisk(ctx context.Context, virtualMachineID string, throughputMiBps int) (int, error)
@@ -179,10 +183,13 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 }
 
 // CreateDestination reserves a VM ID or returns a matching in-progress record. An
-// optional resize replaces the source shape on the destination.
-func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize) (DestinationProgress, error) {
+// optional resize replaces the source shape.
+func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize, hasMemorySnapshot bool) (DestinationProgress, error) {
 	if !vm.ValidIdentifier(migrationID) || !vm.ValidIdentifier(virtualMachineID) || !validSourceAddress(source) {
 		return DestinationProgress{}, vm.ErrConflict
+	}
+	if hasMemorySnapshot && resize != nil {
+		return DestinationProgress{}, fmt.Errorf("memory snapshot migration cannot resize the VM: %w", vm.ErrConflict)
 	}
 	unlockCreation, err := m.destinationCreationLocks.Lock(ctx, migrationID)
 	if err != nil {
@@ -211,7 +218,7 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 			if existing.State.terminal() {
 				return existing.progress(), nil
 			}
-			if existing.Source != source || !existing.Resize.equal(resize) {
+			if existing.Source != source || !existing.Resize.equal(resize) || existing.HasMemorySnapshot != hasMemorySnapshot {
 				return DestinationProgress{}, vm.ErrConflict
 			}
 			return existing.progress(), nil
@@ -236,13 +243,14 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		return DestinationProgress{}, err
 	}
 	record := destinationRecord{
-		ID:               migrationID,
-		VirtualMachineID: virtualMachineID,
-		Source:           source,
-		Resize:           resize,
-		State:            destinationPreparing,
-		CreatedAt:        m.now(),
-		LastControlAt:    m.now(),
+		ID:                migrationID,
+		VirtualMachineID:  virtualMachineID,
+		Source:            source,
+		Resize:            resize,
+		HasMemorySnapshot: hasMemorySnapshot,
+		State:             destinationPreparing,
+		CreatedAt:         m.now(),
+		LastControlAt:     m.now(),
 	}
 	if err := m.saveDestination(record); err != nil {
 		return DestinationProgress{}, errors.Join(err, m.store.remove(virtualMachineID))
