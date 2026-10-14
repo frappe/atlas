@@ -122,7 +122,8 @@ func (registry *Registry) Observe(metric string, value float64, labels Labels) {
 	if !registry.isValid(metric, labels) {
 		return
 	}
-	registry.appendObservations(Sample{Metric: metric, Value: value, Time: time.Now().UTC(), Labels: maps.Clone(labels)})
+	registry.observations = append(registry.observations, Sample{Metric: metric, Value: value, Time: time.Now().UTC(), Labels: maps.Clone(labels)})
+	registry.dropOldestObservations()
 }
 
 // Register adds a collector that runs on every snapshot.
@@ -183,13 +184,15 @@ func (registry *Registry) RestoreObservations(observations []Sample) {
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
 
-	registry.appendObservations(observations...)
+	// They are older than the ones recorded during the failed push, so they go
+	// first and are dropped first.
+	registry.observations = slices.Concat(observations, registry.observations)
+	registry.dropOldestObservations()
 }
 
-// appendObservations keeps the newest observations within the bound. The
-// caller holds the mutex.
-func (registry *Registry) appendObservations(observations ...Sample) {
-	registry.observations = append(registry.observations, observations...)
+// dropOldestObservations keeps the newest observations within the bound and
+// counts the dropped ones. The caller holds the mutex.
+func (registry *Registry) dropOldestObservations() {
 	overflow := len(registry.observations) - maximumObservations
 	if overflow <= 0 {
 		return

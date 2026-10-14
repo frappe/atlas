@@ -93,3 +93,19 @@ func TestRegistryGivesEachCollectorADeadline(t *testing.T) {
 		t.Fatalf("deadline = %v, want one within %v so a hung command cannot stop the push", deadline, collectorTimeout)
 	}
 }
+
+func TestRegistryKeepsNewObservationsOverRestoredOnes(t *testing.T) {
+	registry := newTestRegistry()
+	for index := range maximumObservations {
+		registry.Observe("metal_vm_action_duration_seconds", float64(index), nil)
+	}
+	failed := registry.TakeObservations()
+	registry.Observe("metal_vm_action_duration_seconds", -1, nil)
+
+	registry.RestoreObservations(failed)
+
+	kept := registry.TakeObservations()
+	if len(kept) != maximumObservations || kept[0].Value != 1 || kept[len(kept)-1].Value != -1 {
+		t.Fatalf("kept %d observations from %v to %v, want the oldest restored one dropped and the new one kept", len(kept), kept[0].Value, kept[len(kept)-1].Value)
+	}
+}
