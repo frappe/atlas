@@ -9,6 +9,7 @@ Metal host
 Atlas
   scheduled job ── regional state, counters, events ──> Datum /v1/ingest
   scheduled job ── Error Logs ──> Datum /v1/logs/ingest
+  BMC jobs ── Redfish readings and events of each host ──> Datum, as the host
 ```
 
 During a Datum outage, metald retains counters and up to 50,000 events in memory. Atlas uses Redis. Vector buffers up to 256 MiB of logs on disk.
@@ -50,6 +51,7 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
 | `atlas_*` | Atlas | Regional inventory, capacity, migrations, placement, API calls, queues, public IPs, images, and service readiness |
+| `bmc_*` | Atlas, from the host BMC | Out-of-band health, sensors, and power. See [BMC hardware](#bmc-hardware). |
 
 Kernel tables use a `field` label, for example `system_memory_info{field="MemAvailable"}`.
 
@@ -138,6 +140,33 @@ metald logs each completed reconcile step at info level. The steps that every pa
 | `traceback` | The last 1 KiB of the traceback. Form data is not sent. |
 
 The job keeps its position in Redis. If the position is lost, it starts again 5 minutes back.
+
+## BMC hardware
+
+Atlas reads each host's baseboard management controller (BMC) over Redfish without access to the host OS. It sends hardware health, sensors, power, and events to Datum under the host's identity.
+
+Set the provider to **Generic**, the BMC driver to **Redfish**, and each Metal Server's BMC URL and credentials. Every 5 minutes, Atlas queues up to 5 hosts per job on the long queue. It skips deleted hosts and jobs already queued or running.
+
+A job reads hosts in sequence. Each read has a 10-second timeout within a 90-second budget per host. Section failures leave partial metrics.
+
+| Metric | Labels | Value |
+| --- | --- | --- |
+| `bmc_up` | | `1` if the system read succeeds, otherwise `0` |
+| `bmc_system_info` | `manufacturer`, `model`, `serial`, `bios_version`, `bmc_firmware`, `processor_model`, `processor_count`, `memory_gib`, `power_state` | `1` |
+| `bmc_health` | `component`: `system`, `chassis`, or `manager` | `0` OK, `1` Warning, `2` Critical |
+| `bmc_component_health` | `kind` (`memory`, `processor`, `fan`, `power_supply`), `name` | same |
+| `bmc_temperature_celsius`, `bmc_temperature_critical_celsius` | `name` | Reading and critical threshold |
+| `bmc_fan_speed` | `name`, `unit` (`RPM` or `Percent`) | Speed |
+| `bmc_power_watts` | `name`, `kind` (`consumed`, `average`, `maximum`) | Watts |
+| `bmc_power_supply_input_volts`, `bmc_power_supply_output_watts` | `name` | Volts and watts |
+| `bmc_voltage_volts` | `name` | Volts |
+| `bmc_clock_offset_seconds` | | BMC clock minus Atlas clock |
+
+Atlas sends new or updated Warning and Critical entries with `source=bmc` and level `warning` or `critical`. Attributes are `log`, `entry_id`, `message_id`, `sensor_type`, `entry_type`, and `created`, when present. Atlas skips entries whose origin is another log to avoid copies.
+
+Atlas records sent entry IDs and timestamps in Redis after Datum accepts the data. The first read sends only entries from the last 30 days. Atlas skips collections with more than 1,024 members.
+
+Atlas adjusts event times for the BMC clock offset and keeps the original timestamp in `created`. Later reads use the read time if the timestamp is missing, over 30 days old, or over 5 minutes ahead.
 
 ## Follow one request
 

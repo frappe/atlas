@@ -51,7 +51,7 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 
 ## Telemetry
 
-`telemetry.events` owns shared Redis counters and observations. `telemetry.datum` publishes metrics and issues tokens. `telemetry.error_logs` publishes Error Logs. See [telemetry](../../docs/operate/telemetry.md) for configuration and operation.
+`telemetry.events` owns shared Redis counters and observations. `telemetry.datum` publishes metrics and issues tokens. `telemetry.error_logs` publishes Error Logs. `telemetry.bmc` publishes BMC readings and log entries. See [telemetry](../../docs/operate/telemetry.md) for configuration and operation.
 
 ## SSH tasks
 

@@ -61,24 +61,21 @@ def publish_metrics() -> None:
 
 
 def send_samples(url: str, token: str, samples: list[dict]) -> None:
-	"""Post samples in batches that Datum accepts. Raises on the first failed batch."""
-	with requests.Session() as session:
-		session.headers["Authorization"] = f"Bearer {token}"
-		for start in range(0, len(samples), MAXIMUM_BATCH):
-			response = session.post(
-				f"{url}/v1/ingest",
-				json={"samples": samples[start : start + MAXIMUM_BATCH]},
-				timeout=REQUEST_TIMEOUT_SECONDS,
-			)
-			response.raise_for_status()
+	"""Send samples to Datum in bounded batches."""
+	send_batches(f"{url}/v1/ingest", token, "samples", samples)
 
 
 def send_log_lines(url: str, token: str, lines: list[dict]) -> None:
-	"""Post up to MAXIMUM_BATCH log lines in one request. Raises when Datum rejects them."""
-	response = requests.post(
-		f"{url}/v1/logs/ingest",
-		json={"lines": lines},
-		headers={"Authorization": f"Bearer {token}"},
-		timeout=REQUEST_TIMEOUT_SECONDS,
-	)
-	response.raise_for_status()
+	"""Send log lines to Datum in bounded batches."""
+	send_batches(f"{url}/v1/logs/ingest", token, "lines", lines)
+
+
+def send_batches(url: str, token: str, key: str, items: list[dict]) -> None:
+	"""Post bounded batches, stopping on the first failure."""
+	with requests.Session() as session:
+		session.headers["Authorization"] = f"Bearer {token}"
+		for start in range(0, len(items), MAXIMUM_BATCH):
+			response = session.post(
+				url, json={key: items[start : start + MAXIMUM_BATCH]}, timeout=REQUEST_TIMEOUT_SECONDS
+			)
+			response.raise_for_status()
