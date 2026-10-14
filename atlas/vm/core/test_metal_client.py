@@ -546,7 +546,7 @@ class TestMetalClientMigrations(UnitTestCase):
 			return_value=build_response(202, {"status": "running"}),
 		) as request:
 			client.put_migration(
-				"mig-00001", "vm-00001", "http://10.0.0.3:9000", resize, migrate_memory_snapshot=True
+				"mig-00001", "vm-00001", "http://10.0.0.3:9000", resize, has_memory_snapshot=True
 			)
 
 		self.assertEqual(
@@ -555,7 +555,7 @@ class TestMetalClientMigrations(UnitTestCase):
 				"virtual_machine_id": "vm-00001",
 				"source": "http://10.0.0.3:9000",
 				"resize": resize,
-				"migrate_memory_snapshot": True,
+				"has_memory_snapshot": True,
 			},
 		)
 

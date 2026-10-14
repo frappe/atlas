@@ -46,7 +46,7 @@ class MigrationService:
 		virtual_machine: VirtualMachine,
 		destination_metal_server: str | None = None,
 		resize: VirtualMachineShape | None = None,
-		migrate_memory_snapshot: bool = False,
+		has_memory_snapshot: bool = False,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		if virtual_machine.current_state not in LIVE_STATES:
@@ -67,7 +67,7 @@ class MigrationService:
 				"virtual_machine": locked.name,
 				"source_metal_server": locked.server,
 				"destination_metal_server": destination_metal_server,
-				"migrate_memory_snapshot": migrate_memory_snapshot,
+				"has_memory_snapshot": has_memory_snapshot,
 			}
 		)
 		if resize:
@@ -238,10 +238,10 @@ class MigrationService:
 
 	def validate_compatibility(self, destination: str, architecture: str) -> None:
 		"""Check synced host facts before a memory snapshot migration."""
-		if not self.migration.migrate_memory_snapshot:
+		if not self.migration.has_memory_snapshot:
 			return
 		if self.has_target_shape:
-			raise AtlasUserError(_("A memory migration cannot resize the VM."))
+			raise AtlasUserError(_("A memory snapshot migration cannot resize the VM."))
 
 		source = self._load_compatibility_report(self.migration.source_metal_server)
 		target = self._load_compatibility_report(destination)
@@ -320,7 +320,7 @@ class MigrationService:
 			self.migration.virtual_machine,
 			source_coordination_url,
 			resize,
-			migrate_memory_snapshot=bool(self.migration.migrate_memory_snapshot),
+			has_memory_snapshot=bool(self.migration.has_memory_snapshot),
 		)
 
 	def poll(self) -> dict[str, Any]:
@@ -351,7 +351,7 @@ class MigrationService:
 		if status:
 			values["status"] = status
 			values["progress_percent"] = self.progress_percent(status, transfers)
-		if self.migration.migrate_memory_snapshot and response.get("memory_snapshot_status"):
+		if self.migration.has_memory_snapshot and response.get("memory_snapshot_status"):
 			values["memory_snapshot_status"] = response["memory_snapshot_status"]
 		self.update(values, transfers=transfers, commit=True)
 
@@ -483,7 +483,7 @@ class MigrationService:
 		}
 		if status == "completed":
 			values["progress_percent"] = 100
-		if self.migration.migrate_memory_snapshot:
+		if self.migration.has_memory_snapshot:
 			values["memory_snapshot_status"] = status
 		self.update(values)
 		frappe.db.set_value(

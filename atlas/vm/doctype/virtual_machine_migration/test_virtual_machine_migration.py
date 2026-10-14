@@ -40,7 +40,7 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 				"destination_metal_server": servers[1],
 				"status": "copying",
 				"started_at": now_datetime() - timedelta(minutes=11),
-				"migrate_memory_snapshot": 1,
+				"has_memory_snapshot": 1,
 				"memory_snapshot_status": "not_started",
 			}
 		)
@@ -120,7 +120,7 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 				"virtual_machine": virtual_machine.name,
 				"source_metal_server": server.name,
 				"status": "copying",
-				"migrate_memory_snapshot": 1,
+				"has_memory_snapshot": 1,
 				"memory_snapshot_status": "not_started",
 			}
 		)
@@ -157,7 +157,7 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 				self.assertEqual([row.snapshot_type for row in stored.transfers], ["Disk", "Memory"])
 				self.assertEqual(stored.transfers[1].transferred_mib, 512)
 			migration.db_set(
-				{"status": "copying", "migrate_memory_snapshot": 0, "memory_snapshot_status": "not_started"}
+				{"status": "copying", "has_memory_snapshot": 0, "memory_snapshot_status": "not_started"}
 			)
 			service = MigrationService(frappe.get_doc(migration.doctype, migration.name))
 			service.store_progress({"memory_snapshot_status": "transferring"})

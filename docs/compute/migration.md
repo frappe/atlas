@@ -6,12 +6,12 @@ Atlas picks the new host. Metal on the new host copies the disk from the old hos
 
 1. Open **Dangerous Actions → Migrate VM** on the Virtual Machine form.
 2. Select a destination Metal Server, or leave it empty for automatic placement.
-3. Optionally select **Migrate Memory Snapshot**.
+3. Optionally select **Memory Snapshot**.
 4. Follow the new migration record.
 
 Atlas excludes the source host and checks destination capacity. Desk users cannot create or edit migration records directly.
 
-The VM `migrate` method accepts the optional boolean `migrate_memory_snapshot`, which defaults to `false`. Atlas stores this flag and sends it to Metal when true.
+The VM `migrate` method accepts the optional boolean `has_memory_snapshot`, which defaults to `false`. Atlas stores this flag and sends it to Metal when true.
 
 The flag transfers memory during the final disk copy and restores the destination paused. After Atlas commits the new host, Metal applies the original desired power state. See the [migration engine](migration-engine.md#copy-the-disk) for compatibility checks and retry behavior.
 
@@ -19,11 +19,11 @@ A stopped VM also moves when a resize does not fit on its host. The migration st
 
 ## Compatibility before transfer
 
-Only memory snapshot migrations require the compatibility reports stored on Metal Server by [host sync](../region/host-sync.md). Atlas compares them after destination selection and before the first Metal migration request. Missing or invalid reports fail the memory migration and release its Atlas reservation without starting a transfer.
+Only memory snapshot migrations require the compatibility reports stored on Metal Server by [host sync](../region/host-sync.md). Atlas compares them after destination selection and before the first Metal migration request. Missing or invalid reports fail the memory snapshot migration and release its Atlas reservation without starting a transfer.
 
 Disk-only migrations skip these reports. Placement checks destination readiness, recent capacity, architecture, memory, and disk capacity for both modes.
 
-| Memory migration check | Required compatibility |
+| Memory snapshot migration check | Required compatibility |
 | --- | --- |
 | Architecture and profile | VM and host architecture match. Source and destination CPU template JSON content matches. |
 | CPU | Same vendor. Native profiles also require matching host CPU model and features. |
@@ -46,9 +46,9 @@ flowchart LR
     E --> F[Atlas moves public IPs and finishes cleanup]
 ```
 
-Metal copies a full ZFS snapshot, then smaller changes while the VM runs. It starts cutover when the change is below `migration.final_delta_mib`, after 16 intervals, or after 30 minutes. Cutover stops the source, removes its network, and copies the final change. With memory transfer enabled, the saved bundle travels in parallel with the final disk change.
+Metal copies a full ZFS snapshot, then smaller changes while the VM runs. It starts cutover when the change is below `migration.final_delta_mib`, after 16 intervals, or after 30 minutes. Cutover stops the source, removes its network, and copies the final change. In a memory snapshot migration, the memory snapshot travels in parallel with the final disk change.
 
-| Desired power state | Disk-only migration | Memory migration after finish |
+| Desired power state | Disk-only migration | Memory snapshot migration after finish |
 | --- | --- | --- |
 | Running | Boots from the copied disk. | Resumes the saved guest. |
 | Stopped | Stays stopped. | Stays stopped. |
@@ -61,7 +61,7 @@ Atlas keeps the source host as the VM's recorded owner until the destination rep
 1. Destination Metal reports `ready`.
 2. Atlas commits the new host and resize values in one transaction.
 3. Atlas requests public IP moves. A failed move retries on its own schedule. It does not undo the host change.
-4. Atlas asks Metal to finish. Memory migrations activate the restored destination before removing the stopped source.
+4. Atlas asks Metal to finish. Memory snapshot migrations activate the restored destination before removing the stopped source.
 
 Atlas rejects cancellation after it commits destination ownership. A later controller error retries finish.
 
@@ -84,9 +84,9 @@ Metal hides the incoming VM from normal reads until the move finishes.
 
 `progress_percent` estimates the whole lifecycle, not copied bytes. Use the transfer rows for copied MiB.
 
-The transfer table labels each row as `Disk` or `Memory`. Memory migrations add one row for the saved-state bundle alongside the final disk transfer. The row records transfer timing and completion. Its total starts with the VM memory size and becomes the verified combined size of state, memory, and metadata when the copy completes. Transferred bytes update at completion, as they do for disk transfers. Retries update the same row.
+The transfer table labels each row as `Disk` or `Memory`. Memory snapshot migrations add one row for the memory snapshot alongside the final disk transfer. The row records transfer timing and completion. Its total starts with the VM memory size and becomes the verified combined size of state, memory, and metadata when the copy completes. Transferred bytes update at completion, as they do for disk transfers. Retries update the same row.
 
-`memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `is_memory_snapshot` checkbox is checked. This checkbox reflects `migrate_memory_snapshot`.
+`memory_snapshot_status` tracks the memory snapshot separately from the migration status. The form shows it only when the read-only `has_memory_snapshot` checkbox is checked.
 
 Metal reports `not_started` during disk precopy, `creating` while it captures and stops the source, `transferring` during the final copy, and `restoring` during destination setup. The snapshot is `completed` when the destination is loaded paused and ready. Migration finish still controls guest activation.
 
@@ -94,7 +94,7 @@ Rollback reports `failed` or `aborted`. Atlas stores the optional `memory_snapsh
 
 ## Measure SSH downtime
 
-Run [benchmark_migration.py](../../atlas/vm/scripts/benchmark_migration.py) from the Frappe bench directory with its Python environment. One round runs memory migration in both directions, then disk-only migration in both directions. Disk-only migration cold-boots the guest. The VM must start running on one of the specified hosts, without an active migration.
+Run [benchmark_migration.py](../../atlas/vm/scripts/benchmark_migration.py) from the Frappe bench directory with its Python environment. One round runs memory snapshot migration in both directions, then disk-only migration in both directions. Disk-only migration cold-boots the guest. The VM must start running on one of the specified hosts, without an active migration.
 
 ```sh
 env/bin/python apps/atlas/atlas/vm/scripts/benchmark_migration.py run \
