@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -614,6 +615,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 	def test_successful_transfer_marks_image_available_and_deletes_staging(self) -> None:
 		image = SimpleNamespace(
 			name="image-1",
+			creation=datetime(2026, 10, 14),
 			image_sha256="a" * 64,
 			kernel_sha256="b" * 64,
 			source_server="server-1",
@@ -641,6 +643,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 	def test_completed_upload_status_records_sha256_and_finalizes(self) -> None:
 		image = SimpleNamespace(
 			name="image-1",
+			creation=datetime(2026, 10, 14),
 			image_sha256=None,
 			kernel_sha256=None,
 			source_server="server-1",
@@ -708,7 +711,13 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.delete_snapshot.assert_not_called()
 
 	def test_transfer_failure_keeps_identifiers_and_sets_actionable_error(self) -> None:
-		image = SimpleNamespace(name="image-1", status="Uploading", transfer_error=None, save=Mock())
+		image = SimpleNamespace(
+			name="image-1",
+			status="Uploading",
+			transfer_error=None,
+			save=Mock(),
+			creation=datetime(2026, 10, 14),
+		)
 		service = VirtualMachineImageTransferService()
 
 		with (
@@ -724,6 +733,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 	def test_upload_start_error_is_visible_and_keeps_retry_identifiers(self) -> None:
 		image = SimpleNamespace(
 			name="image-1",
+			creation=datetime(2026, 10, 14),
 			status="Pending",
 			transfer_progress=0,
 			transfer_error=None,

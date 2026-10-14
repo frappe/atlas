@@ -12,6 +12,7 @@ import frappe
 from frappe import _
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.telemetry.events import timed
 from atlas.vm.core.placement.capacity_expansion import enqueue_capacity_expansion
 from atlas.vm.core.placement.context import (
 	PlacementContext,
@@ -198,6 +199,7 @@ class PlacementStrategy(ABC):
 		)
 
 	@classmethod
+	@timed("atlas_placement_duration_seconds")
 	def find_server(
 		cls,
 		requirements: PlacementRequirements,

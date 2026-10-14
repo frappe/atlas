@@ -230,6 +230,8 @@ scheduler_events = {
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",
 		],
 		"* * * * *": [
+			"atlas.atlas.core.telemetry.datum.publish_metrics",
+			"atlas.atlas.core.telemetry.error_logs.publish_error_logs",
 			"atlas.metal_server.core.public_ip_service.replenish_direct_allocations",
 			"atlas.atlas.doctype.ssh_task.ssh_task.mark_timed_out_ssh_tasks",
 			"atlas.vm.core.vm_migration.reconcile_migrations",
