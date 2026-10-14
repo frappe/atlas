@@ -17,7 +17,8 @@ Each Region Health check points to the table that names the host.
 | --- | --- | --- |
 | Hosts not reporting for 2 minutes | Atlas - Region, Hosts | A high Last Push s. |
 | Hosts with issues | Atlas - Region, Hosts | Issues above 0. The other columns show which problem. |
-| Hosts with hardware problems | Atlas - Region, Hardware | Every listed host. The non-zero column is the fault. |
+| Hosts with hardware problems | Atlas - Region, Hardware Faults from Host and Hardware Faults from BMC | The fault columns name the problem. Read Components and Events on Atlas - Host BMC for BMC faults. |
+| BMCs not reachable, BMCs not read for 15 minutes | Atlas - Region, Hardware Faults from BMC | BMC Reachable 0, or Minutes Since Read at least 15. Check the Metal Server's BMC URL and credentials, then the BMC jobs in the Atlas Desk. |
 | Hosts Atlas has not synced for 5 minutes | The Metal Server list in the Atlas Desk | The oldest Metal Server Usage sample. See [Atlas cannot reach Metal](atlas.md#atlas-cannot-reach-metal). |
 | Failing VMs, Oldest pending VM change | Atlas - Region, Hosts | Failing or Pending above 0. Then read its Warnings and Errors on Atlas - Logs. |
 | Service nodes not ready | Atlas - Platform Services, Service Nodes | The host of the node that is not up. |

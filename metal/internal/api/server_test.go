@@ -975,7 +975,7 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	if response.Capacity.TotalStorageMiB != 1000 || response.Capacity.AvailableStorageMiB != 750 {
 		t.Fatalf("storage capacity = %d/%d", response.Capacity.TotalStorageMiB, response.Capacity.AvailableStorageMiB)
 	}
-	if strings.Contains(recorder.Body.String(), "\"compatibility\"") {
+	if strings.Contains(recorder.Body.String(), "\"host_compatibility\"") {
 		t.Fatal("sync includes unavailable optional compatibility facts")
 	}
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import Mock, patch
 
 import requests
@@ -66,3 +67,38 @@ class TestRedfishClient(UnitTestCase):
 
 		self.assertIn("status 401: Authorization required", str(raised.exception))
 		self.assertFalse(raised.exception.is_retryable)
+
+	def test_read_members_stops_at_the_member_count(self) -> None:
+		# Some BMCs send every member and still link a next page.
+		first = Mock(status_code=200, content=b"{}")
+		first.json.return_value = {
+			"Members@odata.count": 2,
+			"Members": [{"Id": "1"}, {"Id": "2"}],
+			"Members@odata.nextLink": "/redfish/v1/Systems/1/LogServices/Log/Entries?$skip=1",
+		}
+
+		with patch(REQUEST, return_value=first) as request:
+			members = RedfishClient(SYSTEM_URL, "admin", "secret").read_members("Entries")
+
+		self.assertEqual([member["Id"] for member in members], ["1", "2"])
+		self.assertEqual(request.call_count, 1)
+
+	def test_read_members_follows_pages_without_a_member_count(self) -> None:
+		pages = [
+			{"Members": [{"Id": "1"}], "Members@odata.nextLink": "/redfish/v1/Entries?$skip=1"},
+			{"Members": [{"Id": "2"}]},
+		]
+		responses = [Mock(status_code=200, content=b"{}", json=Mock(return_value=page)) for page in pages]
+
+		with patch(REQUEST, side_effect=responses):
+			members = RedfishClient(SYSTEM_URL, "admin", "secret").read_members("Entries")
+
+		self.assertEqual([member["Id"] for member in members], ["1", "2"])
+
+	def test_no_request_starts_after_the_deadline(self) -> None:
+		client = RedfishClient(SYSTEM_URL, "admin", "secret", deadline=time.monotonic() - 1)
+
+		with patch(REQUEST) as request, self.assertRaises(RedfishError):
+			client.read(SYSTEM_URL)
+
+		request.assert_not_called()
