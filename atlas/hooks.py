@@ -229,6 +229,9 @@ scheduler_events = {
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",
 		],
+		"30 3 * * *": [
+			"atlas.metal_server.doctype.metal_server.metal_server.renew_telemetry_credentials",
+		],
 		"* * * * *": [
 			"atlas.atlas.core.telemetry.datum.publish_metrics",
 			"atlas.atlas.core.telemetry.error_logs.publish_error_logs",
