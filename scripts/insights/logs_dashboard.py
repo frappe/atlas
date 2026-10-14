@@ -41,7 +41,7 @@ def add_logs_dashboard(workbook: Workbook) -> None:
 		"Set the VM or Request filter to follow one change from the API call to the applied state.",
 	)
 	actions = folder.add_chart(
-		"action-events",
+		"vm-actions",
 		"VM Actions",
 		logs_sql(
 			"AND l.message = 'virtual machine action completed'",
@@ -85,6 +85,7 @@ def add_logs_dashboard(workbook: Workbook) -> None:
 		default_operator="within",
 		default_value={"span": "last 1 day (include current)"},
 	)
+	# Insights sorts filter links by chart key and suggests values from the first, so log-volume must sort first.
 	layout.filter("Host", "String", workbook.filter_links(charts, "host"), default_operator="in")
 	layout.filter("VM", "String", workbook.filter_links(charts, "vm"), default_operator="in")
 	layout.filter("Request", "String", workbook.filter_links(charts, "request_id"), default_operator="=")
