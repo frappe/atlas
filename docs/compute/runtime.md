@@ -33,7 +33,7 @@ Power requests accept `running`, `paused`, or `stopped`.
 | --- | --- | --- |
 | Explicit stop | Removed. | Guest shutdown requested. Metal waits for the unit. |
 | Automatic idle stop | Memory and device state saved under `machines/<id>/saved-state/`. | Desired state stays `running`. Observed state becomes `stopped`. |
-| Guest-directed IPv4 or IPv6 traffic | Same VM state restored. | Idle VM wakes. |
+| Guest-directed IPv4 or IPv6 traffic, except ICMP | Same VM state restored. | Idle VM wakes. |
 | Restart or shape change | Removed. | Next start follows the normal boot path. |
 | VM removal | Removed. | Guest resources are deleted. |
 

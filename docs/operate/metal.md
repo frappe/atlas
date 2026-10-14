@@ -164,7 +164,7 @@ Do not stop `metal-vm@*.service` units as part of daemon shutdown. Do not remove
 
 ## Automatic idle shutdown does not stop or restore a VM
 
-An idle VM does not reach `stopped`, or new IP traffic does not restore it.
+An idle VM does not reach `stopped`, or new IP traffic does not restore it. Ping does not count as traffic, so test with TCP or UDP.
 
 **Check**
 

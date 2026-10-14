@@ -30,7 +30,7 @@ sequenceDiagram
     C->>V: Retry reaches the running VM
 ```
 
-Only real traffic counts: unicast IPv4 or IPv6 packets from the host to the VM. Traffic the VM sends, ARP, and IPv6 multicast chatter do not keep it awake.
+Only real traffic counts: unicast IPv4 or IPv6 packets from the host to the VM, except ICMP. Traffic the VM sends, ICMP such as ping, ARP, and IPv6 multicast chatter do not keep it awake or wake it.
 
 ## What the state looks like
 
