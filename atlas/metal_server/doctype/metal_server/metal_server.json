@@ -9,16 +9,20 @@
   "title",
   "status",
   "is_provisioning_completed",
+  "is_sleepy_vm_host",
   "column_break_qbap",
   "provider_server_id",
   "metald_tls_expires_on",
-  "is_sleepy_vm_host",
   "section_break_configuration",
   "server_image",
   "column_break_njar",
   "server_size",
   "column_break_iiyh",
   "architecture",
+<<<<<<< HEAD
+=======
+  "tsc_scaling_supported",
+>>>>>>> 3fe1e63 (refactor(atlas): Tidy provider and host sync internals)
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -44,6 +48,7 @@
   "tags_section",
   "tags",
   "section_break_metadata",
+  "host_compatibility_report",
   "provider_metadata",
   "hidden_data_section",
   "column_break_xhax",
@@ -165,7 +170,7 @@
    "collapsible": 1,
    "fieldname": "section_break_metadata",
    "fieldtype": "Section Break",
-   "label": "Provider Metadata"
+   "label": "Metadata"
   },
   {
    "fieldname": "provider_metadata",
@@ -310,6 +315,25 @@
    "label": "Tags",
    "options": "Atlas Tag",
    "show_description_on_click": 1
+<<<<<<< HEAD
+=======
+  },
+  {
+   "default": "0",
+   "fieldname": "tsc_scaling_supported",
+   "fieldtype": "Check",
+   "label": "TSC Scaling Supported",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "host_compatibility_report",
+   "fieldtype": "Code",
+   "label": "Host Compatibility Report",
+   "no_copy": 1,
+   "options": "JSON",
+   "read_only": 1
+>>>>>>> 3fe1e63 (refactor(atlas): Tidy provider and host sync internals)
   }
  ],
  "grid_page_length": 50,
@@ -331,7 +355,11 @@
    "link_fieldname": "server"
   }
  ],
+<<<<<<< HEAD
  "modified": "2026-10-05 16:32:01.049346",
+=======
+ "modified": "2026-10-15 03:45:00.000000",
+>>>>>>> 3fe1e63 (refactor(atlas): Tidy provider and host sync internals)
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

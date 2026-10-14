@@ -26,6 +26,21 @@ sequenceDiagram
 
 Metal replaces its managed policy sets and wakes the relevant reconcilers. Atlas stores a capacity sample and updates its VM state cache.
 
+<<<<<<< HEAD
+=======
+When Metal starts, the Firecracker runtime captures architecture, configured CPU profile, CPU vendor/model/features, and x86 clock frequency and scaling support. Its runtime fingerprint hashes Firecracker binary contents, architecture, and the host kernel release.
+
+It sends the same facts in each sync without running the probes again. Provisioning, host reboot, and daemon restart refresh these facts.
+
+A failed startup probe is logged once and leaves the optional report absent until Metal restarts. Capacity and VM-state sync continue.
+
+Atlas stores the validated JSON in Metal Server's `host_compatibility_report` and exposes `tsc_scaling_supported` as a read-only checkbox.
+
+The next host sync populates these fields after an upgrade. Sync updates them only when the report changes and leaves the server's edit timestamp unchanged. A document save preserves the latest synced facts from the locked server row.
+
+Reports have no expiry. A host that omits the optional report clears its stored facts. Only memory snapshot migrations require the report; they do not probe hosts. Placement still requires recent capacity. See [migration checks](../compute/migration.md#compatibility-before-transfer).
+
+>>>>>>> 3fe1e63 (refactor(atlas): Tidy provider and host sync internals)
 ### Why sync sends complete sets
 
 A complete set repairs policy after a restart or missed sync. Atlas includes a peer only after it has keys, network addresses, and a private interface MAC.

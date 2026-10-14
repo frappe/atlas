@@ -528,6 +528,51 @@ class MigrationService:
 		"""Return the source Metal Server record."""
 		return cast("MetalServer", frappe.get_doc("Metal Server", self.migration.source_metal_server))
 
+<<<<<<< HEAD
+=======
+	@staticmethod
+	def _load_compatibility_report(server: str) -> MetalHostCompatibility:
+		"""Load and validate one synced host report."""
+		try:
+			return MetalHostCompatibility.from_dict(
+				frappe.parse_json(frappe.db.get_value("Metal Server", server, "host_compatibility_report"))
+			)
+		except ValueError as error:
+			raise AtlasUserError(
+				_("Metal Server {0} has no CPU compatibility report. Wait for host sync.").format(server)
+			) from error
+
+	@staticmethod
+	def _validate_cpu_compatibility(
+		source: MetalHostCompatibility, target: MetalHostCompatibility, architecture: str
+	) -> None:
+		"""Check the VM architecture and host CPU contract."""
+		if source.architecture != architecture:
+			raise AtlasUserError(_("The source CPU architecture does not match the VM."))
+
+		fields = ("architecture", "cpu_profile", "cpu_vendor", "snapshot_host")
+		if source.cpu_profile == "native":
+			fields += ("cpu_model", "cpu_features")
+		for field in fields:
+			if getattr(source, field) != getattr(target, field):
+				raise AtlasUserError(_("Migration hosts have different {0}.").format(field.replace("_", " ")))
+
+	@staticmethod
+	def _validate_clock_compatibility(source: MetalHostCompatibility, target: MetalHostCompatibility) -> None:
+		"""Check stable x86 clocks and destination scaling support."""
+		if source.architecture != "amd64":
+			return
+		if not source.tsc_khz or not target.tsc_khz:
+			raise AtlasUserError(_("The migration hosts did not report a stable CPU clock."))
+
+		# Firecracker accepts boot-time clock calibration differences up to 250 ppm.
+		if (
+			abs(source.tsc_khz - target.tsc_khz) > source.tsc_khz * 250 // 1_000_000
+			and not target.tsc_scaling
+		):
+			raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
+
+>>>>>>> 3fe1e63 (refactor(atlas): Tidy provider and host sync internals)
 
 def reconcile_migration(migration_name: str) -> None:
 	"""Queue the worker that advances one migration. A second call is deduplicated."""

@@ -101,6 +101,28 @@ def sync_server(
 	if mac_address and mac_address != server.private_network_mac_address:
 		frappe.db.set_value("Metal Server", server.name, "private_network_mac_address", mac_address)
 
+<<<<<<< HEAD
+=======
+	compatibility = response.get("host_compatibility")
+	try:
+		if compatibility is not None:
+			compatibility = MetalHostCompatibility.from_dict(compatibility)
+	except ValueError:
+		frappe.log_error(
+			frappe.get_traceback(), f"Invalid host compatibility report from Server {server.name}"
+		)
+		compatibility = None
+	report = frappe.as_json(asdict(compatibility)) if compatibility else None
+	scaling = bool(compatibility and compatibility.tsc_scaling)
+	if (server.host_compatibility_report or None) != report or bool(server.tsc_scaling_supported) != scaling:
+		frappe.db.set_value(
+			"Metal Server",
+			server.name,
+			{"host_compatibility_report": report, "tsc_scaling_supported": scaling},
+			update_modified=False,
+		)
+
+>>>>>>> 3fe1e63 (refactor(atlas): Tidy provider and host sync internals)
 
 def get_desired_images() -> list[dict[str, Any]]:
 	"""Return images that each host must retain locally."""
