@@ -12,6 +12,8 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // fakeMigrationHost implements migrationHost with in-memory records and call counters.
@@ -361,7 +363,7 @@ func newMigrationManager(t *testing.T) (*Manager, *fakeMigrationHost, *fakeSourc
 	t.Helper()
 	machines := newFakeMigrationHost(t)
 	source := &fakeSourceOperations{}
-	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, ampleCapacity, 0, nil)
+	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +381,7 @@ func TestNewManagerRejectsACorruptRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, ampleCapacity, 0, nil); err == nil {
+	if _, err := newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil)); err == nil {
 		t.Fatal("manager started with a corrupt record")
 	}
 	if !store.has(store.sourcePath("vm-1")) {
@@ -541,7 +543,7 @@ func TestAbortDestinationKeepsRecordsWhenRollbackFails(t *testing.T) {
 func TestUnlockSourceStopsAnInFlightStream(t *testing.T) {
 	machines := newFakeMigrationHost(t)
 	transfer := &fakeMigrationStorage{sendHang: true, sendStarted: make(chan struct{}, 1)}
-	migrationManager, err := newManager(machines, &fakeSourceOperations{}, transfer, ampleCapacity, 0, nil)
+	migrationManager, err := newManager(machines, &fakeSourceOperations{}, transfer, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

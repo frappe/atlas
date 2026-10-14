@@ -21,6 +21,8 @@ import (
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type fakeVM struct {
@@ -364,7 +366,7 @@ func newServerWithServices(
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := New(Config{}, Dependencies{
+	server, err := New(Config{Telemetry: telemetry.NewRegistry(nil)}, Dependencies{
 		MetricsStore:          store,
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      &stubMigrationManager{},
@@ -932,7 +934,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestNewRequiresAuthenticationHash(t *testing.T) {
-	_, err := New(Config{}, Dependencies{})
+	_, err := New(Config{Telemetry: telemetry.NewRegistry(nil)}, Dependencies{})
 	if err == nil {
 		t.Fatal("New accepted missing authentication configuration")
 	}

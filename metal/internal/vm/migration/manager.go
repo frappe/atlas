@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -113,6 +114,7 @@ type Manager struct {
 	finalDeltaMiB int
 	locks         vm.KeyedLocks
 	logger        *slog.Logger
+	telemetry     *telemetry.Registry
 	now           func() time.Time
 
 	destinationCreationLocks vm.KeyedLocks
@@ -129,18 +131,22 @@ type Manager struct {
 	sourceStreamsMutex     sync.Mutex
 	sourceStreams          map[string]*backgroundOperation
 	sourceStreamsWaitGroup sync.WaitGroup
+
+	// downtimeStarts maps a migration to when its source was asked to stop.
+	downtimeMutex  sync.Mutex
+	downtimeStarts map[string]time.Time
 }
 
 // NewManager validates records and returns a host migration manager.
-func NewManager(host *vm.MigrationHost, source *SourceClient, disks *storage.MigrationTransfer, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger) (*Manager, error) {
+func NewManager(host *vm.MigrationHost, source *SourceClient, disks *storage.MigrationTransfer, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
 	if host == nil || source == nil || disks == nil {
 		return nil, fmt.Errorf("migration manager dependencies are required")
 	}
-	return newManager(host, source, disks, capacity, finalDeltaMiB, logger)
+	return newManager(host, source, disks, capacity, finalDeltaMiB, logger, registry)
 }
 
-func newManager(host migrationHost, source sourceOperations, disks migrationStorage, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger) (*Manager, error) {
-	if host == nil || source == nil || disks == nil || capacity == nil {
+func newManager(host migrationHost, source sourceOperations, disks migrationStorage, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
+	if host == nil || source == nil || disks == nil || capacity == nil || registry == nil {
 		return nil, fmt.Errorf("migration manager dependencies are required")
 	}
 	if logger == nil {
@@ -155,18 +161,20 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 	}
 	rootContext, rootCancel := context.WithCancel(context.Background())
 	return &Manager{
-		host:          host,
-		store:         store,
-		source:        source,
-		disks:         disks,
-		capacity:      capacity,
-		finalDeltaMiB: finalDeltaMiB,
-		logger:        logger,
-		now:           func() time.Time { return time.Now().UTC() },
-		transfers:     make(map[string]*backgroundOperation),
-		sourceStreams: make(map[string]*backgroundOperation),
-		rootContext:   rootContext,
-		rootCancel:    rootCancel,
+		host:           host,
+		store:          store,
+		source:         source,
+		disks:          disks,
+		capacity:       capacity,
+		finalDeltaMiB:  finalDeltaMiB,
+		logger:         logger,
+		telemetry:      registry,
+		now:            func() time.Time { return time.Now().UTC() },
+		transfers:      make(map[string]*backgroundOperation),
+		sourceStreams:  make(map[string]*backgroundOperation),
+		downtimeStarts: make(map[string]time.Time),
+		rootContext:    rootContext,
+		rootCancel:     rootCancel,
 	}, nil
 }
 
@@ -236,7 +244,7 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		CreatedAt:        m.now(),
 		LastControlAt:    m.now(),
 	}
-	if err := m.store.writeDestination(record); err != nil {
+	if err := m.saveDestination(record); err != nil {
 		return DestinationProgress{}, errors.Join(err, m.store.remove(virtualMachineID))
 	}
 	return record.progress(), nil
@@ -307,7 +315,7 @@ func (m *Manager) mutateDestination(
 		return destinationRecord{}, err
 	}
 	apply(&record)
-	if err := m.store.writeDestination(record); err != nil {
+	if err := m.saveDestination(record); err != nil {
 		return destinationRecord{}, err
 	}
 	return record, nil
@@ -338,7 +346,7 @@ func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) err
 		return nil
 	}
 	record.State = destinationRemovingRuntime
-	return m.store.writeDestination(record)
+	return m.saveDestination(record)
 }
 
 // DestinationReservations returns capacity held by active destinations.

@@ -49,6 +49,7 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | `network` | vm, platform, network/traffic |
 | `vm/migration` | vm, storage, platform |
 | `network/traffic` | cilium eBPF |
+| `api`, `vm`, `vm/migration`, `reconciler`, `storage`, `firecracker` | telemetry |
 | `telemetry/system` | telemetry, platform |
 
 `vm` must not import `vm/migration`. It reads migration locks through an injected guard.

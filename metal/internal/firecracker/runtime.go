@@ -19,6 +19,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -65,6 +66,7 @@ type Runtime struct {
 	sshMutex              sync.Mutex
 	sshSessions           map[string]*sshSession
 	logger                *slog.Logger
+	telemetry             *telemetry.Registry
 }
 
 var _ vm.Runtime = (*Runtime)(nil)
@@ -78,6 +80,7 @@ func NewRuntime(
 	imageStore imageStore,
 	serialBroker serialBroker,
 	logger *slog.Logger,
+	registry *telemetry.Registry,
 ) *Runtime {
 	if logger == nil {
 		logger = slog.Default()
@@ -92,7 +95,15 @@ func NewRuntime(
 		serialBroker:          serialBroker,
 		sshSessions:           make(map[string]*sshSession),
 		logger:                logger,
+		telemetry:             registry,
 	}
+}
+
+// CollectTelemetry reports the open guest SSH sessions.
+func (runtime *Runtime) CollectTelemetry(context.Context) ([]telemetry.Sample, error) {
+	runtime.sshMutex.Lock()
+	defer runtime.sshMutex.Unlock()
+	return []telemetry.Sample{{Metric: "metal_ssh_sessions", Value: float64(len(runtime.sshSessions))}}, nil
 }
 
 // Inspect returns the current systemd and Firecracker state.

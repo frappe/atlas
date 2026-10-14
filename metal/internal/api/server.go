@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -13,13 +17,15 @@ import (
 	"github.com/frappe/atlas/metal/internal/host"
 	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
 
 // Config contains HTTP server configuration. The TLS listener authenticates the caller.
 type Config struct {
-	Logger *slog.Logger
+	Logger    *slog.Logger
+	Telemetry *telemetry.Registry
 	// Versions are read at startup, because a binary upgrade restarts metald.
 	Versions Versions
 }
@@ -96,6 +102,7 @@ type Server struct {
 	hostService           HostService
 	serialBroker          SerialBroker
 	logger                *slog.Logger
+	telemetry             *telemetry.Registry
 	versions              Versions
 	// consoleShutdown ends when the HTTP server shuts down. http.Server does not
 	// track a WebSocket after the upgrade, so each console waits for it.
@@ -122,6 +129,7 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 		configuration.Logger = slog.Default()
 	}
 	server.logger = configuration.Logger
+	server.telemetry = configuration.Telemetry
 
 	router := echo.New()
 	var stopConsoles context.CancelFunc
@@ -140,14 +148,14 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 
 // NewCoordination builds the mutual-TLS router used between Metal nodes.
 // The listener enforces the client certificate before a request reaches it.
-func NewCoordination(logger *slog.Logger, migrationManager MigrationManager) (*echo.Echo, error) {
-	if migrationManager == nil {
-		return nil, fmt.Errorf("migration manager is required")
+func NewCoordination(logger *slog.Logger, registry *telemetry.Registry, migrationManager MigrationManager) (*echo.Echo, error) {
+	if migrationManager == nil || registry == nil {
+		return nil, fmt.Errorf("migration manager and telemetry registry are required")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	server := &Server{migrationManager: migrationManager, logger: logger}
+	server := &Server{migrationManager: migrationManager, logger: logger, telemetry: registry}
 	router := echo.New()
 	router.HideBanner = true
 	router.HTTPErrorHandler = errorHandler
@@ -157,29 +165,57 @@ func NewCoordination(logger *slog.Logger, migrationManager MigrationManager) (*e
 	return router, nil
 }
 
-// logRequest records each request outcome.
+// Frequent host syncs are counted without latency observations.
 func (s *Server) logRequest(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		c.Set("logger", s.logger)
+		startedAt := time.Now()
 
 		err := next(c)
+		duration := time.Since(startedAt)
 		status := c.Response().Status
 		if err != nil {
 			status = publicAPIError(err).status
 		}
 
+		method, route := c.Request().Method, c.Path()
 		s.logger.Info("API request",
-			"method", c.Request().Method, "path", c.Path(), "status", status,
+			"method", method, "path", route, "status", status, "duration", duration,
+			pathIdentifier(route, c.Param("id")),
 			"request_id", requestID(c.Request().Context()),
 			"operation_id", operationID(c.Request().Context()),
 		)
 
+		labels := telemetry.Labels{"route": route, "method": method, "status": strconv.Itoa(status)}
+		s.telemetry.Count("metal_api_requests_total", 1, labels)
+		s.telemetry.Count("metal_api_request_duration_seconds_total", duration.Seconds(), telemetry.Labels{"route": route, "method": method})
+		if method != http.MethodGet && route != "/v1/sync" {
+			s.telemetry.Observe("metal_api_request_duration_seconds", duration.Seconds(), labels)
+		}
 		return err
 	}
 }
 
+func pathIdentifier(route, identifier string) slog.Attr {
+	switch {
+	case identifier == "":
+		return slog.Attr{}
+	case strings.HasPrefix(route, "/v1/vms/"):
+		return slog.String("virtual_machine_id", identifier)
+	case strings.HasPrefix(route, "/v1/snapshots/"):
+		return slog.String("snapshot_id", identifier)
+	case strings.HasPrefix(route, "/v1/migrations/"):
+		return slog.String("migration_id", identifier)
+	default:
+		return slog.Attr{}
+	}
+}
+
 // validateServerConfiguration rejects unsafe server configuration.
-func validateServerConfiguration(_ Config, dependencies Dependencies) error {
+func validateServerConfiguration(configuration Config, dependencies Dependencies) error {
+	if configuration.Telemetry == nil {
+		return fmt.Errorf("telemetry registry is required")
+	}
 	if dependencies.MetricsStore == nil || dependencies.VirtualMachineManager == nil || dependencies.MigrationManager == nil || dependencies.SnapshotStore == nil || dependencies.WakeReconciler == nil || dependencies.HostService == nil || dependencies.SerialBroker == nil {
 		return fmt.Errorf("API dependencies are required")
 	}

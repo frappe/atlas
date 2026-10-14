@@ -10,10 +10,12 @@ import (
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 func TestEnsureImageRejectsDifferentContentForReference(t *testing.T) {
-	imageStore := NewStores(t.Context(), "metal", t.TempDir(), nil).Images
+	imageStore := NewStores(t.Context(), "metal", t.TempDir(), nil, telemetry.NewRegistry(nil)).Images
 	original := imageManifest{RootfsSHA256: strings.Repeat("a", 64), KernelSHA256: strings.Repeat("b", 64), Architecture: runtime.GOARCH}
 	if err := imageStore.saveImageManifest("ubuntu", original); err != nil {
 		t.Fatal(err)
@@ -36,7 +38,7 @@ func TestEnsureImageRejectsDifferentContentForReference(t *testing.T) {
 
 func TestEnsureImageRemovesAnIncompleteImport(t *testing.T) {
 	logFile := fakeZFS(t, "", "none")
-	imageStore := NewStores(t.Context(), "metal", t.TempDir(), nil).Images
+	imageStore := NewStores(t.Context(), "metal", t.TempDir(), nil, telemetry.NewRegistry(nil)).Images
 	if err := os.MkdirAll(imageStore.imageDirectory("ubuntu"), 0o755); err != nil {
 		t.Fatal(err)
 	}

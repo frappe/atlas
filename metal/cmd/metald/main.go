@@ -269,7 +269,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	// Create resources that metald owns.
 	daemonContext, cancelDaemon := context.WithCancel(context.Background())
 	registry := telemetry.NewRegistry(logger)
-	stores := storage.NewStores(daemonContext, options.pool, options.imagesDir, logger)
+	stores := storage.NewStores(daemonContext, options.pool, options.imagesDir, logger, registry)
 	serialBroker := console.NewSerialBroker(options.cfg.ConsolesDir(), descriptorStore)
 	daemon := newDaemon(daemonContext, cancelDaemon, logger, stores.Snapshots, serialBroker, units)
 	defer func() {
@@ -317,6 +317,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		stores.Images,
 		serialBroker,
 		logger,
+		registry,
 	)
 	virtualMachineRuntime.RecoverSSHSessions()
 	virtualMachineManager, err := vm.NewManager(
@@ -330,6 +331,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 			Snapshots: stores.Snapshots,
 			Traffic:   trafficMonitor,
 			Logger:    logger,
+			Telemetry: registry,
 		},
 	)
 	if err != nil {
@@ -344,14 +346,14 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	virtualMachineReconciler := reconciler.NewVirtualMachineReconciler(
 		virtualMachineManager,
 		reconcileInterval,
-		reconciler.VirtualMachineConfig{Logger: logger},
+		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
 		stores.Snapshots,
 		memorySnapshotBuilder,
 		imageReconcileInterval,
-		reconciler.ImageConfig{Logger: logger},
+		reconciler.ImageConfig{Logger: logger, Telemetry: registry},
 	)
 	var migrationReconciler *reconciler.MigrationReconciler
 	var migrationManager *migration.Manager
@@ -414,6 +416,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		migrationCapacity,
 		options.migration.finalDeltaMiB,
 		logger,
+		registry,
 	)
 	if err != nil {
 		return fmt.Errorf("configure migration manager: %w", err)
@@ -424,10 +427,10 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	migrationReconciler = reconciler.NewMigrationReconciler(
 		migrationManager,
 		reconcileInterval,
-		reconciler.MigrationConfig{Logger: logger},
+		reconciler.MigrationConfig{Logger: logger, Telemetry: registry},
 	)
 	daemon.OwnMigrations(migrationManager)
-	coordinationServer, err := api.NewCoordination(logger, migrationManager)
+	coordinationServer, err := api.NewCoordination(logger, registry, migrationManager)
 	if err != nil {
 		return fmt.Errorf("configure coordination API: %w", err)
 	}
@@ -440,7 +443,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if versions.FirecrackerVersion, err = options.cfg.FirecrackerVersion(daemonContext); err != nil {
 		logger.Warn("could not read the Firecracker version", "error", err)
 	}
-	server, err := api.New(api.Config{Logger: logger, Versions: versions}, api.Dependencies{
+	server, err := api.New(api.Config{Logger: logger, Telemetry: registry, Versions: versions}, api.Dependencies{
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      migrationManager,
 		SnapshotStore:         stores.Snapshots,
@@ -461,7 +464,9 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
-	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions).Run)
+	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
+		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
+	}).Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
 	}

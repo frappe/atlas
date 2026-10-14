@@ -15,6 +15,7 @@ This package owns metric collection and delivery. Services own their state and r
 | `Client` | Batched delivery to Datum. Rereads `datum_url` and `datum_token` from `metald.toml` every 24 hours, or when the token expires. |
 | `ProcessCollector` | metald process and build information. |
 | `system` package | Host collectors, grouped by subsystem. |
+| `WithRequestID`, `RequestID` | Carry the API request ID to the VM manager. |
 
 ## Invariants
 
@@ -22,6 +23,7 @@ This package owns metric collection and delivery. Services own their state and r
 - An observation is one sample for one event. The registry keeps at most 50,000 and counts the dropped ones.
 - A failed collector does not stop the others. Each collector gets a context with a 10-second deadline and must honor it. The registry logs its first failure and its recovery.
 - A push never blocks a VM operation. Callers only take the registry mutex.
+- metald builds one `Registry` and passes it to every service. Constructors require it, so no metric goes to a registry that is never pushed.
 
 ## Add a metric
 

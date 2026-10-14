@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type recordingManager struct {
@@ -40,7 +42,7 @@ func TestRunReconcilesEveryVirtualMachine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{}).Run(ctx)
+	go NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)}).Run(ctx)
 
 	got := map[string]bool{}
 	for range manager.ids {
@@ -61,7 +63,7 @@ func TestWakeRequestsReconciliation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{})
+	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)})
 	go reconciler.Run(ctx)
 
 	<-manager.done
@@ -79,7 +81,7 @@ func TestRunContinuesAfterListError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{})
+	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)})
 	go reconciler.Run(ctx)
 
 	manager.mu.Lock()
@@ -134,6 +136,7 @@ func TestReconcileAllLimitsConcurrentOperations(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{
+		Telemetry:               telemetry.NewRegistry(nil),
 		MaxConcurrentOperations: 2,
 		OperationTimeout:        time.Second,
 	})
@@ -184,6 +187,7 @@ func (manager *timeoutManager) Reconcile(ctx context.Context, _ string) error {
 func TestReconcileAllAppliesOperationTimeout(t *testing.T) {
 	manager := &timeoutManager{timedOut: make(chan struct{})}
 	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{
+		Telemetry:               telemetry.NewRegistry(nil),
 		MaxConcurrentOperations: 1,
 		OperationTimeout:        20 * time.Millisecond,
 	})

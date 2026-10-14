@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/network/traffic"
@@ -30,6 +31,10 @@ const (
 	phaseDestroyStorage = "destroy-storage"
 )
 
+func isRoutinePhase(phase string) bool {
+	return phase == phaseInspect || phase == phaseNetwork || phase == phaseStorage
+}
+
 // Reconcile moves observed VM state toward the latest desired record.
 func (manager *Manager) Reconcile(ctx context.Context, identifier string) error {
 	virtualMachine := manager.newVirtualMachine(identifier)
@@ -49,12 +54,17 @@ func (manager *Manager) Reconcile(ctx context.Context, identifier string) error 
 		return err
 	}
 	operationID := newOperationID()
+	acceptedAt := manager.desiredWrittenAt(identifier)
 
 	if desired.State == StateDestroyed {
-		return manager.reconcileDestroyed(ctx, desired, observed, operationID)
+		err = manager.reconcileDestroyed(ctx, desired, observed, operationID)
+	} else {
+		err = manager.reconcileActive(ctx, desired, observed, operationID)
 	}
-
-	return manager.reconcileActive(ctx, desired, observed, operationID)
+	if err == nil {
+		manager.recordAction(desired, observed, acceptedAt)
+	}
+	return err
 }
 
 // reconcileActive applies network, restart, power, shape, and disk changes.
@@ -426,8 +436,9 @@ func (manager *Manager) runOperation(
 	operationID string,
 	phase string,
 	operation func() error,
-) error {
+) (operationError error) {
 	now := time.Now().UTC()
+	defer func() { manager.recordOperation(phase, now, operationError) }()
 	observed.Phase = phase
 	if observed.OperationID != operationID {
 		observed.OperationStartedAt = now
@@ -452,8 +463,12 @@ func (manager *Manager) runOperation(
 		manager.logOperationFailure(ctx, identifier, observed, phase, now, err)
 		return fmt.Errorf("%s: %w", phase, err)
 	}
-	manager.logger.Info("virtual machine operation completed",
-		"component", "vm", "operation", "reconcile", "phase", phase, "vm_id", identifier,
+	level := slog.LevelInfo
+	if isRoutinePhase(phase) {
+		level = slog.LevelDebug
+	}
+	manager.logger.Log(ctx, level, "virtual machine operation completed",
+		"component", "vm", "operation", "reconcile", "phase", phase, "virtual_machine_id", identifier,
 		"operation_id", operationID, "applied_generation", observed.Generation,
 		"observed_state", observed.State, "duration", time.Since(now),
 	)
@@ -470,7 +485,7 @@ func (manager *Manager) logOperationFailure(
 	err error,
 ) {
 	manager.logger.ErrorContext(ctx, "virtual machine operation failed",
-		"component", "vm", "operation", "reconcile", "phase", phase, "vm_id", identifier,
+		"component", "vm", "operation", "reconcile", "phase", phase, "virtual_machine_id", identifier,
 		"operation_id", observed.OperationID, "applied_generation", observed.Generation,
 		"observed_state", observed.State, "duration", time.Since(startedAt), "error", err,
 	)
