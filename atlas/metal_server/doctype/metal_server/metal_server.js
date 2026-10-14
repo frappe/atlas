@@ -134,7 +134,7 @@ frappe.ui.form.on("Metal Server", {
 			);
 		});
 
-		if (is_running && frm.doc.__onload?.server_provider === "AWS") {
+		if (is_running && frm.doc.__onload?.has_resizable_volumes) {
 			["root", "storage"].forEach((kind) => {
 				const title = __("Resize {0} Disk", [kind === "root" ? "Root" : "Storage"]);
 				frm.add_custom_button(
@@ -168,7 +168,7 @@ function show_resize_volume_dialog(frm, kind, title) {
 				{
 					fieldtype: "HTML",
 					options: `<p class="text-danger">${__(
-						"AWS allows one change to a volume every 6 hours."
+						"The provider allows one change to a volume every 6 hours."
 					)}</p>`,
 				},
 				{ fieldtype: "Section Break" },
@@ -191,7 +191,7 @@ function show_resize_volume_dialog(frm, kind, title) {
 				}).then(() => {
 					dialog.hide();
 					frappe.show_alert(
-						__("The disk grows on the host when AWS finishes the change.")
+						__("The disk grows on the host when the provider finishes the change.")
 					);
 				});
 			},

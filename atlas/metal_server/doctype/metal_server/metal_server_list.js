@@ -459,24 +459,27 @@ frappe.listview_settings["Metal Server"] = {
 	add_fields: ["title"],
 	onload(listview) {
 		if (!frappe.user.has_role("System Manager")) return;
-		frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
-			if (provider !== "Generic") {
-				listview.page.add_inner_button(__("Import Server"), () =>
-					showImportServerDialog(listview)
-				);
-			}
-		});
+		frappe
+			.xcall(`${HOST_REGISTRATION_METHOD}.get_server_creation_options`)
+			.then(({ has_host_registration }) => {
+				if (!has_host_registration) {
+					listview.page.add_inner_button(__("Import Server"), () =>
+						showImportServerDialog(listview)
+					);
+				}
+			});
 		listview.page.add_actions_menu_item(__("Create Metald Update"), () =>
 			createMetaldUpdate(listview)
 		);
 	},
 	async primary_action() {
-		const provider = await frappe.db.get_single_value("Atlas Settings", "server_provider");
-		if (provider !== "Generic") {
+		const { has_host_registration, bmc_driver } = await frappe.xcall(
+			`${HOST_REGISTRATION_METHOD}.get_server_creation_options`
+		);
+		if (!has_host_registration) {
 			frappe.new_doc("Metal Server");
 			return;
 		}
-		const bmc_driver = await frappe.db.get_single_value("Atlas Settings", "bmc_driver");
 		new HostRegistrationDialog(bmc_driver);
 	},
 };

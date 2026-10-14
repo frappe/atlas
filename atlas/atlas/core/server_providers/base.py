@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 import frappe
 
 if TYPE_CHECKING:
+	from atlas.atlas.core.server_providers.generic.redfish import RedfishClient
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 
@@ -127,6 +128,26 @@ class ServerProvider(ABC):
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
 
+	@property
+	def has_bmc_driver(self) -> bool:
+		"""Return whether BMC access is enabled."""
+		return False
+
+	@property
+	def has_host_registration(self) -> bool:
+		"""Return whether operators register prepared hosts."""
+		return False
+
+	@property
+	def has_resizable_volumes(self) -> bool:
+		"""Return whether host volumes support resize."""
+		return False
+
+	@property
+	def private_network_prefix_length(self) -> int:
+		"""Return the prefix length of the Atlas private network."""
+		return ipaddress.ip_network(self.settings.private_network_cidr, strict=False).prefixlen
+
 	@abstractmethod
 	def setup_infrastructure(self) -> None:
 		"""Set up the named provider resources that Atlas needs."""
@@ -136,10 +157,6 @@ class ServerProvider(ABC):
 	def validate_settings(self) -> None:
 		"""Check the provider settings."""
 		...
-
-	def validate_server(self, server: "MetalServer") -> None:
-		"""Check the Metal Server values that this provider needs."""
-		return None
 
 	@abstractmethod
 	def validate_credentials(self) -> bool:
@@ -176,12 +193,6 @@ class ServerProvider(ABC):
 		"""Return the raw block device for the virtual machine storage pool."""
 		...
 
-	def get_storage_pool_device(self, server: "MetalServer") -> str:
-		"""Return the device that registration or import stored, else the provider device."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		device = metadata.get("storage_pool_device") if isinstance(metadata, Mapping) else None
-		return device or self.storage_pool_device(server)
-
 	@abstractmethod
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
 		"""Apply one power action to a provider server."""
@@ -191,6 +202,38 @@ class ServerProvider(ABC):
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, Any]) -> None:
 		"""Delete a provider server and its owned resources if they exist."""
 		...
+
+	def validate_server(self, server: "MetalServer") -> None:
+		"""Check the Metal Server values that this provider needs."""
+		return None
+
+	def get_bmc_client(self, server: "MetalServer", deadline: float | None = None) -> "RedfishClient":
+		"""Create a BMC client with an optional monotonic request deadline."""
+		raise UnsupportedProviderOperation("BMC access")
+
+	def read_bmc_power_state(self, server: "MetalServer") -> str | None:
+		"""Read BMC power state, or return None when BMC access is disabled."""
+		return None
+
+	def describe_volume(self, server: "MetalServer", kind: str) -> dict:
+		"""Describe a root or storage volume and its latest change."""
+		raise UnsupportedProviderOperation("volume resize")
+
+	def resize_volume(
+		self, server: "MetalServer", kind: str, size_gib: int, iops: int, throughput_mibps: int
+	) -> None:
+		"""Change a root or storage volume's size and performance."""
+		raise UnsupportedProviderOperation("volume resize")
+
+	def grow_volume(self, server: "MetalServer", kind: str) -> None:
+		"""Grow host storage after the provider resizes its volume."""
+		raise UnsupportedProviderOperation("volume resize")
+
+	def get_storage_pool_device(self, server: "MetalServer") -> str:
+		"""Return the device that registration or import stored, else the provider device."""
+		metadata = frappe.parse_json(server.provider_metadata or "{}")
+		device = metadata.get("storage_pool_device") if isinstance(metadata, Mapping) else None
+		return device or self.storage_pool_device(server)
 
 	def import_server(self, server: "MetalServer") -> None:
 		"""Fill a Metal Server from a provider server that Atlas did not create."""
@@ -309,11 +352,6 @@ class ServerProvider(ABC):
 				return result
 			sleep(poll_interval_seconds)
 		raise self.error_class(f"Timed out while waiting for {description}", is_retryable=True)
-
-	@property
-	def private_network_prefix_length(self) -> int:
-		"""Return the prefix length of the Atlas private network."""
-		return ipaddress.ip_network(self.settings.private_network_cidr, strict=False).prefixlen
 
 	def apply_provider_server(self, server: "MetalServer", provider_server: ProviderServer) -> None:
 		"""Apply provider-owned values to an Atlas Server."""

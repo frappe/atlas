@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, override
 
 import frappe
+from frappe import _
 
 from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.base import (
@@ -16,6 +17,7 @@ from atlas.atlas.core.server_providers.base import (
 	ServerSizeData,
 	UnsupportedProviderOperation,
 )
+from atlas.atlas.core.server_providers.generic.redfish import RedfishClient
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -38,6 +40,18 @@ class GenericProvider(ServerProvider):
 	ssh_users = ("root",)
 	error_class = GenericError
 
+	@property
+	@override
+	def has_host_registration(self) -> bool:
+		"""Generic hosts use registration."""
+		return True
+
+	@property
+	@override
+	def has_bmc_driver(self) -> bool:
+		"""Return whether Redfish is enabled."""
+		return self.settings.bmc_driver == "Redfish"
+
 	@override
 	def validate_settings(self) -> None:
 		"""Reject automatic host creation."""
@@ -46,8 +60,24 @@ class GenericProvider(ServerProvider):
 
 	@override
 	def validate_server(self, server: "MetalServer") -> None:
-		"""Require the storage pool device that host registration stores."""
+		"""Require a registered storage device and complete BMC credentials."""
 		self.get_storage_pool_device(server)
+		self._validate_bmc(server)
+
+	@override
+	def get_bmc_client(self, server: "MetalServer", deadline: float | None = None) -> RedfishClient:
+		"""Create a Redfish client with an optional monotonic request deadline."""
+		return RedfishClient(
+			server.bmc_url, server.bmc_username, server.get_password("bmc_password"), deadline=deadline
+		)
+
+	@override
+	def read_bmc_power_state(self, server: "MetalServer") -> str | None:
+		"""Read power state when Redfish and the host's BMC URL are set."""
+		if not (self.has_bmc_driver and server.bmc_url):
+			return None
+
+		return self.get_bmc_client(server).read_power_state()
 
 	@override
 	def validate_credentials(self) -> bool:
@@ -92,7 +122,7 @@ class GenericProvider(ServerProvider):
 	@override
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
 		"""Apply the power action through the host BMC. Refuse it without a BMC driver."""
-		if self.settings.bmc_driver != "Redfish":
+		if not self.has_bmc_driver:
 			raise UnsupportedProviderOperation(f"the {action} power action")
 
 		servers = frappe.get_all(
@@ -109,7 +139,7 @@ class GenericProvider(ServerProvider):
 		if not server.bmc_url:
 			raise GenericError(f"Metal Server {server.name} has no BMC details")
 
-		server.bmc_client.set_power_state(action)
+		self.get_bmc_client(server).set_power_state(action)
 
 	@override
 	def delete_server(self, provider_server_id: str, provider_metadata: Mapping[str, object]) -> None:
@@ -133,3 +163,11 @@ class GenericProvider(ServerProvider):
 		self, provider_resource_id: str, host_address: str | None, server: "MetalServer"
 	) -> None:
 		"""Do nothing because the host network keeps the route."""
+
+	def _validate_bmc(self, server: "MetalServer") -> None:
+		if not self.has_bmc_driver:
+			return
+
+		values = (server.bmc_url, server.bmc_username, server.bmc_password)
+		if any(values) and not all(values):
+			frappe.throw(_("Enter the BMC URL, username, and password together."))

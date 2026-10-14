@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerPowerAction, UnsupportedProviderOperation
@@ -33,18 +34,44 @@ class TestGenericProvider(UnitTestCase):
 			GenericProvider(self.settings()).set_power_state("host-1", ServerPowerAction.REBOOT)
 
 	def test_power_action_uses_the_bmc_of_the_server(self) -> None:
-		server = self.server(bmc_url="https://bmc.local/redfish/v1/Systems/1", bmc_client=Mock())
+		server = self.server(bmc_url="https://bmc.local/redfish/v1/Systems/1")
+		provider = GenericProvider(self.settings(bmc_driver="Redfish"))
 
 		with (
 			patch(f"{MODULE}.frappe.get_all", return_value=["host-1"]) as get_all,
 			patch(f"{MODULE}.frappe.get_doc", return_value=server),
+			patch.object(provider, "get_bmc_client") as get_bmc_client,
 		):
-			GenericProvider(self.settings(bmc_driver="Redfish")).set_power_state(
-				"generic-1", ServerPowerAction.STOP
-			)
+			provider.set_power_state("generic-1", ServerPowerAction.STOP)
 
 		self.assertEqual(get_all.call_args.kwargs["filters"]["provider_server_id"], "generic-1")
-		server.bmc_client.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
+		get_bmc_client.assert_called_once_with(server)
+		get_bmc_client.return_value.set_power_state.assert_called_once_with(ServerPowerAction.STOP)
+
+	def test_bmc_details_must_be_complete(self) -> None:
+		provider = GenericProvider(self.settings(bmc_driver="Redfish"))
+		provider._validate_bmc(self.server(bmc_url=None, bmc_username=None, bmc_password=None))
+		provider._validate_bmc(
+			self.server(bmc_url="https://bmc.local", bmc_username="admin", bmc_password="secret")
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			provider._validate_bmc(
+				self.server(bmc_url="https://bmc.local", bmc_username="admin", bmc_password=None)
+			)
+
+	def test_bmc_details_are_ignored_without_a_driver(self) -> None:
+		GenericProvider(self.settings())._validate_bmc(
+			self.server(bmc_url="https://bmc.local", bmc_username=None, bmc_password=None)
+		)
+
+	def test_bmc_power_state_is_not_read_without_a_driver(self) -> None:
+		provider = GenericProvider(self.settings())
+
+		with patch.object(provider, "get_bmc_client") as get_bmc_client:
+			self.assertIsNone(provider.read_bmc_power_state(self.server(bmc_url="https://bmc.local")))
+
+		get_bmc_client.assert_not_called()
 
 	def test_power_action_needs_bmc_details(self) -> None:
 		with (
