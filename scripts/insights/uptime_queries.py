@@ -7,14 +7,19 @@ DAYS = "toDateTime(today() - 27)"
 # A host that stops reporting counts every VM it last reported as wanted running,
 # because its VMs are down with it. Minutes before a host's first report do not count,
 # and neither does a minute in which no host reported: that is a gap in telemetry.
+# A host counts only in the minutes in which Atlas reported it as Running.
 VM_UPTIME_TARGET = 0.999
+# Transitions are read from this far before the month, so an outage that started
+# earlier counts from the month start. metald logs a VM that is still down again
+# after a restart, so an open outage starts at its first such line.
+OUTAGE_LOOKBACK = "INTERVAL 90 DAY"
 
 
 def vm_downtime_minutes_sql(start: str) -> str:
 	"""One row per host and minute since start: VMs wanted running and VMs down."""
 	return f"""WITH
-servers AS (
-  SELECT DISTINCT labels['server'] AS server FROM samples
+running AS (
+  SELECT DISTINCT toStartOfMinute(ts) AS minute, labels['server'] AS server FROM samples
   WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running' AND ts > {start}
 ),
 pushes AS (
@@ -26,14 +31,6 @@ pushes AS (
 ),
 reported AS (
   SELECT minute, resource_id, max(wanted) AS wanted, max(down) AS down FROM pushes GROUP BY minute, resource_id
-),
-grid AS (
-  SELECT s.server AS server, m.minute AS minute
-  FROM servers AS s
-  CROSS JOIN (
-    SELECT toStartOfMinute(now()) - toIntervalMinute(number + 1) AS minute
-    FROM numbers(toUInt64(dateDiff('minute', {start}, now())))
-  ) AS m
 )
 SELECT minute, server, wanted, down FROM (
   SELECT g.minute AS minute, g.server AS server, r.resource_id != '' AS reported,
@@ -41,7 +38,7 @@ SELECT minute, server, wanted, down FROM (
     anyLast(reported_wanted) OVER (PARTITION BY g.server ORDER BY g.minute ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS last_wanted,
     if(reported, r.wanted, last_wanted) AS wanted,
     if(reported, r.down, last_wanted) AS down
-  FROM grid AS g LEFT JOIN reported AS r ON r.resource_id = g.server AND r.minute = g.minute
+  FROM running AS g LEFT JOIN reported AS r ON r.resource_id = g.server AND r.minute = g.minute
 )
 WHERE wanted IS NOT NULL AND minute IN (SELECT minute FROM reported)"""
 
@@ -55,12 +52,16 @@ VM_DOWNTIME_THIS_MONTH = f"""measured AS (
 ),
 downtime AS (
   SELECT attributes['virtual_machine_id'] AS vm, argMax(resource_id, ts) AS resource_id,
-    sumIf(toInt64OrZero(attributes['duration']), message = 'virtual machine available again') / 1e9
-      + if(argMax(message, ts) = 'virtual machine unavailable', dateDiff('second', max(ts), now()), 0) AS seconds,
-    argMax(attributes['reason'], ts) AS last_reason, argMax(message, ts) = 'virtual machine unavailable' AS is_down_now
+    argMax(message, ts) = 'virtual machine unavailable' AS is_down_now, argMax(attributes['reason'], ts) AS last_reason,
+    maxIf(ts, message = 'virtual machine available again') AS last_recovered,
+    sumIf(least(toInt64OrZero(attributes['duration']) / 1e9, toFloat64(dateDiff('second', {MONTH_START}, ts))),
+      message = 'virtual machine available again' AND ts > {MONTH_START})
+      + if(is_down_now, dateDiff('second', greatest(arrayMin(arrayFilter((t, m) -> m = 'virtual machine unavailable' AND t > last_recovered, groupArray(ts), groupArray(message))), {MONTH_START}), now()), 0) AS seconds,
+    countIf(message = 'virtual machine available again' AND ts > {MONTH_START}) + is_down_now AS periods
   FROM logs
-  WHERE message IN ('virtual machine unavailable', 'virtual machine available again') AND ts > {MONTH_START}
+  WHERE message IN ('virtual machine unavailable', 'virtual machine available again') AND ts > {MONTH_START} - {OUTAGE_LOOKBACK}
   GROUP BY vm
+  HAVING seconds > 0
 )"""
 
 

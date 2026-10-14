@@ -1,4 +1,4 @@
-from uptime_queries import MONTH_START, VM_UPTIME_TARGET, vm_downtime_minutes_sql
+from uptime_queries import MONTH_START, VM_DOWNTIME_THIS_MONTH, VM_UPTIME_TARGET, vm_downtime_minutes_sql
 from workbook import PERCENT, TITLES, Layout, Workbook, dimension, measure, table
 
 WINDOW = "INTERVAL 28 DAY"
@@ -169,16 +169,11 @@ FROM api CROSS JOIN atlas_minutes"""
 
 # Per VM: the minutes it was unavailable this month, from metald's transition log.
 # A host that stopped reporting logs nothing, so its VMs show in the host column instead.
-VM_DOWNTIME = f"""WITH {TITLES}
-SELECT l.attributes['virtual_machine_id'] AS vm, if(t.title = '', l.resource_id, t.title) AS host,
-  countIf(l.message = 'virtual machine unavailable') AS periods,
-  argMax(l.attributes['reason'], l.ts) AS last_reason,
-  (sumIf(toInt64OrZero(l.attributes['duration']), l.message = 'virtual machine available again') / 1e9
-    + if(argMax(l.message, l.ts) = 'virtual machine unavailable', dateDiff('second', max(l.ts), now()), 0)) / 60 AS downtime_minutes,
-  argMax(l.message, l.ts) = 'virtual machine unavailable' AS is_down_now
-FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
-WHERE l.message IN ('virtual machine unavailable', 'virtual machine available again') AND l.ts > {MONTH_START}
-GROUP BY vm, host"""
+VM_DOWNTIME = f"""WITH {TITLES},
+{VM_DOWNTIME_THIS_MONTH}
+SELECT d.vm AS vm, if(t.title = '', d.resource_id, t.title) AS host, d.periods AS periods, d.last_reason AS last_reason,
+  d.seconds / 60 AS downtime_minutes, d.is_down_now AS is_down_now
+FROM downtime AS d LEFT JOIN titles AS t ON t.server = d.resource_id"""
 
 
 def add_slo_dashboard(workbook: Workbook) -> None:

@@ -15,8 +15,8 @@ TITLE = "if(t.title = '', u.server, t.title)"
 def host_minutes_sql(start: str) -> str:
 	"""Report host-minutes after the first report, excluding fleet-wide telemetry gaps."""
 	return f"""WITH
-servers AS (
-  SELECT DISTINCT labels['server'] AS server FROM samples
+running AS (
+  SELECT DISTINCT toStartOfMinute(ts) AS minute, labels['server'] AS server FROM samples
   WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running' AND ts > {start}
 ),
 reports AS (
@@ -26,15 +26,11 @@ reports AS (
 first_reports AS (
   SELECT resource_id, min(minute) AS first_minute FROM reports GROUP BY resource_id
 )
-SELECT m.minute AS minute, s.server AS server, r.resource_id != '' AS reported
-FROM servers AS s
-CROSS JOIN (
-  SELECT toStartOfMinute(now()) - toIntervalMinute(number + 1) AS minute
-  FROM numbers(toUInt64(dateDiff('minute', {start}, now())))
-) AS m
+SELECT s.minute AS minute, s.server AS server, r.resource_id != '' AS reported
+FROM running AS s
 INNER JOIN first_reports AS f ON f.resource_id = s.server
-LEFT JOIN reports AS r ON r.resource_id = s.server AND r.minute = m.minute
-WHERE m.minute >= f.first_minute AND m.minute IN (SELECT minute FROM reports)"""
+LEFT JOIN reports AS r ON r.resource_id = s.server AND r.minute = s.minute
+WHERE s.minute >= f.first_minute AND s.minute IN (SELECT minute FROM reports)"""
 
 
 UPTIME_DAILY = f"""SELECT h.day AS day, h.host_uptime AS host_uptime, v.vm_uptime AS vm_uptime
