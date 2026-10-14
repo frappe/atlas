@@ -138,9 +138,9 @@ SELECT {HOST.format(alias="l")} AS host, coalesce(d.unhealthy_disks, 0) AS unhea
   g.ecc_uncorrected AS ecc_uncorrected, l.cpu_temperature AS cpu_temperature, l.memory_temperature AS memory_temperature,
   g.thermal_throttles AS thermal_throttles, coalesce(n.links_down, 0) AS links_down, g.nic_errors AS nic_errors,
   l.failed_units AS failed_units,
-  toUInt8(unhealthy_disks > 0) + toUInt8(degraded_arrays > 0) + toUInt8(zfs_data_errors > 0) + toUInt8(zfs_device_errors > 0)
-    + toUInt8(ecc_uncorrected > 0) + toUInt8(ecc_corrected > 0) + toUInt8(cpu_temperature > 85) + toUInt8(thermal_throttles > 0)
-    + toUInt8(links_down > 0) + toUInt8(nic_errors > 0) + toUInt8(failed_units > 0) AS problems
+  ifNull(unhealthy_disks > 0, 0) + ifNull(degraded_arrays > 0, 0) + ifNull(zfs_data_errors > 0, 0) + ifNull(zfs_device_errors > 0, 0)
+    + ifNull(ecc_uncorrected > 0, 0) + ifNull(ecc_corrected > 0, 0) + ifNull(cpu_temperature > 85, 0) + ifNull(thermal_throttles > 0, 0)
+    + ifNull(links_down > 0, 0) + ifNull(nic_errors > 0, 0) + ifNull(failed_units > 0, 0) AS problems
 FROM latest AS l LEFT JOIN titles AS t ON t.server = l.resource_id
 LEFT JOIN growth AS g ON g.resource_id = l.resource_id
 LEFT JOIN links AS n ON n.resource_id = l.resource_id
@@ -186,8 +186,8 @@ allocation AS (
 SELECT {HOST.format(alias="u")} AS host, u.cpu_busy AS cpu_busy, u.load_per_core AS load_per_core, p.cpu_pressure AS cpu_pressure,
   p.memory_pressure AS memory_pressure, p.io_pressure AS io_pressure, u.ram_used AS ram_used,
   a.cpu_allocated AS cpu_allocated, a.memory_allocated AS memory_allocated,
-  toUInt8(cpu_pressure > 10) + toUInt8(memory_pressure > 5) + toUInt8(io_pressure > 10) + toUInt8(ram_used > 90)
-    + toUInt8(load_per_core > 1.5) + toUInt8(cpu_allocated > 100) + toUInt8(memory_allocated > 100) AS stress_signals
+  ifNull(cpu_pressure > 10, 0) + ifNull(memory_pressure > 5, 0) + ifNull(io_pressure > 10, 0) + ifNull(ram_used > 90, 0)
+    + ifNull(load_per_core > 1.5, 0) + ifNull(cpu_allocated > 100, 0) + ifNull(memory_allocated > 100, 0) AS stress_signals
 FROM usage AS u LEFT JOIN titles AS t ON t.server = u.resource_id
 LEFT JOIN pressure AS p ON p.resource_id = u.resource_id
 LEFT JOIN allocation AS a ON a.server = u.resource_id
