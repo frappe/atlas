@@ -77,7 +77,7 @@ def add_logs_dashboard(workbook: Workbook) -> None:
 	)
 	charts = [volume, trace, actions, problems, migrations]
 
-	layout = Layout(workbook, "d-logs", "Atlas - Logs")
+	layout = Layout(workbook, "Atlas - Logs")
 	layout.filter(
 		"Period",
 		"Date",

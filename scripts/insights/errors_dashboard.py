@@ -190,7 +190,7 @@ def add_errors_dashboard(workbook: Workbook) -> None:
 		"Host error lines grouped by service and message. Hosts is how many hosts logged the error.",
 	)
 
-	layout = Layout(workbook, "d-errors", "Atlas - Errors")
+	layout = Layout(workbook, "Atlas - Errors")
 	layout.heading("Atlas and Hosts")
 	layout.chart(overview, 20, 14)
 	layout.heading("Atlas")

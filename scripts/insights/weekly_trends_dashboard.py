@@ -174,7 +174,7 @@ FROM samples WHERE metric = 'atlas_migration_duration_seconds' AND ts >= {WEEK} 
 			"Atlas API responses with a 5xx status, and Atlas calls to Metal that failed, by status.",
 		),
 	]
-	layout = Layout(workbook, "d-weekly-trends", "Atlas - Weekly Trends")
+	layout = Layout(workbook, "Atlas - Weekly Trends")
 	sections = [
 		("Hosts", daily[0:3]),
 		("Virtual Machines", daily[3:6]),

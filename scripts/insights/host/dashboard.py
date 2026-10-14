@@ -204,7 +204,7 @@ def add_host_dashboard(workbook: Workbook) -> None:
 	]
 	section_charts = [chart for _, charts in sections for chart in charts]
 
-	layout = Layout(workbook, "d-host", "Atlas - Host")
+	layout = Layout(workbook, "Atlas - Host")
 	layout.filter(
 		"Period",
 		"Date",

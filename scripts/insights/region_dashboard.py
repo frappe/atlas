@@ -363,7 +363,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 		"Host selection time. The target is under 100 ms.",
 	)
 
-	layout = Layout(workbook, "d-region", "Atlas - Region")
+	layout = Layout(workbook, "Atlas - Region")
 	layout.filter(
 		"Period",
 		"Date",

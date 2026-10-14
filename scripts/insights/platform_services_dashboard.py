@@ -139,7 +139,7 @@ def add_platform_services_dashboard(workbook: Workbook) -> None:
 		"Probes that timed out after 3 seconds or did not answer with a success status.",
 	)
 
-	layout = Layout(workbook, "d-platform-services", "Atlas - Platform Services")
+	layout = Layout(workbook, "Atlas - Platform Services")
 	layout.heading("Now")
 	layout.readings(status, [name for name, _ in STATUS_READINGS])
 	layout.heading("This Month")

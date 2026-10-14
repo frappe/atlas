@@ -257,7 +257,7 @@ def add_slo_dashboard(workbook: Workbook) -> None:
 		"For each day, the share of each SLO's events within target over the 28 days up to that day.",
 	)
 
-	layout = Layout(workbook, "d-sla-slos", "Atlas - SLA and SLOs")
+	layout = Layout(workbook, "Atlas - SLA and SLOs")
 	layout.heading("Status")
 	layout.chart(status_table, 20, 20)
 	layout.heading("Trend")

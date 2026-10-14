@@ -275,15 +275,16 @@ def numbers(
 class Layout:
 	"""Place dashboard items left to right in the 20-column grid, row by row."""
 
-	def __init__(self, workbook: Workbook, key: str, title: str) -> None:
+	def __init__(self, workbook: Workbook, title: str) -> None:
 		self.items: list = []
 		self.x = 0
 		self.y = 0
 		self.row_height = 0
-		workbook.dashboards[key] = {
-			"name": key,
+		route = title.lower().replace(" - ", "-").replace(" ", "-")
+		workbook.dashboards[f"dashboard-{route}"] = {
+			"name": f"dashboard-{route}",
 			"title": title,
-			"route": title.lower().replace(" - ", "-").replace(" ", "-"),
+			"route": route,
 			"workbook": "wb-atlas",
 			"vertical_compact_layout": 1,
 			"items": self.items,

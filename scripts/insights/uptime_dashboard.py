@@ -163,7 +163,7 @@ def add_uptime_dashboard(workbook: Workbook) -> None:
 		"the host tables instead.",
 	)
 
-	layout = Layout(workbook, "d-uptime", "Atlas - Uptime")
+	layout = Layout(workbook, "Atlas - Uptime")
 	layout.heading("Overall")
 	layout.chart(overall, 20, 16)
 	layout.heading("By Host")
