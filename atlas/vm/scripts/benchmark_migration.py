@@ -278,7 +278,7 @@ def run_comparison(arguments: argparse.Namespace) -> None:
 							repetition=repetition,
 							source=source,
 							destination=destination,
-							migrate_memory_snapshot=memory,
+							has_memory_snapshot=memory,
 						)
 						output.write(json.dumps(result, default=str) + "\n")
 						output.flush()
@@ -310,7 +310,7 @@ def measure_migration(
 			raise RuntimeError("Observer could not establish a healthy SSH baseline")
 		started = time.monotonic()
 		migration_id = virtual_machine.migrate(
-			destination_metal_server=destination, migrate_memory_snapshot=memory
+			destination_metal_server=destination, has_memory_snapshot=memory
 		)
 		frappe.db.commit()  # nosemgrep
 		emit("migration_started", migration_id=migration_id, memory=memory, observer=arguments.observer)

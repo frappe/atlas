@@ -27,7 +27,7 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"target_cpu_millicores": 0,
 		"target_memory_mib": 0,
 		"target_disk_mib": 0,
-		"migrate_memory_snapshot": 0,
+		"has_memory_snapshot": 0,
 		"transfers": [],
 	}
 	values.update(overrides)
@@ -152,7 +152,7 @@ class TestMigrationCompatibility(UnitTestCase):
 			with self.subTest(source=source_changes, target=target_changes):
 				source = replace(HOST_COMPATIBILITY, **source_changes)
 				target = replace(HOST_COMPATIBILITY, **target_changes)
-				service = MigrationService(migration_doc(migrate_memory_snapshot=True))
+				service = MigrationService(migration_doc(has_memory_snapshot=True))
 				with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
 					read_report.side_effect = [frappe.as_json(asdict(source)), frappe.as_json(asdict(target))]
 					if compatible:
@@ -162,7 +162,7 @@ class TestMigrationCompatibility(UnitTestCase):
 							service.validate_compatibility("metal-2", source.architecture)
 
 	def test_missing_facts_block_the_request(self) -> None:
-		service = MigrationService(migration_doc(status="scheduled", migrate_memory_snapshot=True))
+		service = MigrationService(migration_doc(status="scheduled", has_memory_snapshot=True))
 		service.update = Mock()
 		service.settle = Mock()
 		service.send_request = Mock()
@@ -181,7 +181,7 @@ class TestMigrationCompatibility(UnitTestCase):
 		service.send_request.assert_not_called()
 
 	def test_memory_resize_is_rejected_before_reading_facts(self) -> None:
-		service = MigrationService(migration_doc(migrate_memory_snapshot=True, target_memory_mib=1024))
+		service = MigrationService(migration_doc(has_memory_snapshot=True, target_memory_mib=1024))
 		with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
 			with self.assertRaisesRegex(AtlasUserError, "cannot resize"):
 				service.validate_compatibility("metal-2", "amd64")
@@ -314,11 +314,11 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			"vm-00001",
 			"https://10.0.0.1:9001",
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
-			migrate_memory_snapshot=False,
+			has_memory_snapshot=False,
 		)
 
 	def test_a_plain_migration_sends_no_resize(self) -> None:
-		service = MigrationService(migration_doc(migrate_memory_snapshot=1))
+		service = MigrationService(migration_doc(has_memory_snapshot=1))
 		destination_client = Mock()
 
 		with (
@@ -332,7 +332,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			service.send_request()
 
 		self.assertIsNone(destination_client.put_migration.call_args.args[3])
-		self.assertTrue(destination_client.put_migration.call_args.kwargs["migrate_memory_snapshot"])
+		self.assertTrue(destination_client.put_migration.call_args.kwargs["has_memory_snapshot"])
 
 	def test_the_commit_stores_the_server_and_the_resized_shape(self) -> None:
 		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
