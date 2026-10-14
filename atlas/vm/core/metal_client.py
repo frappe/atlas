@@ -433,7 +433,7 @@ class MetalClient:
 		**kwargs: Any,
 	) -> dict[str, Any]:
 		timeout = kwargs.pop("timeout", self.timeout_seconds)
-		started_at = monotonic()
+		started_at = time.perf_counter()
 		try:
 			response = self.session.request(
 				method,
@@ -530,7 +530,7 @@ def get_correlation_headers() -> dict[str, str]:
 def record_metal_request(method: str, path: str, status: str, started_at: float) -> None:
 	"""Count Metal calls and observe mutation latency, except frequent host syncs."""
 	route = METAL_ROUTE_IDENTIFIER.sub(r"\1:id", path.partition("?")[0])
-	duration = monotonic() - started_at
+	duration = time.perf_counter() - started_at
 	count("atlas_metal_requests_total", method=method, route=route, status=status)
 	count("atlas_metal_request_duration_seconds_total", duration, method=method, route=route)
 	if method != "GET" and route != "/v1/sync":
