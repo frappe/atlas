@@ -40,6 +40,8 @@ The **BMC Power State** field in the **BMC** section of the Metal Server form sh
 
 When the driver is `Redfish`, **Reboot**, **Power Off**, and **Power On** on the Metal Server form use the Redfish `ComputerSystem.Reset` action. Atlas sends a graceful reset type when the BMC offers it, and a forced one only when the BMC offers no graceful type. Atlas does not wait for the new power state. Check **BMC Power State** to see the result. When the driver is `None`, Atlas refuses these actions for Generic hosts.
 
+Redfish also provides [BMC hardware telemetry](../operate/telemetry.md#bmc-hardware) every 5 minutes.
+
 ### Prepare a host
 
 Before you register a host, prepare it with these items:

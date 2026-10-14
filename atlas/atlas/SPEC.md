@@ -48,6 +48,13 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 - `ensure_server_certificate` reissues a node certificate that is missing, wrong, or within 30 days of expiry.
 - Host installation sends node certificate files through direct SSH, never through an SSH Task.
 
+<<<<<<< HEAD
+=======
+## Telemetry
+
+`telemetry.events` owns shared Redis counters and observations. `telemetry.datum` publishes metrics and issues tokens. `telemetry.error_logs` publishes Error Logs. `telemetry.bmc` publishes BMC readings and log entries. See [telemetry](../../docs/operate/telemetry.md) for configuration and operation.
+
+>>>>>>> e7bd867 (feat(atlas): Send BMC readings and log entries to Datum)
 ## SSH tasks
 
 - `target` is a Dynamic Link. The task connects to the target's `ssh_host` through its `get_ssh_proxy_command()`. A VM uses its host as the proxy.
