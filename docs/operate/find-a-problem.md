@@ -2,7 +2,7 @@
 
 Start with the first failed step. Find its owning component before you retry. Keep uncertain records until that owner confirms the result. A timeout can leave an accepted request in progress. Keep the operation ID, fix the cause, and let the owner retry.
 
-Each component has a runbook with detailed checks: [Atlas](atlas.md), [Metal](metal.md), [Telemetry](telemetry.md), [HTTP proxy recovery](../networking/http-proxy/high-availability.md), and [WG Mesh operations](../networking/wg-mesh/operations.md). Read the [incident reports](../incidents/) before you change recovery behavior.
+To go from a dashboard alert to one host, see [Diagnose a host](diagnose-a-host.md). Each component has a runbook with detailed checks: [Atlas](atlas.md), [Metal](metal.md), [Telemetry](telemetry.md), [HTTP proxy recovery](../networking/http-proxy/high-availability.md), and [WG Mesh operations](../networking/wg-mesh/operations.md). Read the [incident reports](../incidents/) before you change recovery behavior.
 
 ## Find your symptom
 
