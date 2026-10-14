@@ -68,6 +68,13 @@ frappe.ui.form.on("Metal Server", {
 				false,
 			],
 			[
+				__("Configure Telemetry"),
+				"configure_telemetry",
+				is_running && frm.doc.is_provisioning_completed,
+				__("Configuring telemetry..."),
+				false,
+			],
+			[
 				__("Reboot"),
 				"reboot_server",
 				!is_deleted && !is_stopped,

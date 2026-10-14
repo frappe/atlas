@@ -14,6 +14,7 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 | `registry` | Provider name to implementation |
 | `DNSProvider`, `Route53Provider` | DNS contract and Route 53 |
 | `host_binaries` | Builds `metald` and the WG Mesh CLI |
+| `telemetry` | Atlas metrics, events, Error Log shipping, and Datum tokens. See [telemetry](../../docs/operate/telemetry.md). |
 | `artifacts` | Publishes a build as a public File |
 | `LetsEncrypt`, `AcmeClient` | Wildcard certificate through ACME |
 | `certificate` | Authorities, certificates, and keys |
@@ -44,6 +45,10 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 - Metal accepts only the client common name `atlas.<wildcard_domain>`.
 - `ensure_server_certificate` reissues a node certificate that is missing, wrong, or within 30 days of expiry.
 - Host installation sends node certificate files through direct SSH, never through an SSH Task.
+
+## Telemetry
+
+`telemetry.events` owns shared Redis counters and observations. `telemetry.datum` publishes metrics and issues tokens. `telemetry.error_logs` publishes Error Logs. See [telemetry](../../docs/operate/telemetry.md) for configuration and operation.
 
 ## SSH tasks
 

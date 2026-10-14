@@ -95,9 +95,6 @@ func (sampler *Sampler) Collect(ctx context.Context) {
 						sampler.previousDiskMu.Unlock()
 					}
 				}
-				if err != nil && ctx.Err() == nil {
-					sampler.logger.Warn("collect VM metrics", "virtual_machine_id", identifier, "error", err)
-				}
 			}
 		})
 	}

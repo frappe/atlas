@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import time
 from datetime import datetime
 from time import monotonic
@@ -9,12 +10,17 @@ from urllib.parse import quote
 
 import frappe
 import requests
+from frappe.monitor import get_trace_id
 
+from atlas.atlas.core.telemetry.events import count, observe
 from atlas.atlas.core.tls.metal import ca_file, client_certificate_files
 from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
+
+# Replace resource IDs to keep one metric series per route.
+METAL_ROUTE_IDENTIFIER = re.compile(r"^(/v1/(?:vms|migrations|snapshots)/)[^/]+")
 
 
 class MetalClientError(Exception):
@@ -427,6 +433,7 @@ class MetalClient:
 		**kwargs: Any,
 	) -> dict[str, Any]:
 		timeout = kwargs.pop("timeout", self.timeout_seconds)
+		started_at = time.perf_counter()
 		try:
 			response = self.session.request(
 				method,
@@ -434,10 +441,13 @@ class MetalClient:
 				timeout=timeout,
 				verify=self.ca_file,
 				cert=self.client_certificate,
+				headers=get_correlation_headers(),
 				**kwargs,
 			)
 		except requests.RequestException as error:
+			record_metal_request(method, path, "unreachable", started_at)
 			raise MetalClientError(str(error), retryable=True, uncertain=uncertain_on_failure) from error
+		record_metal_request(method, path, str(response.status_code), started_at)
 
 		if response.status_code >= 400:
 			message, code, response_retryable = self._error_data(response)
@@ -509,3 +519,24 @@ class MetalClient:
 						retryable if isinstance(retryable, bool) else None,
 					)
 		return f"Metal returned HTTP {response.status_code}", None, None
+
+
+def get_correlation_headers() -> dict[str, str]:
+	"""Send the ID of this Atlas request or job, so Metal logs the same ID."""
+	trace_id = get_trace_id()
+	return {"X-Request-ID": trace_id} if trace_id else {}
+
+
+def get_metal_route(path: str) -> str:
+	"""Return the route of a Metal path, with the VM, migration, or snapshot ID as :id."""
+	return METAL_ROUTE_IDENTIFIER.sub(r"\1:id", path.partition("?")[0])
+
+
+def record_metal_request(method: str, path: str, status: str, started_at: float) -> None:
+	"""Count Metal calls and observe mutation latency, except frequent host syncs."""
+	route = get_metal_route(path)
+	duration = time.perf_counter() - started_at
+	count("atlas_metal_requests_total", method=method, route=route, status=status)
+	count("atlas_metal_request_duration_seconds_total", duration, method=method, route=route)
+	if method != "GET" and route != "/v1/sync":
+		observe("atlas_metal_request_duration_seconds", duration, method=method, route=route, status=status)

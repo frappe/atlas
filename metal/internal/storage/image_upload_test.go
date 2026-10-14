@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // partRecorder stands in for the object store. It records the parts it stored
@@ -66,7 +68,7 @@ func (recorder *partRecorder) server(t *testing.T) *httptest.Server {
 // uploadFixture builds a store with one staged snapshot and one artifact file.
 func uploadFixture(t *testing.T, contents []byte) (*SnapshotStore, string, string) {
 	t.Helper()
-	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil, telemetry.NewRegistry(nil)).Snapshots
 	snapshotID := "snapshot-1"
 	now := time.Now().UTC()
 	if err := store.saveStagedSnapshot(stagedSnapshotMetadata{

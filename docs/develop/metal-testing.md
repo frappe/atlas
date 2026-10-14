@@ -51,7 +51,7 @@ sudo -E go test -tags integration \
 
 A full boot, Secure Shell, and idle shutdown check needs a complete environment. Use the manual steps in [Manual access](#manual-access) until the end to end environment exists.
 
-An idle VM stops and keeps no Firecracker process. The next IPv4 or IPv6 packet starts it again. [Sleepy VMs](../compute/sleepy-vms.md) explains the full save and wake path.
+An idle VM stops and keeps no Firecracker process. The next IPv4 or IPv6 packet that is not ICMP starts it again, so test with TCP or UDP, not ping. [Sleepy VMs](../compute/sleepy-vms.md) explains the full save and wake path.
 
 ## Configuration
 

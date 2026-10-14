@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 func TestRemoveWarmImagesContinuesPastInUseDisk(t *testing.T) {
@@ -20,7 +22,7 @@ fi
 	}
 	t.Setenv("PATH", commandDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	store := NewStores(t.Context(), "metal", t.TempDir(), nil).Images
+	store := NewStores(t.Context(), "metal", t.TempDir(), nil, telemetry.NewRegistry(nil)).Images
 	for _, key := range []string{"a", "b"} {
 		if err := os.MkdirAll(filepath.Join(store.imageDirectory("image"), "warm", key), 0o750); err != nil {
 			t.Fatal(err)

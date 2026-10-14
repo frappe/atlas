@@ -39,6 +39,8 @@ type Runtime interface {
 	// CheckMigratedGuestSSH verifies guest responsiveness when configured on the host.
 	CheckMigratedGuestSSH(context.Context, RuntimeMachine) error
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
+	// Ping returns nil when the guest answers one ICMP echo.
+	Ping(context.Context, RuntimeMachine) error
 }
 
 // RuntimeUsage describes a running machine's current resource use.

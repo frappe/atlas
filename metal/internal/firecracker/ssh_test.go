@@ -13,6 +13,8 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // stubSSHUnits lists fixed session units and records stops. Its Wait fails like
@@ -78,7 +80,7 @@ func TestRecoverSSHSessionsAdoptsLiveSessionsAndEndsTheRest(t *testing.T) {
 	writeSSHSessionRecord(t, configuration, "ssh-gone", "vm-1")
 	broker := &recordingBroker{open: map[string]bool{"ssh-live": true}}
 	sshUnits := &stubSSHUnits{sessionIDs: []string{"ssh-live", "ssh-orphan"}}
-	runtime := NewRuntime(configuration, &stubUnits{}, sshUnits, nil, nil, broker, nil)
+	runtime := NewRuntime(configuration, &stubUnits{}, sshUnits, nil, nil, broker, nil, telemetry.NewRegistry(nil))
 
 	runtime.RecoverSSHSessions()
 

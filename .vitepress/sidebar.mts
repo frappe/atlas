@@ -130,8 +130,11 @@ const handbook: DefaultTheme.SidebarItem[] = [
 		collapsed: true,
 		items: [
 			{ text: 'Find a problem', link: '/docs/operate/find-a-problem' },
+			{ text: 'Diagnose a host', link: '/docs/operate/diagnose-a-host' },
 			{ text: 'Atlas checks', link: '/docs/operate/atlas' },
 			{ text: 'Metal checks', link: '/docs/operate/metal' },
+			{ text: 'Telemetry', link: '/docs/operate/telemetry' },
+			{ text: 'Dashboards', link: '/docs/operate/dashboards' },
 			{ text: 'Incidents', link: '/docs/incidents/' },
 		],
 	},

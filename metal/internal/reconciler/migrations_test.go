@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type recordingDriver struct {
@@ -57,7 +59,7 @@ func TestRunReleasesEveryExpiredSourceLock(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go NewMigrationReconciler(driver, time.Hour, MigrationConfig{}).Run(ctx)
+	go NewMigrationReconciler(driver, time.Hour, MigrationConfig{Telemetry: telemetry.NewRegistry(nil)}).Run(ctx)
 
 	select {
 	case <-driver.done:
@@ -76,7 +78,7 @@ func TestRunAdvancesEveryActiveMigration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go NewMigrationReconciler(driver, time.Hour, MigrationConfig{}).Run(ctx)
+	go NewMigrationReconciler(driver, time.Hour, MigrationConfig{Telemetry: telemetry.NewRegistry(nil)}).Run(ctx)
 
 	got := map[string]bool{}
 	for range driver.ids {
@@ -97,7 +99,7 @@ func TestWakeRequestsAMigrationPass(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	reconciler := NewMigrationReconciler(driver, time.Hour, MigrationConfig{})
+	reconciler := NewMigrationReconciler(driver, time.Hour, MigrationConfig{Telemetry: telemetry.NewRegistry(nil)})
 	go reconciler.Run(ctx)
 
 	<-driver.done
@@ -115,7 +117,7 @@ func TestMigrationRunContinuesAfterListError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	reconciler := NewMigrationReconciler(driver, time.Hour, MigrationConfig{})
+	reconciler := NewMigrationReconciler(driver, time.Hour, MigrationConfig{Telemetry: telemetry.NewRegistry(nil)})
 	go reconciler.Run(ctx)
 
 	driver.mu.Lock()

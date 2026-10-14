@@ -43,7 +43,7 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 			"status", record.State.status(), "phase", record.State.phase(),
 			"idle_seconds", int(m.now().Sub(record.LastControlAt).Seconds()))
 		record.State = destinationRemovingRuntime
-		if err := m.store.writeDestination(record); err != nil {
+		if err := m.saveDestination(record); err != nil {
 			return err
 		}
 		m.StartTransfer(virtualMachineID)
@@ -61,7 +61,7 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	if m.now().Sub(record.CreatedAt) > reservationTimeout {
 		m.logger.Warn("migration destination expired before source preparation started", "migration_id", record.ID)
 		record.State = destinationRemovingRuntime
-		if err := m.store.writeDestination(record); err != nil {
+		if err := m.saveDestination(record); err != nil {
 			return err
 		}
 		m.StartTransfer(virtualMachineID)
@@ -177,7 +177,7 @@ func (m *Manager) reconstructDestination(record destinationRecord, definition Vi
 	record.SourceObservedState = observedState
 	record.CopyStartedAt = m.now()
 	record.Error = nil
-	return m.store.writeDestination(record)
+	return m.saveDestination(record)
 }
 
 func (m *Manager) reuseOrAllocateUserID(virtualMachineID string) (uint32, error) {
@@ -191,7 +191,7 @@ func (m *Manager) reuseOrAllocateUserID(virtualMachineID string) (uint32, error)
 
 func (m *Manager) recordDestinationError(record destinationRecord, cause error) error {
 	record.Error = &vm.OperationError{Code: "migration_error", Message: cause.Error(), UpdatedAt: m.now()}
-	if writeError := m.store.writeDestination(record); writeError != nil {
+	if writeError := m.saveDestination(record); writeError != nil {
 		return errors.Join(cause, writeError)
 	}
 	return cause
@@ -223,7 +223,7 @@ func (m *Manager) RequestFinish(ctx context.Context, migrationID string) error {
 		return vm.ErrConflict
 	}
 	record.State = destinationFinishing
-	return m.store.writeDestination(record)
+	return m.saveDestination(record)
 }
 
 // advanceFinish activates the destination and removes source and staging data.

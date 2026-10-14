@@ -38,8 +38,9 @@ Atlas creates regional signing and Metal trust material as part of settings setu
 | `atlas_wireguard_mtu` | MTU of `atlas0`. Restart the interface after a change. |
 | `warpgate_grant_max_hours` | Longest Warpgate host access grant, 24 hours by default. |
 | `is_unicast_network_enabled` | Uses unicast discovery when the host network cannot carry multicast. |
+| `datum_url` | Regional Datum base URL for Atlas and host [telemetry](../operate/telemetry.md). |
 
-The first four values are site configuration keys. See [Atlas access to hosts](host-access.md) for setup and recovery.
+The first four values and `datum_url` are site configuration keys. See [Atlas access to hosts](host-access.md) for setup and recovery.
 
 ## Limits and recovery
 

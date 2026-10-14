@@ -179,6 +179,11 @@ class AtlasSettings(Document):
 		return f"atlas-wg-gateway:{self.region_id}"
 
 	@property
+	def datum_audience_id(self) -> str:
+		"""Return the audience that a token for the regional Datum must carry."""
+		return f"atlas-datum:{self.region_id}"
+
+	@property
 	def issuer(self) -> str:
 		"""Return this region's Atlas issuer."""
 		return f"atlas:{self.region_id}"

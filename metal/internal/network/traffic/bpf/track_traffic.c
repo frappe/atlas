@@ -8,6 +8,10 @@
 #define ETHERNET_TYPE_OFFSET 12
 #define ETHERNET_TYPE_IPV4 0x0800
 #define ETHERNET_TYPE_IPV6 0x86DD
+#define IPV4_PROTOCOL_OFFSET 23
+#define IPV6_NEXT_HEADER_OFFSET 20
+#define IP_PROTOCOL_ICMP 1
+#define IP_PROTOCOL_ICMPV6 58
 
 /*
  * Stores the last time meaningful network traffic was seen for the VM.
@@ -99,7 +103,7 @@ static __always_inline void count_sent_protocol(struct __sk_buff *packet, struct
 	if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV4)) {
 		if (bpf_skb_load_bytes(packet, 14, &first_header_byte, 1) < 0 ||
 		    (first_header_byte >> 4) != 4 || (first_header_byte & 15) < 5 ||
-		    bpf_skb_load_bytes(packet, 23, &protocol, 1) < 0)
+		    bpf_skb_load_bytes(packet, IPV4_PROTOCOL_OFFSET, &protocol, 1) < 0)
 			return;
 		transport_offset = 14 + (first_header_byte & 15) * 4;
 		__u16 fragment_offset_and_flags;
@@ -109,14 +113,14 @@ static __always_inline void count_sent_protocol(struct __sk_buff *packet, struct
 	} else if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV6)) {
 		if (bpf_skb_load_bytes(packet, 14, &first_header_byte, 1) < 0 ||
 		    (first_header_byte >> 4) != 6 ||
-		    bpf_skb_load_bytes(packet, 20, &protocol, 1) < 0)
+		    bpf_skb_load_bytes(packet, IPV6_NEXT_HEADER_OFFSET, &protocol, 1) < 0)
 			return;
 		transport_offset = 54;
 	} else {
 		return;
 	}
 
-	if (protocol == 1 || protocol == 58) {
+	if (protocol == IP_PROTOCOL_ICMP || protocol == IP_PROTOCOL_ICMPV6) {
 		__sync_fetch_and_add(&counters->icmp_packets, 1);
 		return;
 	}
@@ -173,6 +177,22 @@ static __always_inline int is_unicast_packet(struct __sk_buff *packet)
 	return (first_destination_byte & ETHERNET_GROUP_ADDRESS_BIT) == 0;
 }
 
+/*
+ * ICMP and ICMPv6 carry pings, scans, and neighbor discovery, not guest work,
+ * so they neither keep a VM awake nor wake it.
+ */
+static __always_inline int is_icmp_packet(struct __sk_buff *packet)
+{
+	__u16 ethernet_type;
+	__u8 protocol;
+
+	if (bpf_skb_load_bytes(packet, ETHERNET_TYPE_OFFSET, &ethernet_type, sizeof(ethernet_type)) < 0)
+		return 0;
+	if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV4))
+		return bpf_skb_load_bytes(packet, IPV4_PROTOCOL_OFFSET, &protocol, 1) == 0 && protocol == IP_PROTOCOL_ICMP;
+	return bpf_skb_load_bytes(packet, IPV6_NEXT_HEADER_OFFSET, &protocol, 1) == 0 && protocol == IP_PROTOCOL_ICMPV6;
+}
+
 SEC("tc")
 int track_guest_received(struct __sk_buff *packet)
 {
@@ -180,17 +200,18 @@ int track_guest_received(struct __sk_buff *packet)
 		return TCX_NEXT;
 
 	__u32 user_id = virtual_machine_user_id;
-	__u64 packet_time = bpf_ktime_get_ns();
+	add_traffic_counters(&rx_counters_by_user_id, user_id, packet->len);
+	if (is_icmp_packet(packet))
+		return TCX_NEXT;
 
-	/* Always update the VM's last activity timestamp. */
+	/* Update the VM's last activity timestamp. */
+	__u64 packet_time = bpf_ktime_get_ns();
 	bpf_map_update_elem(
 		&activity_by_user_id,
 		&user_id,
 		&packet_time,
 		BPF_ANY
 	);
-
-	add_traffic_counters(&rx_counters_by_user_id, user_id, packet->len);
 
 	/*
 	 * Only notify userspace if it explicitly armed a watch for this VM.
