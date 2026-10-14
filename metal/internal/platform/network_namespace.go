@@ -1,4 +1,4 @@
-package traffic
+package platform
 
 import (
 	"errors"
@@ -11,7 +11,9 @@ import (
 
 const currentNamespacePath = "/proc/thread-self/ns/net"
 
-func withNetworkNamespace(path string, operation func() error) error {
+// WithNetworkNamespace runs operation on a thread inside the network namespace at
+// path. A socket that operation opens stays in that namespace after it returns.
+func WithNetworkNamespace(path string, operation func() error) error {
 	runtime.LockOSThread()
 	safeToReuseThread := true
 	defer func() {

@@ -11,6 +11,8 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
+
+	"github.com/frappe/atlas/metal/internal/platform"
 )
 
 //go:embed track_traffic.o
@@ -89,7 +91,7 @@ func (hooks *bpfHooks) attach(userID uint32, namespacePath, interfaceName string
 
 	var interfaceIndex int
 	var egress, ingress link.Link
-	err = withNetworkNamespace(namespacePath, func() error {
+	err = platform.WithNetworkNamespace(namespacePath, func() error {
 		device, err := net.InterfaceByName(interfaceName)
 		if err != nil {
 			return fmt.Errorf("resolve %s: %w", interfaceName, err)
@@ -159,7 +161,7 @@ func (hooks *bpfHooks) loadPrograms(userID uint32) (trafficPrograms, error) {
 // interfaceIndex resolves a TAP index inside its network namespace.
 func (hooks *bpfHooks) interfaceIndex(namespacePath, interfaceName string) (int, error) {
 	var interfaceIndex int
-	err := withNetworkNamespace(namespacePath, func() error {
+	err := platform.WithNetworkNamespace(namespacePath, func() error {
 		device, err := net.InterfaceByName(interfaceName)
 		if err != nil {
 			return fmt.Errorf("resolve %s: %w", interfaceName, err)
