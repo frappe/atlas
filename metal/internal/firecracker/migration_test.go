@@ -114,11 +114,11 @@ func TestMigrationFingerprintUsesBinaryContents(t *testing.T) {
 
 func TestMigrationCPUParserRejectsUnknownHardwareAndPreservesARMIdentity(t *testing.T) {
 	info := "CPU implementer: 0x41\nCPU architecture: 8\nCPU part: 0xd0c\nCPU variant: 0x1\nCPU revision: 2\nFeatures: fp asimd aes\n"
-	cpu, err := migrationCPUFromInfo(info, "arm64")
+	cpu, err := parseHostCPU(info, "arm64")
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed, err := migrationCPUFromInfo(strings.ReplaceAll(info, "revision: 2", "revision: 3"), "arm64")
+	changed, err := parseHostCPU(strings.ReplaceAll(info, "revision: 2", "revision: 3"), "arm64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestMigrationCPUParserRejectsUnknownHardwareAndPreservesARMIdentity(t *test
 		t.Fatal("ARM CPU revision was not recorded")
 	}
 	for _, architecture := range []string{"amd64", "arm64", "unsupported"} {
-		if _, err := migrationCPUFromInfo("processor: 0", architecture); err == nil {
+		if _, err := parseHostCPU("processor: 0", architecture); err == nil {
 			t.Fatalf("incomplete %s CPU identity accepted", architecture)
 		}
 	}
@@ -190,13 +190,13 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 				MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4},
 			}
 			compatibility.Host = "different-source-build"
-			compatibility.CPU = &migrationCPUCompatibility{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2"}
+			compatibility.CPU = &hostCPU{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2"}
 			savedStateFixture(t, configuration, savedStateRequirement{
 				VirtualMachineID: input.ID, UserID: input.UserID + 1, SpecificationGeneration: 2, RestartGeneration: 3,
 				FirecrackerCompatibility: "source-local-marker", MigrationCompatibility: &compatibility,
 			})
-			bundle := filepath.Join(configuration.vmDir(input.ID), "incoming")
-			if err := os.Rename(configuration.savedStateDirectory(input.ID), bundle); err != nil {
+			incoming := filepath.Join(configuration.vmDir(input.ID), "incoming")
+			if err := os.Rename(configuration.savedStateDirectory(input.ID), incoming); err != nil {
 				t.Fatal(err)
 			}
 			requests := make(chan string, 4)
@@ -239,7 +239,7 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 				}
 				writer.WriteHeader(http.StatusNoContent)
 			})
-			err = runtime.RestoreMigrationSnapshot(t.Context(), input, bundle)
+			err = runtime.RestorePausedFrom(t.Context(), input, incoming)
 			if failure == "tap_failure" {
 				if err == nil || !strings.Contains(err.Error(), "restore snapshot TAP MAC") || units.active || len(requests) != 0 {
 					t.Fatalf("TAP failure started the guest: %v", err)
@@ -271,7 +271,7 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 			if err := runtime.RefreshDisk(t.Context(), input); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.RemoveAll(bundle); err != nil {
+			if err := os.RemoveAll(incoming); err != nil {
 				t.Fatal(err)
 			}
 			memory, err := os.ReadFile(filepath.Join(configuration.chrootRoot(input.ID), "snap", "mem"))

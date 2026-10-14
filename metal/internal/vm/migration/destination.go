@@ -228,12 +228,12 @@ func (m *Manager) RequestFinish(ctx context.Context, migrationID string) error {
 
 // advanceFinish activates the destination and removes source and staging data.
 func (m *Manager) advanceFinish(ctx context.Context, record destinationRecord) error {
-	if record.MigrateMemorySnapshot {
+	if record.HasMemorySnapshot {
 		unlock, err := m.host.LockOperation(ctx, record.VirtualMachineID)
 		if err != nil {
 			return err
 		}
-		err = m.host.ActivateMigratedMemory(ctx, record.VirtualMachineID)
+		err = m.host.ActivateMigratedDestination(ctx, record.VirtualMachineID)
 		unlock()
 		if err != nil {
 			return fmt.Errorf("activate migrated memory: %w", err)

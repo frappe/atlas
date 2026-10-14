@@ -92,8 +92,8 @@ func (c *SourceClient) PrepareSource(ctx context.Context, address, migrationID, 
 }
 
 // StopSource stops the VM and returns its final snapshot.
-func (c *SourceClient) StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int, migrateMemorySnapshot bool) (SourceSnapshot, error) {
-	body, err := json.Marshal(SnapshotAcknowledgement{ReceivedSequence: receivedSequence, MigrateMemorySnapshot: migrateMemorySnapshot})
+func (c *SourceClient) StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (SourceSnapshot, error) {
+	body, err := json.Marshal(SnapshotAcknowledgement{ReceivedSequence: receivedSequence, HasMemorySnapshot: hasMemorySnapshot})
 	if err != nil {
 		return SourceSnapshot{}, err
 	}

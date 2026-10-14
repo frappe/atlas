@@ -43,8 +43,8 @@ func (host *MigrationHost) NormalizeSourceToStopped(ctx context.Context, virtual
 	}
 }
 
-// SaveSourceMemory saves guest memory before terminating the source process.
-func (host *MigrationHost) SaveSourceMemory(ctx context.Context, virtualMachineID string) error {
+// SaveAndStopSource saves guest memory before terminating the source process.
+func (host *MigrationHost) SaveAndStopSource(ctx context.Context, virtualMachineID string) error {
 	desired, observed, err := host.manager.newVirtualMachine(virtualMachineID).records()
 	if err != nil {
 		return err
@@ -117,8 +117,8 @@ func (host *MigrationHost) ApplyMigratedDestinationState(ctx context.Context, vi
 	return host.RestoreRuntimeState(ctx, virtualMachineID, desired.State, false)
 }
 
-// RestoreMigratedMemory loads the incoming snapshot without running the guest.
-func (host *MigrationHost) RestoreMigratedMemory(ctx context.Context, virtualMachineID, directory string) error {
+// RestoreMigratedMemorySnapshot loads the incoming snapshot without running the guest.
+func (host *MigrationHost) RestoreMigratedMemorySnapshot(ctx context.Context, virtualMachineID, directory string) error {
 	manager := host.manager
 	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
 	if err != nil {
@@ -133,7 +133,7 @@ func (host *MigrationHost) RestoreMigratedMemory(ctx context.Context, virtualMac
 		return fmt.Errorf("migration destination already runs: %w", ErrConflict)
 	}
 	if status.State != StatePaused {
-		if err := manager.runtime.RestoreMigrationSnapshot(ctx, machine, directory); err != nil {
+		if err := manager.runtime.RestorePausedFrom(ctx, machine, directory); err != nil {
 			return err
 		}
 	}
@@ -146,8 +146,8 @@ func (host *MigrationHost) RestoreMigratedMemory(ctx context.Context, virtualMac
 	return manager.recordMigrationRuntimeState(ctx, desired, &observed, StatePaused)
 }
 
-// ActivateMigratedMemory applies the desired power state after Atlas commits ownership.
-func (host *MigrationHost) ActivateMigratedMemory(ctx context.Context, virtualMachineID string) error {
+// ActivateMigratedDestination applies the desired power state after Atlas commits ownership.
+func (host *MigrationHost) ActivateMigratedDestination(ctx context.Context, virtualMachineID string) error {
 	manager := host.manager
 	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
 	if err != nil {
@@ -172,7 +172,7 @@ func (host *MigrationHost) ActivateMigratedMemory(ctx context.Context, virtualMa
 		}
 	}
 	if desired.State == StateRunning {
-		if err := manager.runtime.CheckMigratedGuest(ctx, machine); err != nil {
+		if err := manager.runtime.CheckMigratedGuestSSH(ctx, machine); err != nil {
 			return fmt.Errorf("check migrated guest: %w", err)
 		}
 	}
@@ -181,7 +181,7 @@ func (host *MigrationHost) ActivateMigratedMemory(ctx context.Context, virtualMa
 
 // RestoreRuntimeState starts or restores running or paused VMs, verifies the result,
 // and records state and generations. Stopped VMs stay stopped.
-func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState State, savedState bool) error {
+func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState State, fromSavedState bool) error {
 	manager := host.manager
 	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
 	if err != nil {
@@ -190,7 +190,7 @@ func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachi
 	machine := runtimeMachine(desired, observed.NetworkInterface)
 
 	resultState := desiredState
-	if savedState {
+	if fromSavedState {
 		status, inspectError := manager.runtime.Inspect(ctx, machine)
 		if inspectError != nil {
 			return inspectError

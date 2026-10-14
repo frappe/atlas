@@ -20,17 +20,17 @@ import (
 )
 
 // HostCompatibility probes the configured runtime for the controller sync response.
-func (service *Runtime) HostCompatibility(ctx context.Context) (vm.HostCompatibility, error) {
-	result, err := hostCompatibility(ctx, service.configuration.FirecrackerBin)
+func (runtime *Runtime) HostCompatibility(ctx context.Context) (vm.HostCompatibility, error) {
+	result, err := hostCompatibility(ctx, runtime.configuration.FirecrackerBin)
 	if err != nil {
 		return vm.HostCompatibility{}, err
 	}
-	result.CPUProfile, err = service.cpuProfile()
+	result.CPUProfile, err = runtime.cpuProfile()
 	if err != nil {
 		return vm.HostCompatibility{}, err
 	}
 	if result.Architecture == "amd64" {
-		result.TSCKHz, result.TSCScaling, err = migrationTSC()
+		result.TSCKHz, result.TSCScaling, err = probeTSC()
 	}
 	return result, err
 }
@@ -53,7 +53,7 @@ func (runtime *Runtime) cpuProfile() (string, error) {
 	return "custom:" + hex.EncodeToString(digest[:]), nil
 }
 
-func migrationTSC() (int, bool, error) {
+func probeTSC() (int, bool, error) {
 	kvm, err := unix.Open("/dev/kvm", unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return 0, false, err
@@ -75,7 +75,7 @@ func migrationTSC() (int, bool, error) {
 	}
 	defer unix.Close(virtualCPU)
 	frequency, err := unix.IoctlRetInt(virtualCPU, 0xaea3) // KVM_GET_TSC_KHZ.
-	// Unstable or unavailable TSC blocks memory migration, not host sync.
+	// Unstable or unavailable TSC blocks memory snapshot migration, not host sync.
 	if errors.Is(err, unix.EIO) || errors.Is(err, unix.ENOTTY) {
 		return 0, scaling > 0, nil
 	}
@@ -84,19 +84,19 @@ func migrationTSC() (int, bool, error) {
 
 type migrationSnapshotCompatibility struct {
 	// Host and CPU preserve the metadata schema of existing snapshots.
-	Host string                     `json:"host,omitempty"`
-	CPU  *migrationCPUCompatibility `json:"cpu,omitempty"`
+	Host string   `json:"host,omitempty"`
+	CPU  *hostCPU `json:"cpu,omitempty"`
 	vm.MemorySnapshotConfiguration
 }
 
-type migrationCPUCompatibility struct {
+type hostCPU struct {
 	Vendor   string `json:"vendor"`
 	Model    string `json:"model"`
 	Features string `json:"features"`
 }
 
-// RestoreMigrationSnapshot validates transferred state and loads it paused into a new jail.
-func (runtime *Runtime) RestoreMigrationSnapshot(ctx context.Context, input vm.RuntimeMachine, directory string) error {
+// RestorePausedFrom validates transferred state and loads it paused into a new jail.
+func (runtime *Runtime) RestorePausedFrom(ctx context.Context, input vm.RuntimeMachine, directory string) error {
 	compatibility := migrationSnapshotCompatibility{
 		MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{
 			VirtualCPUCount: input.Specification.VirtualCPUCount(),
@@ -147,7 +147,7 @@ func hostCompatibility(ctx context.Context, executable string) (vm.HostCompatibi
 	if err != nil {
 		return compatibility, err
 	}
-	processor, err := migrationCPUFromInfo(string(cpu), runtime.GOARCH)
+	processor, err := parseHostCPU(string(cpu), runtime.GOARCH)
 	if err != nil {
 		return compatibility, err
 	}
@@ -157,7 +157,7 @@ func hostCompatibility(ctx context.Context, executable string) (vm.HostCompatibi
 	return compatibility, ctx.Err()
 }
 
-func migrationCPUFromInfo(info, architecture string) (migrationCPUCompatibility, error) {
+func parseHostCPU(info, architecture string) (hostCPU, error) {
 	fields := make(map[string]string)
 	for line := range strings.SplitSeq(strings.SplitN(info, "\n\n", 2)[0], "\n") {
 		key, value, found := strings.Cut(line, ":")
@@ -165,7 +165,7 @@ func migrationCPUFromInfo(info, architecture string) (migrationCPUCompatibility,
 			fields[strings.TrimSpace(key)] = strings.TrimSpace(value)
 		}
 	}
-	var cpu migrationCPUCompatibility
+	var cpu hostCPU
 	var model []string
 	switch architecture {
 	case "amd64":

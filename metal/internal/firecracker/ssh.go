@@ -66,9 +66,9 @@ type sshSessionRecord struct {
 	KeyIndex         string `json:"key_index"`
 }
 
-// CheckMigratedGuest requires a guest SSH handshake when enabled for memory migrations.
-func (runtime *Runtime) CheckMigratedGuest(ctx context.Context, input vm.RuntimeMachine) error {
-	if !runtime.configuration.CheckMigrationGuestSSH {
+// CheckMigratedGuestSSH requires a guest SSH handshake when enabled for memory snapshot migrations.
+func (runtime *Runtime) CheckMigratedGuestSSH(ctx context.Context, input vm.RuntimeMachine) error {
+	if !runtime.configuration.RequireMigratedGuestSSH {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

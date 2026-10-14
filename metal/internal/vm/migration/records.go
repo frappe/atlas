@@ -197,20 +197,20 @@ type DestinationProgress struct {
 }
 
 type destinationRecord struct {
-	SchemaVersion         int                       `json:"schema_version"`
-	ID                    string                    `json:"id"`
-	VirtualMachineID      string                    `json:"virtual_machine_id"`
-	Source                string                    `json:"source"`
-	Resize                *Resize                   `json:"resize,omitempty"`
-	MigrateMemorySnapshot bool                      `json:"migrate_memory_snapshot,omitempty"`
-	MemorySnapshotGUID    string                    `json:"memory_snapshot_guid,omitempty"`
-	State                 destinationState          `json:"state"`
-	Definition            *VirtualMachineDefinition `json:"config,omitempty"`
-	SourceObservedState   vm.State                  `json:"source_observed_state,omitempty"`
-	CopyStartedAt         time.Time                 `json:"copy_started_at,omitempty"`
-	Intervals             []TransferProgress        `json:"intervals,omitempty"`
-	MemoryTransfer        *TransferProgress         `json:"memory_transfer,omitempty"`
-	SourceStopped         bool                      `json:"source_stopped,omitempty"`
+	SchemaVersion          int                       `json:"schema_version"`
+	ID                     string                    `json:"id"`
+	VirtualMachineID       string                    `json:"virtual_machine_id"`
+	Source                 string                    `json:"source"`
+	Resize                 *Resize                   `json:"resize,omitempty"`
+	HasMemorySnapshot      bool                      `json:"has_memory_snapshot,omitempty"`
+	MemorySnapshotDiskGUID string                    `json:"memory_snapshot_disk_guid,omitempty"`
+	State                  destinationState          `json:"state"`
+	Definition             *VirtualMachineDefinition `json:"config,omitempty"`
+	SourceObservedState    vm.State                  `json:"source_observed_state,omitempty"`
+	CopyStartedAt          time.Time                 `json:"copy_started_at,omitempty"`
+	Intervals              []TransferProgress        `json:"intervals,omitempty"`
+	MemoryTransfer         *TransferProgress         `json:"memory_transfer,omitempty"`
+	SourceStopped          bool                      `json:"source_stopped,omitempty"`
 
 	Error      *vm.OperationError `json:"error,omitempty"`
 	CreatedAt  time.Time          `json:"created_at"`
@@ -238,7 +238,7 @@ func (record destinationRecord) progress() DestinationProgress {
 }
 
 func (record destinationRecord) memorySnapshotStatus() string {
-	if !record.MigrateMemorySnapshot {
+	if !record.HasMemorySnapshot {
 		return ""
 	}
 	switch record.State {
@@ -287,7 +287,7 @@ func isValidSourceState(state sourceState) bool {
 }
 
 type sourceRecord struct {
-	MigrateMemorySnapshot   *bool       `json:"migrate_memory_snapshot,omitempty"`
+	HasMemorySnapshot       *bool       `json:"has_memory_snapshot,omitempty"`
 	SchemaVersion           int         `json:"schema_version"`
 	ID                      string      `json:"id"`
 	VirtualMachineID        string      `json:"virtual_machine_id"`
@@ -419,13 +419,13 @@ func (store *migrationStore) readDestination(virtualMachineID string) (destinati
 
 func terminalDestinationRecord(record destinationRecord, state destinationState, finishedAt time.Time) destinationRecord {
 	return destinationRecord{
-		SchemaVersion:         migrationSchemaVersion,
-		ID:                    record.ID,
-		VirtualMachineID:      record.VirtualMachineID,
-		State:                 state,
-		MigrateMemorySnapshot: record.MigrateMemorySnapshot,
-		CreatedAt:             record.CreatedAt,
-		FinishedAt:            finishedAt,
+		SchemaVersion:     migrationSchemaVersion,
+		ID:                record.ID,
+		VirtualMachineID:  record.VirtualMachineID,
+		State:             state,
+		HasMemorySnapshot: record.HasMemorySnapshot,
+		CreatedAt:         record.CreatedAt,
+		FinishedAt:        finishedAt,
 	}
 }
 

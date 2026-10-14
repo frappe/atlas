@@ -69,7 +69,7 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 | `traffic_monitor.enabled` | `true` | Enables idle shutdown. |
 | `migration.final_delta_mib` | `512` | Delta size that triggers the final snapshot. |
 | `migration.transfer_port` | `9002` | Snapshot stream port. Same on every host. |
-| `migration.check_guest_ssh` | `false` | Requires a guest SSH handshake before memory migration source cleanup. |
+| `migration.require_guest_ssh` | `false` | Requires a guest SSH handshake before memory snapshot migration source cleanup. |
 
 `config.example.toml` shows the full file.
 

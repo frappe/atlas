@@ -50,10 +50,10 @@ type stubMigrationManager struct {
 	memoryPath           string
 }
 
-func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, migrateMemorySnapshot bool) (migration.DestinationProgress, error) {
+func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, hasMemorySnapshot bool) (migration.DestinationProgress, error) {
 	m.createArgs = []string{migrationID, virtualMachineID, source}
 	m.createResize = resize
-	m.createMemorySnapshot = migrateMemorySnapshot
+	m.createMemorySnapshot = hasMemorySnapshot
 	return m.record, m.createErr
 }
 
@@ -180,7 +180,7 @@ func TestCreateMigrationDecodesTheMemorySnapshotFlag(t *testing.T) {
 	}{{"false", false}, {"true", true}} {
 		stub := &stubMigrationManager{}
 		server := newMigrationTestServer(t, stub)
-		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","migrate_memory_snapshot":` + flag.value + `}`
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","has_memory_snapshot":` + flag.value + `}`
 		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusAccepted)
 		if stub.createMemorySnapshot != flag.want {
 			t.Fatalf("memory snapshot flag = %v, want %v", stub.createMemorySnapshot, flag.want)
@@ -189,7 +189,7 @@ func TestCreateMigrationDecodesTheMemorySnapshotFlag(t *testing.T) {
 
 	server := newMigrationTestServer(t, &stubMigrationManager{})
 	for _, flag := range []string{`"true"`, `1`} {
-		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","migrate_memory_snapshot":` + flag + `}`
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","has_memory_snapshot":` + flag + `}`
 		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusBadRequest)
 	}
 }
@@ -456,7 +456,7 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
-func (m *stubMigrationManager) OpenSourceMemoryFile(context.Context, string, string, int, string) (*os.File, error) {
+func (m *stubMigrationManager) OpenSourceMemorySnapshotFile(context.Context, string, string, int, string) (*os.File, error) {
 	if m.memoryPath != "" {
 		return os.Open(m.memoryPath)
 	}
@@ -480,7 +480,7 @@ func TestCoordinationMemoryStreamCarriesChecksum(t *testing.T) {
 	if err := client.ReceiveMemorySnapshot(t.Context(), server.URL, "mig-1", "vm-1", 1, t.TempDir(), 1); err != nil {
 		t.Fatal(err)
 	}
-	do(t, router, http.MethodPost, "/v1/migrations/mig-1/stop?virtual_machine_id=vm-1", `{"migrate_memory_snapshot":true}`, http.StatusOK)
+	do(t, router, http.MethodPost, "/v1/migrations/mig-1/stop?virtual_machine_id=vm-1", `{"has_memory_snapshot":true}`, http.StatusOK)
 	if !stub.stopMemorySnapshot {
 		t.Fatal("stop did not preserve the memory request")
 	}

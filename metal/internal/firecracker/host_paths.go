@@ -12,12 +12,12 @@ import (
 
 // Config contains Firecracker host paths and guest configuration.
 type Config struct {
-	MachinesDir            string
-	SocketsDir             string
-	JailerBin              string
-	FirecrackerBin         string
-	CPUTemplate            json.RawMessage
-	CheckMigrationGuestSSH bool
+	MachinesDir             string
+	SocketsDir              string
+	JailerBin               string
+	FirecrackerBin          string
+	CPUTemplate             json.RawMessage
+	RequireMigratedGuestSSH bool
 }
 
 // DefaultConfig returns the standard Firecracker host paths.

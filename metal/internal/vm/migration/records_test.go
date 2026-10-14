@@ -56,7 +56,7 @@ func TestAColdCopyReportsCopyingUntilTheFinalSnapshotArrives(t *testing.T) {
 func TestMemoryProgressSurvivesReloadAndTerminalCleanup(t *testing.T) {
 	store := newMigrationStore(t.TempDir())
 	record := newDestinationRecord()
-	record.MigrateMemorySnapshot = true
+	record.HasMemorySnapshot = true
 	for _, step := range []struct {
 		state   destinationState
 		stopped bool
@@ -95,7 +95,7 @@ func TestMemoryProgressSurvivesReloadAndTerminalCleanup(t *testing.T) {
 		if got := loaded.progress().MemorySnapshotStatus; got != step.want {
 			t.Fatalf("%s: snapshot status = %s, want %s", step.state, got, step.want)
 		}
-		loaded.MigrateMemorySnapshot = false
+		loaded.HasMemorySnapshot = false
 		if got := loaded.progress().MemorySnapshotStatus; got != "" {
 			t.Fatalf("disk-only migration reported snapshot status %s", got)
 		}

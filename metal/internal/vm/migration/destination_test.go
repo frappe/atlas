@@ -36,8 +36,8 @@ func TestCreateDestinationPreservesTheMemorySnapshotFlag(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if record.MigrateMemorySnapshot != flag {
-			t.Fatalf("stored memory snapshot flag = %v, want %v", record.MigrateMemorySnapshot, flag)
+		if record.HasMemorySnapshot != flag {
+			t.Fatalf("stored memory snapshot flag = %v, want %v", record.HasMemorySnapshot, flag)
 		}
 		if _, err := manager.CreateDestination(ctx, "mig-1", "vm-1", source, nil, flag); err != nil {
 			t.Fatalf("repeat request: %v", err)

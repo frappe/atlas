@@ -163,12 +163,12 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 		record.ID,
 		record.VirtualMachineID,
 		lastCompletedSequence(record),
-		record.MigrateMemorySnapshot,
+		record.HasMemorySnapshot,
 	)
 	if err != nil {
 		return err
 	}
-	if final.Sequence < 1 || (record.MigrateMemorySnapshot && final.GUID == "") {
+	if final.Sequence < 1 || (record.HasMemorySnapshot && final.GUID == "") {
 		return m.failTransfer(ctx, record, "source returned an invalid final sequence")
 	}
 
@@ -219,7 +219,7 @@ func (m *Manager) advanceStarting(ctx context.Context, record destinationRecord)
 		}
 	}
 	if record.State == destinationApplyingState {
-		if record.MigrateMemorySnapshot {
+		if record.HasMemorySnapshot {
 			err = m.restoreMemorySnapshot(ctx, record)
 		} else {
 			err = m.host.ApplyMigratedDestinationState(ctx, record.VirtualMachineID)

@@ -23,7 +23,7 @@ func DefaultCPUTemplate() (json.RawMessage, error) {
 }
 
 func cpuTemplateForHost(architecture, information string) (json.RawMessage, error) {
-	cpu, err := migrationCPUFromInfo(information, architecture)
+	cpu, err := parseHostCPU(information, architecture)
 	if err != nil {
 		return nil, err
 	}
