@@ -19,7 +19,7 @@ Each Region Health check points to the table that names the host.
 | Hosts with issues | Atlas - Region, Hosts | Issues above 0. The other columns show which problem. |
 | Hosts with hardware problems | Atlas - Region, Hardware | Every listed host. The non-zero column is the fault. |
 | Hosts Atlas has not synced for 5 minutes | The Metal Server list in the Atlas Desk | The oldest Metal Server Usage sample. See [Atlas cannot reach Metal](atlas.md#atlas-cannot-reach-metal). |
-| Failing VMs, Oldest pending VM change | Atlas - Uptime, VMs Below 99.9% Uptime | The host of the VM. The reason says what failed. |
+| Failing VMs, Oldest pending VM change | Atlas - Region, Hosts | Failing or Pending above 0. Then read its Warnings and Errors on Atlas - Logs. |
 | Service nodes not ready | Atlas - Platform Services, Service Nodes | The host of the node that is not up. |
 | An action or boot SLO | Atlas - Logs, VM Actions | The host of the slow actions. |
 
