@@ -101,7 +101,7 @@ func (runtime *fakeRuntime) RestorePaused(context.Context, RuntimeMachine) error
 	return nil
 }
 
-func (runtime *fakeRuntime) RestoreMigrationSnapshot(_ context.Context, _ RuntimeMachine, directory string) error {
+func (runtime *fakeRuntime) RestorePausedFrom(_ context.Context, _ RuntimeMachine, directory string) error {
 	runtime.migrationRestores++
 	runtime.migrationDirectory = directory
 	if runtime.restoreError != nil {
@@ -157,7 +157,7 @@ func (runtime *fakeRuntime) ResumeSSH(string, string) (SSHSession, error) {
 	return nil, nil
 }
 
-func (runtime *fakeRuntime) CheckMigratedGuest(context.Context, RuntimeMachine) error {
+func (runtime *fakeRuntime) CheckMigratedGuestSSH(context.Context, RuntimeMachine) error {
 	runtime.guestChecks++
 	return runtime.guestCheckError
 }

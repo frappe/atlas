@@ -66,7 +66,7 @@ func TestFinalTransfersOverlapAndCheckpointIndependently(t *testing.T) {
 	store := writeCopyingDestination(t, machines, vm.StateRunning)
 	record, _ := store.readDestination("vm-1")
 	record.State = destinationStopping
-	record.MigrateMemorySnapshot = true
+	record.HasMemorySnapshot = true
 	if err := store.writeDestination(record); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestFinalTransfersOverlapAndCheckpointIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.State != destinationReady || record.MemorySnapshotGUID != "disk-guid" || !source.stopMemorySnapshot {
+	if record.State != destinationReady || record.MemorySnapshotDiskGUID != "disk-guid" || !source.stopMemorySnapshot {
 		t.Fatalf("record = %+v, memory requested = %v", record, source.stopMemorySnapshot)
 	}
 	transfer := record.MemoryTransfer
@@ -156,7 +156,7 @@ func TestFinalTransferFailureCancelsItsPeer(t *testing.T) {
 			seedDestinationVM(t, machines, vm.StateRunning)
 			store := writeCopyingDestination(t, machines, vm.StateRunning)
 			record, _ := store.readDestination("vm-1")
-			record.State, record.MigrateMemorySnapshot = destinationStopping, true
+			record.State, record.HasMemorySnapshot = destinationStopping, true
 			if err := store.writeDestination(record); err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +178,7 @@ func TestFinalTransferFailureCancelsItsPeer(t *testing.T) {
 				t.Fatalf("error = %v, context = %v", err, ctx.Err())
 			}
 			record, _ = store.readDestination("vm-1")
-			if record.MemorySnapshotGUID != "" || record.State != destinationStopping {
+			if record.MemorySnapshotDiskGUID != "" || record.State != destinationStopping {
 				t.Fatalf("record = %+v", record)
 			}
 			if _, err := os.Stat(store.memorySnapshotDirectory("vm-1")); !errors.Is(err, os.ErrNotExist) {
@@ -195,7 +195,7 @@ func TestMemorySourceIsBoundToStoppedFinalSnapshot(t *testing.T) {
 	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.OpenSourceMemoryFile(t.Context(), "mig-1", "vm-1", 1, "memory"); !errors.Is(err, vm.ErrConflict) {
+	if _, err := manager.OpenSourceMemorySnapshotFile(t.Context(), "mig-1", "vm-1", 1, "memory"); !errors.Is(err, vm.ErrConflict) {
 		t.Fatal(err)
 	}
 	if _, err := manager.StopSource(t.Context(), "mig-1", "vm-1", 0, true); err != nil {
@@ -222,11 +222,11 @@ func TestMemorySourceIsBoundToStoppedFinalSnapshot(t *testing.T) {
 		if name == "memory" {
 			sequence = 2
 		}
-		if _, err := manager.OpenSourceMemoryFile(t.Context(), "mig-1", "vm-1", sequence, name); !errors.Is(err, vm.ErrConflict) {
+		if _, err := manager.OpenSourceMemorySnapshotFile(t.Context(), "mig-1", "vm-1", sequence, name); !errors.Is(err, vm.ErrConflict) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	file, err := manager.OpenSourceMemoryFile(t.Context(), "mig-1", "vm-1", 1, "memory")
+	file, err := manager.OpenSourceMemorySnapshotFile(t.Context(), "mig-1", "vm-1", 1, "memory")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,11 +278,11 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			record.State, record.MigrateMemorySnapshot, record.SourceStopped = destinationApplyingState, true, true
-			record.MemorySnapshotGUID = "final-guid"
+			record.State, record.HasMemorySnapshot, record.SourceStopped = destinationApplyingState, true, true
+			record.MemorySnapshotDiskGUID = "final-guid"
 			record.Intervals = []TransferProgress{{Sequence: 2, Completed: true, GUID: "final-guid"}}
 			if failing == "checkpoint" {
-				record.MemorySnapshotGUID = "other-guid"
+				record.MemorySnapshotDiskGUID = "other-guid"
 			}
 			if err := store.writeDestination(record); err != nil {
 				t.Fatal(err)
@@ -345,7 +345,7 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 				}
 				return
 			}
-			if record.State != destinationCompleted || record.MemorySnapshotGUID != "" || source.finishCalls != 1 {
+			if record.State != destinationCompleted || record.MemorySnapshotDiskGUID != "" || source.finishCalls != 1 {
 				t.Fatalf("record = %+v", record)
 			}
 			if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {

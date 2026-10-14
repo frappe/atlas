@@ -40,9 +40,9 @@ Changing a template requires a daemon restart and a cold boot of each affected g
 
 ## Migration validation
 
-A common instruction baseline reduces differences between hosts. It does not guarantee memory migration between arbitrary CPU models. Intel-to-AMD and cross-architecture snapshot restores are unsupported. x86 hosts need compatible TSC frequencies or TSC scaling. ARM hosts need compatible CPU and interrupt-controller state. Use disk-only migration within one architecture when memory migration is unsupported.
+A common instruction baseline reduces differences between hosts. It does not guarantee memory snapshot migration between arbitrary CPU models. Intel-to-AMD and cross-architecture snapshot restores are unsupported. x86 hosts need compatible TSC frequencies or TSC scaling. ARM hosts need compatible CPU and interrupt-controller state. Use disk-only migration within one architecture when memory snapshot migration is unsupported.
 
-For each supported CPU, kernel, and Firecracker combination, use the [Firecracker CPU template helper](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/cpu_templates/cpu-template-helper.md) to dump and verify the guest configuration. Verification checks that the template is applied; it does not prove that a guest will boot or migrate correctly. Test guest boot and memory migration in both directions before adding hosts to a migration group.
+For each supported CPU, kernel, and Firecracker combination, use the [Firecracker CPU template helper](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/cpu_templates/cpu-template-helper.md) to dump and verify the guest configuration. Verification checks that the template is applied; it does not prove that a guest will boot or migrate correctly. Test guest boot and memory snapshot migration in both directions before adding hosts to a migration group.
 
 ```sh
 cpu-template-helper template verify \

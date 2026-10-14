@@ -16,8 +16,8 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// OpenSourceMemoryFile opens immutable state only after source cutover completes.
-func (m *Manager) OpenSourceMemoryFile(ctx context.Context, migrationID, virtualMachineID string, sequence int, name string) (*os.File, error) {
+// OpenSourceMemorySnapshotFile opens immutable state only after source cutover completes.
+func (m *Manager) OpenSourceMemorySnapshotFile(ctx context.Context, migrationID, virtualMachineID string, sequence int, name string) (*os.File, error) {
 	if !vm.ValidIdentifier(virtualMachineID) || (name != "state" && name != "memory" && name != "metadata.json") {
 		return nil, vm.ErrConflict
 	}
@@ -31,7 +31,7 @@ func (m *Manager) OpenSourceMemoryFile(ctx context.Context, migrationID, virtual
 	if err != nil {
 		return nil, err
 	}
-	if record.State != sourceDetached || record.MigrateMemorySnapshot == nil || !*record.MigrateMemorySnapshot || sequence < 1 || sequence != record.FinalSequence {
+	if record.State != sourceDetached || record.HasMemorySnapshot == nil || !*record.HasMemorySnapshot || sequence < 1 || sequence != record.FinalSequence {
 		return nil, vm.ErrConflict
 	}
 	path := filepath.Join(m.host.VirtualMachineRecordsDirectory(), virtualMachineID, "saved-state", name)
@@ -40,13 +40,13 @@ func (m *Manager) OpenSourceMemoryFile(ctx context.Context, migrationID, virtual
 		return nil, err
 	}
 	if !information.Mode().IsRegular() || information.Size() <= 0 {
-		return nil, fmt.Errorf("invalid saved state file %s", name)
+		return nil, fmt.Errorf("invalid memory snapshot file %s", name)
 	}
 	// The open descriptor remains valid if rollback or finish unlinks this file.
 	return os.Open(path)
 }
 
-// ReceiveMemorySnapshot downloads the saved bundle into migration staging.
+// ReceiveMemorySnapshot downloads the memory snapshot into migration staging.
 func (c *SourceClient) ReceiveMemorySnapshot(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, directory string, memoryMiB int) error {
 	for _, name := range []string{"state", "memory", "metadata.json"} {
 		limit := int64(64 << 20)
@@ -56,15 +56,15 @@ func (c *SourceClient) ReceiveMemorySnapshot(ctx context.Context, address, migra
 		case "metadata.json":
 			limit = 1 << 20
 		}
-		if err := c.receiveMemoryFile(ctx, address, migrationID, virtualMachineID, sequence, directory, name, limit); err != nil {
-			return fmt.Errorf("receive saved state %s: %w", name, err)
+		if err := c.receiveMemorySnapshotFile(ctx, address, migrationID, virtualMachineID, sequence, directory, name, limit); err != nil {
+			return fmt.Errorf("receive memory snapshot %s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func (c *SourceClient) receiveMemoryFile(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, directory, name string, limit int64) error {
-	path := sourcePath(migrationID, virtualMachineID, "/memory") + "&" + url.Values{
+func (c *SourceClient) receiveMemorySnapshotFile(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, directory, name string, limit int64) error {
+	path := sourcePath(migrationID, virtualMachineID, "/memory-snapshot") + "&" + url.Values{
 		"sequence": {strconv.Itoa(sequence)}, "file": {name},
 	}.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address+path, nil)
@@ -98,7 +98,7 @@ func (c *SourceClient) receiveMemoryFile(ctx context.Context, address, migration
 }
 
 func (m *Manager) receiveFinalSnapshots(ctx context.Context, record destinationRecord, final SourceSnapshot) error {
-	if !record.MigrateMemorySnapshot {
+	if !record.HasMemorySnapshot {
 		return m.receiveSnapshot(ctx, record, final, 0)
 	}
 	// Reserve the final disk row before the parallel memory row becomes visible.
@@ -124,8 +124,8 @@ func (m *Manager) receiveFinalSnapshots(ctx context.Context, record destinationR
 }
 
 func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationRecord, final SourceSnapshot) error {
-	if record.MemorySnapshotGUID != "" {
-		if record.MemorySnapshotGUID != final.GUID {
+	if record.MemorySnapshotDiskGUID != "" {
+		if record.MemorySnapshotDiskGUID != final.GUID {
 			return m.failTransfer(ctx, record, "memory snapshot belongs to a different disk snapshot")
 		}
 		return nil
@@ -159,7 +159,7 @@ func (m *Manager) receiveMemorySnapshot(ctx context.Context, record destinationR
 
 func (store *migrationStore) prepareMemorySnapshot(virtualMachineID string) (string, error) {
 	pending := store.memorySnapshotDirectory(virtualMachineID) + "-pending"
-	// ponytail: incomplete bundles restart; add byte ranges if retry cost matters.
+	// ponytail: incomplete memory snapshots restart; add byte ranges if retry cost matters.
 	if err := os.RemoveAll(pending); err != nil {
 		return "", err
 	}
@@ -194,7 +194,7 @@ func (store *migrationStore) publishMemorySnapshot(virtualMachineID, pending str
 
 func (m *Manager) completeMemoryTransfer(ctx context.Context, virtualMachineID, guid string, totalBytes int64) error {
 	_, err := m.mutateDestination(context.WithoutCancel(ctx), virtualMachineID, func(destination *destinationRecord) {
-		destination.MemorySnapshotGUID = guid
+		destination.MemorySnapshotDiskGUID = guid
 		transfer := destination.MemoryTransfer
 		transfer.FinishedAt = m.now()
 		transfer.DurationSeconds = int(transfer.FinishedAt.Sub(transfer.StartedAt).Seconds())
@@ -214,7 +214,7 @@ func (m *Manager) restoreMemorySnapshot(ctx context.Context, record destinationR
 	if err := readMigrationRecord(filepath.Join(directory, "disk-snapshot.json"), &snapshot); err != nil {
 		return err
 	}
-	if snapshot.GUID == "" || snapshot.GUID != record.MemorySnapshotGUID || snapshot.Sequence != lastCompletedSequence(record) {
+	if snapshot.GUID == "" || snapshot.GUID != record.MemorySnapshotDiskGUID || snapshot.Sequence != lastCompletedSequence(record) {
 		return errors.New("memory snapshot does not match the final disk checkpoint")
 	}
 	guid, err := m.disks.SnapshotGUID(ctx, record.VirtualMachineID, migrationSnapshotName(record.ID, snapshot.Sequence))
@@ -224,5 +224,5 @@ func (m *Manager) restoreMemorySnapshot(ctx context.Context, record destinationR
 	if guid != snapshot.GUID {
 		return errors.New("memory snapshot does not match the received disk")
 	}
-	return m.host.RestoreMigratedMemory(ctx, record.VirtualMachineID, directory)
+	return m.host.RestoreMigratedMemorySnapshot(ctx, record.VirtualMachineID, directory)
 }

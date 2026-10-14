@@ -175,7 +175,7 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 	if err := metadata.validateIdentity(requirement); err != nil {
 		return err
 	}
-	if err := metadata.validateBundle(); err != nil {
+	if err := metadata.validateFiles(); err != nil {
 		return err
 	}
 	if err := metadata.validateNetwork(requirement); err != nil {
@@ -200,7 +200,7 @@ func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequir
 	return nil
 }
 
-func (metadata savedStateMetadata) validateBundle() error {
+func (metadata savedStateMetadata) validateFiles() error {
 	switch {
 	case metadata.StateFileName != memorySnapshotStateFileName || metadata.MemoryFileName != memorySnapshotMemoryFileName:
 		return errors.New("saved state metadata has unexpected file names")

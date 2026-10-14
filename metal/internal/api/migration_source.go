@@ -81,15 +81,15 @@ func (s *Server) stopMigrationSource(c echo.Context) error {
 	if request.ReceivedSequence < 0 {
 		return badRequest("invalid received_sequence")
 	}
-	snapshot, err := s.migrationManager.StopSource(c.Request().Context(), identifier, virtualMachineID, request.ReceivedSequence, request.MigrateMemorySnapshot)
+	snapshot, err := s.migrationManager.StopSource(c.Request().Context(), identifier, virtualMachineID, request.ReceivedSequence, request.HasMemorySnapshot)
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, snapshot)
 }
 
-// getMigrationMemoryFile streams one saved-state file over the node TLS listener.
-func (s *Server) getMigrationMemoryFile(c echo.Context) error {
+// streamMigrationMemorySnapshotFile streams one memory snapshot file over the node TLS listener.
+func (s *Server) streamMigrationMemorySnapshotFile(c echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -98,7 +98,7 @@ func (s *Server) getMigrationMemoryFile(c echo.Context) error {
 	if err != nil || sequence < 1 {
 		return badRequest("invalid sequence")
 	}
-	file, err := s.migrationManager.OpenSourceMemoryFile(c.Request().Context(), identifier, virtualMachineID, sequence, c.QueryParam("file"))
+	file, err := s.migrationManager.OpenSourceMemorySnapshotFile(c.Request().Context(), identifier, virtualMachineID, sequence, c.QueryParam("file"))
 	if err != nil {
 		return err
 	}

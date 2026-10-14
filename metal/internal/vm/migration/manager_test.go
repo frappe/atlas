@@ -157,12 +157,12 @@ func (f *fakeMigrationHost) ApplyMigratedDestinationState(context.Context, strin
 	return f.applyStateError
 }
 
-func (f *fakeMigrationHost) RestoreMigratedMemory(context.Context, string, string) error {
+func (f *fakeMigrationHost) RestoreMigratedMemorySnapshot(context.Context, string, string) error {
 	f.restoreMemoryCalls++
 	return f.restoreMemoryError
 }
 
-func (f *fakeMigrationHost) ActivateMigratedMemory(context.Context, string) error {
+func (f *fakeMigrationHost) ActivateMigratedDestination(context.Context, string) error {
 	f.activateMemoryCalls++
 	if f.activateMemory != nil {
 		return f.activateMemory()
@@ -170,9 +170,9 @@ func (f *fakeMigrationHost) ActivateMigratedMemory(context.Context, string) erro
 	return f.activateMemoryError
 }
 
-func (f *fakeMigrationHost) RestoreRuntimeState(_ context.Context, _ string, _ vm.State, savedState bool) error {
+func (f *fakeMigrationHost) RestoreRuntimeState(_ context.Context, _ string, _ vm.State, fromSavedState bool) error {
 	f.restoreCalls++
-	f.restoreMemory = savedState
+	f.restoreMemory = fromSavedState
 	return nil
 }
 
@@ -639,7 +639,7 @@ func TestDestinationReservationsCountOnlyMigrationsWithConfig(t *testing.T) {
 	}
 }
 
-func (f *fakeMigrationHost) SaveSourceMemory(context.Context, string) error {
+func (f *fakeMigrationHost) SaveAndStopSource(context.Context, string) error {
 	f.saveMemoryCalls++
 	return nil
 }

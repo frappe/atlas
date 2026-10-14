@@ -36,14 +36,14 @@ func initializeMemoryMigrationFlag(path string, isSource bool) error {
 	if record == nil {
 		return fmt.Errorf("read %s: migration record must be an object", path)
 	}
-	if _, exists := record["migrate_memory_snapshot"]; exists {
+	if _, exists := record["has_memory_snapshot"]; exists {
 		return nil
 	}
 
-	record["migrate_memory_snapshot"] = json.RawMessage("false")
+	record["has_memory_snapshot"] = json.RawMessage("false")
 	if isSource {
 		// A locked source chooses its transfer mode when StopSource runs.
-		record["migrate_memory_snapshot"] = json.RawMessage("null")
+		record["has_memory_snapshot"] = json.RawMessage("null")
 	}
 	data, err = json.MarshalIndent(record, "", "  ")
 	if err != nil {

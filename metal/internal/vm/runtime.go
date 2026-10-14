@@ -24,8 +24,8 @@ type Runtime interface {
 	SaveAndStop(context.Context, RuntimeMachine) error
 	Restore(context.Context, RuntimeMachine) error
 	RestorePaused(context.Context, RuntimeMachine) error
-	// RestoreMigrationSnapshot loads a transferred bundle with the guest paused.
-	RestoreMigrationSnapshot(ctx context.Context, machine RuntimeMachine, directory string) error
+	// RestorePausedFrom loads a transferred memory snapshot with the guest paused.
+	RestorePausedFrom(ctx context.Context, machine RuntimeMachine, directory string) error
 	DeleteSavedState(context.Context, RuntimeMachine) error
 	Pause(context.Context, RuntimeMachine) error
 	Resume(context.Context, RuntimeMachine) error
@@ -36,8 +36,8 @@ type Runtime interface {
 	RefreshDisk(context.Context, RuntimeMachine) error
 	ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error)
 	ResumeSSH(virtualMachineID, sessionID string) (SSHSession, error)
-	// CheckMigratedGuest verifies guest responsiveness when configured on the host.
-	CheckMigratedGuest(context.Context, RuntimeMachine) error
+	// CheckMigratedGuestSSH verifies guest responsiveness when configured on the host.
+	CheckMigratedGuestSSH(context.Context, RuntimeMachine) error
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
 }
 

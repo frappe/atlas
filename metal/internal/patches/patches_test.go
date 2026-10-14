@@ -94,7 +94,7 @@ func TestInitializeMemoryMigrationFlagsKeepsLegacyCheckpoints(t *testing.T) {
 			path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", test.name)
 			writeMigrationPatchRecord(t, path, test.contents)
 			want := readMigrationPatchRecord(t, path)
-			want["migrate_memory_snapshot"] = test.mode
+			want["has_memory_snapshot"] = test.mode
 
 			for range 2 {
 				if err := initializeMemoryMigrationFlags(baseDirectory); err != nil {
@@ -114,9 +114,9 @@ func TestInitializeMemoryMigrationFlagsPreservesSelectedModes(t *testing.T) {
 			t.Run(name+"/"+mode, func(t *testing.T) {
 				baseDirectory := t.TempDir()
 				path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", name)
-				contents := fmt.Sprintf(`{"migrate_memory_snapshot":%s,"memory_snapshot_guid":"g1","memory_transfer":{"sequence":7,"bytes_transferred":4096,"completed":true}}`, mode)
+				contents := fmt.Sprintf(`{"has_memory_snapshot":%s,"memory_snapshot_disk_guid":"g1","memory_transfer":{"sequence":7,"bytes_transferred":4096,"completed":true}}`, mode)
 				if name == "source.json" {
-					contents = fmt.Sprintf(`{"migrate_memory_snapshot":%s,"sequence":7,"acknowledged_sequence":6}`, mode)
+					contents = fmt.Sprintf(`{"has_memory_snapshot":%s,"sequence":7,"acknowledged_sequence":6}`, mode)
 				}
 				writeMigrationPatchRecord(t, path, contents)
 
@@ -178,7 +178,7 @@ func TestMemoryMigrationPatchRetriesAfterPartialUpgrade(t *testing.T) {
 	if err := Run(baseDirectory, logger); err == nil {
 		t.Fatal("a corrupt destination record was accepted")
 	}
-	wantSource := map[string]any{"sequence": json.Number("7"), "migrate_memory_snapshot": nil}
+	wantSource := map[string]any{"sequence": json.Number("7"), "has_memory_snapshot": nil}
 	if got := readMigrationPatchRecord(t, sourcePath); !reflect.DeepEqual(got, wantSource) {
 		t.Fatalf("source was not upgraded before the failure: %v", got)
 	}
@@ -188,7 +188,7 @@ func TestMemoryMigrationPatchRetriesAfterPartialUpgrade(t *testing.T) {
 		if err := Run(baseDirectory, logger); err != nil {
 			t.Fatal(err)
 		}
-		if mode := readMigrationPatchRecord(t, destinationPath)["migrate_memory_snapshot"]; mode != false {
+		if mode := readMigrationPatchRecord(t, destinationPath)["has_memory_snapshot"]; mode != false {
 			t.Fatalf("destination mode = %v, want false", mode)
 		}
 	}
