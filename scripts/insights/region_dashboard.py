@@ -1,3 +1,4 @@
+from bmc_dashboard import BMC_HOSTS
 from platform_services_dashboard import STATUS_CHART as SERVICE_STATUS_CHART
 from platform_services_dashboard import STATUS_READINGS
 from region_tables import ACTIVE_MIGRATIONS, FLEET_HOSTS, HARDWARE, RECENT_PROBLEMS, REGION_HEALTH, STRESS
@@ -250,7 +251,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 	)
 	hardware = folder.add_chart(
 		"hardware",
-		"Hardware",
+		"Hardware Faults from Host",
 		HARDWARE,
 		"Table",
 		table(
@@ -273,7 +274,29 @@ def add_region_dashboard(workbook: Workbook) -> None:
 			order="Problems",
 			scale="Problems",
 		),
-		"Only hosts with a hardware fault. A rising ECC corrected count warns of a failing DIMM; CPU above 85 °C counts as a problem.",
+		"Host-reported hardware faults. A rising corrected ECC count can warn of a failing DIMM. "
+		"CPU temperature above 85 °C counts as a problem.",
+	)
+	bmc = folder.add_chart(
+		"bmc-problems",
+		"Hardware Faults from BMC",
+		f"SELECT * FROM ({BMC_HOSTS}) WHERE problems > 0",
+		"Table",
+		table(
+			[dimension("host")],
+			[
+				measure("Problems", "problems", "max", "Integer"),
+				measure("BMC Reachable", "reachable", "min", "Integer"),
+				measure("Minutes Since Read", "minutes_since_read", "max", "Integer"),
+				measure("Unhealthy Components", "unhealthy_components", "max", "Integer"),
+				measure("Critical Events 24h", "critical_events", "max", "Integer"),
+				measure("Warning Events 24h", "warning_events", "max", "Integer"),
+			],
+			order="Problems",
+			scale="Problems",
+		),
+		"Unreachable BMCs, no read for 15 minutes, unhealthy components, or critical events in the last day. "
+		"Select the host in Atlas - Host BMC for details.",
 	)
 	stress = folder.add_chart(
 		"stress",
@@ -396,6 +419,7 @@ def add_region_dashboard(workbook: Workbook) -> None:
 	layout.heading("Hosts")
 	layout.chart(hosts_table, 20, 12)
 	layout.chart(hardware, 20, 12)
+	layout.chart(bmc, 20, 12)
 	layout.chart(stress, 20, 12)
 	layout.heading("VM Actions")
 	layout.readings(actions, [action.title() for action in ACTION_NAMES])

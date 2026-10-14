@@ -205,6 +205,7 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"atlas.auth.jwks.sync_central_jwks",
+			"atlas.atlas.core.telemetry.bmc.enqueue_bmc_telemetry",
 		],
 		"* * * * * */5": [
 			"atlas.operations.doctype.metald_update.metald_update.run_metald_update_steps",

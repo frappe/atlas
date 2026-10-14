@@ -41,8 +41,8 @@ type wireGuardPeerRequest struct {
 // syncResponse returns host capacity and virtual machine state in the same
 // exchange as the sync.
 type syncResponse struct {
-	Compatibility *hostCompatibilityResponse `json:"compatibility,omitempty"`
-	Capacity      capacityResponse           `json:"capacity"`
+	HostCompatibility *hostCompatibilityResponse `json:"host_compatibility,omitempty"`
+	Capacity          capacityResponse           `json:"capacity"`
 	// VirtualMachines maps a VM identifier to its last observed state.
 	VirtualMachines map[string]virtualMachineStateResponse `json:"virtual_machines"`
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
@@ -128,7 +128,7 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 		return synchronizationFailure(err)
 	}
 	return c.JSON(http.StatusOK, syncResponse{
-		Compatibility:     (*hostCompatibilityResponse)(result.Compatibility),
+		HostCompatibility: (*hostCompatibilityResponse)(result.Compatibility),
 		Capacity:          capacityResponseFromHost(result.Capacity),
 		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachineStates),
 		PrivateNetworkMAC: result.PrivateNetworkMAC,

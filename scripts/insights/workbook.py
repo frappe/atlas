@@ -228,6 +228,7 @@ def table(
 	limit: int = 100,
 	scale: str | None = None,
 	status_colors: dict[str, str] | None = None,
+	status_column: str = "status",
 ) -> dict:
 	"""Build a sorted table with optional value and status colors."""
 	config = {"rows": rows, "columns": [], "values": values, "limit": limit, "show_row_totals": False}
@@ -236,7 +237,7 @@ def table(
 	formats = [
 		{
 			"mode": "text_rules",
-			"column": {"type": "column", "column_name": "status"},
+			"column": {"type": "column", "column_name": status_column},
 			"color": color,
 			"operator": "equals_text",
 			"value": text,

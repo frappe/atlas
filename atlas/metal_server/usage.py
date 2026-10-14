@@ -103,7 +103,7 @@ def sync_server(
 	if mac_address and mac_address != server.private_network_mac_address:
 		frappe.db.set_value("Metal Server", server.name, "private_network_mac_address", mac_address)
 
-	compatibility = response.get("compatibility")
+	compatibility = response.get("host_compatibility")
 	try:
 		if compatibility is not None:
 			compatibility = MetalHostCompatibility.from_dict(compatibility)
@@ -114,11 +114,11 @@ def sync_server(
 		compatibility = None
 	report = frappe.as_json(asdict(compatibility)) if compatibility else None
 	scaling = bool(compatibility and compatibility.tsc_scaling)
-	if server.cpu_compatibility_report != report or bool(server.tsc_scaling_supported) != scaling:
+	if (server.host_compatibility_report or None) != report or bool(server.tsc_scaling_supported) != scaling:
 		frappe.db.set_value(
 			"Metal Server",
 			server.name,
-			{"cpu_compatibility_report": report, "tsc_scaling_supported": scaling},
+			{"host_compatibility_report": report, "tsc_scaling_supported": scaling},
 			update_modified=False,
 		)
 

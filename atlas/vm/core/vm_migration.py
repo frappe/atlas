@@ -613,7 +613,7 @@ class MigrationService:
 		"""Load and validate one synced host report."""
 		try:
 			return MetalHostCompatibility.from_dict(
-				frappe.parse_json(frappe.db.get_value("Metal Server", server, "cpu_compatibility_report"))
+				frappe.parse_json(frappe.db.get_value("Metal Server", server, "host_compatibility_report"))
 			)
 		except ValueError as error:
 			raise AtlasUserError(

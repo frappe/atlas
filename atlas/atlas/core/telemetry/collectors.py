@@ -73,9 +73,10 @@ class AtlasGauges:
 	def add_hosts(self) -> None:
 		"""Count hosts by status, name each host, and report its latest capacity and use."""
 		servers = frappe.get_all(
-			"Metal Server", fields=["name", "title", "status", "is_sleepy_vm_host", "architecture"]
+			"Metal Server", fields=["name", "title", "status", "is_sleepy_vm_host", "architecture", "bmc_url"]
 		)
 		self.add_counts("atlas_metal_servers", Counter(server.status for server in servers), "status")
+		has_bmc_driver = frappe.get_cached_doc("Atlas Settings").server_provider_controller.has_bmc_driver
 		for server in servers:
 			self.add(
 				"atlas_metal_server_info",
@@ -85,6 +86,7 @@ class AtlasGauges:
 				status=server.status,
 				architecture=server.architecture or "",
 				sleepy=str(bool(server.is_sleepy_vm_host)).lower(),
+				bmc=str(has_bmc_driver and bool(server.bmc_url)).lower(),
 			)
 
 		for usage in self.latest_usages():
@@ -117,23 +119,6 @@ class AtlasGauges:
 				kind="available",
 			)
 			self.add("atlas_host_virtual_machines", usage.virtual_machine_count, server=server)
-
-	def latest_usages(self) -> list:
-		"""Return the newest usage sample of each host from the last hour."""
-		return frappe.db.sql(
-			"""
-			SELECT sample.*
-			FROM `tabMetal Server Usage` AS sample
-			JOIN (
-				SELECT server, MAX(creation) AS creation
-				FROM `tabMetal Server Usage`
-				WHERE creation >= %(cutoff)s
-				GROUP BY server
-			) AS latest ON latest.server = sample.server AND latest.creation = sample.creation
-			""",
-			{"cutoff": add_to_date(self.now, hours=-1)},
-			as_dict=True,
-		)
 
 	def add_migrations(self) -> None:
 		"""Count active migrations by status and report the oldest one's age."""
@@ -251,6 +236,23 @@ class AtlasGauges:
 			self.add("atlas_job_queue_length", queue.count, queue=queue_name)
 			self.add("atlas_job_failed", queue.failed_job_registry.count, queue=queue_name)
 			self.add("atlas_job_started", queue.started_job_registry.count, queue=queue_name)
+
+	def latest_usages(self) -> list:
+		"""Return the newest usage sample of each host from the last hour."""
+		return frappe.db.sql(
+			"""
+			SELECT sample.*
+			FROM `tabMetal Server Usage` AS sample
+			JOIN (
+				SELECT server, MAX(creation) AS creation
+				FROM `tabMetal Server Usage`
+				WHERE creation >= %(cutoff)s
+				GROUP BY server
+			) AS latest ON latest.server = sample.server AND latest.creation = sample.creation
+			""",
+			{"cutoff": add_to_date(self.now, hours=-1)},
+			as_dict=True,
+		)
 
 	def oldest_age(self, times: list[datetime | str | None]) -> float:
 		"""Return the age in seconds of the oldest time, or 0."""
