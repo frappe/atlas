@@ -1,5 +1,6 @@
 import json
 
+from bmc_dashboard import add_bmc_dashboard
 from errors_dashboard import add_errors_dashboard
 from host.dashboard import add_host_dashboard
 from logs_dashboard import add_logs_dashboard
@@ -14,6 +15,7 @@ if __name__ == "__main__":
 	workbook = Workbook("Atlas")
 	add_region_dashboard(workbook)
 	add_host_dashboard(workbook)
+	add_bmc_dashboard(workbook)
 	add_platform_services_dashboard(workbook)
 	add_uptime_dashboard(workbook)
 	add_slo_dashboard(workbook)

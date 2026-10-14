@@ -12,10 +12,18 @@ FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
 WHERE l.ts > now() - {LOOKBACK} {where}"""
 
 
-def log_table(columns: list[str], values: list[dict], limit: int = 200) -> dict:
+def log_table(
+	columns: list[str],
+	values: list[dict],
+	limit: int = 200,
+	status_colors: dict[str, str] | None = None,
+	status_column: str = "status",
+) -> dict:
 	"""A table of log lines, newest first."""
 	rows = [dimension("ts", "Datetime", granularity="second")] + [dimension(column) for column in columns]
-	return table(rows, values, order="ts", limit=limit)
+	return table(
+		rows, values, order="ts", limit=limit, status_colors=status_colors, status_column=status_column
+	)
 
 
 def add_logs_dashboard(workbook: Workbook) -> None:

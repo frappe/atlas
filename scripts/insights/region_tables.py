@@ -1,3 +1,4 @@
+from bmc_dashboard import BMC_HOSTS
 from workbook import HOST, TITLES, UNHEALTHY_DISKS
 
 # One row per host: its newest push, Atlas's view of its capacity, and a count of
@@ -64,9 +65,11 @@ LEFT JOIN disks AS d ON d.resource_id = l.resource_id"""
 # Problems of the last day, one row per kind of problem and place, newest first.
 RECENT_PROBLEMS = f"""WITH {TITLES}
 SELECT if(l.resource_id LIKE 'atlas-%', 'Atlas', if(t.title = '', l.resource_id, t.title)) AS place,
-  multiIf(l.service = 'atlas', 'Unhandled error', l.message = 'migration state changed', 'Migration failed', 'Host error') AS kind,
-  if(l.service = 'atlas', l.message, concat(l.service, ': ', l.message)) AS problem,
-  any(left(coalesce(nullIf(l.attributes['error'], ''), l.attributes['exception'], ''), 160)) AS detail,
+  multiIf(l.service = 'atlas', 'Unhandled error', l.message = 'migration state changed', 'Migration failed',
+    l.source = 'bmc', 'BMC event', 'Host error') AS kind,
+  multiIf(l.service = 'atlas', l.message, l.source = 'bmc', concat(l.attributes['sensor_type'], ' event in ', l.attributes['log']),
+    concat(l.service, ': ', l.message)) AS problem,
+  any(left(if(l.source = 'bmc', l.message, coalesce(nullIf(l.attributes['error'], ''), l.attributes['exception'], '')), 160)) AS detail,
   count() AS occurrences, min(l.ts) AS first_seen, max(l.ts) AS last_seen
 FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
 WHERE l.ts > now() - INTERVAL 1 DAY AND (
@@ -234,17 +237,28 @@ api AS (
     GROUP BY labels
   )
 ),
+bmc AS ({BMC_HOSTS}),
 checks AS (
   SELECT 'Hosts not reporting for 2 minutes' AS check, toFloat64(count()) AS value, 'at most' AS rule, 0 AS limit
   FROM (SELECT arrayJoin(groupArrayIf(labels['server'], metric = 'atlas_metal_server_info' AND labels['status'] = 'Running')) AS server FROM atlas) AS r
   LEFT JOIN host_last AS h ON h.resource_id = r.server
   WHERE h.last_ts < now() - INTERVAL 2 MINUTE OR h.resource_id = ''
   UNION ALL
+  SELECT 'Seconds since Atlas reported', toFloat64(dateDiff('second', (SELECT last_ts FROM atlas_last), now())), 'under', 120
+  UNION ALL
   SELECT 'Hosts Atlas has not synced for 5 minutes', toFloat64(countIf(metric = 'atlas_host_sync_age_seconds' AND value > 300)), 'at most', 0 FROM atlas
   UNION ALL
   SELECT 'Hosts with issues', toFloat64(sum(has_issues)), 'at most', 0 FROM ({FLEET_HOSTS})
   UNION ALL
-  SELECT 'Hosts with hardware problems', toFloat64(countIf(problems > 0)), 'at most', 0 FROM ({HARDWARE})
+  SELECT 'Hosts with hardware problems', toFloat64(uniqExact(host)), 'at most', 0 FROM (
+    SELECT host FROM ({HARDWARE})
+    UNION ALL
+    SELECT host FROM bmc WHERE unhealthy_components > 0 OR critical_events > 0
+  )
+  UNION ALL
+  SELECT 'BMCs not reachable', toFloat64(countIf(reachable = 0 AND minutes_since_read < 15)), 'at most', 0 FROM bmc
+  UNION ALL
+  SELECT 'BMCs not read for 15 minutes', toFloat64(countIf(minutes_since_read >= 15)), 'at most', 0 FROM bmc
   UNION ALL
   SELECT 'Failing VMs', sum(failing), 'at most', 0 FROM host_last WHERE last_ts > now() - INTERVAL 5 MINUTE
   UNION ALL
