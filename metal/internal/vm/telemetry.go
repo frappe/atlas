@@ -117,9 +117,13 @@ type inventory struct {
 	oldestPending      time.Duration
 	cpuMillicores      float64
 	memoryMiB, diskMiB float64
+	wantedRunning      float64
+	unavailable        map[string]float64
+	// reasons maps each VM the user wants running to why it is unavailable, or "".
+	reasons map[string]string
 }
 
-// CollectTelemetry reports VM inventory, allocations, and progress.
+// CollectTelemetry reports VM inventory, allocations, progress, and availability.
 func (manager *Manager) CollectTelemetry(context.Context) ([]telemetry.Sample, error) {
 	identifiers, err := manager.store.listIDs()
 	if err != nil {
@@ -134,6 +138,7 @@ func (manager *Manager) CollectTelemetry(context.Context) ([]telemetry.Sample, e
 		}
 		manager.addToInventory(&counts, desired, observed)
 	}
+	manager.recordAvailability(counts.reasons)
 	return counts.samples(), nil
 }
 
@@ -142,6 +147,8 @@ func newInventory() inventory {
 		states:       make(map[string]float64),
 		sleepyStates: make(map[string]float64),
 		phases:       make(map[string]float64),
+		unavailable:  make(map[string]float64),
+		reasons:      make(map[string]string),
 	}
 }
 
@@ -167,9 +174,19 @@ func (manager *Manager) addToInventory(counts *inventory, desired DesiredRecord,
 	}
 
 	isApplied := observed.Generation == desired.Generation && observed.RestartGeneration == desired.RestartGeneration
+	pendingFor := time.Duration(0)
 	if !isApplied || desired.State == StateDestroyed {
+		pendingFor = time.Since(manager.desiredWrittenAt(desired.ID))
 		counts.pending++
-		counts.oldestPending = max(counts.oldestPending, time.Since(manager.desiredWrittenAt(desired.ID)))
+		counts.oldestPending = max(counts.oldestPending, pendingFor)
+	}
+
+	if wanted, reason := availabilityOf(desired, observed, pendingFor, manager.missedPings(desired.ID)); wanted {
+		counts.wantedRunning++
+		counts.reasons[desired.ID] = reason
+		if reason != "" {
+			counts.unavailable[reason]++
+		}
 	}
 }
 
@@ -181,6 +198,10 @@ func (counts inventory) samples() []telemetry.Sample {
 		{Metric: "metal_vm_allocated_cpu_millicores", Value: counts.cpuMillicores},
 		{Metric: "metal_vm_allocated_memory_bytes", Value: counts.memoryMiB * mebibyte},
 		{Metric: "metal_vm_allocated_disk_bytes", Value: counts.diskMiB * mebibyte},
+		{Metric: "metal_vm_wanted_running", Value: counts.wantedRunning},
+	}
+	for _, reason := range unavailableReasons {
+		samples = append(samples, telemetry.Sample{Metric: "metal_vm_unavailable", Value: counts.unavailable[reason], Labels: telemetry.Labels{"reason": reason}})
 	}
 	for state, count := range counts.states {
 		samples = append(samples, telemetry.Sample{Metric: "metal_vm_count", Value: count, Labels: telemetry.Labels{"state": state}})

@@ -85,6 +85,10 @@ func NewRuntime(
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// A failure counter starts at zero, so its first failure reads as an increase.
+	for _, kind := range []string{"cold", "warm", "restore"} {
+		registry.Count("metal_vm_boot_unreachable_total", 0, telemetry.Labels{"kind": kind})
+	}
 
 	return &Runtime{
 		configuration:         configuration,
@@ -97,6 +101,12 @@ func NewRuntime(
 		logger:                logger,
 		telemetry:             registry,
 	}
+}
+
+// countBoot counts one VM boot. A cold boot names why warm memory was not used
+// when the image had it.
+func (runtime *Runtime) countBoot(kind, fallbackReason string) {
+	runtime.telemetry.Count("metal_vm_boots_total", 1, telemetry.Labels{"kind": kind, "fallback_reason": fallbackReason})
 }
 
 // CollectTelemetry reports the open guest SSH sessions.

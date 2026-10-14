@@ -23,6 +23,8 @@ type Runtime interface {
 	ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error)
 	ResumeSSH(virtualMachineID, sessionID string) (SSHSession, error)
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
+	// Ping returns nil when the guest answers one ICMP echo.
+	Ping(context.Context, RuntimeMachine) error
 }
 
 // RuntimeUsage describes a running machine's current resource use.

@@ -42,6 +42,7 @@ const (
 	reconcileInterval      = 5 * time.Second
 	meshSetupTimeout       = 2 * time.Minute
 	imageReconcileInterval = time.Hour
+	guestCheckInterval     = time.Minute
 )
 
 //	@title			Metal API
@@ -348,6 +349,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		reconcileInterval,
 		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
+	guestChecker := reconciler.NewGuestChecker(virtualMachineManager, guestCheckInterval, registry, logger)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
 		stores.Snapshots,
@@ -461,6 +463,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
 	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	daemon.StartWorker(virtualMachineReconciler.Run)
+	daemon.StartWorker(guestChecker.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)

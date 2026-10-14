@@ -68,6 +68,8 @@ type Manager struct {
 	// requests maps a VM to the API request that last wrote its desired record.
 	requestsMutex sync.Mutex
 	requests      map[string]notedRequest
+
+	availability availabilityTracker
 }
 
 // notedRequest is one API request and the desired generations it wrote.
@@ -105,6 +107,7 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		logger:               dependencies.Logger,
 		telemetry:            dependencies.Telemetry,
 		requests:             make(map[string]notedRequest),
+		availability:         newAvailabilityTracker(),
 		temporaryUserIDs:     make(map[uint32]bool),
 		temporaryIdentifiers: make(map[string]bool),
 	}
