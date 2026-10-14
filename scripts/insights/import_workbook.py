@@ -18,8 +18,20 @@ def import_workbook(path: str) -> str:
 	# A saved dashboard starts a headless browser job for its preview. Skip them.
 	frappe.flags.in_patch = True
 	target.restore_workbook_contents(workbook, target.name, ignore_permissions=True, keep_names=True)
+	share_with_organization(target.name)
 	frappe.db.commit()  # nosemgrep
 	return target.name
+
+
+def share_with_organization(workbook: str) -> None:
+	"""Let everyone in the organization edit the workbook, as Insights' share dialog does."""
+	from insights.utils import DocShare
+
+	share = DocShare.get_or_create_doc(share_doctype="Insights Workbook", share_name=workbook, everyone=1)
+	share.read = 1
+	share.write = 1
+	share.notify_by_email = 0
+	share.save(ignore_permissions=True)
 
 
 def get_failed_charts(workbook: str) -> list[str]:

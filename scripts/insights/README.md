@@ -28,7 +28,7 @@ The script finds the bench that has the site under the Pilot `benches` folder, a
 | `--default-host <host title>` | The host that Atlas - Host opens with. |
 | `--source <folder>` | Use a local `scripts/insights` folder, such as a checkout with changes. |
 
-The update changes the workbook named Atlas in place. Each query, chart, and dashboard keeps its generated name, so a dashboard URL, such as `/insights/dashboards/d-uptime`, stays the same. The update overwrites edits made in Insights and deletes members that the scripts no longer make. Change the scripts instead.
+The update changes the workbook named Atlas in place and lets everyone in the organization edit it. Each query, chart, and dashboard keeps its generated name, so a dashboard URL, such as `/insights/dashboards/d-uptime`, stays the same. The update overwrites edits made in Insights and deletes members that the scripts no longer make. Change the scripts instead.
 
 ## Add a chart
 
