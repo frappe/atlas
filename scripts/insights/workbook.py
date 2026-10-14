@@ -13,17 +13,21 @@ TITLES = f"""titles AS (
   GROUP BY server
 )"""
 
-# A disk is unhealthy when it fails its own check, has reallocated or pending
-# sectors, or is an NVMe disk with a critical warning or media errors.
+# A disk is unhealthy when it fails its own check, has pending sectors or an NVMe
+# critical warning, or gained reallocated sectors or media errors in the last day.
 UNHEALTHY_DISKS = """disks AS (
   SELECT resource_id, countIf(unhealthy) AS unhealthy_disks
   FROM (
     SELECT resource_id, labels['device'] AS device,
-      coalesce(minIfOrNull(value, metric = 'system_smart_healthy'), 1) = 0
-        OR maxIf(value, metric = 'system_smart_attribute' AND labels['field'] = 'raw' AND labels['id'] IN ('5', '197')) > 0
-        OR maxIf(value, metric = 'system_nvme_smart' AND labels['field'] IN ('critical_warning', 'media_errors')) > 0 AS unhealthy
+      coalesce(minIfOrNull(value, metric = 'system_smart_healthy' AND ts > now() - INTERVAL 1 HOUR), 1) = 0
+        OR maxIf(value, metric = 'system_smart_attribute' AND labels['field'] = 'raw' AND labels['id'] = '197' AND ts > now() - INTERVAL 1 HOUR) > 0
+        OR maxIf(value, metric = 'system_nvme_smart' AND labels['field'] = 'critical_warning' AND ts > now() - INTERVAL 1 HOUR) > 0
+        OR maxIf(value, metric = 'system_smart_attribute' AND labels['field'] = 'raw' AND labels['id'] = '5')
+          > minIf(value, metric = 'system_smart_attribute' AND labels['field'] = 'raw' AND labels['id'] = '5')
+        OR maxIf(value, metric = 'system_nvme_smart' AND labels['field'] = 'media_errors')
+          > minIf(value, metric = 'system_nvme_smart' AND labels['field'] = 'media_errors') AS unhealthy
     FROM samples
-    WHERE ts > now() - INTERVAL 1 HOUR AND metric IN ('system_smart_healthy', 'system_smart_attribute', 'system_nvme_smart')
+    WHERE ts > now() - INTERVAL 1 DAY AND metric IN ('system_smart_healthy', 'system_smart_attribute', 'system_nvme_smart')
     GROUP BY resource_id, device
   )
   GROUP BY resource_id

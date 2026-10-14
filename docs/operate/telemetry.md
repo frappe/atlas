@@ -98,8 +98,10 @@ These metrics show a failing disk before a pool or array loses data.
 | --- | --- |
 | `system_smart_healthy` | `0`: the disk reports that it fails its own health check. |
 | `system_smart_exit_status` | Bit 3 (8) a failing disk, bit 4 (16) an attribute at its threshold, bit 6 (64) errors in the error log, bit 7 (128) a failed self-test. |
-| `system_smart_attribute{field="raw"}` for `id` 5, 187, 197, and 198 | More than `0`: reallocated, uncorrectable, pending, or offline-uncorrectable sectors. |
-| `system_nvme_smart{field="critical_warning"}`, `{field="media_errors"}` | More than `0`. |
+| `system_smart_attribute{field="raw"}` for `id` 5 and 187 | An increase: new reallocated or uncorrectable sectors. A stable count is old wear. |
+| `system_smart_attribute{field="raw"}` for `id` 197 and 198 | More than `0`: pending or offline-uncorrectable sectors. |
+| `system_nvme_smart{field="critical_warning"}` | More than `0`. |
+| `system_nvme_smart{field="media_errors"}` | An increase. |
 | `system_disk_scsi_timeouts_total` | An increase: a command to a SATA or SAS disk timed out. |
 | `system_md_degraded`, `system_md_mismatch_cnt` | More than `0`: a missing member, or copies that differ after a check. |
 | `system_md_member_corrected_errors` | An increase: md rewrote a sector that a member could not read. |
