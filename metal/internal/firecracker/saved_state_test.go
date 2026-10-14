@@ -26,10 +26,10 @@ func savedStateFixture(t *testing.T, configuration Config, requirement savedStat
 		FirecrackerCompatibility: requirement.FirecrackerCompatibility,
 		CreatedAt:                time.Now().UTC(), StateFileName: memorySnapshotStateFileName,
 		MemoryFileName: memorySnapshotMemoryFileName, StateFileSizeBytes: stateSize,
-		MemoryFileSizeBytes:    memorySize,
-		MigrationCompatibility: requirement.MigrationCompatibility,
+		MemoryFileSizeBytes: memorySize,
+		Shape:               requirement.MigratedShape,
 	}
-	if requirement.MigrationCompatibility != nil {
+	if requirement.MigratedShape != nil {
 		metadata.TapMACAddress = "02:11:22:33:44:55"
 	}
 	data, err := json.Marshal(metadata)
@@ -157,27 +157,20 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 }
 
 func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
-	compatibility := migrationSnapshotCompatibility{
-		Host: "binary-and-host", CPU: &hostCPU{Vendor: "GenuineIntel", Model: "6/58", Features: "fpu sse"},
-		MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4},
-	}
-	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigrationCompatibility: &compatibility}
+	shape := vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigratedShape: &shape}
 	configuration := Config{MachinesDir: t.TempDir()}
 	metadata := savedStateFixture(t, configuration, requirement)
 	metadata.UserID = 2002
 	metadata.FirecrackerCompatibility = "source-only-build-marker"
-	source := compatibility
-	source.Host = "different-binary-or-host"
-	source.CPU = &hostCPU{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2 fpu sse"}
-	metadata.MigrationCompatibility = &source
 	if err := metadata.validate(requirement); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"cpu", "memory", "disk", "generation", "restart", "vm", "missing_metadata", "missing_mac", "invalid_mac", "multicast_mac", "extended_mac"} {
 		t.Run(field, func(t *testing.T) {
 			candidate := metadata
-			changed := compatibility
-			candidate.MigrationCompatibility = &changed
+			changed := shape
+			candidate.Shape = &changed
 			switch field {
 			case "cpu":
 				changed.VirtualCPUCount++
@@ -192,7 +185,7 @@ func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 			case "vm":
 				candidate.VirtualMachineID = "another-vm"
 			case "missing_metadata":
-				candidate.MigrationCompatibility = nil
+				candidate.Shape = nil
 			case "missing_mac":
 				candidate.TapMACAddress = ""
 			case "invalid_mac":
@@ -208,7 +201,7 @@ func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
 		})
 	}
 	// The host-specific user ID remains enforced for ordinary local restores.
-	requirement.MigrationCompatibility = nil
+	requirement.MigratedShape = nil
 	if err := metadata.validate(requirement); err == nil {
 		t.Fatal("local restore ignored its host user ID")
 	}

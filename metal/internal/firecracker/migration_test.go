@@ -186,14 +186,10 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 				SpecificationGeneration: 2, RestartGeneration: 3,
 				NetworkInterface: vm.NetworkInterface{NetworkNamespacePath: "/run/netns/destination-vm", TapName: "tap0", GuestIPAddress: "172.16.0.2", MACAddress: "06:00:ac:10:00:02"},
 			}
-			compatibility := migrationSnapshotCompatibility{
-				MemorySnapshotConfiguration: vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4},
-			}
-			compatibility.Host = "different-source-build"
-			compatibility.CPU = &hostCPU{Vendor: "GenuineIntel", Model: "6/60", Features: "avx2 fma bmi1 bmi2"}
+			shape := vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4}
 			savedStateFixture(t, configuration, savedStateRequirement{
 				VirtualMachineID: input.ID, UserID: input.UserID + 1, SpecificationGeneration: 2, RestartGeneration: 3,
-				FirecrackerCompatibility: "source-local-marker", MigrationCompatibility: &compatibility,
+				FirecrackerCompatibility: "source-local-marker", MigratedShape: &shape,
 			})
 			incoming := filepath.Join(configuration.vmDir(input.ID), "incoming")
 			if err := os.Rename(configuration.savedStateDirectory(input.ID), incoming); err != nil {
@@ -305,9 +301,9 @@ func TestSavedSnapshotCapturesShapeAndGatewayMACWithoutHostProbes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	compatibility := snapshot.Metadata.MigrationCompatibility
-	if compatibility == nil || compatibility.MemorySnapshotConfiguration != (vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4}) || compatibility.Host != "" || compatibility.CPU != nil {
-		t.Fatalf("snapshot metadata = %+v", compatibility)
+	shape := snapshot.Metadata.Shape
+	if shape == nil || *shape != (vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4}) {
+		t.Fatalf("snapshot shape = %+v", shape)
 	}
 	if snapshot.Metadata.TapMACAddress != "02:11:22:33:44:55" {
 		t.Fatalf("snapshot lost the source TAP MAC: %q", snapshot.Metadata.TapMACAddress)
