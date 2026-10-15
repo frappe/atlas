@@ -35,6 +35,7 @@ type fakeRuntime struct {
 	saveError      error
 	deleteError    error
 	coldStartError error
+	pauseError     error
 	pingError      error
 	usage          RuntimeUsage
 	usageError     error
@@ -125,6 +126,9 @@ func (runtime *fakeRuntime) DeleteSavedState(context.Context, RuntimeMachine) er
 
 func (runtime *fakeRuntime) Pause(context.Context, RuntimeMachine) error {
 	runtime.pauses++
+	if runtime.pauseError != nil {
+		return runtime.pauseError
+	}
 	runtime.state = StatePaused
 	return nil
 }

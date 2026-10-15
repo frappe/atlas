@@ -10,6 +10,7 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.vm_migration import MigrationService
 
 # On IntegrationTestCase, the doctype test records and all
@@ -107,6 +108,44 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 			stale.store_progress({"status": "running", "phase": "copying"})
 			self.assertEqual(stale.migration.status, "aborted")
 			self.assertTrue(stale.advance({"status": "ready"}))
+
+	def test_cancellation_remains_aborted_after_a_connection_error(self) -> None:
+		service = self.create_migration()
+		with patch("frappe.db.commit"), patch.object(MigrationService, "destination_client", Mock()):
+			service.request_abort()
+			service.record_error(MetalClientError("Destination offline", retryable=True))
+			self.assertTrue(service.advance({"status": "aborted"}))
+		self.assertEqual(service.migration.status, "aborted")
+		self.assertEqual(service.migration.memory_snapshot_status, "aborted")
+		self.assertFalse(
+			frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "active_migration")
+		)
+
+	def test_connection_errors_do_not_replace_the_migration_failure(self) -> None:
+		service = self.create_migration()
+		stale = MigrationService(frappe.get_doc(service.migration.doctype, service.migration.name))
+		with patch("frappe.db.commit"):
+			service.fail("migration_error", "Restore failed")
+			stale.record_error(MetalClientError("Destination offline", retryable=True))
+			self.assertEqual(stale.migration.error_code, "migration_error")
+			self.assertEqual(stale.migration.error_message, "Restore failed")
+			self.assertTrue(stale.advance({"status": "aborted"}))
+		self.assertEqual(stale.migration.status, "failed")
+
+	def test_timeouts_do_not_fail_an_existing_cancellation(self) -> None:
+		service = self.create_migration()
+		stale = MigrationService(frappe.get_doc(service.migration.doctype, service.migration.name))
+		with patch("frappe.db.commit"), patch.object(MigrationService, "destination_client", Mock()):
+			service.request_abort()
+			self.assertTrue(stale.is_expired)
+			self.assertFalse(stale.advance({"status": "missing"}))
+			stale.fail("migration_timeout", "The worker reached its run duration")
+			self.assertTrue(stale.advance({"status": "aborted"}))
+		self.assertEqual(stale.migration.status, "aborted")
+		self.assertEqual(stale.migration.memory_snapshot_status, "aborted")
+		self.assertFalse(
+			frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "active_migration")
+		)
 
 	def test_snapshot_progress_and_terminal_results_are_persisted(self) -> None:
 		server = frappe.get_doc({"doctype": "Metal Server", "name": str(uuid4())})

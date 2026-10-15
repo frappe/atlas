@@ -308,6 +308,87 @@ func TestMemoryActivationRetainsRunningGuestAfterHealthCheckFailure(t *testing.T
 	}
 }
 
+func TestMemoryActivationColdStartsAfterDestinationProcessLoss(t *testing.T) {
+	for _, test := range []struct {
+		desiredState State
+		lostState    State
+	}{
+		{StateRunning, StateStopped},
+		{StateRunning, StateFailed},
+		{StatePaused, StateStopped},
+		{StatePaused, StateFailed},
+	} {
+		t.Run(string(test.desiredState)+"/"+string(test.lostState), func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, test.desiredState)
+			host := NewMigrationHost(machines)
+			if err := host.RestoreMigratedMemorySnapshot(t.Context(), "vm-1", "/incoming"); err != nil {
+				t.Fatal(err)
+			}
+			if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			runtime.state = test.lostState
+			for range 2 {
+				if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if runtime.state != test.desiredState || runtime.coldStarts != 1 || runtime.migrationRestores != 1 || runtime.restores != 0 {
+				t.Fatalf("activation replayed saved memory or failed to recover: %+v", runtime)
+			}
+		})
+	}
+}
+
+func TestMemoryActivationRemovesFailedProcessWhenDesiredStopped(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StateStopped)
+	host := NewMigrationHost(machines)
+	if err := host.RestoreMigratedMemorySnapshot(t.Context(), "vm-1", "/incoming"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateFailed
+	if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.state != StateStopped || runtime.removes != 1 || runtime.coldStarts != 0 || runtime.migrationRestores != 1 {
+		t.Fatalf("activation did not remove the failed process: %+v", runtime)
+	}
+}
+
+func TestMemoryActivationRetriesPauseAfterDestinationProcessLoss(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StatePaused)
+	setObservedState(t, machines, "vm-1", StatePaused)
+	runtime.state = StateStopped
+	failure := errors.New("pause interrupted")
+	runtime.pauseError = failure
+	host := NewMigrationHost(machines)
+	if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); !errors.Is(err, failure) {
+		t.Fatalf("activation error = %v", err)
+	}
+	if runtime.state != StateRunning || runtime.coldStarts != 1 || runtime.pauses != 1 {
+		t.Fatalf("runtime after failed pause = %+v", runtime)
+	}
+	runtime.pauseError = nil
+	for range 2 {
+		if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.state != StatePaused || runtime.coldStarts != 1 || runtime.pauses != 2 || runtime.migrationRestores != 0 {
+		t.Fatalf("pause retry restarted or restored the guest: %+v", runtime)
+	}
+	observed, err := machines.store.readObserved("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.State != StatePaused || observed.Generation != 2 {
+		t.Fatalf("observed = %s at generation %d", observed.State, observed.Generation)
+	}
+}
+
 func TestMemoryDestinationDoesNotHideRestoreFailures(t *testing.T) {
 	for _, failing := range []string{"load", "metadata", "disk", "already_running"} {
 		t.Run(failing, func(t *testing.T) {

@@ -3,6 +3,8 @@ package migration
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -514,6 +516,58 @@ func TestRunTransferKeepsLockedWhenRollbackFails(t *testing.T) {
 	}
 	if rec.State != destinationUnlockingSource {
 		t.Fatal("the abort request must be preserved for a retry")
+	}
+}
+
+func TestAbortRestoresSourceWhenTheStopReplyWasLost(t *testing.T) {
+	for _, memory := range []bool{false, true} {
+		sourceManager, sourceMachines, _ := newMigrationManager(t)
+		seedSourceVM(t, sourceManager, sourceMachines, vm.StateRunning, 1)
+		if _, err := sourceManager.StopSource(t.Context(), "mig-1", "vm-1", 1, memory); err != nil {
+			t.Fatal(err)
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var err error
+			if r.Method == http.MethodDelete {
+				err = sourceManager.UnlockSource(r.Context(), "mig-1", "vm-1")
+			} else if r.URL.Path == "/v1/migrations/mig-1/start" {
+				err = sourceManager.StartSourceRollback(r.Context(), "mig-1", "vm-1")
+			} else {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if errors.Is(err, vm.ErrConflict) {
+				w.WriteHeader(http.StatusConflict)
+			} else if err != nil {
+				t.Errorf("source operation: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+		}))
+		defer server.Close()
+		manager, machines, _ := newMigrationManager(t)
+		manager.source = NewSourceClient(0, nil)
+		store := writeCopyingDestination(t, machines, vm.StateRunning)
+		record, _ := store.readDestination("vm-1")
+		record.State = destinationStopping
+		record.Source = server.URL
+		record.HasMemorySnapshot = memory
+		if err := store.writeDestination(record); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.requestAbort(t.Context(), "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+		manager.runTransfer(t.Context(), "vm-1")
+		record, _ = store.readDestination("vm-1")
+		if record.State != destinationAborted || sourceManager.IsSourceLocked("vm-1") {
+			t.Fatalf("memory=%t: rollback left destination %s or source locked", memory, record.State)
+		}
+		if sourceMachines.restoreCalls != 1 || sourceMachines.restoreMemory != memory {
+			t.Fatalf("memory=%t: source restored %d times with memory=%t", memory, sourceMachines.restoreCalls, sourceMachines.restoreMemory)
+		}
 	}
 }
 

@@ -233,6 +233,10 @@ func (m *Manager) advanceFinish(ctx context.Context, record destinationRecord) e
 		if err != nil {
 			return err
 		}
+		if err := m.host.EnsureMigrationNetwork(ctx, record.VirtualMachineID); err != nil {
+			unlock()
+			return fmt.Errorf("restore destination network: %w", err)
+		}
 		err = m.host.ActivateMigratedDestination(ctx, record.VirtualMachineID)
 		unlock()
 		if err != nil {
@@ -289,6 +293,12 @@ func (m *Manager) advanceAbort(ctx context.Context, record destinationRecord) er
 	}
 	if record.State == destinationUnlockingSource {
 		if err := m.source.RemoveSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
+			if errors.Is(err, vm.ErrConflict) {
+				// The source can stop without its reply reaching the destination.
+				_, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
+					destination.State = destinationRestoringSource
+				})
+			}
 			return err
 		}
 	}
