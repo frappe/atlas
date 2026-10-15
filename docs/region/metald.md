@@ -22,9 +22,15 @@ The listeners separate Atlas control calls from host-to-host migration calls. Th
 
 Disk snapshots use a separate stream because they carry ZFS data rather than API messages. The control and coordination APIs use TLS 1.3. Read [Metal listener security](../interfaces/security.md#metal-listeners) before you expose an address.
 
-The control listener uses the WireGuard address. The coordination listener and the snapshot stream use the migration network. By default, this is the host's private IPv4 address. Migration traffic already uses TLS, so it skips WireGuard. This removes a second encryption layer and the smaller WireGuard MTU from large transfers.
+The control listener uses the WireGuard address. The coordination listener and the snapshot stream use the migration network. By default, this is the host's private IPv4 address.
 
-To move migration traffic to WireGuard, turn on **Migrate over WireGuard** in Atlas Settings, under Networking. Then run **Upgrade Metald** on each Metal Server. Atlas uses the new network for the source address at once. Each host moves its listener at its upgrade, so a migration from a host that is not upgraded yet fails before the source locks. The host firewall admits migration traffic on both networks.
+Migration traffic already uses TLS, so by default it skips WireGuard. This removes a second encryption layer and the smaller WireGuard MTU from large transfers.
+
+To move migration traffic to WireGuard, turn on **Migrate over WireGuard** in Atlas Settings, under Networking. Then run **Upgrade Metald** on each Metal Server.
+
+Atlas uses the new network for the source address at once. Each host moves its listener at its upgrade. Until then, a migration from that host fails before the source locks.
+
+The host firewall admits migration traffic on both networks, so a change needs no firewall update.
 
 ## What happens at startup
 
