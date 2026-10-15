@@ -93,12 +93,15 @@ func loadSavedState(directory string, requirement savedStateRequirement) (savedS
 	if err != nil {
 		return savedState{}, fmt.Errorf("read saved state metadata: %w", err)
 	}
-	metadata, err := decodeSavedStateMetadata(data)
-	if err != nil {
-		return savedState{}, err
+	metadata, decodeErr := decodeSavedStateMetadata(data)
+	if decodeErr != nil && !errors.Is(decodeErr, errSavedStateIncompatible) {
+		return savedState{}, decodeErr
 	}
 	if err := metadata.validate(requirement); err != nil {
 		return savedState{}, err
+	}
+	if decodeErr != nil {
+		return savedState{}, decodeErr
 	}
 	statePath, err := validateSavedStateFile(directory, memorySnapshotStateFileName, metadata.StateFileSizeBytes)
 	if err != nil {
@@ -160,10 +163,6 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 	}
 
 	published := runtime.configuration.savedStateDirectory(machine.ID)
-	// An incompatible state from an earlier build can still hold the directory.
-	if err := os.RemoveAll(published); err != nil {
-		return savedState{}, fmt.Errorf("remove previous saved VM state: %w", err)
-	}
 	if err := os.Rename(pending, published); err != nil {
 		return savedState{}, fmt.Errorf("publish saved VM state: %w", err)
 	}
@@ -248,9 +247,10 @@ func decodeSavedStateMetadata(data []byte) (savedStateMetadata, error) {
 	decoder.DisallowUnknownFields()
 	var metadata savedStateMetadata
 	if err := decoder.Decode(&metadata); err != nil {
-		// A newer build can add a field, and a rollback must not leave the VM stuck.
-		if json.Unmarshal(data, &savedStateMetadata{}) == nil {
-			return savedStateMetadata{}, fmt.Errorf("%w: decode saved state metadata: %w", errSavedStateIncompatible, err)
+		// A newer build can add a field. Return the known fields, so validate still checks them.
+		var known savedStateMetadata
+		if json.Unmarshal(data, &known) == nil {
+			return known, fmt.Errorf("%w: decode saved state metadata: %w", errSavedStateIncompatible, err)
 		}
 		return savedStateMetadata{}, fmt.Errorf("decode saved state metadata: %w", err)
 	}

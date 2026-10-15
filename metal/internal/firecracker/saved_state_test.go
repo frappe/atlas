@@ -121,6 +121,43 @@ func TestLoadSavedStateReportsUnknownMetadataAsIncompatible(t *testing.T) {
 	}
 }
 
+func TestLoadSavedStateChecksKnownFieldsBeforeUnknownFields(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001}
+	savedStateFixture(t, configuration, requirement)
+	path := filepath.Join(configuration.savedStateDirectory("vm-1"), savedStateMetadataFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[len(data)-1] = ','
+	data = append(data, []byte(`"unknown":true}`)...)
+	if err := os.WriteFile(path, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	requirement.SpecificationGeneration = 3
+	if _, err := configuration.loadSavedState(requirement); err == nil || errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want a hard generation error", err)
+	}
+}
+
+func TestHasSavedStateRemovesAnIncompatibleState(t *testing.T) {
+	runtime := &Runtime{configuration: Config{MachinesDir: t.TempDir(), FirecrackerBin: "/missing/firecracker"}}
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: 1001}
+	requirement := runtime.newMachine(input).savedStateRequirement()
+	savedStateFixture(t, runtime.configuration, requirement)
+
+	runtime.configuration.CPUTemplate = []byte(`{"cpuid_modifiers":[]}`)
+	has, err := runtime.hasSavedState(input)
+	if err != nil || has {
+		t.Fatalf("hasSavedState = %v, %v, want false and no error", has, err)
+	}
+	if _, err := os.Stat(runtime.configuration.savedStateDirectory("vm-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("saved state still exists: %v", err)
+	}
+}
+
 func TestLoadSavedStateRejectsMalformedMetadata(t *testing.T) {
 	configuration := Config{MachinesDir: t.TempDir()}
 	requirement := savedStateRequirement{VirtualMachineID: "vm-1"}
