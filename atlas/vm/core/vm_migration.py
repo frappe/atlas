@@ -278,7 +278,8 @@ class MigrationService:
 			self.settle("completed")
 			return True
 		if state == "aborted":
-			self.settle("failed" if self.migration.error_code else "aborted")
+			failed = self.migration.error_code not in (None, "", "metal_client_error")
+			self.settle("failed" if failed else "aborted")
 			return True
 		if state == "failed":
 			error = status.get("error") or {}
@@ -524,7 +525,10 @@ class MigrationService:
 	) -> None:
 		"""Write fresh migration fields and upsert typed transfer rows."""
 		virtual_machine, migration = self._lock_records()
-		if migration.status in TERMINAL_STATUSES:
+		if migration.status in TERMINAL_STATUSES or (
+			values.get("error_code") == "metal_client_error"
+			and migration.error_code not in (None, "", "metal_client_error")
+		):
 			self.migration = migration
 			if commit:
 				frappe.db.commit()  # nosemgrep
