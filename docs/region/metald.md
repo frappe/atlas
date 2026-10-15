@@ -22,7 +22,9 @@ The listeners separate Atlas control calls from host-to-host migration calls. Th
 
 Disk snapshots use a separate stream because they carry ZFS data rather than API messages. The control and coordination APIs use TLS 1.3. Read [Metal listener security](../interfaces/security.md#metal-listeners) before you expose an address.
 
-The control listener uses the WireGuard address. The coordination listener and the snapshot stream use the host's private IPv4 address. Migration traffic already uses TLS, so it skips WireGuard. This removes a second encryption layer and the smaller WireGuard MTU from large transfers.
+The control listener uses the WireGuard address. The coordination listener and the snapshot stream use the migration network. By default, this is the host's private IPv4 address. Migration traffic already uses TLS, so it skips WireGuard. This removes a second encryption layer and the smaller WireGuard MTU from large transfers.
+
+To move migration traffic to WireGuard, turn on **Migrate over WireGuard** in Atlas Settings, under Networking. Then run **Upgrade Metald** on each Metal Server. Atlas uses the new network for the source address at once. Each host moves its listener at its upgrade, so a migration from a host that is not upgraded yet fails before the source locks. The host firewall admits migration traffic on both networks.
 
 ## What happens at startup
 
@@ -47,7 +49,7 @@ At startup, Metal compares running VM units with adopted console handles. If sys
 | Setting | Default | What to check |
 | --- | --- | --- |
 | Control address | `127.0.0.1:8080` | Installation binds the host WireGuard address. See [Atlas access to hosts](host-access.md). A Unix socket is also accepted. |
-| Coordination address | `127.0.0.1:9001` | Installation and `upgrade_metald` bind the host's private IPv4 address. |
+| Coordination address | `127.0.0.1:9001` | Installation and `upgrade_metald` bind the host address on the migration network. |
 | Snapshot port | `9002` | Binds on the coordination host address, not a wildcard. |
 | `base_dir` | `/var/lib/metal` | Holds VM records and host state. |
 | `zfs.pool` | `metal` | Names the pool Metal uses. Installation selects its device. |

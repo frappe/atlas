@@ -47,7 +47,7 @@ At startup, the `initialize_memory_migration_flags` [host patch](../develop/meta
 
 The patch can run again after an interrupted upgrade. A malformed record stops startup and reports its path.
 
-Control calls use the node mutual-TLS listener on the source's private IPv4 address. Disk bytes use a separate one-shot TLS stream on port `9002` of the same address. Both already use TLS, so they skip WireGuard:
+Control calls use the node mutual-TLS listener on the source's [migration network](../region/metald.md#three-connection-roles) address. By default, this is the private IPv4 address. Disk bytes use a separate one-shot TLS stream on port `9002` of the same address:
 
 ```text
 Source zfs send -> Go TLS connection -> Destination zfs receive

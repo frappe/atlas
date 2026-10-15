@@ -26,7 +26,7 @@ Each layer uses the one below it. A VM never sees the host tunnels or the provid
 
 ## Layer 1: the host network
 
-The provider gives the hosts of a region a private network. Network code calls this the **underlay**. It moves packets between hosts. VM traffic goes through WireGuard before it crosses this network. Host location lookups use the network directly. Migration traffic between hosts also uses it directly, because it has its own TLS.
+The provider gives the hosts of a region a private network. Network code calls this the **underlay**. It moves packets between hosts. VM traffic goes through WireGuard before it crosses this network. Host location lookups use the network directly. By default, migration traffic between hosts also uses it directly, because it has its own TLS.
 
 ## Layer 2: WireGuard between every host
 
