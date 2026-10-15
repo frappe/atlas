@@ -35,6 +35,24 @@ class TestRedfishClient(UnitTestCase):
 		self.assertEqual(post.args, ("POST", f"{SYSTEM_URL}/Actions/ComputerSystem.Reset"))
 		self.assertEqual(post.kwargs["json"], {"ResetType": "ForceOff"})
 
+	def test_set_power_state_reads_the_reset_types_from_the_action_info(self) -> None:
+		reset = {
+			"target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+			"@Redfish.ActionInfo": "/redfish/v1/Systems/1/ResetActionInfo",
+		}
+		action_info = Mock(status_code=200, content=b"{}")
+		action_info.json.return_value = {
+			"Parameters": [{"Name": "ResetType", "AllowableValues": ["On", "ForceRestart"]}]
+		}
+
+		with patch(
+			REQUEST,
+			side_effect=[system_response(reset), action_info, Mock(status_code=204, content=b"")],
+		) as request:
+			RedfishClient(SYSTEM_URL, "admin", "secret").set_power_state(ServerPowerAction.REBOOT)
+
+		self.assertEqual(request.call_args_list[2].kwargs["json"], {"ResetType": "ForceRestart"})
+
 	def test_set_power_state_refuses_a_reset_target_on_another_host(self) -> None:
 		reset = {"target": "https://attacker.example/reset"}
 
