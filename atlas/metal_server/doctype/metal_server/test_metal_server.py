@@ -16,6 +16,7 @@ from atlas.metal_server.doctype.metal_server.metal_server import (
 	MetalServer,
 	renew_expiring_tls_certificates,
 )
+from atlas.vm.core.metal_client import MetalClientError
 
 
 def _disk(device: str) -> dict:
@@ -718,12 +719,11 @@ class TestServer(UnitTestCase):
 
 		with (
 			patch("atlas.metal_server.core.host_installation.get_download_url"),
-			patch("atlas.metal_server.core.host_installation.frappe.throw", side_effect=ValueError),
 			patch(
 				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
 			) as create_for_script_file,
 		):
-			with self.assertRaises(ValueError):
+			with self.assertRaises(MetalClientError):
 				MetalServer._upgrade_metald(server)
 
 		create_for_script_file.assert_not_called()
@@ -1252,6 +1252,7 @@ class TestServer(UnitTestCase):
 				wildcard_domain="example.test",
 				region_id=1,
 				private_network_mtu=1500,
+				is_migration_on_wireguard=0,
 				private_network_cidr="10.0.0.0/20",
 				wireguard_ip_address="fdaa:1::ffff:ffff:ffff:ffff",
 				wireguard_public_key="atlas-key",

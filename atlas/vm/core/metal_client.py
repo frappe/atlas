@@ -77,12 +77,19 @@ class MetalClient:
 
 	@classmethod
 	def get_coordination_url(cls, server: "MetalServer") -> str:
-		"""Return the Metal coordination address on the server private network."""
+		"""Return the Metal coordination URL on the selected migration network."""
+		return f"https://{cls.get_coordination_address(server)}"
+
+	@classmethod
+	def get_coordination_address(cls, server: "MetalServer") -> str:
+		"""Return the coordination host and port on the migration network that Atlas Settings selects."""
+		if server.settings.is_migration_on_wireguard:
+			return f"[{cls.get_wireguard_address(server)}]:{cls.coordination_port}"
 		try:
 			address = ipaddress.IPv4Address(server.private_ipv4_address)
 		except ipaddress.AddressValueError as error:
 			raise MetalClientError(f"Server {server.name} has no valid private IPv4 address") from error
-		return f"https://{address}:{cls.coordination_port}"
+		return f"{address}:{cls.coordination_port}"
 
 	@staticmethod
 	def get_wireguard_address(server: "MetalServer") -> ipaddress.IPv6Address:
