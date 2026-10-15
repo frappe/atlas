@@ -30,7 +30,7 @@ The installation needs:
 - Atlas-built binaries.
 - A regional certificate.
 
-Atlas writes the control and coordination listeners on the WireGuard address. [Atlas access to hosts](host-access.md) explains the path. The install script creates the ZFS pool. `metald` does not select its device.
+Atlas writes the control listener on the WireGuard address and the coordination listener on the private IPv4 address. [Atlas access to hosts](host-access.md) explains the path. The install script creates the ZFS pool. `metald` does not select its device.
 
 ## Failure and recovery
 

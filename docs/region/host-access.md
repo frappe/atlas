@@ -93,7 +93,7 @@ Atlas reads the VM host for each connection. The guest needs no public address f
 | --- | --- |
 | WireGuard UDP | The private network, and the local atlas-vm (`tap-atlas`). |
 | SSH and Metal control `9000` | The Atlas address on `wg0`. |
-| Migration `9001` and `9002` | Host addresses on `wg0`. |
+| Migration `9001` and `9002` | The private network on the private uplink. |
 | SSH for recovery | The private network on the private uplink. |
 | ICMP, DHCP, and replies | Any address. |
 
