@@ -142,6 +142,9 @@ class MigrationService:
 	def run(self) -> None:
 		"""Select a destination when needed, then drive it until it settles."""
 		if self.migration.status in TERMINAL_STATUSES:
+			# A status edited by hand skips settle, so release a lock that it left on the VM.
+			self.release_virtual_machine()
+			frappe.db.commit()  # nosemgrep
 			return
 		if self.is_canceling and not self.migration.destination_metal_server:
 			self.settle("aborted")
@@ -478,6 +481,15 @@ class MigrationService:
 			commit=True,
 		)
 
+	def release_virtual_machine(self) -> None:
+		"""Clear the VM action lock when this migration still holds it."""
+		frappe.db.set_value(
+			"Virtual Machine",
+			{"name": self.migration.virtual_machine, "active_migration": self.migration.name},
+			"active_migration",
+			None,
+		)
+
 	def settle(self, status: str) -> None:
 		"""Record a terminal result and release the VM action lock."""
 		finished_at = now_datetime()
@@ -491,12 +503,7 @@ class MigrationService:
 		if self.migration.has_memory_snapshot:
 			values["memory_snapshot_status"] = status
 		self.update(values)
-		frappe.db.set_value(
-			"Virtual Machine",
-			{"name": self.migration.virtual_machine, "active_migration": self.migration.name},
-			"active_migration",
-			None,
-		)
+		self.release_virtual_machine()
 		frappe.db.commit()  # nosemgrep
 
 		count("atlas_migrations_total", result=status)
