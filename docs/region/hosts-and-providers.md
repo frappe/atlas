@@ -84,6 +84,8 @@ A failed upgrade or check pauses the update. [When a server fails](../operate/ro
 
 If the script reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
 
+Run **Re-install Firewall** to apply the current host firewall without a metald restart. Use it when a host was upgraded before a firewall rule existed, for example the migration rule for the private network.
+
 ## Capacity and state reports
 
 Periodic [host sync](host-sync.md) sends policy and receives capacity and VM state. Atlas saves usage samples and a state cache.
