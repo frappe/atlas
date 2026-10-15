@@ -172,12 +172,33 @@ class TestServer(UnitTestCase):
 		provider = Mock()
 		provider.read_bmc_power_state.side_effect = RedfishError("status 401")
 		server = SimpleNamespace(
-			settings=SimpleNamespace(server_provider_controller=provider), set_onload=Mock()
+			name="bmc-failure",
+			modified="2026-10-15 10:00:00",
+			settings=SimpleNamespace(server_provider_controller=provider),
+			set_onload=Mock(),
 		)
 
 		self.assertIsNone(MetalServer.bmc_power_state.fget(server))
 
 		server.set_onload.assert_called_once_with("bmc_power_error", "status 401")
+
+	def test_bmc_power_state_is_read_again_after_the_server_is_saved(self) -> None:
+		provider = Mock()
+		provider.read_bmc_power_state.side_effect = ["On", "Off"]
+		server = SimpleNamespace(
+			name="bmc-cache",
+			modified="2026-10-15 10:00:00",
+			settings=SimpleNamespace(server_provider_controller=provider),
+			set_onload=Mock(),
+		)
+
+		self.assertEqual(MetalServer.bmc_power_state.fget(server), "On")
+		self.assertEqual(MetalServer.bmc_power_state.fget(server), "On")
+		self.assertEqual(provider.read_bmc_power_state.call_count, 1)
+
+		server.modified = "2026-10-15 10:05:00"
+		self.assertEqual(MetalServer.bmc_power_state.fget(server), "Off")
+		self.assertEqual(provider.read_bmc_power_state.call_count, 2)
 
 	def test_ensure_provider_server_identifies_the_host_by_name(self) -> None:
 		provider = SimpleNamespace(
