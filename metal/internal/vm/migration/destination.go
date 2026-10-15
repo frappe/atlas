@@ -233,6 +233,10 @@ func (m *Manager) advanceFinish(ctx context.Context, record destinationRecord) e
 		if err != nil {
 			return err
 		}
+		if err := m.host.EnsureMigrationNetwork(ctx, record.VirtualMachineID); err != nil {
+			unlock()
+			return fmt.Errorf("restore destination network: %w", err)
+		}
 		err = m.host.ActivateMigratedDestination(ctx, record.VirtualMachineID)
 		unlock()
 		if err != nil {

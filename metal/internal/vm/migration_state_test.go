@@ -308,6 +308,31 @@ func TestMemoryActivationRetainsRunningGuestAfterHealthCheckFailure(t *testing.T
 	}
 }
 
+func TestMemoryActivationColdStartsAfterDestinationProcessLoss(t *testing.T) {
+	for _, state := range []State{StateRunning, StatePaused} {
+		t.Run(string(state), func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, state)
+			host := NewMigrationHost(machines)
+			if err := host.RestoreMigratedMemorySnapshot(t.Context(), "vm-1", "/incoming"); err != nil {
+				t.Fatal(err)
+			}
+			if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			runtime.state = StateStopped
+			for range 2 {
+				if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if runtime.state != state || runtime.coldStarts != 1 || runtime.migrationRestores != 1 || runtime.restores != 0 {
+				t.Fatalf("activation replayed saved memory or failed to recover: %+v", runtime)
+			}
+		})
+	}
+}
+
 func TestMemoryDestinationDoesNotHideRestoreFailures(t *testing.T) {
 	for _, failing := range []string{"load", "metadata", "disk", "already_running"} {
 		t.Run(failing, func(t *testing.T) {
