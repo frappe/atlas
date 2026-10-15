@@ -313,7 +313,11 @@ func (m *machine) Resume(ctx context.Context) error {
 // kill stops a VM without giving the guest a chance to shut down.
 func (m *machine) kill(ctx context.Context) error {
 	if err := m.runtime.units.Kill(ctx, m.input.ID, syscall.SIGKILL); err != nil {
-		return err
+		// systemd can fail its auxiliary-process signal after the main process died.
+		status, statusError := m.runtime.units.Status(ctx, m.input.ID)
+		if statusError != nil || status.ActiveState == "active" {
+			return err
+		}
 	}
 	if _, err := m.runtime.units.Wait(ctx, m.input.ID); err != nil {
 		return err
