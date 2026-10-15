@@ -81,9 +81,8 @@ func ensurePublicIPv4(ctx context.Context, virtualMachineID string, userID uint3
 	})
 }
 
-// defaultRouteInterface returns the IPv4 default route device. WG Mesh uses the same public interface.
-func defaultRouteInterface() (string, error) {
-	contents, err := os.ReadFile("/proc/net/route")
+func defaultRouteInterfaceFromFile(path string) (string, error) {
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read the IPv4 routes: %w", err)
 	}
@@ -106,8 +105,9 @@ func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, pu
 	})
 }
 
-// releasePublicIPv4Claims removes every public address claim of the VM except keep.
-func releasePublicIPv4Claims(ctx context.Context, userID uint32, publicInterfaceName, keep string) error {
+// releasePublicIPv4Claims removes the VM's public address claims, keeping a
+// wanted address on the current interface.
+func releasePublicIPv4Claims(ctx context.Context, userID uint32, keep, currentInterface string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
 	if err != nil || !exists {
@@ -120,15 +120,17 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, publicInterface
 	}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || fields[0] == keep {
+		if len(fields) == 0 {
 			continue
 		}
-		// The route marks the claim, so it goes only after the proxy entry.
-		err := removeProxyNeighbour(ctx, "-4", fields[0], publicInterfaceName)
-		if err == nil {
-			err = platform.Run(ctx, "ip", "-4", "route", "del", fields[0]+"/32", "dev", hostVirtualEthernet)
+		if err := removeProxyNeighbours(ctx, "-4", fields[0], fields[0] == keep, currentInterface); err != nil {
+			return fmt.Errorf("release the public IPv4 claim of %s: %w", fields[0], err)
 		}
-		if err != nil {
+		// The route marks the claim, so it goes only after the proxy entry.
+		if fields[0] == keep {
+			continue
+		}
+		if err := platform.Run(ctx, "ip", "-4", "route", "del", fields[0]+"/32", "dev", hostVirtualEthernet); err != nil {
 			return fmt.Errorf("release the public IPv4 claim of %s: %w", fields[0], err)
 		}
 	}
@@ -143,9 +145,9 @@ func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string
 	})
 }
 
-// releasePublicIPv6Claims removes every public address claim of the VM except keep.
-// The mesh routes each public /128 through the host veth, so these routes list the claims.
-func releasePublicIPv6Claims(ctx context.Context, userID uint32, publicInterfaceName, keep string) error {
+// releasePublicIPv6Claims removes the VM's proxy entries, keeping a wanted
+// address on the current interface. Host prefix routes belong to the mesh.
+func releasePublicIPv6Claims(ctx context.Context, userID uint32, keep, currentInterface string) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
 	if err != nil || !exists {
@@ -158,23 +160,38 @@ func releasePublicIPv6Claims(ctx context.Context, userID uint32, publicInterface
 	}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || strings.Contains(fields[0], "/") || fieldAfter(fields, "via") == "" || fields[0] == strings.TrimSuffix(keep, "/128") {
+		if len(fields) == 0 || strings.Contains(fields[0], "/") || fieldAfter(fields, "via") == "" {
 			continue
 		}
-		if err := removeProxyNeighbour(ctx, "-6", fields[0], publicInterfaceName); err != nil {
+		if err := removeProxyNeighbours(ctx, "-6", fields[0], fields[0] == strings.TrimSuffix(keep, "/128"), currentInterface); err != nil {
 			return fmt.Errorf("release the public IPv6 claim of %s: %w", fields[0], err)
 		}
 	}
 	return nil
 }
 
-// removeProxyNeighbour skips an absent entry, so a retried release does not fail.
-func removeProxyNeighbour(ctx context.Context, familyFlag, address, publicInterfaceName string) error {
-	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address, "dev", publicInterfaceName)
-	if err != nil || strings.TrimSpace(output) == "" {
+// removeProxyNeighbours deletes one address's proxy entries on every interface
+// except the current one when the address is still wanted. Entries are
+// device-scoped, so a moved route strands the old entry.
+func removeProxyNeighbours(ctx context.Context, familyFlag, address string, keep bool, currentInterface string) error {
+	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address)
+	if err != nil {
 		return err
 	}
-	return platform.Run(ctx, "ip", familyFlag, "neigh", "del", "proxy", address, "dev", publicInterfaceName)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != address {
+			continue
+		}
+		device := fieldAfter(fields, "dev")
+		if device == "" || (keep && device == currentInterface) {
+			continue
+		}
+		if err := platform.Run(ctx, "ip", familyFlag, "neigh", "del", "proxy", address, "dev", device); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensurePublicIPv6(ctx context.Context, virtualMachineID, publicIPv6, meshIPv6 string) error {
