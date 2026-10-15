@@ -83,6 +83,13 @@ class VirtualMachineMigration(Document):
 		reconcile_migration(self.name)
 
 
+@frappe.whitelist(methods=["POST"])
+def set_vm_migration_paused(is_paused: bool) -> None:
+	"""Pause or resume new VM migrations. Running migrations continue."""
+	frappe.get_doc("Atlas Settings").check_permission("write")
+	frappe.db.set_single_value("Atlas Settings", "is_vm_migration_paused", int(frappe.parse_json(is_paused)))
+
+
 def on_doctype_update() -> None:
 	"""Index destination reservations for VM placement."""
 	frappe.db.add_index(
