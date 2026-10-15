@@ -282,3 +282,32 @@ class TestObjectStorageConfiguration(UnitTestCase):
 			settings.get_password.return_value = secret
 			with self.subTest(bucket=bucket, access_key_id=access_key_id, secret=secret):
 				self.assertEqual(AtlasSettings.is_object_storage_configured.fget(settings), expected)
+
+
+class TestVMMigrationNetworkChange(UnitTestCase):
+	def validate(self, changed: set[str], *, is_paused: bool, has_running: bool) -> None:
+		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
+
+		settings = MagicMock()
+		settings.is_new.return_value = False
+		settings.has_value_changed.side_effect = lambda field: field in changed
+		with (
+			patch("frappe.db.get_single_value", return_value=is_paused),
+			patch("atlas.vm.core.vm_migration.has_running_migration", return_value=has_running),
+		):
+			AtlasSettings._validate_vm_migration_network_change(settings)
+
+	def test_a_network_change_needs_paused_migrations(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "Pause VM migrations"):
+			self.validate({"is_migration_on_wireguard"}, is_paused=False, has_running=False)
+
+	def test_a_network_change_waits_for_running_migrations(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "running VM migrations"):
+			self.validate({"is_migration_on_wireguard"}, is_paused=True, has_running=True)
+
+	def test_a_network_change_passes_when_paused_and_idle(self) -> None:
+		self.validate({"is_migration_on_wireguard"}, is_paused=True, has_running=False)
+
+	def test_the_pause_flag_changes_only_through_the_list_action(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "Pause or Resume"):
+			self.validate({"is_vm_migration_paused"}, is_paused=True, has_running=False)
