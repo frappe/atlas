@@ -70,6 +70,8 @@ After `finish` starts, an activation or cleanup fault retries forward. Abort is 
 
 If a restored destination loses its process during finish, Metal recreates its network and cold-boots its current disk in the requested power state. The guest loses its RAM state, but retains disk writes made after migration activation. Source cleanup waits for activation and any configured guest health check.
 
+If pausing fails after recovery boots the guest, activation retries pause the running process without another boot.
+
 Hosts with SSH-enabled guests can set `migration.require_guest_ssh = true`. After a running guest resumes from its memory snapshot, Metal requires an SSH key-exchange response from its guest address inside the VM network namespace before source cleanup. The probe needs no guest credentials and has a ten-second timeout. A failure keeps the migration in `finishing`, retains source recovery state, and retries the check without replaying memory. Paused and stopped guests skip the probe. The setting defaults to false; it checks guest responsiveness rather than application health.
 
 ## Limits and recovery

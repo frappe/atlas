@@ -333,6 +333,38 @@ func TestMemoryActivationColdStartsAfterDestinationProcessLoss(t *testing.T) {
 	}
 }
 
+func TestMemoryActivationRetriesPauseAfterDestinationProcessLoss(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StatePaused)
+	setObservedState(t, machines, "vm-1", StatePaused)
+	runtime.state = StateStopped
+	failure := errors.New("pause interrupted")
+	runtime.pauseError = failure
+	host := NewMigrationHost(machines)
+	if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); !errors.Is(err, failure) {
+		t.Fatalf("activation error = %v", err)
+	}
+	if runtime.state != StateRunning || runtime.coldStarts != 1 || runtime.pauses != 1 {
+		t.Fatalf("runtime after failed pause = %+v", runtime)
+	}
+	runtime.pauseError = nil
+	for range 2 {
+		if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.state != StatePaused || runtime.coldStarts != 1 || runtime.pauses != 2 || runtime.migrationRestores != 0 {
+		t.Fatalf("pause retry restarted or restored the guest: %+v", runtime)
+	}
+	observed, err := machines.store.readObserved("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.State != StatePaused || observed.Generation != 2 {
+		t.Fatalf("observed = %s at generation %d", observed.State, observed.Generation)
+	}
+}
+
 func TestMemoryDestinationDoesNotHideRestoreFailures(t *testing.T) {
 	for _, failing := range []string{"load", "metadata", "disk", "already_running"} {
 		t.Run(failing, func(t *testing.T) {
