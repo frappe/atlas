@@ -137,9 +137,10 @@ func (r *VirtualMachineReconciler) reconcile(ctx context.Context, id string) {
 	operationContext, cancel := context.WithTimeout(ctx, r.operationTimeout)
 	defer cancel()
 
+	startedAt := r.backoff.now()
 	if err := r.manager.Reconcile(operationContext, id); err != nil {
 		if ctx.Err() == nil {
-			r.backoff.fail(id)
+			r.backoff.fail(id, startedAt)
 		}
 		r.logFailure(ctx, "virtual machine reconciliation failed", err, "virtual_machine_id", id)
 		return

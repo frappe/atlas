@@ -103,13 +103,61 @@ func TestFailingVirtualMachineWaitsForItsBackoff(t *testing.T) {
 	}
 }
 
+func newTestBackoff(interval time.Duration) (*backoff, *time.Time) {
+	now := time.Unix(1000, 0)
+	b := newBackoff(interval)
+	b.now = func() time.Time { return now }
+	return b, &now
+}
+
 func TestBackoffDoublesUpToTheMaximum(t *testing.T) {
-	b := newBackoff(time.Minute)
-	for range 10 {
-		b.fail("a")
+	b, now := newTestBackoff(10 * time.Second)
+	for _, want := range []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute, time.Minute} {
+		b.fail("a", *now)
+		if got := b.failures["a"].retryAt.Sub(*now); got != want {
+			t.Fatalf("wait = %s, want %s", got, want)
+		}
 	}
-	if wait := time.Until(b.failures["a"].retryAt); wait > maximumBackoff || wait < maximumBackoff-time.Second {
-		t.Fatalf("wait = %s, want the maximum %s", wait, maximumBackoff)
+}
+
+func TestBackoffEndsAtTheRetryTime(t *testing.T) {
+	b, now := newTestBackoff(10 * time.Second)
+	b.fail("a", *now)
+	*now = now.Add(9 * time.Second)
+	if !b.isWaiting("a") {
+		t.Fatal("want a wait before the retry time")
+	}
+	*now = now.Add(time.Second)
+	if b.isWaiting("a") {
+		t.Fatal("want no wait at the retry time")
+	}
+}
+
+func TestBackoffIgnoresAFailureOfAnAttemptBeforeAReset(t *testing.T) {
+	b, now := newTestBackoff(10 * time.Second)
+	startedAt := *now
+	*now = now.Add(time.Second)
+	b.reset()
+	b.fail("a", startedAt)
+	if b.isWaiting("a") {
+		t.Fatal("a failure that began before Wake restored the wait")
+	}
+}
+
+func TestSuccessAfterAnExpiredFailureClearsTheBackoff(t *testing.T) {
+	manager := newRecordingManager("a")
+	manager.reconcileErr = errors.New("inspect failed")
+	reconciler := NewVirtualMachineReconciler(manager, 10*time.Second, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)})
+	now := time.Unix(1000, 0)
+	reconciler.backoff.now = func() time.Time { return now }
+
+	reconciler.reconcileAll(t.Context())
+	now = now.Add(10 * time.Second)
+	manager.reconcileErr = nil
+	reconciler.reconcileAll(t.Context())
+
+	if len(reconciler.backoff.failures) != 0 || manager.seen["a"] != 2 {
+		t.Fatalf("failures = %v, attempts = %v, want a cleared backoff after two attempts", reconciler.backoff.failures, manager.seen)
 	}
 }
 
