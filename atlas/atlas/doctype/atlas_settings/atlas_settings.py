@@ -77,6 +77,7 @@ class AtlasSettings(Document):
 		ipv6_router_package_hash: DF.Data | None
 		is_dns_setup_completed: DF.Check
 		is_letsencrypt_staging: DF.Check
+		is_migration_on_wireguard: DF.Check
 		is_server_provider_setup_completed: DF.Check
 		is_setup_completed: DF.Check
 		is_unicast_network_enabled: DF.Check

@@ -13,6 +13,7 @@ from atlas.atlas.core.telemetry.datum import HOST_TOKEN_LIFETIME, get_datum_url,
 from atlas.atlas.core.tls.metal import atlas_client_identity, ensure_server_certificate
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.atlas_peer import WIREGUARD_KEY
+from atlas.vm.core.metal_client import MetalClient
 
 if TYPE_CHECKING:
 	from frappe.model.document import Document
@@ -98,7 +99,7 @@ class HostInstallation:
 				"WG_MESH_SHA256": settings.wg_mesh_binary_hash,
 				"LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9000",
 				"ATLAS_COMMON_NAME": atlas_client_identity(settings),
-				"COORDINATION_LISTEN_ADDRESS": self.coordination_listen_address,
+				"COORDINATION_LISTEN_ADDRESS": MetalClient.get_coordination_address(self.server),
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
 				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
 				"ATLAS_MESH_ADDRESS": settings.wireguard_ip_address,
@@ -135,7 +136,7 @@ class HostInstallation:
 			)
 
 	def install_host_firewall(self) -> None:
-		"""Admit Atlas calls through wg0 and migration calls from the private network. Keep guests off it."""
+		"""Admit Atlas calls through wg0 and migration calls on both networks. Keep guests off the private network."""
 		settings = self.server.settings
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
@@ -219,7 +220,7 @@ class HostInstallation:
 				"METALD_SHA256": build.metald_binary_hash,
 				"WG_MESH_DOWNLOAD_URL": get_download_url(build.wg_mesh_binary_x86_64_file),
 				"WG_MESH_SHA256": build.wg_mesh_binary_hash,
-				"COORDINATION_LISTEN_ADDRESS": self.coordination_listen_address,
+				"COORDINATION_LISTEN_ADDRESS": MetalClient.get_coordination_address(self.server),
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=run_in_background,
@@ -229,13 +230,6 @@ class HostInstallation:
 		"""Set the WireGuard IP address if it is empty."""
 		if not self.server.wireguard_ip_address:
 			self.server.db_set("wireguard_ip_address", self.wireguard_ip_address)
-
-	@property
-	def coordination_listen_address(self) -> str:
-		"""Return the migration listener address. Migration traffic uses TLS, so it skips WireGuard."""
-		if not self.server.private_ipv4_address:
-			frappe.throw(_("Metal Server {0} needs a private IPv4 address.").format(self.server.name))
-		return f"{self.server.private_ipv4_address}:9001"
 
 	@property
 	def wireguard_ip_address(self) -> str:
