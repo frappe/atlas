@@ -7,7 +7,7 @@ import re
 from typing import TYPE_CHECKING
 
 import frappe
-from frappe import _, request_cache
+from frappe import _
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
 from frappe.utils import add_days, cint, now_datetime
@@ -121,14 +121,24 @@ class MetalServer(Document):
 		return f"atlas||server||telemetry||{self.name}"
 
 	@property
-	@request_cache
 	def bmc_power_state(self) -> str | None:
-		"""Read BMC power state for Desk and expose failures in onload."""
+		"""Read BMC power state for Desk and expose failures in onload.
+
+		Cache a good read for 10 seconds. A save changes `modified` and so starts a new cache entry.
+		"""
+		key = f"atlas:bmc_power_state:{self.name}:{self.modified}"
+		if power_state := frappe.cache.get_value(key):
+			return power_state
+
 		try:
-			return self.settings.server_provider_controller.read_bmc_power_state(self)
+			power_state = self.settings.server_provider_controller.read_bmc_power_state(self)
 		except ProviderOperationError as error:
 			self.set_onload("bmc_power_error", str(error))
 			return None
+
+		if power_state:
+			frappe.cache.set_value(key, power_state, expires_in_sec=10)
+		return power_state
 
 	def get_ssh_proxy_command(self) -> None:
 		"""Return no proxy. Atlas connects to the host directly."""
