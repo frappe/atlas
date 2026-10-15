@@ -6,8 +6,8 @@
 base_dir = "/var/lib/metal"
 # TCP address or unix:/path.
 listen = "127.0.0.1:8080"
-# Mutual-TLS API for communication between Metal nodes.
-coordination_listen = "[fdab::1]:9001"
+# Mutual-TLS API for communication between Metal nodes, on the private IPv4 address.
+coordination_listen = "10.0.0.1:9001"
 
 [tls]
 ca_file = "/var/lib/metal/tls/ca.crt"
