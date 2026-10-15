@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // defaultMigrationOperationTimeout bounds one handshake and record write.
@@ -20,6 +22,8 @@ type MigrationDriver interface {
 
 // MigrationConfig controls one migration reconcile pass.
 type MigrationConfig struct {
+	// Telemetry counts passes and failures. It is required.
+	Telemetry        *telemetry.Registry
 	Logger           *slog.Logger
 	OperationTimeout time.Duration
 }
@@ -42,7 +46,7 @@ func NewMigrationReconciler(driver MigrationDriver, interval time.Duration, conf
 		configuration.Logger = slog.Default()
 	}
 	return &MigrationReconciler{
-		passScheduler:    newPassScheduler(interval),
+		passScheduler:    newPassScheduler("migration", interval, configuration.Telemetry),
 		driver:           driver,
 		operationTimeout: configuration.OperationTimeout,
 		logger:           configuration.Logger,
@@ -119,5 +123,6 @@ func (r *MigrationReconciler) logFailure(ctx context.Context, message string, er
 	if ctx.Err() != nil {
 		return
 	}
+	r.countFailure()
 	r.logger.Error(message, append([]any{"error", err}, fields...)...)
 }

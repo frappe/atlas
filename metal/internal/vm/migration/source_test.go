@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // writeSourceRecord sets up a source lock for transfer tests.
@@ -119,7 +121,7 @@ func TestUnlockWaitsUntilAStartingStreamIsRegistered(t *testing.T) {
 	host.operationCalls = make(chan string, 2)
 	serverRelease := make(chan struct{})
 	storage := &fakeMigrationStorage{sendStarted: make(chan struct{}), serverRelease: serverRelease}
-	manager, err := newManager(host, &fakeSourceOperations{}, storage, ampleCapacity, 0, nil)
+	manager, err := newManager(host, &fakeSourceOperations{}, storage, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

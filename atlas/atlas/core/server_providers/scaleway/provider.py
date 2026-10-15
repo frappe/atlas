@@ -161,7 +161,9 @@ class ScalewayProvider(ServerProvider):
 
 	@override
 	def configure_server_network(self, server: "MetalServer") -> None:
-		"""Configure and check the private network through Secure Shell."""
+		"""Repair the Scaleway image, then configure and check the private network through Secure Shell."""
+		self.run_setup_script(server, "scaleway/repair-image.sh")
+
 		parent_interface = server.public_network_interface
 		device = server.private_network_interface
 		if not parent_interface or not device:

@@ -25,7 +25,7 @@ class MetalHostCompatibility:
 	@classmethod
 	def from_dict(cls, value: object) -> MetalHostCompatibility:
 		"""Validate the optional sync report at the Metal boundary."""
-		report = object_value(value, "compatibility")
+		report = object_value(value, "host_compatibility")
 		strings = {
 			field: string_field(report, field)
 			for field in (

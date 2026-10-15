@@ -1,0 +1,418 @@
+from host.charts import PER_SECOND, PRECISE_SECONDS, Chart
+from host.queries import fields_sql, label, union_sql
+from workbook import COUNT, PERCENT, gauge_sql, rate_sql
+
+SECTIONS = [
+	(
+		"System Timesync",
+		[
+			Chart(
+				key="time-drift",
+				title="Time Synchronized Drift",
+				sql=union_sql(
+					gauge_sql("system_timex_estimated_error_seconds", "'estimated error'"),
+					gauge_sql("system_timex_offset_seconds", "'offset'"),
+					gauge_sql("system_timex_maximum_error_seconds", "'maximum error'"),
+				),
+				measure="Seconds",
+				aggregation="avg",
+				number_format=PRECISE_SECONDS,
+			),
+			Chart(
+				key="time-pll",
+				title="Time PLL Adjust",
+				sql=gauge_sql("system_timex_loop_time_constant", "'PLL time constant'"),
+				measure="Value",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+			Chart(
+				key="time-sync",
+				title="Time Synchronized Status",
+				sql=union_sql(
+					gauge_sql("system_timex_sync_status", "'synchronized'"),
+					gauge_sql("system_timex_frequency_adjustment_ratio", "'frequency adjustment'"),
+				),
+				measure="Value",
+				aggregation="avg",
+				number_format={"decimals": 6},
+			),
+			Chart(
+				key="time-misc",
+				title="Time Misc",
+				sql=union_sql(
+					gauge_sql("system_timex_tick_seconds", "'tick seconds'"),
+					gauge_sql("system_timex_tai_offset_seconds", "'TAI offset'"),
+				),
+				measure="Value",
+				aggregation="avg",
+				number_format={"decimals": 6},
+			),
+		],
+	),
+	(
+		"System Processes",
+		[
+			Chart(
+				key="proc-status",
+				title="Processes Status",
+				sql=union_sql(
+					gauge_sql("system_processes_running", "'running'"),
+					gauge_sql("system_processes_blocked", "'blocked'"),
+				),
+				measure="Processes",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+			Chart(
+				key="proc-state",
+				title="Processes State",
+				sql=gauge_sql("system_processes_state", "s.labels['state']"),
+				measure="Processes",
+				aggregation="avg",
+				number_format=COUNT,
+				info="R running, S sleeping, D uninterruptible wait, Z zombie, T stopped, I idle.",
+			),
+			Chart(
+				key="proc-forks",
+				title="Processes Forks",
+				sql=rate_sql(["system_forks_total"], "'forks'"),
+				measure="Forks/s",
+				aggregation="avg",
+				number_format=PER_SECOND,
+			),
+			Chart(
+				key="proc-pids",
+				title="PIDs Number and Limit",
+				sql=union_sql(
+					gauge_sql("system_processes_pids", "'PIDs'"),
+					gauge_sql("system_processes_max_processes", "'PID limit'"),
+				),
+				measure="PIDs",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+			Chart(
+				key="proc-schedule",
+				title="Process Schedule Stats Running / Waiting",
+				sql=rate_sql(
+					["system_schedstat_running_seconds_total", "system_schedstat_waiting_seconds_total"],
+					"if(d.metric = 'system_schedstat_running_seconds_total', 'running', 'waiting')",
+				),
+				measure="Seconds/s",
+				aggregation="sum",
+				number_format=PRECISE_SECONDS,
+				info="Seconds per second that tasks ran on or waited for a CPU, summed over cores. Waiting time is CPU contention.",
+			),
+			Chart(
+				key="proc-threads",
+				title="Threads Number and Limit",
+				sql=union_sql(
+					gauge_sql("system_processes_threads", "'threads'"),
+					gauge_sql("system_processes_max_threads", "'thread limit'"),
+				),
+				measure="Threads",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+		],
+	),
+	(
+		"System Misc",
+		[
+			Chart(
+				key="misc-switches",
+				title="Context Switches / Interrupts",
+				sql=rate_sql(
+					["system_context_switches_total", "system_interrupts_total"],
+					"if(d.metric = 'system_context_switches_total', 'context switches', 'interrupts')",
+				),
+				measure="Per second",
+				aggregation="avg",
+				number_format=PER_SECOND,
+			),
+			Chart(
+				key="misc-load",
+				title="System Load",
+				sql=gauge_sql("system_load_average", "s.labels['window']"),
+				measure="Load",
+				aggregation="avg",
+				number_format={"decimals": 2},
+			),
+			Chart(
+				key="misc-interrupts",
+				title="Interrupts Detail",
+				sql=rate_sql(
+					["system_interrupts_by_source_total"],
+					"concat(d.labels['interrupt'], ' ', d.labels['devices'])",
+				),
+				measure="Interrupts/s",
+				aggregation="avg",
+				number_format=PER_SECOND,
+				split_values=15,
+			),
+			Chart(
+				key="misc-softirqs",
+				title="Soft Interrupts",
+				sql=rate_sql(["system_softirqs_total"], label("type")),
+				measure="Per second",
+				aggregation="avg",
+				number_format=PER_SECOND,
+			),
+			Chart(
+				key="misc-timeslices",
+				title="Schedule Timeslices per CPU",
+				sql=rate_sql(["system_schedstat_timeslices_total"], "concat('cpu', d.labels['cpu'])"),
+				measure="Timeslices/s",
+				aggregation="avg",
+				number_format=PER_SECOND,
+				split_values=16,
+			),
+			Chart(
+				key="misc-entropy",
+				title="Entropy",
+				sql=union_sql(
+					gauge_sql("system_entropy_available_bits", "'available'"),
+					gauge_sql("system_entropy_pool_size_bits", "'pool size'"),
+				),
+				measure="Bits",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+			Chart(
+				key="misc-fds",
+				title="File Descriptors",
+				sql=union_sql(
+					gauge_sql("system_open_files", "'allocated'"),
+					gauge_sql("system_open_files_limit", "'maximum'"),
+				),
+				measure="Files",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+			Chart(
+				key="misc-pressure",
+				title="Pressure Stall",
+				sql=rate_sql(
+					["system_pressure_stall_seconds_total"],
+					"concat(d.labels['resource'], ' ', d.labels['kind'])",
+					scale="100",
+				),
+				measure="Stalled %",
+				aggregation="avg",
+				number_format=PERCENT,
+				info="Share of time that some or all tasks waited for CPU, memory, I/O, or interrupts.",
+			),
+			Chart(
+				key="misc-frequency",
+				title="CPU Frequency",
+				sql=gauge_sql("system_cpu_frequency_hertz", "concat('cpu', s.labels['cpu'])"),
+				measure="Hz",
+				aggregation="avg",
+				number_format={"shorten": True, "suffix": "Hz"},
+				split_values=16,
+			),
+		],
+	),
+	(
+		"Hardware Misc",
+		[
+			Chart(
+				key="hw-temperature",
+				title="Hardware Temperature Monitor",
+				sql=gauge_sql(
+					"system_hwmon_temperature_celsius",
+					"concat(s.labels['chip'], ' ', s.labels['sensor'], if(s.labels['attribute'] = 'input', '', concat(' ', s.labels['attribute'])))",
+					"AND s.labels['attribute'] IN ('input', 'crit', 'max')",
+				),
+				measure="°C",
+				aggregation="max",
+				number_format={"decimals": 1, "suffix": "°C"},
+				split_values=20,
+			),
+			Chart(
+				key="hw-cooling",
+				title="Throttle Cooling Device",
+				sql=gauge_sql(
+					"system_cooling_device_current_state",
+					"concat(s.labels['device'], ' ', s.labels['type'])",
+				),
+				measure="State",
+				aggregation="max",
+				number_format=COUNT,
+			),
+			Chart(
+				key="hw-power-supply",
+				title="Power Supply",
+				sql=gauge_sql(
+					"system_power_supply",
+					"concat(s.labels['supply'], ' ', s.labels['field'])",
+					"AND s.labels['field'] = 'online'",
+				),
+				measure="Online",
+				aggregation="max",
+				number_format=COUNT,
+			),
+			Chart(
+				key="hw-rapl",
+				title="CPU Power (RAPL)",
+				sql=rate_sql(
+					["system_rapl_energy_joules_total"], "concat(d.labels['zone'], ' ', d.labels['name'])"
+				),
+				measure="Watts",
+				aggregation="avg",
+				number_format={"decimals": 1, "suffix": "W"},
+			),
+			Chart(
+				key="hw-voltage",
+				title="Voltages",
+				sql=gauge_sql(
+					"system_hwmon_voltage_volts",
+					"concat(s.labels['chip'], ' ', s.labels['sensor'])",
+					"AND s.labels['attribute'] = 'input'",
+				),
+				measure="Volts",
+				aggregation="avg",
+				number_format={"decimals": 2, "suffix": "V"},
+			),
+			Chart(
+				key="hw-edac",
+				title="Memory Errors (EDAC)",
+				sql=rate_sql(
+					["system_edac_correctable_errors_total", "system_edac_uncorrectable_errors_total"],
+					"concat(d.labels['controller'], if(d.metric = 'system_edac_correctable_errors_total', ' corrected', ' uncorrected'))",
+					"AND labels['csrow'] = ''",
+					per_second=False,
+				),
+				measure="Errors",
+				aggregation="sum",
+				number_format=COUNT,
+				info="A rising corrected count warns of a failing DIMM.",
+			),
+			Chart(
+				key="hw-nvme",
+				title="NVMe Health",
+				sql=fields_sql(
+					"system_nvme_smart",
+					[
+						"percentage_used",
+						"available_spare_percent",
+						"temperature_celsius",
+						"media_errors",
+						"critical_warning",
+					],
+				),
+				measure="Value",
+				aggregation="max",
+				number_format=COUNT,
+			),
+			Chart(
+				key="hw-throttle",
+				title="CPU Thermal Throttling",
+				sql=rate_sql(
+					["system_cpu_core_throttles_total"],
+					"concat('cpu', d.labels['cpu'])",
+					per_second=False,
+				),
+				measure="Throttles",
+				aggregation="sum",
+				number_format=COUNT,
+			),
+		],
+	),
+	(
+		"Systemd",
+		[
+			Chart(
+				key="systemd-units",
+				title="Systemd Units State",
+				sql=gauge_sql("system_systemd_units", "s.labels['state']"),
+				measure="Units",
+				aggregation="avg",
+				number_format=COUNT,
+			),
+			Chart(
+				key="systemd-failed",
+				title="Failed Units",
+				sql=gauge_sql("system_systemd_failed_units", "'failed'"),
+				measure="Units",
+				aggregation="max",
+				number_format=COUNT,
+			),
+			Chart(
+				key="systemd-restarts",
+				title="Unit Restarts",
+				sql=rate_sql(["system_systemd_unit_restarts_total"], label("unit"), per_second=False),
+				measure="Restarts",
+				aggregation="sum",
+				number_format=COUNT,
+			),
+		],
+	),
+	(
+		"metald",
+		[
+			Chart(
+				key="metald-pending",
+				title="Pending VM Changes",
+				sql=union_sql(
+					gauge_sql("metal_vm_pending", "'pending'"), gauge_sql("metal_vm_failing", "'failing'")
+				),
+				measure="VMs",
+				aggregation="max",
+				number_format=COUNT,
+				info="VMs whose desired generation is not applied yet, and VMs whose last operation failed.",
+			),
+			Chart(
+				key="metald-failures",
+				title="Reconcile Failures",
+				sql=rate_sql(["metal_reconciler_failures_total"], label("loop"), per_second=False),
+				measure="Failures",
+				aggregation="sum",
+				number_format=COUNT,
+			),
+			Chart(
+				key="metald-api",
+				title="Metal API Requests",
+				sql=rate_sql(
+					["metal_api_requests_total"],
+					"concat(d.labels['method'], ' ', substring(d.labels['status'], 1, 1), 'xx')",
+					per_second=False,
+				),
+				measure="Requests",
+				aggregation="sum",
+				number_format=COUNT,
+			),
+			Chart(
+				key="metald-memory",
+				title="metald Memory",
+				sql=union_sql(
+					gauge_sql("metal_process_resident_memory_bytes", "'resident'"),
+					gauge_sql("metal_process_heap_bytes", "'heap'"),
+				),
+				measure="Bytes",
+				aggregation="max",
+				number_format={"decimals": 1, "suffix": " MiB", "scale": 1 << 20},
+			),
+			Chart(
+				key="metald-goroutines",
+				title="metald Goroutines",
+				sql=gauge_sql("metal_process_goroutines", "'goroutines'"),
+				measure="Goroutines",
+				aggregation="max",
+				number_format=COUNT,
+			),
+			Chart(
+				key="metald-telemetry",
+				title="Telemetry Collector Errors",
+				sql=rate_sql(
+					["metal_telemetry_collector_errors_total"], label("collector"), per_second=False
+				),
+				measure="Errors",
+				aggregation="sum",
+				number_format=COUNT,
+				info="A host collector that failed to read its source. metald logs the first failure of each.",
+			),
+		],
+	),
+]

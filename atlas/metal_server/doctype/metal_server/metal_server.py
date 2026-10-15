@@ -14,9 +14,13 @@ from frappe.utils import add_days, cint, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
-from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
-from atlas.atlas.core.server_providers.generic import RedfishClient, RedfishError
+from atlas.atlas.core.server_providers.base import (
+	ProviderOperationError,
+	ServerCreateRequest,
+	ServerPowerAction,
+)
 from atlas.atlas.core.tags import validate_tags
+from atlas.atlas.core.telemetry.datum import get_datum_url
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.disk_inventory import DiskInventory
@@ -24,6 +28,7 @@ from atlas.metal_server.core.host_inspection import HostInspection
 from atlas.metal_server.core.host_installation import (
 	METALD_INSTALL_TIMEOUT_SECONDS,
 	METALD_SETUP_TIMEOUT_SECONDS,
+	TELEMETRY_INSTALL_TIMEOUT_SECONDS,
 	WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
 	HostInstallation,
 	throw_script_failure,
@@ -32,7 +37,6 @@ from atlas.metal_server.core.provisioning import ServerProvisioner
 from atlas.metal_server.usage import enqueue_server_sync
 
 if TYPE_CHECKING:
-	from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 # Warpgate uses the title as a target name and in `email:title` logins.
@@ -57,7 +61,7 @@ class MetalServer(Document):
 		bmc_password: DF.Password | None
 		bmc_url: DF.Data | None
 		bmc_username: DF.Data | None
-		cpu_compatibility_report: DF.Code | None
+		host_compatibility_report: DF.Code | None
 		disks: DF.Table[MetalServerDisk]
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check
@@ -93,10 +97,6 @@ class MetalServer(Document):
 
 		return self.public_ipv4_address
 
-	def get_ssh_proxy_command(self) -> None:
-		"""Return no proxy. Atlas connects to the host directly."""
-		return None
-
 	@property
 	def settings(self) -> AtlasSettings:
 		"""Return the Atlas settings this server uses."""
@@ -104,6 +104,35 @@ class MetalServer(Document):
 			self._settings = frappe.get_single("Atlas Settings")
 
 		return self._settings
+
+	@property
+	def setup_job_id(self) -> str:
+		"""Return the background job identifier for this server."""
+		return f"atlas||server-provision||{self.name}"
+
+	@property
+	def metald_job_id(self) -> str:
+		"""Return one job ID for each metald operation on this server."""
+		return f"atlas||server||metald||{self.name}"
+
+	@property
+	def telemetry_job_id(self) -> str:
+		"""Return one job ID for the telemetry setup of this server."""
+		return f"atlas||server||telemetry||{self.name}"
+
+	@property
+	@request_cache
+	def bmc_power_state(self) -> str | None:
+		"""Read BMC power state for Desk and expose failures in onload."""
+		try:
+			return self.settings.server_provider_controller.read_bmc_power_state(self)
+		except ProviderOperationError as error:
+			self.set_onload("bmc_power_error", str(error))
+			return None
+
+	def get_ssh_proxy_command(self) -> None:
+		"""Return no proxy. Atlas connects to the host directly."""
+		return None
 
 	def before_validate(self) -> None:
 		"""Fill values that depend on the selected size and image."""
@@ -141,41 +170,20 @@ class MetalServer(Document):
 		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
 
 	def validate(self) -> None:
-		"""Fill the mesh address and check the title, tags, and BMC details."""
+		"""Fill the mesh address and check the title and tags."""
 		self._validate_title()
-		self._validate_bmc()
 		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
 
 	def before_save(self) -> None:
-		"""Preserve host facts that sync owns when saving an older document."""
+		"""Preserve synced host facts from the locked database row."""
 		if previous := self.get_doc_before_save():
-			self.cpu_compatibility_report = previous.cpu_compatibility_report
+			self.host_compatibility_report = previous.host_compatibility_report
 			self.tsc_scaling_supported = previous.tsc_scaling_supported
-
-	def _validate_title(self) -> None:
-		if not self.is_new() and not self.has_value_changed("title"):
-			return
-
-		if not HOST_TITLE.fullmatch(self.title or ""):
-			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
-
-	def _validate_bmc(self) -> None:
-		if not self.has_bmc_driver:
-			return
-
-		values = (self.bmc_url, self.bmc_username, self.bmc_password)
-		if any(values) and not all(values):
-			frappe.throw(_("Enter the BMC URL, username, and password together."))
 
 	def after_insert(self) -> None:
 		"""Start provisioning in the background."""
 		self._enqueue_setup_server()
-
-	@property
-	def setup_job_id(self) -> str:
-		"""Return the background job identifier for this server."""
-		return f"atlas||server-provision||{self.name}"
 
 	@frappe.whitelist(methods=["POST"])
 	def ping_server(self) -> str:
@@ -271,18 +279,6 @@ class MetalServer(Document):
 		)
 		self.db_set({"status": "Deleted", "is_provisioning_completed": 0})
 
-	def _enqueue_setup_server(self) -> None:
-		frappe.enqueue_doc(
-			self.doctype,
-			self.name,
-			"_setup_server",
-			queue="long",
-			timeout=7200,
-			job_id=self.setup_job_id,
-			deduplicate=True,
-			enqueue_after_commit=True,
-		)
-
 	@frappe.whitelist(methods=["POST"])
 	def sync_disks(self) -> None:
 		"""Queue a read of the block devices on the server."""
@@ -303,47 +299,28 @@ class MetalServer(Document):
 			enqueue_after_commit=True,
 		)
 
-	def _sync_disks(self) -> None:
-		DiskInventory(self).sync()
-
 	def onload(self) -> None:
-		self.set_onload("server_provider", self.settings.server_provider)
-		self.set_onload("has_bmc_driver", self.has_bmc_driver)
-
-	@property
-	def has_bmc_driver(self) -> bool:
-		return self.settings.server_provider == "Generic" and self.settings.bmc_driver != "None"
-
-	@property
-	def bmc_client(self) -> RedfishClient:
-		return RedfishClient(self.bmc_url, self.bmc_username, self.get_password("bmc_password"))
-
-	@property
-	@request_cache
-	def bmc_power_state(self) -> str | None:
-		"""Read the live BMC power state for Desk. A failed read leaves the reason in the form onload."""
-		if not (self.has_bmc_driver and self.bmc_url):
-			return None
-
-		try:
-			return self.bmc_client.read_power_state()
-		except RedfishError as error:
-			self.set_onload("bmc_power_error", str(error))
-			return None
+		provider = self.settings.server_provider_controller
+		self.set_onload("has_bmc_driver", provider.has_bmc_driver)
+		self.set_onload("has_resizable_volumes", provider.has_resizable_volumes)
 
 	@frappe.whitelist(methods=["POST"])
 	def get_volume(self, kind: str) -> dict:
-		"""Return the current AWS values of the root or the storage volume."""
+		"""Describe a root or storage volume."""
 		frappe.only_for("System Manager")
-		return self._aws_volumes(kind).describe(self, kind)
+		self._validate_volume_kind(kind)
+		return self.settings.server_provider_controller.describe_volume(self, kind)
 
 	@frappe.whitelist(methods=["POST"])
 	def resize_volume(self, kind: str, size_gib: int, iops: int = 0, throughput_mibps: int = 0) -> None:
-		"""Change one AWS volume and queue its growth on the host."""
+		"""Resize a provider volume and queue its growth on the host."""
 		frappe.only_for("System Manager")
 		if self.status != "Running":
 			frappe.throw(_("Metal Server {0} is not running.").format(self.name))
-		self._aws_volumes(kind).modify(self, kind, cint(size_gib), cint(iops), cint(throughput_mibps))
+		self._validate_volume_kind(kind)
+		self.settings.server_provider_controller.resize_volume(
+			self, kind, cint(size_gib), cint(iops), cint(throughput_mibps)
+		)
 		frappe.enqueue_doc(
 			self.doctype,
 			self.name,
@@ -356,14 +333,6 @@ class MetalServer(Document):
 			enqueue_after_commit=False,
 		)
 
-	def _grow_volume(self, kind: str) -> None:
-		self._aws_volumes(kind).grow(self, kind)
-
-	def _aws_volumes(self, kind: str) -> "AwsVolumes":
-		if self.settings.server_provider != "AWS" or kind not in ("root", "storage"):
-			frappe.throw(_("Only an AWS root or storage volume can be resized."))
-		return self.settings.server_provider_controller.volumes
-
 	@frappe.whitelist(methods=["POST"])
 	def sync_state(self) -> None:
 		"""Queue one host state exchange for this server."""
@@ -372,11 +341,6 @@ class MetalServer(Document):
 			frappe.throw(_("Metal Server {0} is not ready to synchronize.").format(self.name))
 
 		enqueue_server_sync(self.name)
-
-	@property
-	def metald_job_id(self) -> str:
-		"""Return one job ID for each metald operation on this server."""
-		return f"atlas||server||metald||{self.name}"
 
 	@frappe.whitelist(methods=["POST"])
 	def install_metald(self) -> None:
@@ -429,6 +393,28 @@ class MetalServer(Document):
 		)
 
 	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this server."""
+		frappe.only_for("System Manager")
+		if self.status != "Running" or not self.is_provisioning_completed:
+			frappe.throw(_("Metal Server {0} is not ready for telemetry.").format(self.name))
+
+		self.enqueue_telemetry_configuration()
+
+	def enqueue_telemetry_configuration(self) -> None:
+		"""Queue the telemetry setup. A queued setup absorbs a second request."""
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_configure_telemetry",
+			queue="long",
+			timeout=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
+			job_id=self.telemetry_job_id,
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+
+	@frappe.whitelist(methods=["POST"])
 	def upgrade_metald(self) -> None:
 		"""Queue a metald binary upgrade for this server."""
 		frappe.only_for("System Manager")
@@ -450,8 +436,6 @@ class MetalServer(Document):
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)
-
-	# Static methods
 
 	@staticmethod
 	def provision(
@@ -498,7 +482,34 @@ class MetalServer(Document):
 			frappe.db.commit()  # nosemgrep
 		return server
 
-	# Internal methods
+	def _validate_title(self) -> None:
+		if not self.is_new() and not self.has_value_changed("title"):
+			return
+
+		if not HOST_TITLE.fullmatch(self.title or ""):
+			frappe.throw(_("Title {0} is not one lowercase DNS label.").format(self.title))
+
+	def _enqueue_setup_server(self) -> None:
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_setup_server",
+			queue="long",
+			timeout=7200,
+			job_id=self.setup_job_id,
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+
+	def _sync_disks(self) -> None:
+		DiskInventory(self).sync()
+
+	def _grow_volume(self, kind: str) -> None:
+		self.settings.server_provider_controller.grow_volume(self, kind)
+
+	def _validate_volume_kind(self, kind: str) -> None:
+		if kind not in ("root", "storage"):
+			frappe.throw(_("Only a root or storage volume can be resized."))
 
 	@run_as_admin
 	def _setup_server(self) -> None:
@@ -507,6 +518,10 @@ class MetalServer(Document):
 	def _install_metald(self) -> None:
 		"""Install metald and its host dependencies."""
 		HostInstallation(self).install_metal()
+
+	def _configure_telemetry(self) -> None:
+		"""Install Vector and the Datum credentials that metald and Vector read."""
+		HostInstallation(self).install_telemetry()
 
 	def _renew_tls_certificate(self) -> None:
 		"""Issue a current certificate and restart Metal with it."""
@@ -564,6 +579,19 @@ class MetalServer(Document):
 		return metadata
 
 
+def renew_telemetry_credentials() -> None:
+	"""Queue a telemetry setup with a fresh Datum token for every ready host. Runs daily."""
+	if not get_datum_url():
+		return
+
+	servers = frappe.get_all(
+		"Metal Server", filters={"status": "Running", "is_provisioning_completed": 1}, pluck="name"
+	)
+	for name in servers:
+		server: MetalServer = frappe.get_doc("Metal Server", name)
+		server.enqueue_telemetry_configuration()
+
+
 def renew_expiring_tls_certificates() -> None:
 	"""Queue a renewal for every ready host whose certificate expires soon."""
 	if is_certificate_authority_expiring():
@@ -583,6 +611,17 @@ def renew_expiring_tls_certificates() -> None:
 		if is_job_enqueued(server.metald_job_id):
 			continue
 		server.enqueue_tls_certificate_renewal()
+
+
+@frappe.whitelist()
+def get_server_creation_options() -> dict:
+	"""Return host registration capabilities for the Metal Server list."""
+	frappe.only_for("System Manager")
+	provider = frappe.get_cached_doc("Atlas Settings").server_provider_controller
+	return {
+		"has_host_registration": provider.has_host_registration,
+		"bmc_driver": provider.settings.bmc_driver if provider.has_bmc_driver else None,
+	}
 
 
 @frappe.whitelist(methods=["POST"])

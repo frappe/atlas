@@ -16,6 +16,7 @@ import (
 )
 
 type options struct {
+	configFile         string
 	cfg                firecracker.Config
 	pool, imagesDir    string
 	listen             string
@@ -25,7 +26,15 @@ type options struct {
 	trafficMonitor     trafficMonitorOptions
 	migration          migrationOptions
 	tls                tlsOptions
+	telemetry          telemetryOptions
 	coordinationListen string
+}
+
+// telemetryOptions configures the metric push to Datum. Atlas writes datum_url
+// and datum_token into [telemetry], and the push client reads them itself.
+type telemetryOptions struct {
+	interval          time.Duration
+	restartCountUnits []string
 }
 
 type tlsOptions struct {
@@ -69,6 +78,14 @@ func defaultOptions() options {
 		trafficMonitor:     trafficMonitorOptions{enabled: true},
 		migration:          migrationOptions{finalDeltaMiB: 512, transferPort: 9002},
 		coordinationListen: "127.0.0.1:9001",
+		configFile:         defaultConfigPath,
+		telemetry: telemetryOptions{
+			interval: 30 * time.Second,
+			restartCountUnits: []string{
+				"metal.service", "atlas-host-firewall.service", "wg-quick@wg0.service", "vector.service",
+				"ssh.service", "chrony.service", "systemd-timesyncd.service", "zfs-zed.service",
+			},
+		},
 		// TCP host:port by default; "unix:/path" for a unix socket instead.
 		listen: "127.0.0.1:8080",
 	}
@@ -92,6 +109,12 @@ type fileConfig struct {
 	Traffic     trafficFile     `toml:"traffic_monitor"`
 	Migration   migrationFile   `toml:"migration"`
 	TLS         tlsFile         `toml:"tls"`
+	Telemetry   telemetryFile   `toml:"telemetry"`
+}
+
+type telemetryFile struct {
+	Interval          *tomlDuration `toml:"interval"`
+	RestartCountUnits []string      `toml:"restart_count_units"`
 }
 
 type tlsFile struct {
@@ -180,6 +203,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	if path == "" {
 		path = defaultConfigPath
 	}
+	resolvedOptions.configFile = path
 	var fc fileConfig
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !explicit {
@@ -218,6 +242,15 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.tls.certificateFile, fc.TLS.CertificateFile)
 	overlay(&resolvedOptions.tls.privateKeyFile, fc.TLS.PrivateKeyFile)
 	overlay(&resolvedOptions.tls.atlasCommonName, fc.TLS.AtlasCommonName)
+	if fc.Telemetry.Interval != nil {
+		if fc.Telemetry.Interval.Duration <= 0 {
+			return fmt.Errorf("config %s: telemetry.interval must be positive", path)
+		}
+		resolvedOptions.telemetry.interval = fc.Telemetry.Interval.Duration
+	}
+	if fc.Telemetry.RestartCountUnits != nil {
+		resolvedOptions.telemetry.restartCountUnits = fc.Telemetry.RestartCountUnits
+	}
 	return nil
 }
 

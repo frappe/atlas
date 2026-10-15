@@ -10,6 +10,7 @@ from frappe.utils import get_datetime, now_datetime
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.telemetry.events import count, observe
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
 from atlas.vm.core.models import VirtualMachineShape
@@ -494,6 +495,9 @@ class MigrationService:
 		)
 		frappe.db.commit()  # nosemgrep
 
+		count("atlas_migrations_total", result=status)
+		observe("atlas_migration_duration_seconds", values["duration_seconds"], result=status)
+
 	def record_error(self, error: Exception) -> None:
 		"""Store a nonterminal client error for operators."""
 		self.update(
@@ -609,7 +613,7 @@ class MigrationService:
 		"""Load and validate one synced host report."""
 		try:
 			return MetalHostCompatibility.from_dict(
-				frappe.parse_json(frappe.db.get_value("Metal Server", server, "cpu_compatibility_report"))
+				frappe.parse_json(frappe.db.get_value("Metal Server", server, "host_compatibility_report"))
 			)
 		except ValueError as error:
 			raise AtlasUserError(

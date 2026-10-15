@@ -9,6 +9,7 @@ from frappe import _
 from atlas.atlas.core.artifacts import get_download_url
 from atlas.atlas.core.mesh_address import get_wireguard_ip_address
 from atlas.atlas.core.ssh import SSHRunner
+from atlas.atlas.core.telemetry.datum import HOST_TOKEN_LIFETIME, get_datum_url, issue_datum_token
 from atlas.atlas.core.tls.metal import atlas_client_identity, ensure_server_certificate
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.atlas_peer import WIREGUARD_KEY
@@ -26,6 +27,7 @@ METALD_INSTALL_TIMEOUT_SECONDS = 1_200
 STORAGE_INSTALL_TIMEOUT_SECONDS = 600
 FIREWALL_INSTALL_TIMEOUT_SECONDS = 120
 METALD_SETUP_TIMEOUT_SECONDS = 3_600
+TELEMETRY_INSTALL_TIMEOUT_SECONDS = 600
 
 
 class HostInstallation:
@@ -72,7 +74,7 @@ class HostInstallation:
 		self.server.db_set("wireguard_public_key", public_key)
 
 	def install_metal(self) -> None:
-		"""Install Metal and its host dependencies."""
+		"""Install Metal and its host dependencies, then queue telemetry when Datum is set."""
 		if not self.server.private_ipv4_address:
 			frappe.throw(_("Metal Server {0} needs a private IPv4 address.").format(self.server.name))
 		if not self.server.private_network_interface:
@@ -110,6 +112,8 @@ class HostInstallation:
 			)
 
 		self.install_host_firewall()
+		if get_datum_url():
+			self.server.enqueue_telemetry_configuration()
 
 	def install_storage(self) -> None:
 		"""Create the storage pool and mount host state on it before any file is written there."""
@@ -167,6 +171,25 @@ class HostInstallation:
 			throw_script_failure(
 				_("Could not install Metal TLS credentials on server {0}.").format(self.server.name),
 				result,
+			)
+
+	def install_telemetry(self) -> None:
+		"""Install Vector and a fresh Datum token. The token goes over direct SSH, so no SSH Task stores it."""
+		datum_url = get_datum_url()
+		if not datum_url:
+			frappe.throw(_("Set datum_url in site config to send host telemetry."))
+
+		result = SSHRunner(self.server.ssh_host).run_script(
+			"install-telemetry.sh",
+			data={
+				"DATUM_URL": datum_url,
+				"DATUM_TOKEN": issue_datum_token(self.server.name, HOST_TOKEN_LIFETIME),
+			},
+			timeout_seconds=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
+		)
+		if not result.is_success:
+			throw_script_failure(
+				_("Could not install telemetry on server {0}.").format(self.server.name), result
 			)
 
 	def upgrade_metald(self, build: Document | None = None, run_in_background: bool = False) -> SSHTask:

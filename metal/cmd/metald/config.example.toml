@@ -56,3 +56,10 @@ final_delta_mib = 512
 transfer_port = 9002
 # Require a guest SSH handshake before memory snapshot migration source cleanup.
 require_guest_ssh = false
+
+[telemetry]
+# Written by Atlas. metald rereads both daily, or when the token expires.
+datum_url = "https://datum.example.com"
+datum_token = "<token>"
+interval = "30s"
+restart_count_units = ["metal.service", "atlas-host-firewall.service", "wg-quick@wg0.service", "vector.service"]

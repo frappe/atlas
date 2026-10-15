@@ -8,18 +8,17 @@ import (
 	"regexp"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // correlationKey is a private context key type, so no other package can collide
 // with these values.
 type correlationKey string
 
-// A request ID identifies one HTTP request. An operation ID groups the host work
-// that request starts, so a log line in another package can be traced back to it.
-const (
-	requestIDKey   correlationKey = "request_id"
-	operationIDKey correlationKey = "operation_id"
-)
+// An operation ID groups the host work that one request starts. The request ID
+// lives in telemetry, so the VM manager can name the request that changed a VM.
+const operationIDKey correlationKey = "operation_id"
 
 // safeCorrelationID accepts only values that are safe to echo in a response
 // header and a log line. A caller-supplied ID is otherwise untrusted input.
@@ -27,14 +26,13 @@ var safeCorrelationID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`
 
 // withCorrelation attaches both IDs to a request context.
 func withCorrelation(requestContext context.Context, requestID, operationID string) context.Context {
-	requestContext = context.WithValue(requestContext, requestIDKey, requestID)
+	requestContext = telemetry.WithRequestID(requestContext, requestID)
 	return context.WithValue(requestContext, operationIDKey, operationID)
 }
 
 // requestID returns the ID that identifies one HTTP request.
 func requestID(requestContext context.Context) string {
-	value, _ := requestContext.Value(requestIDKey).(string)
-	return value
+	return telemetry.RequestID(requestContext)
 }
 
 // operationID returns the ID that groups the work one request starts.

@@ -14,6 +14,7 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 | `registry` | Provider name to implementation |
 | `DNSProvider`, `Route53Provider` | DNS contract and Route 53 |
 | `host_binaries` | Builds `metald` and the WG Mesh CLI |
+| `telemetry` | Atlas metrics, events, Error Log shipping, and Datum tokens. See [telemetry](../../docs/operate/telemetry.md). |
 | `artifacts` | Publishes a build as a public File |
 | `LetsEncrypt`, `AcmeClient` | Wildcard certificate through ACME |
 | `certificate` | Authorities, certificates, and keys |
@@ -34,7 +35,10 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 
 - A provider never saves a Frappe document. It returns typed values, and the caller records them.
 - Metal Server Size stores disk in GiB and price in integer USD cents.
-- `generic/redfish.py` holds `RedfishClient` for the BMC of a Generic host. It reads the power state and sends the `ComputerSystem.Reset` action for a `ServerPowerAction`. It does not wait for the new power state. It sends credentials only to the host of its URL and marks only failed reads as retryable. `GenericProvider.set_power_state` uses it through `MetalServer.bmc_client` when the BMC driver is Redfish, and finds the server by its provider server ID.
+- Desk uses `has_bmc_driver`, `has_host_registration`, and `has_resizable_volumes` instead of provider names. The base defaults to False. The list reads registration options through `get_server_creation_options()`; the form reads capabilities from onload.
+- `AwsProvider` owns volume resize through `describe_volume()`, `resize_volume()`, and `grow_volume()`. Other providers refuse it as an unsupported operation.
+- `GenericProvider` owns BMC access and validates BMC fields in `validate_server()`. `set_power_state()` finds the host by its provider server ID.
+- `generic/redfish.py` owns Redfish reads and reset actions for power control and [BMC telemetry](../../docs/operate/telemetry.md#bmc-hardware). It restricts credentials to the configured host, marks only failed reads as retryable, and respects an optional monotonic deadline. Reset actions do not wait for the new power state.
 
 ## TLS
 
@@ -44,6 +48,10 @@ Domain code reaches a provider only through `ServerProvider`. Implementations ar
 - Metal accepts only the client common name `atlas.<wildcard_domain>`.
 - `ensure_server_certificate` reissues a node certificate that is missing, wrong, or within 30 days of expiry.
 - Host installation sends node certificate files through direct SSH, never through an SSH Task.
+
+## Telemetry
+
+`telemetry.events` owns shared Redis counters and observations. `telemetry.datum` publishes metrics and issues tokens. `telemetry.error_logs` publishes Error Logs. `telemetry.bmc` publishes BMC readings and log entries. See [telemetry](../../docs/operate/telemetry.md) for configuration and operation.
 
 ## SSH tasks
 

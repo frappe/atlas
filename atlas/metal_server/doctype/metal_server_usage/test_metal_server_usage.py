@@ -47,17 +47,18 @@ class TestServerUsage(UnitTestCase):
 			(report, stored, False),
 			(None, stored, True),
 			(None, None, False),
+			(None, "", False),
 			({}, stored, True),
 		):
 			with self.subTest(compatibility=compatibility, previous=previous):
 				server = Mock(
 					private_network_mac_address=None,
-					cpu_compatibility_report=previous,
+					host_compatibility_report=previous,
 					tsc_scaling_supported=bool(previous),
 				)
 				server.name = "server-1"
 				client = Mock()
-				client.sync.return_value = {"capacity": CAPACITY, "compatibility": compatibility}
+				client.sync.return_value = {"capacity": CAPACITY, "host_compatibility": compatibility}
 				with (
 					patch("atlas.metal_server.usage.frappe.get_doc", return_value=server),
 					patch("atlas.metal_server.usage.MetalClient", return_value=client),
@@ -73,7 +74,7 @@ class TestServerUsage(UnitTestCase):
 						"Metal Server",
 						"server-1",
 						{
-							"cpu_compatibility_report": stored if compatibility == report else None,
+							"host_compatibility_report": stored if compatibility == report else None,
 							"tsc_scaling_supported": compatibility == report,
 						},
 						update_modified=False,
@@ -260,7 +261,7 @@ class TestServerUsage(UnitTestCase):
 
 	def test_sync_stores_the_reported_private_network_mac_address(self) -> None:
 		server = Mock(
-			private_network_mac_address=None, cpu_compatibility_report=None, tsc_scaling_supported=0
+			private_network_mac_address=None, host_compatibility_report=None, tsc_scaling_supported=0
 		)
 		server.name = "server-1"
 		client = Mock()

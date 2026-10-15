@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -179,7 +180,7 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 			}
 			images := &fakeImages{}
 			units := &migrationUnits{configuration: configuration, testing: t}
-			runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil)
+			runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil, telemetry.NewRegistry(nil))
 			input := vm.RuntimeMachine{
 				ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid()),
 				Specification:           vm.Specification{CPUMillicores: 1000, MemoryMiB: 1, DiskMiB: 4},

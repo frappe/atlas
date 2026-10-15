@@ -123,7 +123,6 @@ class TestServer(UnitTestCase):
 		server = SimpleNamespace(
 			get=lambda fieldname: tags,
 			_validate_title=Mock(),
-			_validate_bmc=Mock(),
 			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
@@ -135,12 +134,12 @@ class TestServer(UnitTestCase):
 	def test_before_save_preserves_synced_host_facts(self) -> None:
 		for previous in (
 			None,
-			SimpleNamespace(cpu_compatibility_report="new report", tsc_scaling_supported=1),
-			SimpleNamespace(cpu_compatibility_report=None, tsc_scaling_supported=0),
+			SimpleNamespace(host_compatibility_report="new report", tsc_scaling_supported=1),
+			SimpleNamespace(host_compatibility_report=None, tsc_scaling_supported=0),
 		):
 			with self.subTest(previous=previous):
 				server = SimpleNamespace(
-					cpu_compatibility_report="old report",
+					host_compatibility_report="old report",
 					tsc_scaling_supported=0,
 					get_doc_before_save=lambda: previous,
 				)
@@ -148,8 +147,8 @@ class TestServer(UnitTestCase):
 				MetalServer.before_save(server)
 
 				self.assertEqual(
-					server.cpu_compatibility_report,
-					previous.cpu_compatibility_report if previous else "old report",
+					server.host_compatibility_report,
+					previous.host_compatibility_report if previous else "old report",
 				)
 				self.assertEqual(
 					server.tsc_scaling_supported, previous.tsc_scaling_supported if previous else 0
@@ -160,7 +159,6 @@ class TestServer(UnitTestCase):
 		server = SimpleNamespace(
 			get=lambda fieldname: tags,
 			_validate_title=Mock(),
-			_validate_bmc=Mock(),
 			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
@@ -169,46 +167,11 @@ class TestServer(UnitTestCase):
 
 		server._set_wireguard_ip_address_if_not_set.assert_not_called()
 
-	def test_validate_bmc_requires_the_url_username_and_password_together(self) -> None:
-		MetalServer._validate_bmc(
-			SimpleNamespace(has_bmc_driver=True, bmc_url=None, bmc_username=None, bmc_password=None)
-		)
-		MetalServer._validate_bmc(
-			SimpleNamespace(
-				has_bmc_driver=True, bmc_url="https://bmc.local", bmc_username="admin", bmc_password="secret"
-			)
-		)
-
-		with self.assertRaises(frappe.ValidationError):
-			MetalServer._validate_bmc(
-				SimpleNamespace(
-					has_bmc_driver=True, bmc_url="https://bmc.local", bmc_username="admin", bmc_password=None
-				)
-			)
-
-	def test_validate_bmc_ignores_the_bmc_fields_without_a_driver(self) -> None:
-		"""The form hides the BMC fields without a driver, so stale values must not block a save."""
-		MetalServer._validate_bmc(
-			SimpleNamespace(
-				has_bmc_driver=False, bmc_url="https://bmc.local", bmc_username=None, bmc_password=None
-			)
-		)
-
-	def test_bmc_power_state_skips_the_bmc_without_a_driver(self) -> None:
-		client = Mock()
-		server = SimpleNamespace(has_bmc_driver=False, bmc_url="https://bmc.local", bmc_client=client)
-
-		self.assertIsNone(MetalServer.bmc_power_state.fget(server))
-		client.read_power_state.assert_not_called()
-
 	def test_bmc_power_state_shows_a_failed_read_in_the_form(self) -> None:
-		client = Mock()
-		client.read_power_state.side_effect = RedfishError("status 401")
+		provider = Mock()
+		provider.read_bmc_power_state.side_effect = RedfishError("status 401")
 		server = SimpleNamespace(
-			has_bmc_driver=True,
-			bmc_url="https://bmc.local",
-			bmc_client=client,
-			set_onload=Mock(),
+			settings=SimpleNamespace(server_provider_controller=provider), set_onload=Mock()
 		)
 
 		self.assertIsNone(MetalServer.bmc_power_state.fget(server))
@@ -474,9 +437,8 @@ class TestServer(UnitTestCase):
 
 	def test_resize_volume_queues_growth_without_waiting_for_commit(self) -> None:
 		server = self._server(status="Running")
-		volumes = Mock()
-		server.settings.server_provider = "AWS"
-		server._aws_volumes = Mock(return_value=volumes)
+		server._validate_volume_kind = Mock()
+		server.settings.server_provider_controller = Mock()
 
 		with (
 			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
@@ -484,7 +446,9 @@ class TestServer(UnitTestCase):
 		):
 			MetalServer.resize_volume(server, "storage", 600, 3000, 250)
 
-		volumes.modify.assert_called_once_with(server, "storage", 600, 3000, 250)
+		server.settings.server_provider_controller.resize_volume.assert_called_once_with(
+			server, "storage", 600, 3000, 250
+		)
 		self.assertFalse(enqueue_doc.call_args.kwargs["enqueue_after_commit"])
 
 	# An unprovisioned host has no Metal token.

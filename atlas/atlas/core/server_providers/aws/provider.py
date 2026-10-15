@@ -57,6 +57,12 @@ class AwsProvider(ServerProvider):
 		self.ipv6_prefixes = AwsIPv6Prefixes(self.client, self.configuration)
 		self.volumes = AwsVolumes(self)
 
+	@property
+	@override
+	def has_resizable_volumes(self) -> bool:
+		"""EBS volumes support resize."""
+		return True
+
 	@override
 	def validate_settings(self) -> None:
 		"""Validate the AWS infrastructure settings."""
@@ -113,6 +119,23 @@ class AwsProvider(ServerProvider):
 	def ensure_server(self, request: ServerCreateRequest) -> ProviderServer:
 		"""Return the named AWS instance, and create it when necessary."""
 		return self.servers.ensure(request)
+
+	@override
+	def describe_volume(self, server: "MetalServer", kind: str) -> dict:
+		"""Describe an EBS volume and its latest change."""
+		return self.volumes.describe(server, kind)
+
+	@override
+	def resize_volume(
+		self, server: "MetalServer", kind: str, size_gib: int, iops: int, throughput_mibps: int
+	) -> None:
+		"""Change an EBS volume's size and performance."""
+		self.volumes.modify(server, kind, size_gib, iops, throughput_mibps)
+
+	@override
+	def grow_volume(self, server: "MetalServer", kind: str) -> None:
+		"""Wait for the EBS resize, then grow host storage."""
+		self.volumes.grow(server, kind)
 
 	@override
 	def import_server(self, server: "MetalServer") -> None:
@@ -208,26 +231,6 @@ class AwsProvider(ServerProvider):
 			return provider_resource_id
 		return self.ip_addresses.attach(provider_resource_id, interface_id)
 
-	@staticmethod
-	def primary_network_interface(server: "MetalServer") -> Mapping:
-		"""Return the only network interface of one server."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		instance = metadata.get("instance") if isinstance(metadata, Mapping) else None
-		interfaces = instance.get("NetworkInterfaces") if isinstance(instance, Mapping) else []
-		for interface in interfaces if isinstance(interfaces, list) else []:
-			if not isinstance(interface, Mapping):
-				continue
-			attachment = interface.get("Attachment")
-			index = attachment.get("DeviceIndex") if isinstance(attachment, Mapping) else None
-			if index == 0 and isinstance(interface.get("NetworkInterfaceId"), str):
-				return interface
-		raise AwsError("Atlas server has no AWS primary network interface")
-
-	@classmethod
-	def primary_network_interface_id(cls, server: "MetalServer") -> str:
-		"""Return the interface that carries the host, mesh, and public traffic."""
-		return cls.primary_network_interface(server)["NetworkInterfaceId"]
-
 	@override
 	def detach_public_ip_address(
 		self, provider_resource_id: str, host_address: str | None, server: "MetalServer"
@@ -292,6 +295,26 @@ class AwsProvider(ServerProvider):
 		"""Store one created provider resource ID on Atlas Settings."""
 		setattr(self.settings, field, value)
 		self.settings.db_set(field, value, update_modified=False)
+
+	@staticmethod
+	def primary_network_interface(server: "MetalServer") -> Mapping:
+		"""Return the only network interface of one server."""
+		metadata = frappe.parse_json(server.provider_metadata or "{}")
+		instance = metadata.get("instance") if isinstance(metadata, Mapping) else None
+		interfaces = instance.get("NetworkInterfaces") if isinstance(instance, Mapping) else []
+		for interface in interfaces if isinstance(interfaces, list) else []:
+			if not isinstance(interface, Mapping):
+				continue
+			attachment = interface.get("Attachment")
+			index = attachment.get("DeviceIndex") if isinstance(attachment, Mapping) else None
+			if index == 0 and isinstance(interface.get("NetworkInterfaceId"), str):
+				return interface
+		raise AwsError("Atlas server has no AWS primary network interface")
+
+	@classmethod
+	def primary_network_interface_id(cls, server: "MetalServer") -> str:
+		"""Return the interface that carries the host, mesh, and public traffic."""
+		return cls.primary_network_interface(server)["NetworkInterfaceId"]
 
 
 def is_ipv6_prefix(provider_resource_id: str) -> bool:

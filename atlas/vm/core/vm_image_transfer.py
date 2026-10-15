@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import frappe
+from frappe.utils import now_datetime, time_diff_in_seconds
 
 from atlas.atlas.core.background_jobs import run_as_admin
+from atlas.atlas.core.telemetry.events import observe
 from atlas.atlas.object_storage import ObjectStorageError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.multipart_upload import MultipartUploadError, MultipartUploadService, bytes_to_mib
@@ -276,6 +278,7 @@ class VirtualMachineImageTransferService:
 		image.kernel_multipart_upload_id = None
 		image.transfer_error = None
 		image.save()
+		observe_image_creation(image, "available")
 
 	@staticmethod
 	def mark_failed(image: VirtualMachineImage, message: str) -> None:
@@ -283,6 +286,13 @@ class VirtualMachineImageTransferService:
 		image.status = "Failed"
 		image.transfer_error = message[:1000]
 		image.save()
+		observe_image_creation(image, "failed")
+
+
+def observe_image_creation(image: VirtualMachineImage, result: str) -> None:
+	"""Record the time from the image request to its final status."""
+	seconds = time_diff_in_seconds(now_datetime(), image.creation)
+	observe("atlas_image_create_duration_seconds", seconds, result=result)
 
 
 def enqueue_pending_virtual_machine_image_transfers() -> None:

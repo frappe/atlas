@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type fakeImageStore struct {
@@ -72,7 +74,7 @@ func TestImageReconcilerCachesAndWarmsDesiredImages(t *testing.T) {
 		{Name: "on-demand"},
 	}}
 	builder := &fakeMemorySnapshotBuilder{}
-	reconciler := NewImageReconciler(store, store, builder, time.Hour, ImageConfig{})
+	reconciler := NewImageReconciler(store, store, builder, time.Hour, ImageConfig{Telemetry: telemetry.NewRegistry(nil)})
 
 	reconciler.reconcileAll(context.Background())
 

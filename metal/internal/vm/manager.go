@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/network/traffic"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/google/uuid"
 )
 
@@ -41,6 +42,7 @@ type ManagerDependencies struct {
 	Snapshots Snapshots
 	Traffic   *traffic.Monitor
 	Logger    *slog.Logger
+	Telemetry *telemetry.Registry
 }
 
 // Manager owns virtual machine desired state and reconciliation.
@@ -53,6 +55,7 @@ type Manager struct {
 	snapshots            Snapshots
 	traffic              *traffic.Monitor
 	logger               *slog.Logger
+	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
 	allocationMutex      sync.Mutex
 	temporaryUserIDs     map[uint32]bool
@@ -61,6 +64,20 @@ type Manager struct {
 
 	wireGuardGatewayRoutesMutex sync.RWMutex
 	wireGuardGatewayRoutes      []Route
+
+	// requests maps a VM to the API request that last wrote its desired record.
+	requestsMutex sync.Mutex
+	requests      map[string]notedRequest
+
+	availability availabilityTracker
+}
+
+// notedRequest is one API request and the desired generations it wrote.
+type notedRequest struct {
+	id                string
+	generation        uint64
+	restartGeneration uint64
+	isNetworkChange   bool
 }
 
 // NewManager validates all records and returns one host VM manager.
@@ -74,7 +91,7 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 	if configuration.FastApplyTimeout <= 0 {
 		configuration.FastApplyTimeout = defaultFastApplyTimeout
 	}
-	if dependencies.Runtime == nil || dependencies.Network == nil || dependencies.Storage == nil || dependencies.Snapshots == nil {
+	if dependencies.Runtime == nil || dependencies.Network == nil || dependencies.Storage == nil || dependencies.Snapshots == nil || dependencies.Telemetry == nil {
 		return nil, fmt.Errorf("VM manager dependencies are required")
 	}
 	if dependencies.Logger == nil {
@@ -89,6 +106,9 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		snapshots:            dependencies.Snapshots,
 		traffic:              dependencies.Traffic,
 		logger:               dependencies.Logger,
+		telemetry:            dependencies.Telemetry,
+		requests:             make(map[string]notedRequest),
+		availability:         newAvailabilityTracker(),
 		temporaryUserIDs:     make(map[uint32]bool),
 		temporaryIdentifiers: make(map[string]bool),
 	}
@@ -173,6 +193,7 @@ func (manager *Manager) Create(ctx context.Context, identifier string, specifica
 	if err := manager.store.writeObserved(identifier, observed); err != nil {
 		return Information{}, errors.Join(err, manager.store.remove(identifier))
 	}
+	manager.noteRequest(ctx, desired, false)
 	return informationFromRecords(desired, observed, DiskUsage{}), nil
 }
 

@@ -9,10 +9,10 @@
   "title",
   "status",
   "is_provisioning_completed",
+  "is_sleepy_vm_host",
   "column_break_qbap",
   "provider_server_id",
   "metald_tls_expires_on",
-  "is_sleepy_vm_host",
   "section_break_configuration",
   "server_image",
   "column_break_njar",
@@ -20,8 +20,6 @@
   "column_break_iiyh",
   "architecture",
   "tsc_scaling_supported",
-  "cpu_compatibility_section",
-  "cpu_compatibility_report",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -47,6 +45,7 @@
   "tags_section",
   "tags",
   "section_break_metadata",
+  "host_compatibility_report",
   "provider_metadata",
   "hidden_data_section",
   "column_break_xhax",
@@ -168,7 +167,7 @@
    "collapsible": 1,
    "fieldname": "section_break_metadata",
    "fieldtype": "Section Break",
-   "label": "Provider Metadata"
+   "label": "Metadata"
   },
   {
    "fieldname": "provider_metadata",
@@ -323,15 +322,9 @@
    "read_only": 1
   },
   {
-   "collapsible": 1,
-   "fieldname": "cpu_compatibility_section",
-   "fieldtype": "Section Break",
-   "label": "CPU Compatibility"
-  },
-  {
-   "fieldname": "cpu_compatibility_report",
+   "fieldname": "host_compatibility_report",
    "fieldtype": "Code",
-   "label": "CPU Compatibility Report",
+   "label": "Host Compatibility Report",
    "no_copy": 1,
    "options": "JSON",
    "read_only": 1
@@ -356,7 +349,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-13 15:42:29.859427",
+ "modified": "2026-10-15 03:45:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",
