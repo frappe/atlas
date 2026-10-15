@@ -47,6 +47,27 @@ func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 	}
 }
 
+func TestKillFinishesWhenTheUnitStoppedDespiteASignalError(t *testing.T) {
+	units := &stubUnits{failed: true, killErr: errors.New("Failed to send signal SIGKILL to auxiliary processes")}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+
+	if err := m.kill(context.Background()); err != nil {
+		t.Fatalf("kill = %v, want nil", err)
+	}
+	if units.failed {
+		t.Fatal("the failed unit was not reset")
+	}
+}
+
+func TestKillReportsASignalErrorWhileTheUnitIsActive(t *testing.T) {
+	units := &stubUnits{active: true, killErr: errors.New("access denied")}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+
+	if err := m.kill(context.Background()); err == nil {
+		t.Fatal("want the signal error")
+	}
+}
+
 // stubUnits models a systemd unit that stays active until stopped or killed.
 type stubUnits struct {
 	mu     sync.Mutex
@@ -55,6 +76,8 @@ type stubUnits struct {
 	stops  int
 	kills  int
 	waits  int
+
+	killErr error
 }
 
 type stubSerialBroker struct{}
@@ -87,6 +110,9 @@ func (s *stubUnits) Kill(context.Context, string, syscall.Signal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.kills++
+	if s.killErr != nil {
+		return s.killErr
+	}
 	s.active = false
 	s.failed = true
 	return nil
