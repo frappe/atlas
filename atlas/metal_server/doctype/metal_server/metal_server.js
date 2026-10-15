@@ -72,7 +72,7 @@ frappe.ui.form.on("Metal Server", {
 				"configure_telemetry",
 				is_running && frm.doc.is_provisioning_completed,
 				__("Configuring telemetry..."),
-				false,
+				__("Install Vector and a new Datum token on {0}?", [frm.doc.name.bold()]),
 			],
 			[
 				__("Reboot"),
