@@ -80,6 +80,8 @@ The source allows one outbound snapshot stream at a time because streams use a f
 
 These timers release abandoned work. They do not unlock a stopped source or discard a ready destination. Keep the records when cutover or rollback needs an operator.
 
+An expired source keeps a tombstone that rejects the same migration ID. A later abort acknowledges cleanup without removing the tombstone. A new migration can replace it.
+
 For API operations and schemas, use the [Metal API reference](/api/metal/). The Atlas-side decision and regional commit belong to Atlas, not this page.
 
 ::: details Source code and tests
