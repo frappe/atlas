@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replace metald and atlas-wg-mesh on a provisioned host.
+# Replace metald and atlas-wg-mesh on a provisioned host and set its coordination address.
 
 set -eu
 # A failed command inside $(...) also stops the script.
@@ -9,12 +9,15 @@ shopt -s inherit_errexit
 : "${METALD_SHA256:?METALD_SHA256 is required}"
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
+: "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
 
 metald_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
 mesh_binary=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
 service=metal.service
 ready_timeout_seconds=120
 patches_file=/var/lib/metal/patches.json
+config_file=/var/lib/metal/metald.toml
+coordination_line="coordination_listen = \"$COORDINATION_LISTEN_ADDRESS\""
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
@@ -126,6 +129,15 @@ restore_previous() {
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
+	# Restore only this line. install-telemetry.sh can change the rest of the file meanwhile.
+	exec 8>"$config_file.lock"
+	flock 8
+	if [ -n "$previous_coordination_line" ]; then
+		sed -i "s|^coordination_listen[[:space:]]*=.*|$previous_coordination_line|" "$config_file"
+	else
+		sed -i '/^coordination_listen[[:space:]]*=/d' "$config_file"
+	fi
+	exec 8>&-
 	systemctl reset-failed "$service" 2>/dev/null || true
 	if ! systemctl restart "$service" || ! service_is_stable; then
 		echo "    $service did not start with the previous build" >&2
@@ -144,6 +156,7 @@ current_version=$(reported_version "$metald_binary")
 
 # A repeated upgrade after a success changes nothing.
 if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" &&
+	grep -qxF "$coordination_line" "$config_file" &&
 	[ "$(unit_property StatusText)" = "ready $new_version" ]; then
 	step "metald $new_version and atlas-wg-mesh are already installed and running"
 	exit 0
@@ -172,6 +185,18 @@ new_patches=${new_patches# }
 step "back up the running binaries"
 cp -a "$metald_binary" "$metald_binary.previous"
 cp -a "$mesh_binary" "$mesh_binary.previous"
+
+step "set the coordination address to $COORDINATION_LISTEN_ADDRESS"
+# install-telemetry.sh edits the same file under this lock.
+exec 8>"$config_file.lock"
+flock 8
+previous_coordination_line=$(grep '^coordination_listen[[:space:]]*=' "$config_file" || true)
+if [ -n "$previous_coordination_line" ]; then
+	sed -i "s|^coordination_listen[[:space:]]*=.*|$coordination_line|" "$config_file"
+else
+	sed -i "/^listen[[:space:]]*=/a $coordination_line" "$config_file"
+fi
+exec 8>&-
 
 # Rename instead of overwrite. The running process keeps its own inode.
 step "install the new binaries"
