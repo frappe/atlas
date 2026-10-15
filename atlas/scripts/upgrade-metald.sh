@@ -129,7 +129,15 @@ restore_previous() {
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
-	mv -f "$config_file.previous" "$config_file"
+	# Restore only this line. install-telemetry.sh can change the rest of the file meanwhile.
+	exec 8>"$config_file.lock"
+	flock 8
+	if [ -n "$previous_coordination_line" ]; then
+		sed -i "s|^coordination_listen[[:space:]]*=.*|$previous_coordination_line|" "$config_file"
+	else
+		sed -i '/^coordination_listen[[:space:]]*=/d' "$config_file"
+	fi
+	exec 8>&-
 	systemctl reset-failed "$service" 2>/dev/null || true
 	if ! systemctl restart "$service" || ! service_is_stable; then
 		echo "    $service did not start with the previous build" >&2
@@ -182,8 +190,8 @@ step "set the coordination address to $COORDINATION_LISTEN_ADDRESS"
 # install-telemetry.sh edits the same file under this lock.
 exec 8>"$config_file.lock"
 flock 8
-cp -a "$config_file" "$config_file.previous"
-if grep -q '^coordination_listen[[:space:]]*=' "$config_file"; then
+previous_coordination_line=$(grep '^coordination_listen[[:space:]]*=' "$config_file" || true)
+if [ -n "$previous_coordination_line" ]; then
 	sed -i "s|^coordination_listen[[:space:]]*=.*|$coordination_line|" "$config_file"
 else
 	sed -i "/^listen[[:space:]]*=/a $coordination_line" "$config_file"
