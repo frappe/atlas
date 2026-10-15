@@ -8,6 +8,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// announcer announces a public address on the public interface.
+type announcer func(interfaceName, address string) error
+
 // announcePublicIPv4 sends a gratuitous ARP reply, so the provider router learns the new host at once.
 func announcePublicIPv4(interfaceName, publicIPv4 string) error {
 	uplink, err := net.InterfaceByName(interfaceName)
@@ -65,10 +68,10 @@ func announcePublicIPv6(interfaceName, publicIPv6 string) error {
 	defer unix.Close(socket)
 
 	if err := unix.SetsockoptInt(socket, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_HOPS, 255); err != nil {
-		return err
+		return fmt.Errorf("set the NDP hop limit on %s: %w", interfaceName, err)
 	}
 	if err := unix.SetsockoptInt(socket, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, uplink.Index); err != nil {
-		return err
+		return fmt.Errorf("select %s for the NDP socket: %w", interfaceName, err)
 	}
 
 	allNodes := &unix.SockaddrInet6{ZoneId: uint32(uplink.Index), Addr: [16]byte{0: 0xff, 1: 0x02, 15: 1}}
