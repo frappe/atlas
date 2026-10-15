@@ -612,11 +612,19 @@ class TestMetalClientMigrations(UnitTestCase):
 		with self.assertRaises(MetalClientError):
 			MetalClient.get_api_url(server)
 
-	def test_coordination_url_uses_the_wireguard_address(self) -> None:
-		server = Mock(wireguard_ip_address="fdab::12")
+	def test_coordination_url_uses_the_private_ipv4_address(self) -> None:
+		server = Mock(wireguard_ip_address="fdab::12", private_ipv4_address="10.0.0.12")
 		server.name = "metal-1"
 
-		self.assertEqual(MetalClient.get_coordination_url(server), "https://[fdab::12]:9001")
+		self.assertEqual(MetalClient.get_coordination_url(server), "https://10.0.0.12:9001")
+
+	def test_coordination_url_rejects_a_server_without_a_private_ipv4_address(self) -> None:
+		for address in (None, "", "fdab::12"):
+			server = Mock(private_ipv4_address=address)
+			server.name = "metal-1"
+
+			with self.subTest(address=address), self.assertRaises(MetalClientError):
+				MetalClient.get_coordination_url(server)
 
 
 class TestMetalRoute(UnitTestCase):

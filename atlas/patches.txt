@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 atlas.patches.set_migration_has_memory_snapshot_default
 atlas.patches.set_migration_transfer_snapshot_type
+atlas.patches.admit_migration_traffic_on_private_network

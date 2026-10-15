@@ -584,7 +584,7 @@ class TestServer(UnitTestCase):
 				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
 				"LISTEN_ADDRESS": "[fdab:1::7]:9000",
 				"ATLAS_COMMON_NAME": "atlas.example.test",
-				"COORDINATION_LISTEN_ADDRESS": "[fdab:1::7]:9001",
+				"COORDINATION_LISTEN_ADDRESS": "10.0.0.7:9001",
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
 				"PRIVATE_NETWORK_CIDR": "10.0.0.0/20",
 				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
@@ -680,8 +680,8 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
-	def test_upgrade_metald_worker_sends_only_the_download_urls_and_digests(self) -> None:
-		"""The upgrade replaces the binaries. It does not rewrite host configuration."""
+	def test_upgrade_metald_worker_sends_the_builds_and_the_private_coordination_address(self) -> None:
+		"""The upgrade moves an existing host's migration listener from wg0 to the private network."""
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
@@ -707,8 +707,26 @@ class TestServer(UnitTestCase):
 				"METALD_SHA256": "metald-binary-sha256",
 				"WG_MESH_DOWNLOAD_URL": "https://atlas.test/files/metald-linux-amd64",
 				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
+				"COORDINATION_LISTEN_ADDRESS": "10.0.0.7:9001",
 			},
 		)
+
+	def test_upgrade_metald_rejects_a_server_without_a_private_address(self) -> None:
+		server = self._server(status="Running")
+		server.settings.metald_binary_x86_64_file = "metald-file"
+		server.private_ipv4_address = None
+
+		with (
+			patch("atlas.metal_server.core.host_installation.get_download_url"),
+			patch("atlas.metal_server.core.host_installation.frappe.throw", side_effect=ValueError),
+			patch(
+				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
+			) as create_for_script_file,
+		):
+			with self.assertRaises(ValueError):
+				MetalServer._upgrade_metald(server)
+
+		create_for_script_file.assert_not_called()
 
 	def test_upgrade_metald_reports_the_reason_the_script_printed(self) -> None:
 		server = self._server(status="Running")
