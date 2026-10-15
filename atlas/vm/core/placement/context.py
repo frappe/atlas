@@ -254,6 +254,7 @@ class PlacementContext:
 				WHERE server.name = %(host_name)s
 					AND server.status = 'Running'
 					AND server.is_provisioning_completed = 1
+					AND server.is_in_maintenance = 0
 					AND server.architecture = %(architecture)s
 					{sleepy_host_filter}
 					AND COALESCE((
@@ -407,6 +408,7 @@ class PlacementContext:
 				FROM `tabMetal Server` AS server
 				WHERE server.status = 'Running'
 					AND server.is_provisioning_completed = 1
+					AND server.is_in_maintenance = 0
 					AND server.architecture = %(architecture)s
 					{sleepy_host_filter}
 			),

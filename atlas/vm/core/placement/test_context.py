@@ -628,6 +628,11 @@ class TestPlacementLockQuery(IntegrationTestCase):
 		with self.primary_connection():
 			self.assertTrue(self.placement()._host_has_capacity(self.host_name))
 
+	def test_capacity_query_rejects_a_host_in_maintenance(self) -> None:
+		with self.primary_connection():
+			frappe.db.set_value("Metal Server", self.host_name, "is_in_maintenance", 1)
+			self.assertFalse(self.placement()._host_has_capacity(self.host_name))
+
 	def test_the_locked_affinity_check_reads_a_vm_that_breaks_a_rule(self) -> None:
 		rules = AffinityRules.from_value(
 			[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}]
