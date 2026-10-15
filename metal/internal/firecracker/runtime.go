@@ -125,12 +125,26 @@ func (runtime *Runtime) Inspect(ctx context.Context, input vm.RuntimeMachine) (v
 		return vm.RuntimeStatus{}, fmt.Errorf("inspect Firecracker VM: %w", err)
 	}
 
-	_, savedStateError := runtime.configuration.loadSavedState(runtime.newMachine(input).savedStateRequirement())
-	hasSavedState := savedStateError == nil
-	if savedStateError != nil && !errors.Is(savedStateError, errSavedStateNotFound) {
-		return vm.RuntimeStatus{}, fmt.Errorf("validate saved VM state: %w", savedStateError)
+	hasSavedState, err := runtime.hasSavedState(input)
+	if err != nil {
+		return vm.RuntimeStatus{}, err
 	}
 	return vm.RuntimeStatus{State: state, HasSavedState: hasSavedState}, nil
+}
+
+// hasSavedState reports whether the VM has a state it can restore. An incompatible state is
+// removed, because a cold boot changes the disk and the old memory must not resume over it.
+func (runtime *Runtime) hasSavedState(input vm.RuntimeMachine) (bool, error) {
+	_, err := runtime.configuration.loadSavedState(runtime.newMachine(input).savedStateRequirement())
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, errSavedStateNotFound):
+		return false, nil
+	case errors.Is(err, errSavedStateIncompatible):
+		return false, runtime.removeSavedState(input.ID)
+	}
+	return false, fmt.Errorf("validate saved VM state: %w", err)
 }
 
 // Start launches a VM from a warm image or a cold boot.
