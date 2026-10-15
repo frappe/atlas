@@ -212,7 +212,7 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 class TestVMMigrationPause(IntegrationTestCase):
 	def test_create_refuses_a_new_migration_while_paused(self) -> None:
 		with (
-			patch("frappe.db.get_single_value", return_value=1),
+			patch("frappe.db.sql", return_value=[("1",)]),
 			self.assertRaisesRegex(AtlasUserError, "paused"),
 		):
 			MigrationService.create(Mock())

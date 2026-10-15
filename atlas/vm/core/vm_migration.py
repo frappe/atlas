@@ -50,7 +50,7 @@ class MigrationService:
 		has_memory_snapshot: bool = False,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
-		if frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused", cache=False):
+		if is_vm_migration_paused_for_create():
 			frappe.throw(_("VM migrations are paused."), exc=AtlasUserError)
 
 		if virtual_machine.current_state not in LIVE_STATES:
@@ -697,3 +697,16 @@ def has_running_migration() -> bool:
 	return bool(
 		frappe.db.exists("Virtual Machine Migration", {"status": ["not in", list(TERMINAL_STATUSES)]})
 	)
+
+
+def is_vm_migration_paused_for_create() -> bool:
+	"""Read the pause flag under a shared row lock that lasts until commit.
+
+	Pausing updates this row, so it waits for every create that passed this check.
+	"""
+	rows = frappe.db.sql(
+		"""SELECT value FROM `tabSingles`
+		WHERE doctype = 'Atlas Settings' AND field = 'is_vm_migration_paused'
+		LOCK IN SHARE MODE"""
+	)
+	return bool(rows and int(rows[0][0] or 0))
