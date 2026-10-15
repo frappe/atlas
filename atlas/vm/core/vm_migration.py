@@ -525,9 +525,16 @@ class MigrationService:
 	) -> None:
 		"""Write fresh migration fields and upsert typed transfer rows."""
 		virtual_machine, migration = self._lock_records()
-		if migration.status in TERMINAL_STATUSES or (
-			values.get("error_code") == "metal_client_error"
-			and migration.error_code not in (None, "", "metal_client_error")
+		if (
+			migration.status in TERMINAL_STATUSES
+			or (
+				values.get("error_code") == "metal_client_error"
+				and migration.error_code not in (None, "", "metal_client_error")
+			)
+			or (
+				migration.status == "canceling"
+				and values.get("error_code") in ("destination_unreachable", "migration_timeout")
+			)
 		):
 			self.migration = migration
 			if commit:

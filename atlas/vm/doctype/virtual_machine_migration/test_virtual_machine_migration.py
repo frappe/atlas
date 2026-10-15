@@ -132,6 +132,21 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 			self.assertTrue(stale.advance({"status": "aborted"}))
 		self.assertEqual(stale.migration.status, "failed")
 
+	def test_timeouts_do_not_fail_an_existing_cancellation(self) -> None:
+		service = self.create_migration()
+		stale = MigrationService(frappe.get_doc(service.migration.doctype, service.migration.name))
+		with patch("frappe.db.commit"), patch.object(MigrationService, "destination_client", Mock()):
+			service.request_abort()
+			self.assertTrue(stale.is_expired)
+			self.assertFalse(stale.advance({"status": "missing"}))
+			stale.fail("migration_timeout", "The worker reached its run duration")
+			self.assertTrue(stale.advance({"status": "aborted"}))
+		self.assertEqual(stale.migration.status, "aborted")
+		self.assertEqual(stale.migration.memory_snapshot_status, "aborted")
+		self.assertFalse(
+			frappe.db.get_value("Virtual Machine", service.migration.virtual_machine, "active_migration")
+		)
+
 	def test_snapshot_progress_and_terminal_results_are_persisted(self) -> None:
 		server = frappe.get_doc({"doctype": "Metal Server", "name": str(uuid4())})
 		server.db_insert()
