@@ -9,10 +9,11 @@
   "title",
   "status",
   "is_provisioning_completed",
-  "is_sleepy_vm_host",
+  "is_in_maintenance",
   "column_break_qbap",
   "provider_server_id",
   "metald_tls_expires_on",
+  "is_sleepy_vm_host",
   "section_break_configuration",
   "server_image",
   "column_break_njar",
@@ -66,6 +67,14 @@
    "fieldname": "is_sleepy_vm_host",
    "fieldtype": "Check",
    "label": "Sleepy VM Host"
+  },
+  {
+   "default": "0",
+   "description": "Placement skips this host. Existing VMs keep running.",
+   "fieldname": "is_in_maintenance",
+   "fieldtype": "Check",
+   "label": "In Maintenance",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "metald_tls_expires_on",
@@ -349,7 +358,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-15 03:45:00.000000",
+ "modified": "2026-10-16 00:58:13.164413",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

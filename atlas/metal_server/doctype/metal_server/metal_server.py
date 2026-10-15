@@ -53,17 +53,17 @@ class MetalServer(Document):
 	from typing import TYPE_CHECKING
 
 	if TYPE_CHECKING:
-		from frappe.types import DF
-
 		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
 		from atlas.metal_server.doctype.metal_server_disk.metal_server_disk import MetalServerDisk
+		from frappe.types import DF
 
 		architecture: DF.Literal["amd64", "arm64"]
 		bmc_password: DF.Password | None
 		bmc_url: DF.Data | None
 		bmc_username: DF.Data | None
-		host_compatibility_report: DF.Code | None
 		disks: DF.Table[MetalServerDisk]
+		host_compatibility_report: DF.Code | None
+		is_in_maintenance: DF.Check
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check
 		metald_tls_certificate: DF.Password | None
