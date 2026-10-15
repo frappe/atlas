@@ -289,6 +289,12 @@ func (m *Manager) advanceAbort(ctx context.Context, record destinationRecord) er
 	}
 	if record.State == destinationUnlockingSource {
 		if err := m.source.RemoveSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
+			if errors.Is(err, vm.ErrConflict) {
+				// The source can stop without its reply reaching the destination.
+				_, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
+					destination.State = destinationRestoringSource
+				})
+			}
 			return err
 		}
 	}
