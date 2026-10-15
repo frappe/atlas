@@ -14,6 +14,8 @@ type recordingManager struct {
 	ids     []string
 	listErr error
 
+	reconcileErr error
+
 	mu   sync.Mutex
 	seen map[string]int
 	done chan string
@@ -34,7 +36,7 @@ func (manager *recordingManager) Reconcile(_ context.Context, id string) error {
 	manager.seen[id]++
 	manager.mu.Unlock()
 	manager.done <- id
-	return nil
+	return manager.reconcileErr
 }
 
 func TestRunReconcilesEveryVirtualMachine(t *testing.T) {
@@ -72,6 +74,42 @@ func TestWakeRequestsReconciliation(t *testing.T) {
 	case <-manager.done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wake did not trigger a pass")
+	}
+}
+
+func TestFailingVirtualMachineWaitsForItsBackoff(t *testing.T) {
+	manager := newRecordingManager("a", "b")
+	manager.reconcileErr = errors.New("inspect failed")
+	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)})
+
+	reconciler.reconcileAll(t.Context())
+	reconciler.reconcileAll(t.Context())
+	if manager.seen["a"] != 1 || manager.seen["b"] != 1 {
+		t.Fatalf("attempts = %v, want one each while waiting", manager.seen)
+	}
+
+	reconciler.Wake()
+	reconciler.reconcileAll(t.Context())
+	if manager.seen["a"] != 2 {
+		t.Fatalf("attempts = %v, want a retry after Wake", manager.seen)
+	}
+
+	manager.reconcileErr = nil
+	reconciler.Wake()
+	reconciler.reconcileAll(t.Context())
+	reconciler.reconcileAll(t.Context())
+	if manager.seen["a"] != 4 {
+		t.Fatalf("attempts = %v, want every pass after a success", manager.seen)
+	}
+}
+
+func TestBackoffDoublesUpToTheMaximum(t *testing.T) {
+	b := newBackoff(time.Minute)
+	for range 10 {
+		b.fail("a")
+	}
+	if wait := time.Until(b.failures["a"].retryAt); wait > maximumBackoff || wait < maximumBackoff-time.Second {
+		t.Fatalf("wait = %s, want the maximum %s", wait, maximumBackoff)
 	}
 }
 
