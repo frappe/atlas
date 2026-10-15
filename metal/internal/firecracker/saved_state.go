@@ -24,7 +24,11 @@ const (
 	savedStateMetadataFileName     = "metadata.json"
 )
 
-var errSavedStateNotFound = errors.New("saved VM state not found")
+var (
+	errSavedStateNotFound = errors.New("saved VM state not found")
+	// errSavedStateIncompatible marks state that a changed Firecracker build or CPU template cannot resume.
+	errSavedStateIncompatible = errors.New("saved VM state is incompatible with this Firecracker")
+)
 
 type savedStateRequirement struct {
 	VirtualMachineID         string
@@ -156,6 +160,10 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 	}
 
 	published := runtime.configuration.savedStateDirectory(machine.ID)
+	// An incompatible state from an earlier build can still hold the directory.
+	if err := os.RemoveAll(published); err != nil {
+		return savedState{}, fmt.Errorf("remove previous saved VM state: %w", err)
+	}
 	if err := os.Rename(pending, published); err != nil {
 		return savedState{}, fmt.Errorf("publish saved VM state: %w", err)
 	}
@@ -193,7 +201,7 @@ func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequir
 	case metadata.RestartGeneration != requirement.RestartGeneration:
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
 	case requirement.MigratedShape == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
-		return fmt.Errorf("saved state Firecracker compatibility %q does not match %q", metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
+		return fmt.Errorf("%w: saved state Firecracker compatibility %q does not match %q", errSavedStateIncompatible, metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
 	}
 	return nil
 }

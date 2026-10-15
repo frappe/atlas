@@ -86,6 +86,22 @@ func TestLoadSavedStateRejectsAnIncompatibleGeneration(t *testing.T) {
 	}
 }
 
+func TestLoadSavedStateReportsAnIncompatibleFirecracker(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, FirecrackerCompatibility: "firecracker:1"}
+	savedStateFixture(t, configuration, requirement)
+
+	requirement.FirecrackerCompatibility = "firecracker:1:cpu:abc"
+	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want errSavedStateIncompatible", err)
+	}
+
+	requirement.SpecificationGeneration = 3
+	if _, err := configuration.loadSavedState(requirement); errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, a generation mismatch must stay a hard error", err)
+	}
+}
+
 func TestLoadSavedStateRejectsUnknownMetadata(t *testing.T) {
 	configuration := Config{MachinesDir: t.TempDir()}
 	requirement := savedStateRequirement{VirtualMachineID: "vm-1"}

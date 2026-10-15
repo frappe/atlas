@@ -127,7 +127,8 @@ func (runtime *Runtime) Inspect(ctx context.Context, input vm.RuntimeMachine) (v
 
 	_, savedStateError := runtime.configuration.loadSavedState(runtime.newMachine(input).savedStateRequirement())
 	hasSavedState := savedStateError == nil
-	if savedStateError != nil && !errors.Is(savedStateError, errSavedStateNotFound) {
+	// An incompatible state cannot resume, so the VM cold boots like a VM without one.
+	if savedStateError != nil && !errors.Is(savedStateError, errSavedStateNotFound) && !errors.Is(savedStateError, errSavedStateIncompatible) {
 		return vm.RuntimeStatus{}, fmt.Errorf("validate saved VM state: %w", savedStateError)
 	}
 	return vm.RuntimeStatus{State: state, HasSavedState: hasSavedState}, nil
