@@ -33,7 +33,9 @@ Atlas signs every token with its regional key for the `atlas-datum:<region ID>` 
 - A host gets telemetry right after Atlas installs metald on it, during provisioning or **Re-configure Metald**.
 - To repair one host, run **Configure Telemetry** (`configure_telemetry`) on its Metal Server.
 
-The installation script `install-telemetry.sh` runs over direct SSH, so no SSH Task stores the token. It installs a pinned Vector package and smartmontools, makes the RAID monitor `mdmonitor` log array events to the journal, and restarts Vector.
+The SSH Task `install-vector.sh` installs a pinned Vector package and smartmontools, and makes the RAID monitor `mdmonitor` log array events to the journal.
+
+Then `install-telemetry.sh` writes the token to `metald.toml` and `vector.yaml`, and restarts Vector. It runs over direct SSH, so no SSH Task stores the token.
 
 ## Metrics
 
@@ -193,6 +195,7 @@ A `429` from Datum means the caller sent more than 12 requests a minute to one r
 
 - [metald telemetry package](../../metal/internal/telemetry/SPEC.md) owns the registry, the push, and the host collector.
 - [Atlas telemetry](../../atlas/atlas/core/telemetry/) owns Atlas metrics and tokens.
-- [install-telemetry.sh](../../atlas/scripts/install-telemetry.sh) installs Vector, smartmontools, and the credentials.
+- [install-vector.sh](../../atlas/scripts/install-vector.sh) installs Vector and smartmontools.
+- [install-telemetry.sh](../../atlas/scripts/install-telemetry.sh) installs the credentials.
 
 :::

@@ -174,10 +174,22 @@ class HostInstallation:
 			)
 
 	def install_telemetry(self) -> None:
-		"""Install Vector and a fresh Datum token. The token goes over direct SSH, so no SSH Task stores it."""
+		"""Install Vector, then a fresh Datum token. The token goes over direct SSH, so no SSH Task stores it."""
 		datum_url = get_datum_url()
 		if not datum_url:
 			frappe.throw(_("Set datum_url in site config to send host telemetry."))
+
+		packages = SSHTask.create_for_script_file(
+			target_type=self.server.doctype,
+			target=self.server.name,
+			script_path="install-vector.sh",
+			timeout_seconds=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
+			run_in_background=False,
+		).result
+		if not packages or not packages.is_success:
+			throw_script_failure(
+				_("Could not install Vector on server {0}.").format(self.server.name), packages
+			)
 
 		result = SSHRunner(self.server.ssh_host).run_script(
 			"install-telemetry.sh",
