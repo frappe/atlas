@@ -162,6 +162,9 @@ func (host *MigrationHost) ActivateMigratedDestination(ctx context.Context, virt
 		switch {
 		case desired.State == StateRunning && status.State == StatePaused:
 			err = manager.runtime.Resume(ctx, machine)
+		case status.State == StateStopped && (observed.State == StateRunning || observed.State == StatePaused):
+			// A lost process can have changed the disk after its memory snapshot.
+			_, err = manager.coldStartForState(ctx, desired.State, machine)
 		case desired.State == StateStopped:
 			err = manager.runtime.Remove(ctx, machine)
 		default:
