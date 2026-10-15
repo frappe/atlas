@@ -591,6 +591,29 @@ func TestExpireSourceKeepsAStoppedSource(t *testing.T) {
 	}
 }
 
+func TestAbortAfterSourceExpiryKeepsTheTombstoneAndAllowsANewMigration(t *testing.T) {
+	manager, machines, _ := newMigrationManager(t)
+	machines.create("vm-1", testSpecification())
+	setObservedState(t, machines, "vm-1", vm.StateRunning)
+	record := expirableSourceRecord(manager, "vm-1")
+	if err := manager.store.writeSource(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ExpireSource(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.UnlockSource(t.Context(), record.ID, "vm-1"); err != nil {
+		t.Fatalf("abort an expired migration: %v", err)
+	}
+	if _, err := manager.LockSource(t.Context(), record.ID, "vm-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("expired migration revived: %v", err)
+	}
+	if _, err := manager.LockSource(t.Context(), "mig-new", "vm-1"); err != nil {
+		t.Fatalf("start a new migration: %v", err)
+	}
+}
+
 func TestExpireSourceKeepsARecentLock(t *testing.T) {
 	manager, _, _ := newMigrationManager(t)
 	record := expirableSourceRecord(manager, "vm-1")
@@ -643,8 +666,12 @@ func TestATombstoneRefusesItsOwnMigrationAndAcceptsANewOne(t *testing.T) {
 	if _, err := manager.StopSource(context.Background(), "mig-idle", "vm-1", 0, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("stop against a tombstone = %v, want a conflict", err)
 	}
-	if err := manager.UnlockSource(context.Background(), "mig-idle", "vm-1"); !errors.Is(err, vm.ErrConflict) {
-		t.Fatalf("unlock against a tombstone = %v, want a conflict", err)
+	if err := manager.UnlockSource(context.Background(), "mig-idle", "vm-1"); err != nil {
+		t.Fatalf("unlock against a tombstone = %v", err)
+	}
+	tombstone, err := manager.store.readSource("vm-1")
+	if err != nil || tombstone.State != sourceExpired {
+		t.Fatalf("unlock removed the tombstone: %+v, %v", tombstone, err)
 	}
 
 	if _, err := manager.LockSource(context.Background(), "mig-new", "vm-1"); err != nil {
