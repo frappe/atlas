@@ -248,6 +248,10 @@ func decodeSavedStateMetadata(data []byte) (savedStateMetadata, error) {
 	decoder.DisallowUnknownFields()
 	var metadata savedStateMetadata
 	if err := decoder.Decode(&metadata); err != nil {
+		// A newer build can add a field, and a rollback must not leave the VM stuck.
+		if json.Unmarshal(data, &savedStateMetadata{}) == nil {
+			return savedStateMetadata{}, fmt.Errorf("%w: decode saved state metadata: %w", errSavedStateIncompatible, err)
+		}
 		return savedStateMetadata{}, fmt.Errorf("decode saved state metadata: %w", err)
 	}
 	var trailing any
