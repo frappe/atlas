@@ -6,10 +6,13 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import requests
+import urllib3
 
 from atlas.atlas.core.server_providers.base import ProviderOperationError, ServerPowerAction
 
 logger = logging.getLogger("atlas.provider.redfish")
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 READ_TIMEOUT_SECONDS = 10
 ACTION_TIMEOUT_SECONDS = 30
@@ -52,12 +55,25 @@ class RedfishClient:
 			raise RedfishError(f"{self.url} has no ComputerSystem.Reset action")
 
 		# Redfish makes the allowed values optional. Without them, Atlas sends its first choice.
-		allowed = reset.get("ResetType@Redfish.AllowableValues") or RESET_TYPES[action][:1]
+		allowed = self._read_allowed_reset_types(reset) or RESET_TYPES[action][:1]
 		reset_type = next((value for value in RESET_TYPES[action] if value in allowed), None)
 		if not reset_type:
 			raise RedfishError(f"{self.url} allows none of {', '.join(RESET_TYPES[action])}")
 
 		self.request("POST", urljoin(self.url, reset["target"]), json={"ResetType": reset_type})
+
+	def _read_allowed_reset_types(self, reset: dict) -> list[str]:
+		"""Return the ResetType values from the action, or from its ActionInfo resource."""
+		if reset.get("ResetType@Redfish.AllowableValues"):
+			return reset["ResetType@Redfish.AllowableValues"]
+
+		if not isinstance(reset.get("@Redfish.ActionInfo"), str):
+			return []
+
+		for parameter in self.read(reset["@Redfish.ActionInfo"]).get("Parameters") or []:
+			if parameter.get("Name") == "ResetType":
+				return parameter.get("AllowableValues") or []
+		return []
 
 	def read(self, link: str) -> dict[str, Any]:
 		"""Read a Redfish resource by its @odata.id link."""
@@ -124,6 +140,7 @@ class RedfishClient:
 				headers={"Accept": "application/json"},
 				timeout=timeout,
 				allow_redirects=False,
+				verify=False,  # A BMC has a self-signed certificate; password auth protects the request.
 				**kwargs,
 			)
 		except requests.RequestException as error:
