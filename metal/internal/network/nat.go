@@ -98,20 +98,22 @@ func defaultRouteInterface() (string, error) {
 
 // claimPublicIPv4 makes the host answer ARP for the public address on the public interface.
 // The kernel answers a proxy entry only when the address routes through another device.
-// A new claim is announced, so the provider router does not keep the previous host.
-func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, publicIPv4 string) error {
+// A new claim is announced first, so a failed announcement leaves no entry and the next pass retries it.
+func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, publicIPv4 string, announce announcer) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
 	isClaimed, err := hasProxyNeighbour(ctx, "-4", publicIPv4, publicInterfaceName)
 	if err != nil {
 		return err
 	}
-	if err := runSteps(ctx, [][]string{
+	if !isClaimed {
+		if err := announce(publicInterfaceName, publicIPv4); err != nil {
+			return err
+		}
+	}
+	return runSteps(ctx, [][]string{
 		{"ip", "-4", "route", "replace", publicIPv4 + "/32", "dev", hostVirtualEthernet, "proto", "static"},
 		{"ip", "-4", "neigh", "replace", "proxy", publicIPv4, "dev", publicInterfaceName},
-	}); err != nil || isClaimed {
-		return err
-	}
-	return announcePublicIPv4(publicInterfaceName, publicIPv4)
+	})
 }
 
 // releasePublicIPv4Claims removes every public address claim of the VM except keep.
@@ -144,20 +146,22 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, publicInterface
 }
 
 // claimPublicIPv6 makes the host answer NDP for the public address on the public interface.
-// A new claim is announced, so the provider router does not keep the previous host.
-func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string) error {
+// A new claim is announced first, so a failed announcement leaves no entry and the next pass retries it.
+func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string, announce announcer) error {
 	address := strings.TrimSuffix(publicIPv6, "/128")
 	isClaimed, err := hasProxyNeighbour(ctx, "-6", address, publicInterfaceName)
 	if err != nil {
 		return err
 	}
-	if err := runSteps(ctx, [][]string{
+	if !isClaimed {
+		if err := announce(publicInterfaceName, address); err != nil {
+			return err
+		}
+	}
+	return runSteps(ctx, [][]string{
 		{"sysctl", "-q", "-w", "net.ipv6.conf." + publicInterfaceName + ".proxy_ndp=1"},
 		{"ip", "-6", "neigh", "replace", "proxy", address, "dev", publicInterfaceName},
-	}); err != nil || isClaimed {
-		return err
-	}
-	return announcePublicIPv6(publicInterfaceName, address)
+	})
 }
 
 // releasePublicIPv6Claims removes every public address claim of the VM except keep.

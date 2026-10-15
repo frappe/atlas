@@ -330,7 +330,7 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 			return err
 		}
 		if allocator.publicInterfaceName != "" {
-			if err := claimPublicIPv4(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv4); err != nil {
+			if err := claimPublicIPv4(ctx, request.UserID, allocator.publicInterfaceName, request.PublicIPv4, announcePublicIPv4); err != nil {
 				return err
 			}
 		}
@@ -340,7 +340,7 @@ func (allocator *LinuxAllocator) addWanted(ctx context.Context, request request)
 			return err
 		}
 		if allocator.publicInterfaceName != "" {
-			if err := claimPublicIPv6(ctx, allocator.publicInterfaceName, request.PublicIPv6); err != nil {
+			if err := claimPublicIPv6(ctx, allocator.publicInterfaceName, request.PublicIPv6, announcePublicIPv6); err != nil {
 				return err
 			}
 		}
