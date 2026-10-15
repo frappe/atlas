@@ -29,7 +29,7 @@ Metal uses TLS 1.3 with no shared secret.
 | Coordination | `9001` | Any regional node certificate. Source-side migration routes only. |
 | One-shot snapshot stream | `9002` | Any regional node certificate. |
 
-The control listener binds only to the WireGuard address. The coordination and snapshot listeners bind only to the private IPv4 address. The host firewall admits `9000` only from the Atlas WireGuard address, and `9001` and `9002` only from the private network on the private uplink. Metal drops guest packets to the private network, so guests cannot reach these ports. See [Atlas access to hosts](../region/host-access.md#host-firewall). The destination also checks the source server certificate against the source address.
+The control listener binds only to the WireGuard address. The coordination and snapshot listeners bind only to the [migration network](../region/metald.md#three-connection-roles) address: the private IPv4 address by default, or the WireGuard address. The host firewall admits `9000` only from the Atlas WireGuard address, and `9001` and `9002` only from host addresses on `wg0` and from the private network on the private uplink. Metal drops guest packets to the private network, so guests cannot reach these ports. See [Atlas access to hosts](../region/host-access.md#host-firewall). The destination also checks the source server certificate against the source address.
 
 ### Certificate lifetime
 
