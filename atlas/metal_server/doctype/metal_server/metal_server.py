@@ -26,6 +26,7 @@ from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.disk_inventory import DiskInventory
 from atlas.metal_server.core.host_inspection import HostInspection
 from atlas.metal_server.core.host_installation import (
+	FIREWALL_INSTALL_TIMEOUT_SECONDS,
 	METALD_INSTALL_TIMEOUT_SECONDS,
 	METALD_SETUP_TIMEOUT_SECONDS,
 	TELEMETRY_INSTALL_TIMEOUT_SECONDS,
@@ -376,6 +377,29 @@ class MetalServer(Document):
 		)
 
 	@frappe.whitelist(methods=["POST"])
+	def install_host_firewall(self) -> None:
+		"""Queue the host firewall install for this server."""
+		frappe.only_for("System Manager")
+		if self.status != "Running":
+			frappe.throw(_("Metal Server {0} is not running.").format(self.name))
+
+		job_id = f"atlas||server||install-host-firewall||{self.name}"
+
+		if is_job_enqueued(job_id):
+			frappe.throw(_("The host firewall install already runs for {0}.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_install_host_firewall",
+			queue="long",
+			timeout=FIREWALL_INSTALL_TIMEOUT_SECONDS,
+			job_id=job_id,
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+
+	@frappe.whitelist(methods=["POST"])
 	def renew_tls_certificate(self) -> None:
 		"""Queue a Metal TLS certificate renewal for this server."""
 		frappe.only_for("System Manager")
@@ -528,6 +552,10 @@ class MetalServer(Document):
 	def _install_metald(self) -> None:
 		"""Install metald and its host dependencies."""
 		HostInstallation(self).install_metal()
+
+	def _install_host_firewall(self) -> None:
+		"""Install the host input firewall."""
+		HostInstallation(self).install_host_firewall()
 
 	def _configure_telemetry(self) -> None:
 		"""Install Vector and the Datum credentials that metald and Vector read."""

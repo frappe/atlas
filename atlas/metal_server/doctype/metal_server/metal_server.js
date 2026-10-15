@@ -50,6 +50,13 @@ frappe.ui.form.on("Metal Server", {
 				false,
 			],
 			[
+				__("Re-install Firewall"),
+				"install_host_firewall",
+				is_running,
+				__("Installing firewall..."),
+				false,
+			],
+			[
 				__("Upgrade Metald"),
 				"upgrade_metald",
 				is_running,
