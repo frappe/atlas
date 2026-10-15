@@ -254,7 +254,7 @@
   },
   {
    "default": "0",
-   "description": "Hosts send disk and memory snapshot over the private network.",
+   "description": "Off: hosts send disk and memory snapshots over the private network. On: hosts send them over WireGuard.",
    "fieldname": "is_migration_on_wireguard",
    "fieldtype": "Check",
    "label": "Migrate VM over WireGuard",
