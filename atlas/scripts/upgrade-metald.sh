@@ -31,6 +31,13 @@ if ! flock -n 9; then
 	exit 1
 fi
 
+# The coordination listener on the private address needs the migration rule from install-host-firewall.sh.
+firewall_file=/etc/atlas/host-firewall.nft
+if [ -f "$firewall_file" ] && ! grep -q 'ip saddr .* tcp dport { 9001, 9002 } accept' "$firewall_file"; then
+	echo "the host firewall blocks migration traffic from the private network; run the Metal Server action Re-configure Metald" >&2
+	exit 1
+fi
+
 for binary in "$metald_binary" "$mesh_binary"; do
 	if [ ! -x "$binary" ]; then
 		echo "$binary is not installed; run install-metald.sh first" >&2
