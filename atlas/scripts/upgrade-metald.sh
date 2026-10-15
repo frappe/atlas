@@ -53,8 +53,9 @@ unit_property() {
 	systemctl show "$service" -p "$1" --value 2>/dev/null || echo ""
 }
 
+# A restart stops the transient warm image build units, so only tenant VMs count.
 active_virtual_machine_count() {
-	systemctl list-units "metal-vm@*" --state=active --no-legend --plain | wc -l
+	systemctl list-units "metal-vm@*" --state=active --no-legend --plain | awk '$1 !~ /^metal-vm@warm-/' | wc -l
 }
 
 # service_is_stable checks that the service stays active.
