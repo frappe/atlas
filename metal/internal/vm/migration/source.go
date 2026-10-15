@@ -204,7 +204,7 @@ func (m *Manager) UnlockSource(ctx context.Context, migrationID, virtualMachineI
 		return vm.ErrConflict
 	}
 	if existing.State == sourceExpired {
-		return vm.ErrConflict
+		return nil
 	}
 	if existing.State == sourceStopped || existing.State == sourceDetached {
 		return vm.ErrConflict

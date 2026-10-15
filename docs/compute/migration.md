@@ -65,6 +65,10 @@ Atlas keeps the source host as the VM's recorded owner until the destination rep
 
 Atlas rejects cancellation after it commits destination ownership. A later controller error retries finish.
 
+A temporary connection error remains visible in the migration error fields. It does not change a completed cancellation to `failed` or replace the cause of a migration failure.
+
+Visibility and worker timeouts do not replace an existing cancellation or its failure cause.
+
 Metal hides the incoming VM from normal reads until the move finishes.
 
 ## Migration status

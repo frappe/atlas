@@ -64,7 +64,13 @@ The destination stays ready until the Atlas app decides:
 
 An unfinished record on either host means recovery is not complete.
 
+If the source stops but its reply is lost, cancellation restores the source before releasing its lock. A failed restore keeps the migration in rollback for retry.
+
 After `finish` starts, an activation or cleanup fault retries forward. Abort is rejected. Activation retries inspect the existing process and do not reload an old snapshot over a disk that the guest may have changed. The jail retains its immutable memory backing file when Metal removes transfer staging, as required by [Firecracker snapshot loading](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md#loading-snapshots).
+
+If a restored destination process exits or crashes during finish, Metal recreates its network and cold-boots its current disk in the requested power state. The guest loses its RAM state, but retains disk writes made after migration activation. Source cleanup waits for activation and any configured guest health check.
+
+If pausing fails after recovery boots the guest, activation retries pause the running process without another boot.
 
 Hosts with SSH-enabled guests can set `migration.require_guest_ssh = true`. After a running guest resumes from its memory snapshot, Metal requires an SSH key-exchange response from its guest address inside the VM network namespace before source cleanup. The probe needs no guest credentials and has a ten-second timeout. A failure keeps the migration in `finishing`, retains source recovery state, and retries the check without replaying memory. Paused and stopped guests skip the probe. The setting defaults to false; it checks guest responsiveness rather than application health.
 
@@ -79,6 +85,8 @@ The source allows one outbound snapshot stream at a time because streams use a f
 | Snapshot listener with no connection or progress | Closes after 2 minutes. |
 
 These timers release abandoned work. They do not unlock a stopped source or discard a ready destination. Keep the records when cutover or rollback needs an operator.
+
+An expired source keeps a tombstone that rejects the same migration ID. A later abort acknowledges cleanup without removing the tombstone. A new migration can replace it.
 
 For API operations and schemas, use the [Metal API reference](/api/metal/). The Atlas-side decision and regional commit belong to Atlas, not this page.
 

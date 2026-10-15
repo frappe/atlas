@@ -151,6 +151,9 @@ func (c *SourceClient) do(request *http.Request, client *http.Client) ([]byte, e
 	if response.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrNotFound)
 	}
+	if response.StatusCode == http.StatusConflict {
+		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrConflict)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("source %s %s returned HTTP %d", request.Method, request.URL.Path, response.StatusCode)
 	}
