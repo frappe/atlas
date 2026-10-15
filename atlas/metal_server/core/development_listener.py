@@ -58,15 +58,11 @@ class DevelopmentListener:
 				f'pilot --site {self.site} set-config atlas_internal_url "{url}"',
 			)
 
-		install_command = (
-			f'sudo ATLAS_WIREGUARD_TCP_PORTS="22, 80, 443, 2222, {self.url.port}" '
-			f"{repository_path() / 'scripts' / 'install-atlas-wireguard.sh'} {atlas_peer.config_path}"
-		)
 		if not self.firewall_rules_path.is_file():
-			raise setup_error(f"Install the {AtlasPeer.interface} link on this machine", install_command)
+			raise setup_error(f"Install the {AtlasPeer.interface} link on this machine", self.install_command)
 		if not is_port_allowed(self.firewall_rules_path.read_text(), self.url.port):
 			raise setup_error(
-				f"Open port {self.url.port} in the {AtlasPeer.interface} firewall", install_command
+				f"Open port {self.url.port} in the {AtlasPeer.interface} firewall", self.install_command
 			)
 
 		try:
@@ -76,6 +72,13 @@ class DevelopmentListener:
 				f"Start the bench. Nothing listens on 127.0.0.1:{self.web_port}", "pilot start"
 			) from error
 
+	@property
+	def install_command(self) -> str:
+		return (
+			f'sudo ATLAS_WIREGUARD_TCP_PORTS="22, 80, 443, 2222, {self.url.port}" '
+			f"{repository_path() / 'scripts' / 'install-atlas-wireguard.sh'} {AtlasPeer().config_path}"
+		)
+
 	def serve(self) -> None:
 		"""Forward requests until the process stops."""
 		self.check()
@@ -84,8 +87,9 @@ class DevelopmentListener:
 		except OSError as error:
 			if error.errno == errno.EADDRNOTAVAIL:
 				raise setup_error(
-					f"No interface has {self.url.hostname}. Apply the {AtlasPeer.interface} link again",
-					f"sudo systemctl restart atlas-wireguard-{AtlasPeer.interface}.service",
+					f"No interface has {self.url.hostname}. NetworkManager removes it when the desktop "
+					f"disconnects {AtlasPeer.interface}. Install the link again, which also stops that",
+					self.install_command,
 				) from error
 			raise
 
