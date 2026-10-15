@@ -28,6 +28,8 @@ Atlas checks enabled pools every minute. At **200 or fewer** available allocatio
 
 Atlas changes no external route. The operator must route the pool to every eligible Metal Server.
 
+When a host claims an address, Metal announces it on the public interface. IPv4 uses a gratuitous ARP reply. IPv6 uses an unsolicited neighbor advertisement. The router then learns the new host at once, for example after a VM migration.
+
 Metal answers ARP for an attached IPv4 address and NDP for an attached IPv6 `/128` on the public interface, the device of the IPv4 default route. So an on-link pool, such as a provider VXLAN, needs no address on the host.
 
 ## Provider direct pools
