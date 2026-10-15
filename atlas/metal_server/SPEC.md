@@ -35,6 +35,7 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - The Atlas peer lives in the host `wg0.conf`, not in host sync. Metal removes only the peers it added.
 - Certificate renewal restarts `metal.service` and shares the metald job lock with install and upgrade.
 - Placement reads Metal Server Usage rows that `usage` writes after each `POST /v1/sync`.
+- `usage` validates optional host compatibility facts and stores `cpu_compatibility_report` and `tsc_scaling_supported` only when they change. Migration decisions stay in Atlas. See [host sync](../../docs/region/host-sync.md).
 - Atlas WG Mesh identifies a peer by `private_network_mac_address`. Sync writes it only when it changes.
 - `bmc_url`, `bmc_username`, and `bmc_password` are set together or not at all. The form and the registration dialog show them only when Atlas Settings sets a BMC driver for the Generic provider.
 - `bmc_power_state` is a virtual field. It reads the BMC at most once per request, and only when a BMC driver is set and `bmc_url` is set. A failed read sets `__onload.bmc_power_error` and does not fail the form load.

@@ -43,6 +43,15 @@ func (host *MigrationHost) NormalizeSourceToStopped(ctx context.Context, virtual
 	}
 }
 
+// SaveAndStopSource saves guest memory before terminating the source process.
+func (host *MigrationHost) SaveAndStopSource(ctx context.Context, virtualMachineID string) error {
+	desired, observed, err := host.manager.newVirtualMachine(virtualMachineID).records()
+	if err != nil {
+		return err
+	}
+	return host.manager.runtime.SaveAndStop(ctx, runtimeMachine(desired, observed.NetworkInterface))
+}
+
 // LimitSourceDisk applies a temporary combined read and write limit before a
 // stream. It never raises the configured limit.
 func (host *MigrationHost) LimitSourceDisk(ctx context.Context, virtualMachineID string, throughputMiBps int) (int, error) {
@@ -79,7 +88,7 @@ func (host *MigrationHost) RemoveMigrationNetwork(ctx context.Context, virtualMa
 	})
 }
 
-// EnsureMigrationNetwork creates and records the destination network for cold start.
+// EnsureMigrationNetwork creates and records the destination network.
 func (host *MigrationHost) EnsureMigrationNetwork(ctx context.Context, virtualMachineID string) error {
 	manager := host.manager
 	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
@@ -105,12 +114,74 @@ func (host *MigrationHost) ApplyMigratedDestinationState(ctx context.Context, vi
 	if err := manager.storage.ResizeDisk(ctx, virtualMachineID, desired.Specification.DiskMiB); err != nil {
 		return fmt.Errorf("grow migrated disk %s: %w", virtualMachineID, err)
 	}
-	return host.RestoreRuntimeState(ctx, virtualMachineID, desired.State)
+	return host.RestoreRuntimeState(ctx, virtualMachineID, desired.State, false)
 }
 
-// RestoreRuntimeState cold-starts running or paused VMs, verifies the result,
+// RestoreMigratedMemorySnapshot loads the incoming snapshot without running the guest.
+func (host *MigrationHost) RestoreMigratedMemorySnapshot(ctx context.Context, virtualMachineID, directory string) error {
+	manager := host.manager
+	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
+	if err != nil {
+		return err
+	}
+	machine := runtimeMachine(desired, observed.NetworkInterface)
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return err
+	}
+	if status.State == StateRunning {
+		return fmt.Errorf("migration destination already runs: %w", ErrConflict)
+	}
+	if status.State != StatePaused {
+		if err := manager.runtime.RestorePausedFrom(ctx, machine, directory); err != nil {
+			return err
+		}
+	}
+	if err := manager.runtime.RefreshMetadata(ctx, machine); err != nil {
+		return err
+	}
+	if err := manager.runtime.RefreshDisk(ctx, machine); err != nil {
+		return err
+	}
+	return manager.recordMigrationRuntimeState(ctx, desired, &observed, StatePaused)
+}
+
+// ActivateMigratedDestination applies the desired power state after Atlas commits ownership.
+func (host *MigrationHost) ActivateMigratedDestination(ctx context.Context, virtualMachineID string) error {
+	manager := host.manager
+	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
+	if err != nil {
+		return err
+	}
+	machine := runtimeMachine(desired, observed.NetworkInterface)
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return err
+	}
+	if status.State != desired.State {
+		switch {
+		case desired.State == StateRunning && status.State == StatePaused:
+			err = manager.runtime.Resume(ctx, machine)
+		case desired.State == StateStopped:
+			err = manager.runtime.Remove(ctx, machine)
+		default:
+			return &TransitionError{DesiredState: desired.State, ObservedState: status.State}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if desired.State == StateRunning {
+		if err := manager.runtime.CheckMigratedGuestSSH(ctx, machine); err != nil {
+			return fmt.Errorf("check migrated guest: %w", err)
+		}
+	}
+	return manager.recordMigrationRuntimeState(ctx, desired, &observed, desired.State)
+}
+
+// RestoreRuntimeState starts or restores running or paused VMs, verifies the result,
 // and records state and generations. Stopped VMs stay stopped.
-func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState State) error {
+func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState State, fromSavedState bool) error {
 	manager := host.manager
 	desired, observed, err := manager.newVirtualMachine(virtualMachineID).records()
 	if err != nil {
@@ -118,18 +189,40 @@ func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachi
 	}
 	machine := runtimeMachine(desired, observed.NetworkInterface)
 
-	resultState, err := manager.coldStartForState(ctx, desiredState, machine)
+	resultState := desiredState
+	if fromSavedState {
+		status, inspectError := manager.runtime.Inspect(ctx, machine)
+		if inspectError != nil {
+			return inspectError
+		}
+		if status.State != desiredState {
+			switch desiredState {
+			case StateRunning:
+				err = manager.runtime.Restore(ctx, machine)
+			case StatePaused:
+				err = manager.runtime.RestorePaused(ctx, machine)
+			default:
+				return &TransitionError{DesiredState: desiredState, ObservedState: status.State}
+			}
+		}
+	} else {
+		resultState, err = manager.coldStartForState(ctx, desiredState, machine)
+	}
 	if err != nil {
 		return err
 	}
-	status, err := manager.runtime.Inspect(ctx, machine)
+	return manager.recordMigrationRuntimeState(ctx, desired, &observed, resultState)
+}
+
+func (manager *Manager) recordMigrationRuntimeState(ctx context.Context, desired DesiredRecord, observed *ObservedRecord, state State) error {
+	status, err := manager.runtime.Inspect(ctx, runtimeMachine(desired, observed.NetworkInterface))
 	if err != nil {
 		return err
 	}
-	if status.State != resultState {
-		return fmt.Errorf("migrated VM %s is %s, want %s", virtualMachineID, status.State, resultState)
+	if status.State != state {
+		return fmt.Errorf("migrated VM %s is %s, want %s", desired.ID, status.State, state)
 	}
-	return manager.writeAppliedState(desired, &observed, resultState)
+	return manager.writeAppliedState(desired, observed, state)
 }
 
 // RemoveMigratedRuntime removes migration runtime, jail, and network. Repeats

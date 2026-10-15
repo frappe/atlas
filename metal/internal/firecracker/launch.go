@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,9 +32,15 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		return err
 	}
 	runtime.logger.Debug("configured Firecracker VM", "virtual_machine_id", configuration.ID, "kernel", bootConfiguration.Kernel, "cmdline", bootArguments(bootConfiguration, configuration.NetworkInterface))
+	client := api.New(runtime.configuration.socketPath(configuration.ID))
+	if len(runtime.configuration.CPUTemplate) != 0 {
+		if err := client.PutCPUConfig(ctx, runtime.configuration.CPUTemplate); err != nil {
+			return fmt.Errorf("configure guest CPU: %w", err)
+		}
+	}
 	return configure(
 		ctx,
-		api.New(runtime.configuration.socketPath(configuration.ID)),
+		client,
 		configuration.ID,
 		configuration.Specification,
 		bootConfiguration,
@@ -154,7 +161,7 @@ func (runtime *Runtime) launchMemorySnapshot(
 	}
 	if metadata != nil {
 		if err := client.PutMMDS(ctx, metadata); err != nil {
-			runtime.logger.Error("MMDS refresh failed", "virtual_machine_id", configuration.ID, "error", err)
+			return fmt.Errorf("refresh snapshot metadata: %w", err)
 		}
 	}
 	if !resume {
@@ -199,19 +206,18 @@ func (runtime *Runtime) launchWarmImage(ctx context.Context, configuration vm.Ru
 	)
 }
 
-// firecrackerCompatibility identifies a Firecracker build for snapshot matching.
+// firecrackerCompatibility identifies the build and CPU template for snapshot matching.
 // Size and modification time stand in for a version the binary does not report.
 func (runtime *Runtime) firecrackerCompatibility() string {
+	compatibility := runtime.configuration.FirecrackerBin
 	information, err := os.Stat(runtime.configuration.FirecrackerBin)
-	if err != nil {
-		return runtime.configuration.FirecrackerBin
+	if err == nil {
+		compatibility = fmt.Sprintf("%s:%d:%d", compatibility, information.Size(), information.ModTime().UnixNano())
 	}
-	return fmt.Sprintf(
-		"%s:%d:%d",
-		runtime.configuration.FirecrackerBin,
-		information.Size(),
-		information.ModTime().UnixNano(),
-	)
+	if len(runtime.configuration.CPUTemplate) != 0 {
+		compatibility += fmt.Sprintf(":cpu:%x", sha256.Sum256(runtime.configuration.CPUTemplate))
+	}
+	return compatibility
 }
 
 // hasMatchingMemorySnapshot reports whether CPU, memory, and disk match the warm

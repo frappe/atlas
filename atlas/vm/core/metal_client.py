@@ -313,11 +313,14 @@ class MetalClient:
 		virtual_machine_id: str,
 		source: str,
 		resize: dict[str, Any] | None = None,
+		has_memory_snapshot: bool = False,
 	) -> dict[str, Any]:
 		"""Store one migration request at the target host. Safe to repeat."""
 		request: dict[str, Any] = {"virtual_machine_id": virtual_machine_id, "source": source}
 		if resize is not None:
 			request["resize"] = resize
+		if has_memory_snapshot:
+			request["has_memory_snapshot"] = True
 		return self._request(
 			"PUT",
 			f"/v1/migrations/{quote(migration_id, safe='')}",

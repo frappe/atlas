@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import asdict, replace
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.vm.core.metal_models import MetalHostCompatibility
 from atlas.vm.core.vm_migration import MigrationService
 
 
@@ -24,6 +27,7 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"target_cpu_millicores": 0,
 		"target_memory_mib": 0,
 		"target_disk_mib": 0,
+		"has_memory_snapshot": 0,
 		"transfers": [],
 	}
 	values.update(overrides)
@@ -59,7 +63,21 @@ class TestMigrationValidation(UnitTestCase):
 	def test_rejects_a_vm_without_a_live_state(self) -> None:
 		for state in ("failed", "unknown"):
 			with self.assertRaises(AtlasUserError):
-				MigrationService.validate_source(source_vm(current_state=state))
+				MigrationService.create(source_vm(current_state=state))
+
+	def test_reads_metal_state_before_locking_the_vm(self) -> None:
+		with patch("frappe.get_doc", side_effect=RuntimeError("Lock requested")) as lock:
+
+			class Source(SimpleNamespace):
+				@property
+				def current_state(self) -> str:
+					if lock.called:
+						raise AssertionError("Metal state read after the row lock")
+					return "running"
+
+			with self.assertRaisesRegex(RuntimeError, "Lock requested"):
+				MigrationService.create(Source(name="vm-00001"))
+			lock.assert_called_once_with("Virtual Machine", "vm-00001", for_update=True)
 
 
 class TestMigrationStatus(UnitTestCase):
@@ -94,6 +112,88 @@ class TestMigrationStatus(UnitTestCase):
 
 
 AFFINITY_RULES = '[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db"}}]'
+HOST_COMPATIBILITY = MetalHostCompatibility(
+	"amd64", "builtin:baseline", "GenuineIntel", "6/58", "fpu sse", "snapshot-build", 2_500_000, False
+)
+
+
+class TestMigrationCompatibility(UnitTestCase):
+	def setUp(self) -> None:
+		super().setUp()
+		self.enterContext(patch("atlas.vm.core.vm_migration._", side_effect=lambda value: value))
+
+	def test_synced_host_comparison(self) -> None:
+		cases = [
+			({}, {}, True),
+			({}, {"architecture": "arm64"}, False),
+			({}, {"cpu_profile": "native"}, False),
+			({}, {"cpu_vendor": "AuthenticAMD"}, False),
+			({"cpu_profile": "native"}, {"cpu_profile": "native", "cpu_model": "6/60"}, False),
+			({}, {"snapshot_host": "other-build"}, False),
+			(
+				{
+					"cpu_profile": "custom:baseline",
+					"cpu_model": "6/60",
+					"cpu_features": "fpu sse avx2 fma bmi1 bmi2",
+				},
+				{"cpu_profile": "custom:baseline"},
+				True,
+			),
+			({"cpu_profile": "native"}, {"cpu_profile": "native", "cpu_features": "sse"}, False),
+			({"cpu_profile": "native"}, {"cpu_profile": "native"}, True),
+			({}, {"tsc_khz": 0}, False),
+			({"tsc_khz": 0}, {}, False),
+			({}, {"tsc_khz": 2_500_625}, True),
+			({}, {"tsc_khz": 2_500_626}, False),
+			({}, {"tsc_khz": 3_000_000, "tsc_scaling": True}, True),
+			({"architecture": "arm64", "tsc_khz": 0}, {"architecture": "arm64", "tsc_khz": 0}, True),
+		]
+		for source_changes, target_changes, compatible in cases:
+			with self.subTest(source=source_changes, target=target_changes):
+				source = replace(HOST_COMPATIBILITY, **source_changes)
+				target = replace(HOST_COMPATIBILITY, **target_changes)
+				service = MigrationService(migration_doc(has_memory_snapshot=True))
+				with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
+					read_report.side_effect = [frappe.as_json(asdict(source)), frappe.as_json(asdict(target))]
+					if compatible:
+						service.validate_compatibility("metal-2", source.architecture)
+					else:
+						with self.assertRaises(AtlasUserError):
+							service.validate_compatibility("metal-2", source.architecture)
+
+	def test_missing_facts_block_the_request(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled", has_memory_snapshot=True))
+		service.update = Mock()
+		service.settle = Mock()
+		service.send_request = Mock()
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
+			patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report,
+		):
+			read_report.return_value = None
+			service.run()
+		service.update.assert_called_once()
+		self.assertEqual(service.update.call_args.args[0]["error_code"], "migration_incompatible")
+		self.assertNotIn("commit", service.update.call_args.kwargs)
+		service.settle.assert_called_once_with("failed")
+		service.send_request.assert_not_called()
+
+	def test_memory_resize_is_rejected_before_reading_facts(self) -> None:
+		service = MigrationService(migration_doc(has_memory_snapshot=True, target_memory_mib=1024))
+		with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
+			with self.assertRaisesRegex(AtlasUserError, "cannot resize"):
+				service.validate_compatibility("metal-2", "amd64")
+			read_report.assert_not_called()
+
+	def test_disk_only_migration_does_not_read_compatibility_reports(self) -> None:
+		for target_memory_mib in (0, 1024):
+			with self.subTest(target_memory_mib=target_memory_mib):
+				service = MigrationService(migration_doc(target_memory_mib=target_memory_mib))
+				with patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report:
+					service.validate_compatibility("metal-2", "amd64")
+					read_report.assert_not_called()
 
 
 class TestDestinationMetalServerSelection(UnitTestCase):
@@ -180,6 +280,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 
 		with (
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
 			patch(
 				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-2"
 			) as find_server,
@@ -213,10 +314,11 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			"vm-00001",
 			"https://10.0.0.1:9001",
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
+			has_memory_snapshot=False,
 		)
 
 	def test_a_plain_migration_sends_no_resize(self) -> None:
-		service = MigrationService(migration_doc())
+		service = MigrationService(migration_doc(has_memory_snapshot=1))
 		destination_client = Mock()
 
 		with (
@@ -230,10 +332,12 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			service.send_request()
 
 		self.assertIsNone(destination_client.put_migration.call_args.args[3])
+		self.assertTrue(destination_client.put_migration.call_args.kwargs["has_memory_snapshot"])
 
 	def test_the_commit_stores_the_server_and_the_resized_shape(self) -> None:
 		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
 		migration = SimpleNamespace(
+			status="starting",
 			destination_metal_server="metal-2",
 			target_cpu_millicores=4000,
 			target_memory_mib=8192,
@@ -264,7 +368,10 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		service.settle = Mock()
 		service.request_destination_abort = Mock()
 
-		service.request_abort()
+		with patch.object(
+			service, "_lock_records", return_value=(SimpleNamespace(server="metal-1"), service.migration)
+		):
+			service.request_abort()
 
 		service.settle.assert_called_once_with("aborted")
 		service.request_destination_abort.assert_not_called()
@@ -297,6 +404,7 @@ class TestMigrationTransfers(UnitTestCase):
 						"total_mib": 100,
 						"completed": False,
 					},
+					{"sequence": 3, "snapshot_type": "memory", "total_mib": 512, "completed": False},
 				],
 			)
 			self.assertIsNone(migration.transfers[1].finished_at)
@@ -310,13 +418,23 @@ class TestMigrationTransfers(UnitTestCase):
 						"transferred_mib": 100,
 						"total_mib": 100,
 						"completed": True,
-					}
+					},
+					{
+						"sequence": 3,
+						"snapshot_type": "memory",
+						"transferred_mib": 512,
+						"total_mib": 512,
+						"completed": True,
+					},
 				],
 			)
 
-		self.assertEqual(len(migration.transfers), 2)
-		self.assertEqual([row.idx for row in migration.transfers], [1, 2])
+		self.assertEqual(len(migration.transfers), 3)
+		self.assertEqual([row.idx for row in migration.transfers], [1, 2, 3])
+		self.assertEqual([row.snapshot_type for row in migration.transfers], ["Disk", "Disk", "Memory"])
 		self.assertEqual(migration.transfers[0].finished_at, datetime(2026, 9, 20, 12, 0, 42, 26755))
 		self.assertEqual(migration.transfers[1].finished_at, datetime(2026, 9, 20, 12, 1, 10))
 		self.assertEqual(migration.transfers[1].transferred_mib, 100)
 		self.assertTrue(migration.transfers[1].completed)
+		self.assertEqual(migration.transfers[2].transferred_mib, 512)
+		self.assertTrue(migration.transfers[2].completed)

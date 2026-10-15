@@ -2,6 +2,7 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,6 +80,7 @@ func NewRuntime(
 	serialBroker serialBroker,
 	logger *slog.Logger,
 ) *Runtime {
+	configuration.CPUTemplate = bytes.Clone(configuration.CPUTemplate)
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -188,11 +190,22 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	if status.State != vm.StateRunning && status.State != vm.StatePaused {
 		return nil
 	}
+	limiter := driveRateLimiter(input.Specification.Disk)
+	if limiter == nil {
+		limiter = &api.RateLimiter{}
+	}
+	// PATCH retains omitted buckets, so unlimited values must explicitly clear them.
+	if limiter.Bandwidth == nil {
+		limiter.Bandwidth = &api.TokenBucket{}
+	}
+	if limiter.Ops == nil {
+		limiter.Ops = &api.TokenBucket{}
+	}
 
 	return api.New(runtime.configuration.socketPath(input.ID)).PatchDrive(ctx, api.PartialDrive{
 		DriveID:     rootDriveIdentifier,
 		PathOnHost:  rootDrivePath,
-		RateLimiter: driveRateLimiter(input.Specification.Disk),
+		RateLimiter: limiter,
 	})
 }
 

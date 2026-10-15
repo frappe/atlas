@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -18,6 +19,24 @@ import (
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
+
+func TestCPUTemplateSeparatesMemorySnapshotCompatibility(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firecracker")
+	if err := os.WriteFile(path, []byte("binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &Runtime{configuration: Config{FirecrackerBin: path}}
+	defaultCompatibility := runtime.firecrackerCompatibility()
+	runtime.configuration.CPUTemplate = []byte(`{"cpuid_modifiers":[]}`)
+	profileCompatibility := runtime.firecrackerCompatibility()
+	if profileCompatibility == defaultCompatibility {
+		t.Fatal("CPU profile reused unprofiled memory")
+	}
+	runtime.configuration.CPUTemplate = []byte(`{"cpuid_modifiers":[{}]}`)
+	if runtime.firecrackerCompatibility() == profileCompatibility {
+		t.Fatal("changed CPU profile reused previous memory")
+	}
+}
 
 func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 	units := &stubUnits{active: false} // inactive reports stopped

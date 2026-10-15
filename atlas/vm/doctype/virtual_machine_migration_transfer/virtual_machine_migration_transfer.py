@@ -2,7 +2,7 @@ from frappe.model.document import Document
 
 
 class VirtualMachineMigrationTransfer(Document):
-	"""One disk transfer of a virtual machine migration."""
+	"""One disk or memory transfer of a virtual machine migration."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -18,6 +18,7 @@ class VirtualMachineMigrationTransfer(Document):
 		parent: DF.Data
 		parentfield: DF.Data
 		parenttype: DF.Data
+		snapshot_type: DF.Literal["Disk", "Memory"]
 		started_at: DF.Datetime | None
 		throughput_mibps: DF.Int
 		total_mib: DF.Int

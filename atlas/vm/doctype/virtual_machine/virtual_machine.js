@@ -176,7 +176,7 @@ function migrateVirtualMachine(frm) {
 				fieldtype: "HTML",
 				fieldname: "summary",
 				options: __(
-					"This moves {0} off {1}. It stays available until the short cutover.<br><br>",
+					"This moves {0} off {1}. It stays available until the short cutover.<br><br>Select Memory Snapshot to resume the guest on the destination.<br><br>",
 					[frm.doc.name.bold(), (frm.doc.server || "").bold()]
 				),
 			},
@@ -194,6 +194,12 @@ function migrateVirtualMachine(frm) {
 					},
 				}),
 			},
+			{
+				fieldtype: "Check",
+				fieldname: "has_memory_snapshot",
+				label: __("Memory Snapshot"),
+				default: 0,
+			},
 		],
 		primary_action_label: __("Migrate"),
 		primary_action(values) {
@@ -203,6 +209,7 @@ function migrateVirtualMachine(frm) {
 				doc: frm.doc,
 				args: {
 					destination_metal_server: values.destination_metal_server || null,
+					has_memory_snapshot: Boolean(values.has_memory_snapshot),
 				},
 				freeze: true,
 				freeze_message: __("Scheduling migration..."),

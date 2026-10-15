@@ -88,7 +88,7 @@ func TestSourceRejectsInvalidAcknowledgedSequence(t *testing.T) {
 		if _, err := migrationManager.NextSourceSnapshot(t.Context(), "mig-1", "vm-1", receivedSequence); !errors.Is(err, vm.ErrConflict) {
 			t.Errorf("next snapshot sequence %d = %v, want ErrConflict", receivedSequence, err)
 		}
-		if _, err := migrationManager.StopSource(t.Context(), "mig-1", "vm-1", receivedSequence); !errors.Is(err, vm.ErrConflict) {
+		if _, err := migrationManager.StopSource(t.Context(), "mig-1", "vm-1", receivedSequence, false); !errors.Is(err, vm.ErrConflict) {
 			t.Errorf("stop source sequence %d = %v, want ErrConflict", receivedSequence, err)
 		}
 	}
@@ -180,7 +180,7 @@ func TestStopSourceStopsAndCreatesFinalSnapshot(t *testing.T) {
 	transfer.sizeBytes = 500
 	seedSourceVM(t, migrationManager, machines, vm.StateRunning, 2)
 
-	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 2)
+	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestStopSourceAcknowledgesTheLastReceivedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3)
+	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestStopSourceRejectsASequenceTheSourceDidNotCreate(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	seedSourceVM(t, migrationManager, machines, vm.StateRunning, 2)
 
-	_, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3)
+	_, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3, false)
 	if !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("stop source = %v, want ErrConflict", err)
 	}
@@ -245,13 +245,13 @@ func TestStopSourceIsIdempotent(t *testing.T) {
 	seedSourceVM(t, migrationManager, machines, vm.StateRunning, 0)
 	ctx := context.Background()
 
-	first, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0)
+	first, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	created := len(transfer.created)
 
-	second, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0)
+	second, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +638,7 @@ func TestATombstoneRefusesItsOwnMigrationAndAcceptsANewOne(t *testing.T) {
 	if _, err := manager.LockSource(context.Background(), "mig-idle", "vm-1"); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("resurrecting the expired migration = %v, want a conflict", err)
 	}
-	if _, err := manager.StopSource(context.Background(), "mig-idle", "vm-1", 0); !errors.Is(err, vm.ErrConflict) {
+	if _, err := manager.StopSource(context.Background(), "mig-idle", "vm-1", 0, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("stop against a tombstone = %v, want a conflict", err)
 	}
 	if err := manager.UnlockSource(context.Background(), "mig-idle", "vm-1"); !errors.Is(err, vm.ErrConflict) {

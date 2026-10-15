@@ -30,7 +30,11 @@ class VirtualMachineMigration(Document):
 		error_code: DF.Data | None
 		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
+		has_memory_snapshot: DF.Check
 		last_destination_metal_server_selection_at: DF.Datetime | None
+		memory_snapshot_status: DF.Literal[
+			"not_started", "creating", "transferring", "restoring", "completed", "failed", "aborted"
+		]
 		progress_percent: DF.Int
 		scheduled_at: DF.Datetime | None
 		source_metal_server: DF.Link
