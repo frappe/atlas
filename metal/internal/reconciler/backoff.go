@@ -6,7 +6,7 @@ import (
 )
 
 // maximumBackoff caps the wait between two attempts on one failing item.
-const maximumBackoff = 5 * time.Minute
+const maximumBackoff = time.Minute
 
 type failure struct {
 	count   int
@@ -16,12 +16,14 @@ type failure struct {
 // backoff delays the retry of each item that keeps failing.
 type backoff struct {
 	interval time.Duration
+	now      func() time.Time
 	mutex    sync.Mutex
 	failures map[string]failure
+	resetAt  time.Time
 }
 
 func newBackoff(interval time.Duration) *backoff {
-	return &backoff{interval: interval, failures: map[string]failure{}}
+	return &backoff{interval: interval, now: time.Now, failures: map[string]failure{}}
 }
 
 // isWaiting reports whether id failed and its retry time has not come.
@@ -30,13 +32,18 @@ func (b *backoff) isWaiting(id string) bool {
 	defer b.mutex.Unlock()
 
 	failed, found := b.failures[id]
-	return found && time.Now().Before(failed.retryAt)
+	return found && b.now().Before(failed.retryAt)
 }
 
-// fail records a failure of id. The wait doubles from the interval up to maximumBackoff.
-func (b *backoff) fail(id string) {
+// fail records a failure of an attempt that began at startedAt. The wait doubles from the
+// interval up to maximumBackoff. An attempt that began before the last reset is ignored.
+func (b *backoff) fail(id string, startedAt time.Time) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+
+	if startedAt.Before(b.resetAt) {
+		return
+	}
 
 	failed := b.failures[id]
 	failed.count++
@@ -44,7 +51,7 @@ func (b *backoff) fail(id string) {
 	for range failed.count - 1 {
 		wait = min(wait*2, maximumBackoff)
 	}
-	failed.retryAt = time.Now().Add(min(wait, maximumBackoff))
+	failed.retryAt = b.now().Add(min(wait, maximumBackoff))
 	b.failures[id] = failed
 }
 
@@ -60,4 +67,5 @@ func (b *backoff) reset() {
 	defer b.mutex.Unlock()
 
 	clear(b.failures)
+	b.resetAt = b.now()
 }

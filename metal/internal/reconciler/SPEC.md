@@ -23,7 +23,7 @@ This package schedules convergence work. It owns no VM, image, snapshot, or traf
 - Each operation has its own timeout.
 - The VM pass limits concurrency, so one slow VM cannot block others.
 - Errors are logged. A later pass retries safe operations.
-- A failing VM waits twice as long after each failure, up to 5 minutes. Wake clears the wait.
+- A failing VM waits twice as long after each failure, up to 1 minute. Wake clears the wait.
 - Errors after cancellation are suppressed.
 
 ## Ownership
