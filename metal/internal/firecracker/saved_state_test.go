@@ -102,7 +102,7 @@ func TestLoadSavedStateReportsAnIncompatibleFirecracker(t *testing.T) {
 	}
 }
 
-func TestLoadSavedStateRejectsUnknownMetadata(t *testing.T) {
+func TestLoadSavedStateReportsUnknownMetadataAsIncompatible(t *testing.T) {
 	configuration := Config{MachinesDir: t.TempDir()}
 	requirement := savedStateRequirement{VirtualMachineID: "vm-1"}
 	savedStateFixture(t, configuration, requirement)
@@ -116,8 +116,22 @@ func TestLoadSavedStateRejectsUnknownMetadata(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := configuration.loadSavedState(requirement); err == nil {
-		t.Fatal("want an unknown metadata field error")
+	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want errSavedStateIncompatible", err)
+	}
+}
+
+func TestLoadSavedStateRejectsMalformedMetadata(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1"}
+	savedStateFixture(t, configuration, requirement)
+	path := filepath.Join(configuration.savedStateDirectory(requirement.VirtualMachineID), savedStateMetadataFileName)
+	if err := os.WriteFile(path, []byte(`{"virtual_machine_id":`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configuration.loadSavedState(requirement)
+	if err == nil || errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want a hard decode error", err)
 	}
 }
 
