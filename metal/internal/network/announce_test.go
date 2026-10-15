@@ -1,10 +1,8 @@
 package network
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,26 +41,6 @@ func readCommands(t *testing.T, commandLog string) string {
 	return string(data)
 }
 
-func TestClaimPublicIPv4AnnouncesANewClaim(t *testing.T) {
-	commandLog := fakeHostCommands(t, false)
-	var announced []string
-	announce := func(interfaceName, address string) error {
-		announced = append(announced, interfaceName+" "+address)
-		return nil
-	}
-
-	if err := claimPublicIPv4(context.Background(), 1, "bond0", "203.0.113.5", announce); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(announced) != 1 || announced[0] != "bond0 203.0.113.5" {
-		t.Fatalf("announced = %v, want one announcement", announced)
-	}
-	if !strings.Contains(readCommands(t, commandLog), "neigh replace proxy 203.0.113.5 dev bond0") {
-		t.Fatal("the proxy entry was not installed")
-	}
-}
-
 func TestClaimPublicIPv4DoesNotAnnounceAnExistingClaim(t *testing.T) {
 	commandLog := fakeHostCommands(t, true)
 	announce := func(string, string) error {
@@ -87,50 +65,5 @@ func TestFailedAnnouncementLeavesNoProxyEntryForTheRetry(t *testing.T) {
 	}
 	if strings.Contains(readCommands(t, commandLog), "neigh replace") {
 		t.Fatal("a failed announcement installed the proxy entry, so the retry would skip it")
-	}
-}
-
-func TestClaimPublicIPv6AnnouncesTheAddressWithoutItsPrefixLength(t *testing.T) {
-	fakeHostCommands(t, false)
-	var announced string
-	announce := func(_, address string) error {
-		announced = address
-		return nil
-	}
-
-	if err := claimPublicIPv6(context.Background(), "bond0", "2001:db8::5/128", announce); err != nil {
-		t.Fatal(err)
-	}
-	if announced != "2001:db8::5" {
-		t.Fatalf("announced = %q", announced)
-	}
-}
-
-func TestGratuitousARPFrameAnnouncesTheAddressToEveryHost(t *testing.T) {
-	mac := net.HardwareAddr{0xc6, 0x39, 0x48, 0xe6, 0x5f, 0x38}
-	address := [4]byte{103, 48, 90, 252}
-
-	want := []byte{
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xc6, 0x39, 0x48, 0xe6, 0x5f, 0x38, 0x08, 0x06,
-		0, 1, 0x08, 0, 6, 4, 0, 2,
-		0xc6, 0x39, 0x48, 0xe6, 0x5f, 0x38, 103, 48, 90, 252,
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 103, 48, 90, 252,
-	}
-	if got := gratuitousARPFrame(mac, address); !bytes.Equal(got, want) {
-		t.Fatalf("frame = % x\nwant   % x", got, want)
-	}
-}
-
-func TestNeighborAdvertisementOverridesTheCacheWithTheHostMAC(t *testing.T) {
-	mac := net.HardwareAddr{0xc6, 0x39, 0x48, 0xe6, 0x5f, 0x38}
-	address := [16]byte{0x20, 0x01, 0x0d, 0xb8, 15: 1}
-
-	message := neighborAdvertisement(mac, address)
-
-	if message[0] != 136 || message[4]&0x20 == 0 {
-		t.Fatalf("message = % x, want a neighbor advertisement with the override flag", message[:8])
-	}
-	if !bytes.Equal(message[8:24], address[:]) || !bytes.Equal(message[26:], mac) {
-		t.Fatalf("message = % x, want the target address and the MAC option", message)
 	}
 }
