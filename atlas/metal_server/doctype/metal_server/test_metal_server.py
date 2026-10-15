@@ -637,6 +637,32 @@ class TestServer(UnitTestCase):
 
 		enqueue_doc.assert_not_called()
 
+	def test_install_host_firewall_rejects_a_server_that_is_not_running(self) -> None:
+		server = self._server(status="Stopped")
+
+		with (
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
+			),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
+		):
+			with self.assertRaises(ValueError):
+				MetalServer.install_host_firewall(server)
+
+		enqueue_doc.assert_not_called()
+
+	def test_install_host_firewall_worker_installs_only_the_firewall(self) -> None:
+		server = self._server(status="Running")
+
+		with patch(
+			"atlas.metal_server.doctype.metal_server.metal_server.HostInstallation"
+		) as host_installation:
+			MetalServer._install_host_firewall(server)
+
+		host_installation.assert_called_once_with(server)
+		host_installation.return_value.install_host_firewall.assert_called_once_with()
+
 	def test_renew_tls_certificate_rejects_a_server_that_is_not_provisioned(self) -> None:
 		server = self._server(status="Running")
 
