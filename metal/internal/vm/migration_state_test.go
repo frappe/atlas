@@ -309,10 +309,18 @@ func TestMemoryActivationRetainsRunningGuestAfterHealthCheckFailure(t *testing.T
 }
 
 func TestMemoryActivationColdStartsAfterDestinationProcessLoss(t *testing.T) {
-	for _, state := range []State{StateRunning, StatePaused} {
-		t.Run(string(state), func(t *testing.T) {
+	for _, test := range []struct {
+		desiredState State
+		lostState    State
+	}{
+		{StateRunning, StateStopped},
+		{StateRunning, StateFailed},
+		{StatePaused, StateStopped},
+		{StatePaused, StateFailed},
+	} {
+		t.Run(string(test.desiredState)+"/"+string(test.lostState), func(t *testing.T) {
 			machines, runtime, _, _ := newTestManager(t)
-			seedDestinationVM(t, machines, state)
+			seedDestinationVM(t, machines, test.desiredState)
 			host := NewMigrationHost(machines)
 			if err := host.RestoreMigratedMemorySnapshot(t.Context(), "vm-1", "/incoming"); err != nil {
 				t.Fatal(err)
@@ -320,16 +328,32 @@ func TestMemoryActivationColdStartsAfterDestinationProcessLoss(t *testing.T) {
 			if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
 				t.Fatal(err)
 			}
-			runtime.state = StateStopped
+			runtime.state = test.lostState
 			for range 2 {
 				if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if runtime.state != state || runtime.coldStarts != 1 || runtime.migrationRestores != 1 || runtime.restores != 0 {
+			if runtime.state != test.desiredState || runtime.coldStarts != 1 || runtime.migrationRestores != 1 || runtime.restores != 0 {
 				t.Fatalf("activation replayed saved memory or failed to recover: %+v", runtime)
 			}
 		})
+	}
+}
+
+func TestMemoryActivationRemovesFailedProcessWhenDesiredStopped(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StateStopped)
+	host := NewMigrationHost(machines)
+	if err := host.RestoreMigratedMemorySnapshot(t.Context(), "vm-1", "/incoming"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateFailed
+	if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.state != StateStopped || runtime.removes != 1 || runtime.coldStarts != 0 || runtime.migrationRestores != 1 {
+		t.Fatalf("activation did not remove the failed process: %+v", runtime)
 	}
 }
 

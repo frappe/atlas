@@ -68,7 +68,7 @@ If the source stops but its reply is lost, cancellation restores the source befo
 
 After `finish` starts, an activation or cleanup fault retries forward. Abort is rejected. Activation retries inspect the existing process and do not reload an old snapshot over a disk that the guest may have changed. The jail retains its immutable memory backing file when Metal removes transfer staging, as required by [Firecracker snapshot loading](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md#loading-snapshots).
 
-If a restored destination loses its process during finish, Metal recreates its network and cold-boots its current disk in the requested power state. The guest loses its RAM state, but retains disk writes made after migration activation. Source cleanup waits for activation and any configured guest health check.
+If a restored destination process exits or crashes during finish, Metal recreates its network and cold-boots its current disk in the requested power state. The guest loses its RAM state, but retains disk writes made after migration activation. Source cleanup waits for activation and any configured guest health check.
 
 If pausing fails after recovery boots the guest, activation retries pause the running process without another boot.
 
