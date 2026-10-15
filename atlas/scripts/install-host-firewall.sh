@@ -42,7 +42,9 @@ table inet atlas_host {
 		# The atlas-vm guest reaches this host's WireGuard directly.
 		iifname "tap-atlas" udp dport $wireguard_port accept
 		iifname "$wireguard_interface" ip6 saddr $ATLAS_WIREGUARD_ADDRESS tcp dport { 22, 9000 } accept
+		# Atlas Settings chooses the migration network.
 		iifname "$wireguard_interface" ip6 saddr fdab::/16 tcp dport { 9001, 9002 } accept
+		iifname "$MESH_UPLINK_INTERFACE" ip saddr $PRIVATE_NETWORK_CIDR tcp dport { 9001, 9002 } accept
 		# Recovery path when wg0 is down.
 		iifname "$MESH_UPLINK_INTERFACE" ip saddr $PRIVATE_NETWORK_CIDR tcp dport 22 accept
 	}

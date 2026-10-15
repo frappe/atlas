@@ -19,14 +19,14 @@ Atlas still assigns VM addresses and syncs the host peer list and access policy.
 | Layer | Addresses | Job |
 | --- | --- | --- |
 | 1. Host network | Provider private IPv4 | The provider's private network carries traffic between hosts. |
-| 2. WireGuard | `fdab::/16`, one per host | Encrypts all traffic between hosts. |
+| 2. WireGuard | `fdab::/16`, one per host | Encrypts VM and Atlas traffic between hosts. |
 | 3. WG Mesh | `fdaa::/16`, one per VM | eBPF decides where each VM packet goes. |
 
 Each layer uses the one below it. A VM never sees the host tunnels or the provider's private network.
 
 ## Layer 1: the host network
 
-The provider gives the hosts of a region a private network. Network code calls this the **underlay**. It moves packets between hosts. VM traffic goes through WireGuard before it crosses this network. Host location lookups use the network directly.
+The provider gives the hosts of a region a private network. Network code calls this the **underlay**. It moves packets between hosts. VM traffic goes through WireGuard before it crosses this network. Host location lookups use the network directly. By default, migration traffic between hosts also uses it directly, because it has its own TLS.
 
 ## Layer 2: WireGuard between every host
 

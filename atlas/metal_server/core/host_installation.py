@@ -13,6 +13,7 @@ from atlas.atlas.core.telemetry.datum import HOST_TOKEN_LIFETIME, get_datum_url,
 from atlas.atlas.core.tls.metal import atlas_client_identity, ensure_server_certificate
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.atlas_peer import WIREGUARD_KEY
+from atlas.vm.core.metal_client import MetalClient
 
 if TYPE_CHECKING:
 	from frappe.model.document import Document
@@ -98,7 +99,7 @@ class HostInstallation:
 				"WG_MESH_SHA256": settings.wg_mesh_binary_hash,
 				"LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9000",
 				"ATLAS_COMMON_NAME": atlas_client_identity(settings),
-				"COORDINATION_LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9001",
+				"COORDINATION_LISTEN_ADDRESS": MetalClient.get_coordination_address(self.server),
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
 				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
 				"ATLAS_MESH_ADDRESS": settings.wireguard_ip_address,
@@ -135,7 +136,7 @@ class HostInstallation:
 			)
 
 	def install_host_firewall(self) -> None:
-		"""Admit host SSH and Metal calls only through wg0, and keep guests off the private network."""
+		"""Admit Atlas calls through wg0 and migration calls on both networks. Keep guests off the private network."""
 		settings = self.server.settings
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
@@ -205,7 +206,7 @@ class HostInstallation:
 			)
 
 	def upgrade_metald(self, build: Document | None = None, run_in_background: bool = False) -> SSHTask:
-		"""Install a build of metald and Atlas WG Mesh, by default the latest one, and restart metald."""
+		"""Install a metald and Atlas WG Mesh build, set the coordination address, and restart metald."""
 		build = build or self.server.settings
 		if not build.metald_binary_x86_64_file or not build.wg_mesh_binary_x86_64_file:
 			frappe.throw(_("The build has no metald or Atlas WG Mesh binary."))
@@ -219,6 +220,7 @@ class HostInstallation:
 				"METALD_SHA256": build.metald_binary_hash,
 				"WG_MESH_DOWNLOAD_URL": get_download_url(build.wg_mesh_binary_x86_64_file),
 				"WG_MESH_SHA256": build.wg_mesh_binary_hash,
+				"COORDINATION_LISTEN_ADDRESS": MetalClient.get_coordination_address(self.server),
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=run_in_background,
