@@ -45,10 +45,10 @@
   "networking_tab",
   "private_network_config_section",
   "private_network_cidr",
+  "is_migration_on_wireguard",
   "column_break_jzip",
   "private_network_mtu",
   "is_unicast_network_enabled",
-  "is_migration_on_wireguard",
   "atlas_wireguard_peer_connectivity_section",
   "wireguard_ip_address",
   "column_break_uuos",
@@ -142,6 +142,8 @@
   "column_break_dxsw",
   "use_dedicated_sleepy_vm_hosts",
   "sleepy_vm_overcommit_factor",
+  "migration_section",
+  "is_vm_migration_paused",
   "section_break_azkc",
   "auto_spawn_metal_server",
   "column_break_tckj",
@@ -252,10 +254,20 @@
   },
   {
    "default": "0",
-   "description": "Off: hosts send migration traffic over the private network. Run Upgrade Metald on each host after a change.",
+   "description": "Hosts send disk and memory snapshot over the private network.",
    "fieldname": "is_migration_on_wireguard",
    "fieldtype": "Check",
-   "label": "Migrate over WireGuard"
+   "label": "Migrate VM over WireGuard",
+   "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "description": "Pause VM migrations from the Virtual Machine Migration list. Pause them and wait for running ones before you change the network.",
+   "fieldname": "is_vm_migration_paused",
+   "fieldtype": "Check",
+   "label": "VM Migration Paused",
+   "read_only": 1,
+   "show_description_on_click": 1
   },
   {
    "fieldname": "private_network_config_section",
@@ -976,13 +988,18 @@
   {
    "fieldname": "column_break_kccn",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "migration_section",
+   "fieldtype": "Section Break",
+   "label": "Migration"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-15 12:00:00.000000",
+ "modified": "2026-10-15 19:27:05.702712",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

@@ -207,3 +207,20 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 
 		self.assertTrue(value_fields)
 		self.assertTrue(all(field.read_only for field in value_fields))
+
+
+class TestVMMigrationPause(IntegrationTestCase):
+	def test_create_refuses_a_new_migration_while_paused(self) -> None:
+		with (
+			patch("frappe.db.get_single_value", return_value=1),
+			self.assertRaisesRegex(AtlasUserError, "paused"),
+		):
+			MigrationService.create(Mock())
+
+	def test_a_migration_that_has_not_finished_counts_as_running(self) -> None:
+		from atlas.vm.core.vm_migration import has_running_migration
+
+		with patch("frappe.db.exists", return_value="migration") as exists:
+			self.assertTrue(has_running_migration())
+
+		self.assertEqual(exists.call_args.args[1]["status"][0], "not in")

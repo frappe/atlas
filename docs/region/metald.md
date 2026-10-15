@@ -26,9 +26,15 @@ The control listener uses the WireGuard address. The coordination listener and t
 
 Migration traffic already uses TLS, so by default it skips WireGuard. This removes a second encryption layer and the smaller WireGuard MTU from large transfers.
 
-To move migration traffic to WireGuard, turn on **Migrate over WireGuard** in Atlas Settings, under Networking. Then run **Upgrade Metald** on each Metal Server.
+To move migration traffic to WireGuard, follow these steps:
 
-Atlas uses the new network for the source address at once. Each host moves its listener at its upgrade. Until then, a migration from that host fails before the source locks.
+1. Click **Pause VM Migrations** in the Virtual Machine Migration list.
+2. Wait until no migration is running.
+3. Turn on **Migrate VM over WireGuard** in Atlas Settings, under Networking, and save.
+4. Run **Upgrade Metald** on each Metal Server.
+5. Click **Resume VM Migrations**.
+
+Atlas refuses the change unless migrations are paused and none is running. Atlas uses the new network for the source address at once. Each host moves its listener at its upgrade. Until then, a migration from that host fails before the source locks.
 
 The host firewall admits migration traffic on both networks, so a change needs no firewall update.
 

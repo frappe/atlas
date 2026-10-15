@@ -50,6 +50,9 @@ class MigrationService:
 		has_memory_snapshot: bool = False,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
+		if frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused", cache=False):
+			frappe.throw(_("VM migrations are paused."), exc=AtlasUserError)
+
 		if virtual_machine.current_state not in LIVE_STATES:
 			frappe.throw(
 				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(
@@ -687,3 +690,10 @@ def reconcile_migrations() -> None:
 	)
 	for name in names:
 		reconcile_migration(name)
+
+
+def has_running_migration() -> bool:
+	"""Return whether any migration has not finished."""
+	return bool(
+		frappe.db.exists("Virtual Machine Migration", {"status": ["not in", list(TERMINAL_STATUSES)]})
+	)
