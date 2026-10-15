@@ -681,7 +681,7 @@ class TestServer(UnitTestCase):
 		create_for_script_file.assert_not_called()
 
 	def test_upgrade_metald_worker_sends_the_builds_and_the_private_coordination_address(self) -> None:
-		"""The upgrade moves an existing host's migration listener from wg0 to the private network."""
+		"""The upgrade sets the migration listener to the host's private IPv4 address."""
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
