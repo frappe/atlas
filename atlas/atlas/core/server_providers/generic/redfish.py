@@ -6,10 +6,13 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import requests
+import urllib3
 
 from atlas.atlas.core.server_providers.base import ProviderOperationError, ServerPowerAction
 
 logger = logging.getLogger("atlas.provider.redfish")
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 READ_TIMEOUT_SECONDS = 10
 ACTION_TIMEOUT_SECONDS = 30
@@ -124,6 +127,7 @@ class RedfishClient:
 				headers={"Accept": "application/json"},
 				timeout=timeout,
 				allow_redirects=False,
+				verify=False,  # A BMC has a self-signed certificate; password auth protects the request.
 				**kwargs,
 			)
 		except requests.RequestException as error:
