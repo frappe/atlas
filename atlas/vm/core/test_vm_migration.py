@@ -377,6 +377,20 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		service.request_destination_abort.assert_not_called()
 
 
+class TestMigrationLock(UnitTestCase):
+	def test_run_releases_the_vm_lock_of_a_terminal_migration(self) -> None:
+		service = MigrationService(migration_doc(status="aborted"))
+		service.send_request = Mock()
+
+		with patch("frappe.db.set_value") as set_value, patch("frappe.db.commit"):
+			service.run()
+
+		set_value.assert_called_once_with(
+			"Virtual Machine", {"name": "vm-00001", "active_migration": "mig-00001"}, "active_migration", None
+		)
+		service.send_request.assert_not_called()
+
+
 class TestMigrationTransfers(UnitTestCase):
 	def test_upserts_each_transfer_into_its_row_index(self) -> None:
 		class Document(SimpleNamespace):
