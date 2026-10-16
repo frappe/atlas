@@ -59,10 +59,12 @@ class DevelopmentListener:
 			)
 
 		if not self.firewall_rules_path.is_file():
-			raise setup_error(f"Install the {AtlasPeer.interface} link on this machine", self.install_command)
+			raise setup_error(
+				f"Install the {AtlasPeer.interface} link on this machine", self._install_command
+			)
 		if not is_port_allowed(self.firewall_rules_path.read_text(), self.url.port):
 			raise setup_error(
-				f"Open port {self.url.port} in the {AtlasPeer.interface} firewall", self.install_command
+				f"Open port {self.url.port} in the {AtlasPeer.interface} firewall", self._install_command
 			)
 
 		try:
@@ -73,7 +75,7 @@ class DevelopmentListener:
 			) from error
 
 	@property
-	def install_command(self) -> str:
+	def _install_command(self) -> str:
 		return (
 			f'sudo ATLAS_WIREGUARD_TCP_PORTS="22, 80, 443, 2222, {self.url.port}" '
 			f"{repository_path() / 'scripts' / 'install-atlas-wireguard.sh'} {AtlasPeer().config_path}"
@@ -89,7 +91,7 @@ class DevelopmentListener:
 				raise setup_error(
 					f"No interface has {self.url.hostname}. NetworkManager removes it when the desktop "
 					f"disconnects {AtlasPeer.interface}. Install the link again, which also stops that",
-					self.install_command,
+					self._install_command,
 				) from error
 			raise
 
