@@ -12,6 +12,7 @@ set -eu
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
 : "${ATLAS_COMMON_NAME:?ATLAS_COMMON_NAME is required}"
 : "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
+: "${CPU_TEMPLATE_DISABLED:?CPU_TEMPLATE_DISABLED is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
 firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
@@ -24,6 +25,14 @@ machines_dir=$base_dir/machines
 images_dir=$base_dir/images
 sockets_dir=/run/metal
 config_file=$base_dir/metald.toml
+case "$CPU_TEMPLATE_DISABLED" in
+true) cpu_template_line="cpu_template_disabled = true" ;;
+false) cpu_template_line="" ;;
+*)
+	echo "CPU_TEMPLATE_DISABLED must be true or false" >&2
+	exit 1
+	;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "install-metald must run as root" >&2
@@ -236,6 +245,11 @@ EOF
 	mesh_sections
 	tls_sections
 	chmod 600 "$config_file"
+fi
+# Atlas owns this line: metald boots every VM without a CPU template while it is present.
+sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
+if [ -n "$cpu_template_line" ]; then
+	sed -i "/^\[firecracker\]/a $cpu_template_line" "$config_file"
 fi
 
 

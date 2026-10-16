@@ -64,6 +64,7 @@ class MetalServer(Document):
 		bmc_username: DF.Data | None
 		disks: DF.Table[MetalServerDisk]
 		host_compatibility_report: DF.Code | None
+		is_cpu_template_disabled: DF.Check
 		is_in_maintenance: DF.Check
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check

@@ -10,6 +10,7 @@ shopt -s inherit_errexit
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
+: "${CPU_TEMPLATE_DISABLED:?CPU_TEMPLATE_DISABLED is required}"
 
 metald_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
 mesh_binary=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
@@ -18,6 +19,14 @@ ready_timeout_seconds=120
 patches_file=/var/lib/metal/patches.json
 config_file=/var/lib/metal/metald.toml
 coordination_line="coordination_listen = \"$COORDINATION_LISTEN_ADDRESS\""
+case "$CPU_TEMPLATE_DISABLED" in
+true) cpu_template_line="cpu_template_disabled = true" ;;
+false) cpu_template_line="" ;;
+*)
+	echo "CPU_TEMPLATE_DISABLED must be true or false" >&2
+	exit 1
+	;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
@@ -46,6 +55,19 @@ reported_version() {
 	tool_version=$("$1" version 2>/dev/null | head -1 | sed 's/^CLI version: //') || tool_version=""
 	[ -n "$tool_version" ] || tool_version=unknown
 	echo "$tool_version"
+}
+
+# cpu_template_config_line returns the CPU template line of the config, or nothing.
+cpu_template_config_line() {
+	grep '^cpu_template_disabled[[:space:]]*=' "$config_file" || true
+}
+
+# set_cpu_template_line replaces the CPU template line. An empty argument removes it.
+set_cpu_template_line() {
+	sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
+	if [ -n "$1" ]; then
+		sed -i "/^\[firecracker\]/a $1" "$config_file"
+	fi
 }
 
 # unit_property returns a systemd service property.
@@ -130,7 +152,7 @@ restore_previous() {
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
-	# Restore only this line. install-telemetry.sh can change the rest of the file meanwhile.
+	# Restore only these lines. install-telemetry.sh can change the rest of the file meanwhile.
 	exec 8>"$config_file.lock"
 	flock 8
 	if [ -n "$previous_coordination_line" ]; then
@@ -138,6 +160,7 @@ restore_previous() {
 	else
 		sed -i '/^coordination_listen[[:space:]]*=/d' "$config_file"
 	fi
+	set_cpu_template_line "$previous_cpu_template_line"
 	exec 8>&-
 	systemctl reset-failed "$service" 2>/dev/null || true
 	if ! systemctl restart "$service" || ! service_is_stable; then
@@ -158,6 +181,7 @@ current_version=$(reported_version "$metald_binary")
 # A repeated upgrade after a success changes nothing.
 if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" &&
 	grep -qxF "$coordination_line" "$config_file" &&
+	[ "$(cpu_template_config_line)" = "$cpu_template_line" ] &&
 	[ "$(unit_property StatusText)" = "ready $new_version" ]; then
 	step "metald $new_version and atlas-wg-mesh are already installed and running"
 	exit 0
@@ -197,6 +221,8 @@ if [ -n "$previous_coordination_line" ]; then
 else
 	sed -i "/^listen[[:space:]]*=/a $coordination_line" "$config_file"
 fi
+previous_cpu_template_line=$(cpu_template_config_line)
+set_cpu_template_line "$cpu_template_line"
 exec 8>&-
 
 # Rename instead of overwrite. The running process keeps its own inode.
