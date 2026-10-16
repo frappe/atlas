@@ -51,13 +51,23 @@ target_file=/etc/wireguard/$interface.conf
 
 interface_section() { sed '/^\[Peer\]/,$d' "$1" 2>/dev/null || true; }
 
-if ip link show "$interface" >/dev/null 2>&1; then
+# NetworkManager removes the addresses of a link it disconnects and leaves the link up.
+has_addresses() {
+	local address
+	for address in $(sed -n 's/^Address *= *//p' "$target_file" 2>/dev/null | tr ',' ' '); do
+		[ -n "$(ip -o addr show dev "$interface" to "$address")" ] || return 1
+	done
+}
+
+if ip link show "$interface" >/dev/null 2>&1 && has_addresses; then
 	cmp -s "$source_file" "$target_file" && exit 0
 	if cmp -s <(interface_section "$source_file") <(interface_section "$target_file"); then
 		install -m 0600 "$source_file" "$target_file"
 		wg syncconf "$interface" <(wg-quick strip "$interface")
 		exit 0
 	fi
+fi
+if ip link show "$interface" >/dev/null 2>&1; then
 	wg-quick down "$interface"
 fi
 install -m 0600 "$source_file" "$target_file"
@@ -92,6 +102,15 @@ AccuracySec=1s
 [Install]
 WantedBy=timers.target
 EOF
+
+# A desktop can disconnect a link NetworkManager manages, which removes its address.
+if [ -d /etc/NetworkManager/conf.d ]; then
+	cat > /etc/NetworkManager/conf.d/$unit.conf <<EOF
+[keyfile]
+unmanaged-devices+=interface-name:$interface
+EOF
+	nmcli general reload conf >/dev/null 2>&1 || true
+fi
 
 systemctl daemon-reload
 systemctl enable --now "$unit.timer"
