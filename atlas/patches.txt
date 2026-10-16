@@ -7,4 +7,3 @@
 atlas.patches.set_migration_has_memory_snapshot_default
 atlas.patches.set_migration_transfer_snapshot_type
 atlas.patches.set_vm_migration_paused_default
-atlas.patches.set_metal_server_cpu_template_disabled_default
