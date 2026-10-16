@@ -12,7 +12,6 @@ set -eu
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
 : "${ATLAS_COMMON_NAME:?ATLAS_COMMON_NAME is required}"
 : "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
-: "${CPU_TEMPLATE_DISABLED:?CPU_TEMPLATE_DISABLED is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
 firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
@@ -25,7 +24,8 @@ machines_dir=$base_dir/machines
 images_dir=$base_dir/images
 sockets_dir=/run/metal
 config_file=$base_dir/metald.toml
-case "$CPU_TEMPLATE_DISABLED" in
+# An Atlas build from before the setting does not send it.
+case "${CPU_TEMPLATE_DISABLED:-false}" in
 true) cpu_template_line="cpu_template_disabled = true" ;;
 false) cpu_template_line="" ;;
 *)
