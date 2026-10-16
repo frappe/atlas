@@ -8,6 +8,8 @@ A person files each report. An agent can suggest a report, but it must not add o
 
 | Date | Environment | Incident | Status |
 |---|---|---|---|
+| 2026-10-16 | Production | [Slow WireGuard throughput between hosts](2026-10-16-slow-wireguard-between-hosts.md) | Mitigated |
+| 2026-10-16 | Production | [Mesh traffic loss after a WireGuard restart](2026-10-16-wireguard-restart-detached-mesh.md) | Fixed |
 | 2026-10-10 | Production | [Host network loss from allmulticast on Broadcom NICs](2026-10-10-host-nic-receive-stall.md) | Fixed |
 | 2026-09-24 | Staging | [Guest disk corruption after a restart](2026-09-24-guest-disk-corruption.md) | Fixed |
 

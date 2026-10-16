@@ -80,7 +80,8 @@ PublicKey = $ATLAS_WIREGUARD_PUBLIC_KEY
 AllowedIPs = $ATLAS_WIREGUARD_ADDRESS/128"
 
 # A reused host keeps the config of its earlier registration, so rewrite a stale one.
-# A wg0 restart drops the host peers until the next sync.
+# A wg0 restart drops the host peers until the next sync, and it detaches the
+# WG Mesh programs. metald attaches them again when it starts.
 previous_config=$(cat "$config_file" 2>/dev/null || true)
 previous_atlas_public_key=$(printf '%s\n' "$previous_config" | sed -n 's/^PublicKey = //p')
 is_interface_changed=false
@@ -95,6 +96,9 @@ step "interface ($interface)"
 systemctl enable --now "wg-quick@$interface"
 if [ "$is_interface_changed" = true ]; then
 	systemctl restart "wg-quick@$interface"
+	if systemctl is-active --quiet metal.service; then
+		systemctl restart metal.service
+	fi
 fi
 systemctl is-active "wg-quick@$interface" >/dev/null
 
