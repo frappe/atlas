@@ -6,13 +6,19 @@ Metal selects a versioned guest CPU template at daemon startup. It embeds the te
 
 | Host | Built-in template | Guest instruction baseline |
 | --- | --- | --- |
-| Intel x86-64 | `intel-x86_64-v1.json` | x86-64-v2 with basic XSAVE. |
-| AMD x86-64 | `amd-x86_64-v1.json` | x86-64-v2 with basic XSAVE. |
+| Intel x86-64 | `intel-x86_64-v1.json` | x86-64-v2 with PCLMULQDQ and basic XSAVE. |
+| AMD x86-64 | `amd-x86_64-v1.json` | x86-64-v2 with PCLMULQDQ and basic XSAVE. |
 | ARM64 | `arm64-v1.json` | ARMv8-A floating point and Advanced SIMD. |
 
 The JSON files are in [`metal/internal/firecracker/cpu_templates`](../../metal/internal/firecracker/cpu_templates/). The profiles mask optional instruction extensions instead of enabling features that a host might not support. Host identity, topology, address limits, and security information remain host-dependent. Firecracker can normalize some CPU fields after it applies the template.
 
-The x86-64 profiles retain SSE3, SSSE3, CMPXCHG16B, SSE4.1, SSE4.2, POPCNT, LAHF/SAHF, and XSAVE. They hide AES, AVX, AVX2, AVX-512, FMA, F16C, BMI1, BMI2, INVPCID, and other optional instruction extensions. Extended save state is limited to x87 and SSE. The AMD profile retains AMD topology enumeration. Startup rejects an unknown x86 vendor or a host without the baseline features.
+The x86-64 profiles retain SSE3, PCLMULQDQ, SSSE3, CMPXCHG16B, SSE4.1, SSE4.2, POPCNT, LAHF/SAHF, and XSAVE. Extended save state is limited to x87 and SSE. The AMD profile retains AMD topology enumeration.
+
+Common x86-64 builds, such as ClickHouse, require PCLMULQDQ and stop with an illegal instruction without it. Every supported Intel and AMD server CPU implements it.
+
+The profiles hide AES, AVX, AVX2, AVX-512, FMA, F16C, BMI1, BMI2, INVPCID, and other optional instruction extensions.
+
+Startup rejects an unknown x86 vendor or a host without the baseline features.
 
 The ARM64 profile hides optional scalar instruction extensions, FP16, SVE, pointer authentication, BTI, MTE, SME, and performance monitoring. It retains the execution levels and PSCI boot configuration. ARM hosts need a kernel that permits the profile's CPU ID register writes. Platform registers and interrupt-controller state still require compatible hosts.
 
