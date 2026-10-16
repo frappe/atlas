@@ -121,6 +121,9 @@ def sync_server(
 			{"host_compatibility_report": report, "tsc_scaling_supported": scaling},
 			update_modified=False,
 		)
+	# A host that cannot run the built-in CPU template already boots its VMs without one.
+	if compatibility and compatibility.default_cpu_template_error and not server.is_cpu_template_disabled:
+		frappe.db.set_value("Metal Server", server.name, "is_cpu_template_disabled", 1, update_modified=False)
 
 
 def get_desired_images() -> list[dict[str, Any]]:

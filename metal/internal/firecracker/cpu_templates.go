@@ -3,6 +3,7 @@ package firecracker
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -12,6 +13,9 @@ import (
 
 //go:embed cpu_templates/*.json
 var cpuTemplates embed.FS
+
+// ErrUnsupportedCPUTemplate reports a host CPU that cannot run the built-in template.
+var ErrUnsupportedCPUTemplate = errors.New("host CPU does not support the built-in CPU template")
 
 // DefaultCPUTemplate selects the built-in guest CPU baseline for this host.
 func DefaultCPUTemplate() (json.RawMessage, error) {
@@ -27,24 +31,31 @@ func cpuTemplateForHost(architecture, information string) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	name := "arm64"
+	name := "arm64-v1"
 	requiredFeatures := []string{"fp", "asimd"}
 	if architecture == "amd64" {
 		switch cpu.Vendor {
 		case "GenuineIntel":
-			name = "intel-x86_64"
+			name = "intel-x86_64-v3"
 		case "AuthenticAMD":
-			name = "amd-x86_64"
+			name = "amd-x86_64-v3"
 		default:
-			return nil, fmt.Errorf("no default CPU template for vendor %q", cpu.Vendor)
+			return nil, fmt.Errorf("%w: unknown vendor %q", ErrUnsupportedCPUTemplate, cpu.Vendor)
 		}
-		requiredFeatures = []string{"pni", "pclmulqdq", "ssse3", "cx16", "sse4_1", "sse4_2", "popcnt", "lahf_lm", "xsave"}
+		requiredFeatures = []string{
+			"pni", "ssse3", "cx16", "sse4_1", "sse4_2", "popcnt", "lahf_lm", "xsave",
+			"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "aes", "pclmulqdq",
+		}
 	}
 	features := strings.Fields(cpu.Features)
+	var missing []string
 	for _, feature := range requiredFeatures {
 		if !slices.Contains(features, feature) {
-			return nil, fmt.Errorf("default CPU template requires host feature %s", feature)
+			missing = append(missing, feature)
 		}
 	}
-	return cpuTemplates.ReadFile("cpu_templates/" + name + "-v1.json")
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: missing %s", ErrUnsupportedCPUTemplate, strings.Join(missing, " "))
+	}
+	return cpuTemplates.ReadFile("cpu_templates/" + name + ".json")
 }

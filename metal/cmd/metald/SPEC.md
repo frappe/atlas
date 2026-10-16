@@ -59,6 +59,7 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 | `firecracker.binary_path` | `/usr/bin/firecracker` | Firecracker binary. |
 | `firecracker.sockets_dir` | `/run/metal` | API socket links. |
 | `firecracker.cpu_template_file` | built-in host profile | Explicit CPU template JSON override. See [CPU templates](../../../docs/compute/cpu-templates.md). |
+| `firecracker.cpu_template_disabled` | `false` | Boot every VM without a CPU template. Atlas sets it from the Metal Server **Disable CPU Template** check. Cannot be set with `cpu_template_file`. |
 | `jailer.binary_path` | `/usr/bin/jailer` | Jailer binary. |
 | `zfs.pool` | `metal` | ZFS pool name. |
 | `wireguard.interface` | `wg0` | Underlay interface. |

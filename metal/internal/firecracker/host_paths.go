@@ -12,11 +12,13 @@ import (
 
 // Config contains Firecracker host paths and guest configuration.
 type Config struct {
-	MachinesDir             string
-	SocketsDir              string
-	JailerBin               string
-	FirecrackerBin          string
-	CPUTemplate             json.RawMessage
+	MachinesDir    string
+	SocketsDir     string
+	JailerBin      string
+	FirecrackerBin string
+	CPUTemplate    json.RawMessage
+	// DefaultCPUTemplateError says why the host cannot run the built-in template. It is empty when it can.
+	DefaultCPUTemplateError string
 	RequireMigratedGuestSSH bool
 }
 

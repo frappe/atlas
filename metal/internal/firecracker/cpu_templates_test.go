@@ -3,6 +3,7 @@ package firecracker
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,44 +11,50 @@ import (
 )
 
 func TestDefaultCPUTemplateSelection(t *testing.T) {
-	x86 := "vendor_id: %s\ncpu family: 6\nmodel: 58\nflags: pni pclmulqdq ssse3 cx16 sse4_1 sse4_2 popcnt lahf_lm xsave avx2 fma bmi1 bmi2\n"
+	x86 := "vendor_id: %s\ncpu family: 6\nmodel: 58\nflags: pni ssse3 cx16 sse4_1 sse4_2 popcnt lahf_lm xsave avx avx2 bmi1 bmi2 f16c fma abm movbe aes pclmulqdq avx512f\n"
 	arm := "CPU implementer: 0x41\nCPU architecture: 8\nCPU part: 0xd0c\nCPU variant: 0x1\nCPU revision: 2\nFeatures: fp asimd aes sve\n"
 	for _, sample := range []struct {
 		architecture, information, name string
 	}{
-		{"amd64", fmt.Sprintf(x86, "GenuineIntel"), "intel-x86_64"},
-		{"amd64", fmt.Sprintf(x86, "AuthenticAMD"), "amd-x86_64"},
-		{"arm64", arm, "arm64"},
+		{"amd64", fmt.Sprintf(x86, "GenuineIntel"), "intel-x86_64-v3"},
+		{"amd64", fmt.Sprintf(x86, "AuthenticAMD"), "amd-x86_64-v3"},
+		{"arm64", arm, "arm64-v1"},
 	} {
 		t.Run(sample.name, func(t *testing.T) {
 			template, err := cpuTemplateForHost(sample.architecture, sample.information)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := cpuTemplates.ReadFile("cpu_templates/" + sample.name + "-v1.json")
+			want, err := cpuTemplates.ReadFile("cpu_templates/" + sample.name + ".json")
 			if err != nil || !bytes.Equal(template, want) {
 				t.Fatalf("selected wrong CPU template: %v", err)
 			}
 		})
 	}
-	for _, sample := range []struct{ architecture, information string }{
-		{"amd64", fmt.Sprintf(x86, "UnknownVendor")},
-		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "GenuineIntel"), "sse4_2", "")},
-		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "pclmulqdq", "")},
-		{"arm64", strings.ReplaceAll(arm, "asimd", "")},
-		{"amd64", "processor: 0"},
-		{"riscv64", arm},
+	// An unsupported CPU falls back to no template. Unreadable CPU information stops startup.
+	for _, sample := range []struct {
+		architecture, information string
+		isUnsupported             bool
+	}{
+		{"amd64", fmt.Sprintf(x86, "UnknownVendor"), true},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "GenuineIntel"), "sse4_2", ""), true},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "pclmulqdq", ""), true},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "avx2", ""), true},
+		{"arm64", strings.ReplaceAll(arm, "asimd", ""), true},
+		{"amd64", "processor: 0", false},
+		{"riscv64", arm, false},
 	} {
-		if _, err := cpuTemplateForHost(sample.architecture, sample.information); err == nil {
-			t.Fatalf("accepted unsupported CPU: %s %s", sample.architecture, sample.information)
+		_, err := cpuTemplateForHost(sample.architecture, sample.information)
+		if err == nil || errors.Is(err, ErrUnsupportedCPUTemplate) != sample.isUnsupported {
+			t.Fatalf("CPU %s %s: error = %v", sample.architecture, sample.information, err)
 		}
 	}
 }
 
 func TestX86TemplatesMaskOptionalInstructionsAndKeepBaseline(t *testing.T) {
-	for _, name := range []string{"intel-x86_64", "amd-x86_64"} {
+	for _, name := range []string{"intel-x86_64-v3", "amd-x86_64-v3"} {
 		t.Run(name, func(t *testing.T) {
-			data, err := cpuTemplates.ReadFile("cpu_templates/" + name + "-v1.json")
+			data, err := cpuTemplates.ReadFile("cpu_templates/" + name + ".json")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,22 +86,26 @@ func TestX86TemplatesMaskOptionalInstructionsAndKeepBaseline(t *testing.T) {
 				}
 			}
 			basic := values["0x1:0x0:ecx"]
-			for _, bit := range []uint{12, 25, 28, 29, 30} {
-				if basic&(1<<bit) != 0 {
-					t.Fatal("FMA, AES, AVX, F16C or RDRAND remains exposed")
-				}
+			if basic&(1<<30) != 0 {
+				t.Fatal("RDRAND remains exposed")
 			}
-			for _, bit := range []uint{0, 1, 9, 13, 19, 20, 23, 26} {
+			for _, bit := range []uint{0, 1, 9, 12, 13, 19, 20, 22, 23, 25, 26, 28, 29} {
 				if basic&(1<<bit) == 0 {
 					t.Fatal("template removed a baseline instruction or XSAVE")
 				}
 			}
 			extended, found := values["0x7:0x0:ebx"]
-			if !found || extended&((1<<3)|(1<<5)|(1<<8)|(1<<10)|(1<<16)) != 0 {
-				t.Fatal("BMI, AVX2, INVPCID or AVX-512 remains exposed")
+			if !found || extended&((1<<3)|(1<<5)|(1<<8)) != (1<<3)|(1<<5)|(1<<8) {
+				t.Fatal("template removed BMI1, AVX2 or BMI2")
 			}
-			if values["0xd:0x0:eax"] != 3 || values["0xd:0x0:edx"] != 0 {
-				t.Fatal("template exposed extended register state beyond x87 and SSE")
+			if extended&((1<<10)|(1<<16)) != 0 {
+				t.Fatal("INVPCID or AVX-512 remains exposed")
+			}
+			if values["0x80000001:0x0:ecx"]&(1<<5) == 0 {
+				t.Fatal("template removed LZCNT")
+			}
+			if values["0xd:0x0:eax"] != 7 || values["0xd:0x0:edx"] != 0 {
+				t.Fatal("template exposed extended register state beyond x87, SSE and AVX")
 			}
 		})
 	}
