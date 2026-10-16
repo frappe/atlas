@@ -3,6 +3,7 @@ package firecracker
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,17 +31,22 @@ func TestDefaultCPUTemplateSelection(t *testing.T) {
 			}
 		})
 	}
-	for _, sample := range []struct{ architecture, information string }{
-		{"amd64", fmt.Sprintf(x86, "UnknownVendor")},
-		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "GenuineIntel"), "sse4_2", "")},
-		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "pclmulqdq", "")},
-		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "avx2", "")},
-		{"arm64", strings.ReplaceAll(arm, "asimd", "")},
-		{"amd64", "processor: 0"},
-		{"riscv64", arm},
+	// An unsupported CPU falls back to no template. Unreadable CPU information stops startup.
+	for _, sample := range []struct {
+		architecture, information string
+		isUnsupported             bool
+	}{
+		{"amd64", fmt.Sprintf(x86, "UnknownVendor"), true},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "GenuineIntel"), "sse4_2", ""), true},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "pclmulqdq", ""), true},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "avx2", ""), true},
+		{"arm64", strings.ReplaceAll(arm, "asimd", ""), true},
+		{"amd64", "processor: 0", false},
+		{"riscv64", arm, false},
 	} {
-		if _, err := cpuTemplateForHost(sample.architecture, sample.information); err == nil {
-			t.Fatalf("accepted unsupported CPU: %s %s", sample.architecture, sample.information)
+		_, err := cpuTemplateForHost(sample.architecture, sample.information)
+		if err == nil || errors.Is(err, ErrUnsupportedCPUTemplate) != sample.isUnsupported {
+			t.Fatalf("CPU %s %s: error = %v", sample.architecture, sample.information, err)
 		}
 	}
 }

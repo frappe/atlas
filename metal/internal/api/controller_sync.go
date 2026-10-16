@@ -58,6 +58,8 @@ type hostCompatibilityResponse struct {
 	SnapshotHost string `json:"snapshot_host"`
 	TSCKHz       int    `json:"tsc_khz"`
 	TSCScaling   bool   `json:"tsc_scaling"`
+	// DefaultCPUTemplateError is empty when the host can run the built-in CPU template.
+	DefaultCPUTemplateError string `json:"default_cpu_template_error,omitempty"`
 }
 
 // virtualMachineStateResponse is the state of one virtual machine on this host.

@@ -21,6 +21,7 @@ class MetalHostCompatibility:
 	snapshot_host: str
 	tsc_khz: int
 	tsc_scaling: bool
+	default_cpu_template_error: str = ""
 
 	@classmethod
 	def from_dict(cls, value: object) -> MetalHostCompatibility:
@@ -43,6 +44,7 @@ class MetalHostCompatibility:
 			**strings,
 			tsc_khz=integer_field(report, "tsc_khz"),
 			tsc_scaling=boolean_field(report, "tsc_scaling"),
+			default_cpu_template_error=string_field(report, "default_cpu_template_error", default=""),
 		)
 
 

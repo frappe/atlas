@@ -124,6 +124,7 @@ class TestServer(UnitTestCase):
 		server = SimpleNamespace(
 			get=lambda fieldname: tags,
 			_validate_title=Mock(),
+			_validate_cpu_template=Mock(),
 			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
@@ -131,6 +132,22 @@ class TestServer(UnitTestCase):
 
 		self.assertEqual((tags[0].key, tags[0].value), ("env", "local"))
 		server._set_wireguard_ip_address_if_not_set.assert_called_once_with()
+
+	def test_a_host_that_cannot_run_the_cpu_template_keeps_it_disabled(self) -> None:
+		report = frappe.as_json({"default_cpu_template_error": "missing avx2"})
+		for is_disabled in (0, 1):
+			with self.subTest(is_disabled=is_disabled):
+				server = SimpleNamespace(
+					name=SERVER_NAME,
+					is_cpu_template_disabled=is_disabled,
+					host_compatibility_report=report,
+					get_doc_before_save=lambda: None,
+				)
+				if is_disabled:
+					MetalServer._validate_cpu_template(server)
+				else:
+					with self.assertRaisesRegex(frappe.ValidationError, "missing avx2"):
+						MetalServer._validate_cpu_template(server)
 
 	def test_before_save_preserves_synced_host_facts(self) -> None:
 		for previous in (
@@ -160,6 +177,7 @@ class TestServer(UnitTestCase):
 		server = SimpleNamespace(
 			get=lambda fieldname: tags,
 			_validate_title=Mock(),
+			_validate_cpu_template=Mock(),
 			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
