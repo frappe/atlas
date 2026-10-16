@@ -187,12 +187,17 @@ func load(path string) (options, error) {
 	if err := applyFile(&resolvedOptions, path); err != nil {
 		return options{}, err
 	}
-	if len(resolvedOptions.cfg.CPUTemplate) == 0 && !resolvedOptions.isCPUTemplateDisabled {
+	// A host without the baseline boots its VMs without a template and reports why.
+	if len(resolvedOptions.cfg.CPUTemplate) == 0 {
 		template, err := firecracker.DefaultCPUTemplate()
-		if err != nil {
+		switch {
+		case errors.Is(err, firecracker.ErrUnsupportedCPUTemplate):
+			resolvedOptions.cfg.DefaultCPUTemplateError = err.Error()
+		case err != nil:
 			return options{}, fmt.Errorf("select default CPU template: %w", err)
+		case !resolvedOptions.isCPUTemplateDisabled:
+			resolvedOptions.cfg.CPUTemplate = template
 		}
-		resolvedOptions.cfg.CPUTemplate = template
 	}
 	resolvedOptions.deriveDirs()
 	return resolvedOptions, nil

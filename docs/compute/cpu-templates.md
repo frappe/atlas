@@ -18,7 +18,7 @@ Common x86-64 builds, such as ClickHouse, require PCLMULQDQ and stop with an ill
 
 The x86-64 profiles hide AVX-512, RDRAND, INVPCID, and other optional instruction extensions. Extended save state is limited to x87, SSE, and AVX. The AMD profile retains AMD topology enumeration.
 
-Startup rejects an unknown x86 vendor or a host without the baseline features. Intel CPUs before Haswell and AMD CPUs before Excavator do not have AVX2, so they cannot use the built-in profiles. Such a host needs an [override](#override).
+A host with an unknown x86 vendor or without the baseline features boots its VMs without a CPU template. metald logs a warning and reports the reason in `default_cpu_template_error`. Atlas then sets **Disable CPU Template** on the Metal Server and refuses to clear it. Intel CPUs before Haswell and AMD CPUs before Excavator do not have AVX2, so they cannot use the built-in profiles.
 
 The ARM64 profile hides optional scalar instruction extensions, FP16, SVE, pointer authentication, BTI, MTE, SME, and performance monitoring. It retains the execution levels and PSCI boot configuration. ARM hosts need a kernel that permits the profile's CPU ID register writes. Platform registers and interrupt-controller state still require compatible hosts.
 
@@ -44,7 +44,7 @@ Set `firecracker.cpu_template_file` in `metald.toml` to use an explicit JSON tem
 
 Select **Disable CPU Template** on a Metal Server and run **Upgrade Metald** to boot every VM on that host without a CPU template. Atlas then writes `cpu_template_disabled = true` into the `[firecracker]` section of `metald.toml` and restarts metald. Atlas owns this line: install and upgrade remove it when the check is clear.
 
-Without a CPU template, the guests see the host CPU features that Firecracker exposes by default, and startup skips the baseline feature check. Metal reports the CPU profile `native`, so a memory snapshot migration needs a destination with the same CPU model and features. Startup rejects this setting together with `cpu_template_file`.
+Without a CPU template, the guests see the host CPU features that Firecracker exposes by default. Metal reports the CPU profile `native`, so a memory snapshot migration needs a destination with the same CPU model and features. Startup rejects this setting together with `cpu_template_file`.
 
 Changing a template requires a daemon restart and a cold boot of each affected guest. Existing running guests retain their CPU configuration. Snapshot restores use the configuration captured in guest state. Shared warm images and VM-local snapshots include the selected template digest in their compatibility marker; regenerate snapshots after changing a profile.
 

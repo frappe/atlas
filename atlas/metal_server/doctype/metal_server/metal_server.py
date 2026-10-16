@@ -186,7 +186,14 @@ class MetalServer(Document):
 		"""Fill the mesh address and check the title and tags."""
 		self._validate_title()
 		validate_tags(self)
+		self._validate_cpu_template()
 		self._set_wireguard_ip_address_if_not_set()
+
+	def _validate_cpu_template(self) -> None:
+		"""Keep the CPU template disabled on a host that cannot run the built-in one."""
+		report = frappe.parse_json((self.get_doc_before_save() or self).host_compatibility_report or "{}")
+		if not self.is_cpu_template_disabled and (error := report.get("default_cpu_template_error")):
+			frappe.throw(_("Metal Server {0} needs Disable CPU Template: {1}.").format(self.name, error))
 
 	def before_save(self) -> None:
 		"""Preserve synced host facts from the locked database row."""

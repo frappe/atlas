@@ -12,6 +12,8 @@ type HostCompatibility struct {
 	SnapshotHost string
 	TSCKHz       int
 	TSCScaling   bool
+	// DefaultCPUTemplateError is empty when the host can run the built-in CPU template.
+	DefaultCPUTemplateError string
 }
 
 // Runtime controls virtual machine processes and guest-facing operations.

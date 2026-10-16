@@ -86,6 +86,9 @@ func main() {
 		os.Exit(2)
 	}
 	options, err := load(configPath)
+	if err == nil && options.cfg.DefaultCPUTemplateError != "" {
+		logger.Warn("VMs boot without a CPU template", "reason", options.cfg.DefaultCPUTemplateError)
+	}
 	if err == nil {
 		err = serve(options, logger)
 	}
