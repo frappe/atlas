@@ -22,9 +22,24 @@ TCP, `iperf3`, 10 seconds. A single-stream value is the median of 3 runs.
 
 Atlas delivers 96% of WireGuard throughput between hosts. The main cost is the 40-byte tunnel header and the smaller VM MTU. The reverse direction measured 820 Mbit/s.
 
-One stream saturates the 1 GbE link. More streams do not help. On faster links, throughput should track WireGuard until tunnel encryption becomes the limit.
+One stream saturates the 1 GbE link. More streams do not help. On faster links, one CPU core limits the tunnel. See [Bare metal, 2 x 25G](#bare-metal-2-x-25g).
 
 Traffic between VMs on one host does not use WireGuard. Linux delivers it through the VM host route.
+
+## Bare metal, 2 x 25G
+
+These results come from two bare-metal hosts with AMD EPYC 7702 CPUs, Broadcom BCM57454 NICs in a 2 x 25G LACP bond, and kernel `7.0.0`. TCP, `iperf3`, 15 seconds, between hosts.
+
+| Path                       | MTU 1500     | MTU 9000         |
+| -------------------------- | -----------: | ---------------: |
+| Private network, 1 stream  | 21.6 Gbit/s  | 22.4 Gbit/s      |
+| Private network, 8 streams | 23.4 Gbit/s  | 35.3 Gbit/s      |
+| WireGuard, 1 tunnel        | 1.8 Gbit/s   | 8.0 - 9.5 Gbit/s |
+| WireGuard, 2 tunnels       | -            | 12.2 Gbit/s      |
+
+The 8-stream value at MTU 1500 uses the `layer2` bond hash, which sends all traffic to one host through one link. The value at MTU 9000 uses `layer3+4`.
+
+One tunnel is one UDP flow, so one CPU core receives all its packets. That core handles a fixed number of packets each second, so a larger MTU raises the tunnel rate. Several tunnels reach only 12 to 14 Gbit/s, because WireGuard delivers the packets of each tunnel in order. Send bulk traffic between hosts over TLS on the private network. See the [incident report](../../incidents/2026-10-16-slow-wireguard-between-hosts.md).
 
 ## Packet rate
 
