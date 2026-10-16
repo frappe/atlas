@@ -65,8 +65,13 @@ cpu_template_config_line() {
 # set_cpu_template_line replaces the CPU template line. An empty argument removes it.
 set_cpu_template_line() {
 	sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
-	if [ -n "$1" ]; then
+	if [ -z "$1" ]; then
+		return
+	fi
+	if grep -q '^\[firecracker\]' "$config_file"; then
 		sed -i "/^\[firecracker\]/a $1" "$config_file"
+	else
+		printf '\n[firecracker]\n%s\n' "$1" >>"$config_file"
 	fi
 }
 
