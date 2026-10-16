@@ -50,11 +50,15 @@ Before you register a host, prepare it with these items:
 - Give the host a public IPv4 address. Atlas connects as `root` with the Atlas public key.
 - Give the host a private IPv4 address inside `private_network_cidr`.
 - Put the private address on a provider network, such as a VXLAN interface. The interface must have an MTU of at least 1340.
+- If the provider network supports jumbo frames, set the private interface MTU to 9000 on every host before you configure WireGuard. `configure-wireguard.sh` sets the `wg0` MTU to the uplink MTU minus 60. Set the default route to MTU 1500, so that traffic to the internet stays at 1500. Test each pair of hosts with `ping -M do -s 8972 <private address>`.
+- If the private network uses an LACP bond, set the bond transmit hash to `layer3+4`. With `layer2`, all traffic to one host, or to the gateway, uses one link.
 - Configure the provider network to carry IPv6 multicast between hosts, or enable **Use Unicast Networking** in Atlas Settings. WG Mesh uses this network as its uplink.
 - Configure the provider network to route every VM public IPv4 address to every Metal Server.
 - Provide an empty whole disk, partition, or RAID array for the storage pool. Alternatively, provide enough space on the root file system for a disk image.
 
 Atlas does not create or change these network resources. It checks that the private IPv4 address exists before it installs WireGuard.
+
+To change the MTU in a running region, change it on all hosts first. Then set `wg0` with `ip link set wg0 mtu <MTU>` and update `MTU =` in `wg0.conf`. This change does not restart `wg0`. See the [WireGuard throughput benchmarks](../networking/wg-mesh/benchmarks.md#bare-metal-2-x-25g).
 
 ### Register a host
 
