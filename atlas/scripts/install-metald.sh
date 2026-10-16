@@ -248,8 +248,10 @@ EOF
 fi
 # Atlas owns this line: metald boots every VM without a CPU template while it is present.
 sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
-if [ -n "$cpu_template_line" ]; then
+if [ -n "$cpu_template_line" ] && grep -q '^\[firecracker\]' "$config_file"; then
 	sed -i "/^\[firecracker\]/a $cpu_template_line" "$config_file"
+elif [ -n "$cpu_template_line" ]; then
+	printf '\n[firecracker]\n%s\n' "$cpu_template_line" >>"$config_file"
 fi
 
 
