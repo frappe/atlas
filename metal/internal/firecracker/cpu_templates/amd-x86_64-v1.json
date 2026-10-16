@@ -7,7 +7,7 @@
       "modifiers": [
         {
           "register": "ecx",
-          "bitmap": "0bx000xx0xx00xx00000x000x00000000x"
+          "bitmap": "0bx000xx0xx00xx00000x000x0000000xx"
         },
         {
           "register": "edx",
