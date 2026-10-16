@@ -38,7 +38,7 @@ func cpuTemplateForHost(architecture, information string) (json.RawMessage, erro
 		default:
 			return nil, fmt.Errorf("no default CPU template for vendor %q", cpu.Vendor)
 		}
-		requiredFeatures = []string{"pni", "ssse3", "cx16", "sse4_1", "sse4_2", "popcnt", "lahf_lm", "xsave"}
+		requiredFeatures = []string{"pni", "pclmulqdq", "ssse3", "cx16", "sse4_1", "sse4_2", "popcnt", "lahf_lm", "xsave"}
 	}
 	features := strings.Fields(cpu.Features)
 	for _, feature := range requiredFeatures {

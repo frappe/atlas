@@ -10,7 +10,7 @@ import (
 )
 
 func TestDefaultCPUTemplateSelection(t *testing.T) {
-	x86 := "vendor_id: %s\ncpu family: 6\nmodel: 58\nflags: pni ssse3 cx16 sse4_1 sse4_2 popcnt lahf_lm xsave avx2 fma bmi1 bmi2\n"
+	x86 := "vendor_id: %s\ncpu family: 6\nmodel: 58\nflags: pni pclmulqdq ssse3 cx16 sse4_1 sse4_2 popcnt lahf_lm xsave avx2 fma bmi1 bmi2\n"
 	arm := "CPU implementer: 0x41\nCPU architecture: 8\nCPU part: 0xd0c\nCPU variant: 0x1\nCPU revision: 2\nFeatures: fp asimd aes sve\n"
 	for _, sample := range []struct {
 		architecture, information, name string
@@ -33,6 +33,7 @@ func TestDefaultCPUTemplateSelection(t *testing.T) {
 	for _, sample := range []struct{ architecture, information string }{
 		{"amd64", fmt.Sprintf(x86, "UnknownVendor")},
 		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "GenuineIntel"), "sse4_2", "")},
+		{"amd64", strings.ReplaceAll(fmt.Sprintf(x86, "AuthenticAMD"), "pclmulqdq", "")},
 		{"arm64", strings.ReplaceAll(arm, "asimd", "")},
 		{"amd64", "processor: 0"},
 		{"riscv64", arm},
@@ -83,7 +84,7 @@ func TestX86TemplatesMaskOptionalInstructionsAndKeepBaseline(t *testing.T) {
 					t.Fatal("FMA, AES, AVX, F16C or RDRAND remains exposed")
 				}
 			}
-			for _, bit := range []uint{0, 9, 13, 19, 20, 23, 26} {
+			for _, bit := range []uint{0, 1, 9, 13, 19, 20, 23, 26} {
 				if basic&(1<<bit) == 0 {
 					t.Fatal("template removed a baseline instruction or XSAVE")
 				}
