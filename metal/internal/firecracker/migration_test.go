@@ -20,8 +20,8 @@ import (
 
 func TestCPUProfileCompatibility(t *testing.T) {
 	profiles := make(map[string]bool)
-	for _, name := range []string{"intel-x86_64", "amd-x86_64", "arm64"} {
-		content, err := cpuTemplates.ReadFile("cpu_templates/" + name + "-v1.json")
+	for _, name := range []string{"intel-x86_64-v3", "amd-x86_64-v3", "arm64-v1"} {
+		content, err := cpuTemplates.ReadFile("cpu_templates/" + name + ".json")
 		if err != nil {
 			t.Fatal(err)
 		}
