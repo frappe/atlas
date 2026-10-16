@@ -10,7 +10,6 @@ shopt -s inherit_errexit
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
-: "${CPU_TEMPLATE_DISABLED:?CPU_TEMPLATE_DISABLED is required}"
 
 metald_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
 mesh_binary=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
@@ -19,7 +18,8 @@ ready_timeout_seconds=120
 patches_file=/var/lib/metal/patches.json
 config_file=/var/lib/metal/metald.toml
 coordination_line="coordination_listen = \"$COORDINATION_LISTEN_ADDRESS\""
-case "$CPU_TEMPLATE_DISABLED" in
+# An Atlas build from before the setting does not send it.
+case "${CPU_TEMPLATE_DISABLED:-false}" in
 true) cpu_template_line="cpu_template_disabled = true" ;;
 false) cpu_template_line="" ;;
 *)
