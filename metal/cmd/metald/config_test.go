@@ -128,6 +128,22 @@ func TestLoadCPUTemplate(t *testing.T) {
 	}
 }
 
+func TestLoadWithoutCPUTemplate(t *testing.T) {
+	options, err := load(writeConfig(t, "[firecracker]\ncpu_template_disabled = true\n"))
+	if err != nil || options.cfg.CPUTemplate != nil {
+		t.Fatalf("load without template: %v, template %s", err, options.cfg.CPUTemplate)
+	}
+
+	template := filepath.Join(t.TempDir(), "cpu.json")
+	if err := os.WriteFile(template, []byte(`{"cpuid_modifiers": []}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf("[firecracker]\ncpu_template_disabled = true\ncpu_template_file = %q\n", template)
+	if _, err := load(writeConfig(t, body)); err == nil {
+		t.Fatal("accepted a disabled CPU template together with a template file")
+	}
+}
+
 func TestLoadTLSAndCoordination(t *testing.T) {
 	path := writeConfig(t, `[metald]
 coordination_listen = "[fdab::12]:9001"
