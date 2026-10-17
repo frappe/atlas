@@ -231,7 +231,7 @@ func TestMemorySourceIsBoundToStoppedFinalSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	file.Close()
-	if _, err := manager.CreateDestination(t.Context(), "mig-2", "vm-2", "https://host:9000", &Resize{MemoryMiB: 1}, true); !errors.Is(err, vm.ErrConflict) {
+	if _, err := manager.CreateDestination(t.Context(), "mig-2", "vm-2", "https://host:9000", &Resize{MemoryMiB: 1}, true, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("memory resize accepted: %v", err)
 	}
 	if err := manager.StartSourceRollback(t.Context(), "mig-1", "vm-1"); err != nil {
@@ -270,7 +270,7 @@ func TestAbortRemovesTransferredAndPartialMemory(t *testing.T) {
 }
 
 func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.T) {
-	for _, failing := range []string{"", "disk_guid", "checkpoint", "restore", "activation"} {
+	for _, failing := range []string{"", "disk_guid", "checkpoint", "restore", "fallback", "fallback_cleanup", "activation"} {
 		t.Run(failing, func(t *testing.T) {
 			manager, machines, source := newMigrationManager(t)
 			store := writeCopyingDestination(t, machines, vm.StateRunning)
@@ -280,6 +280,7 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 			}
 			record.State, record.HasMemorySnapshot, record.SourceStopped = destinationApplyingState, true, true
 			record.MemorySnapshotDiskGUID = "final-guid"
+			record.AllowDiskOnlyFallback = failing == "fallback" || failing == "fallback_cleanup"
 			record.Intervals = []TransferProgress{{Sequence: 2, Completed: true, GUID: "final-guid"}}
 			if failing == "checkpoint" {
 				record.MemorySnapshotDiskGUID = "other-guid"
@@ -299,15 +300,29 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 			if failing == "disk_guid" {
 				disks.guid = "other-guid"
 			}
-			if failing == "restore" {
+			if failing == "restore" || failing == "fallback" || failing == "fallback_cleanup" {
 				machines.restoreMemoryError = errors.New("load failed")
+			}
+			if failing == "fallback_cleanup" {
+				machines.removeRuntimeError = errors.New("systemd busy")
 			}
 			manager.runTransfer(t.Context(), "vm-1")
 			record, err = store.readDestination("vm-1")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if failing != "" && failing != "activation" {
+			if failing == "fallback_cleanup" {
+				if record.State != destinationApplyingState || record.MemorySnapshotError != "" || machines.applyStateCalls != 0 {
+					t.Fatalf("a temporary cleanup error ended the migration: %+v", record)
+				}
+				return
+			}
+			if failing == "fallback" {
+				if record.State != destinationReady || record.memorySnapshotStatus() != "failed" ||
+					machines.removeRuntimeCalls != 1 || machines.applyStateCalls != 1 {
+					t.Fatalf("failed restore did not cold boot the received disk: %+v", record)
+				}
+			} else if failing != "" && failing != "activation" {
 				if record.State != destinationFailed || source.finishCalls != 0 || machines.activateMemoryCalls != 0 {
 					t.Fatalf("record = %+v", record)
 				}
@@ -316,7 +331,7 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 				}
 				return
 			}
-			if record.State != destinationReady || machines.restoreMemoryCalls != 1 || machines.applyStateCalls != 0 || machines.activateMemoryCalls != 0 {
+			if failing != "fallback" && (record.State != destinationReady || machines.restoreMemoryCalls != 1 || machines.applyStateCalls != 0 || machines.activateMemoryCalls != 0) {
 				t.Fatalf("ready without a paused memory restore: %+v", record)
 			}
 			machines.activateMemory = func() error {
@@ -344,6 +359,9 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 					t.Fatal("rollback allowed after ownership commit")
 				}
 				return
+			}
+			if failing == "fallback" && (machines.activateMemoryCalls != 0 || record.memorySnapshotStatus() != "failed") {
+				t.Fatalf("finish resumed memory or lost the fallback result: %+v", record)
 			}
 			if record.State != destinationCompleted || record.MemorySnapshotDiskGUID != "" || source.finishCalls != 1 {
 				t.Fatalf("record = %+v", record)
