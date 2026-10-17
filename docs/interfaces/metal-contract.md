@@ -6,7 +6,7 @@ This page lists the rules the Atlas app follows when it calls Metal. It does not
 
 - All controller routes use `/v1`. Health and documentation routes are unversioned.
 - Every request uses mutual TLS with the Atlas client certificate.
-- Requests and responses are JSON. Metal rejects unknown fields, invalid values, and trailing data.
+- Requests and responses are JSON. Metal ignores unknown request fields and rejects invalid values and trailing data.
 - Field names name their unit: sizes in `mib`, rates in `mibps`, IOPS in `iops`.
 - Responses never contain signed URLs, user data, command output, host paths, process IDs, or host user IDs.
 
