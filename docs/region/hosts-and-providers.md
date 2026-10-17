@@ -80,7 +80,7 @@ A failed upgrade or check pauses the update. [When a server fails](../operate/ro
 
 ### Run a script on many hosts
 
-**Server Console** runs a script as `root` on many Metal Servers at once, over each host SSH address (wg0). Enter titles, names, or IP addresses, or use **Pick Servers**. Each entry must match one server. The Server Console Log shows the live output of each server.
+**Metal Server Console** runs a script as `root` on many Metal Servers at once, over each host SSH address (wg0). Enter titles, names, or IP addresses, or use **Pick Servers**. Each entry must match one server. The Metal Server Console Log shows the live output of each server.
 
 ### Upgrade on one host
 

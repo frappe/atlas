@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "server-console-log-.#####",
+ "autoname": "metal-server-console-log-.#####",
  "creation": "2026-10-17 12:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -87,7 +87,7 @@
    "fieldname": "results",
    "fieldtype": "Table",
    "label": "Results",
-   "options": "Server Console Log Server",
+   "options": "Metal Server Console Result",
    "read_only": 1
   },
   {
@@ -100,7 +100,7 @@
  "modified": "2026-10-17 16:01:37.350304",
  "modified_by": "Administrator",
  "module": "Operations",
- "name": "Server Console Log",
+ "name": "Metal Server Console Log",
  "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [

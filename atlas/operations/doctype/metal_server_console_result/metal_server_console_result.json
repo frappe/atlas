@@ -75,7 +75,7 @@
  "modified": "2026-10-17 16:05:25.032526",
  "modified_by": "Administrator",
  "module": "Operations",
- "name": "Server Console Log Server",
+ "name": "Metal Server Console Result",
  "owner": "Administrator",
  "permissions": [],
  "row_format": "Dynamic",

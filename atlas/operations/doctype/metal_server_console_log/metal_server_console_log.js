@@ -11,7 +11,7 @@ const TERMINAL_ASSETS = [
 const ANSI_ESCAPE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
 // Updates values in place. A form reload while a row is open breaks the open row form.
-frappe.ui.form.on("Server Console Log", {
+frappe.ui.form.on("Metal Server Console Log", {
 	refresh(frm) {
 		const grid = frm.fields_dict.results.grid;
 		grid.update_docfield_property("output", "formatter", (value) =>
@@ -19,8 +19,8 @@ frappe.ui.form.on("Server Console Log", {
 		);
 		frm.refresh_field("results");
 
-		frappe.realtime.off("server_console_log_update");
-		frappe.realtime.on("server_console_log_update", ({ name, log, results }) => {
+		frappe.realtime.off("metal_server_console_log_update");
+		frappe.realtime.on("metal_server_console_log_update", ({ name, log, results }) => {
 			if (name !== frm.doc.name) return;
 
 			Object.assign(frm.doc, log);
@@ -28,7 +28,7 @@ frappe.ui.form.on("Server Console Log", {
 			frm.refresh_header();
 
 			results.forEach(({ name, offset, new_output, ...values }) => {
-				const doc = locals["Server Console Log Server"][name];
+				const doc = locals["Metal Server Console Result"][name];
 				const output = doc.output || "";
 				if (output.length < offset) return frm.reload_doc();
 				Object.assign(doc, values, { output: output.slice(0, offset) + new_output });
@@ -42,7 +42,7 @@ frappe.ui.form.on("Server Console Log", {
 	},
 });
 
-frappe.ui.form.on("Server Console Log Server", {
+frappe.ui.form.on("Metal Server Console Result", {
 	async form_render(frm, doctype, name) {
 		const grid_form = frm.fields_dict.results.grid.grid_rows_by_docname[name].grid_form;
 		grid_form.fields_dict.output.$wrapper.hide();
