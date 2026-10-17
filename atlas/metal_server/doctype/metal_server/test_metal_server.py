@@ -714,6 +714,24 @@ class TestServer(UnitTestCase):
 
 		enqueue_doc.assert_not_called()
 
+	def test_cpu_template_toggle_flips_the_check_and_upgrades_metald(self) -> None:
+		server = self._server(status="Running")
+		server.save, server.upgrade_metald = Mock(), Mock()
+
+		for is_disabled in (1, 0):
+			MetalServer.toggle_cpu_template(server)
+			self.assertEqual(server.is_cpu_template_disabled, is_disabled)
+
+		self.assertEqual((server.save.call_count, server.upgrade_metald.call_count), (2, 2))
+
+	def test_cpu_template_toggle_fails_when_metald_cannot_upgrade(self) -> None:
+		"""The request transaction then rolls back the saved check."""
+		server = self._server(status="Stopped")
+		server.save, server.upgrade_metald = Mock(), Mock(side_effect=ValueError)
+
+		with self.assertRaises(ValueError):
+			MetalServer.toggle_cpu_template(server)
+
 	def test_upgrade_metald_rejects_a_server_that_is_not_running(self) -> None:
 		server = self._server(status="Stopped")
 
