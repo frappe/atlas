@@ -218,18 +218,18 @@ func (destination *temporaryFileDestination) discard() {
 	destination.file = nil
 }
 
-// sparseVolumeWriter skips all-zero writes. It suits a new ZFS volume, which reads
-// as zeros where nothing was written.
-type sparseVolumeWriter struct {
-	file   *os.File
+// SparseWriter skips all-zero writes. It suits a new file or ZFS volume, which
+// reads as zeros where nothing was written.
+type SparseWriter struct {
+	File   *os.File
 	offset int64
 }
 
 var zeroBuffer = make([]byte, downloadBufferSize)
 
-func (writer *sparseVolumeWriter) Write(data []byte) (int, error) {
+func (writer *SparseWriter) Write(data []byte) (int, error) {
 	if len(data) > len(zeroBuffer) || !bytes.Equal(data, zeroBuffer[:len(data)]) {
-		if _, err := writer.file.WriteAt(data, writer.offset); err != nil {
+		if _, err := writer.File.WriteAt(data, writer.offset); err != nil {
 			return 0, err
 		}
 	}

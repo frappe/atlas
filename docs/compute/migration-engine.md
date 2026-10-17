@@ -78,11 +78,11 @@ Default source control calls have a 60-second timeout. Stop calls have a 120-sec
 
 ## How does Metal validate transferred memory?
 
-The destination downloads `state`, `memory`, and `metadata.json` through the mutual-TLS API. The source exposes these files only after network removal and final snapshot creation.
+The destination downloads `state`, `memory`, and `metadata.json` through the mutual-TLS API. The source exposes these files only after network removal and final snapshot creation. The source compresses each file with zstd. Free guest memory is zero, so it compresses to almost nothing. The destination writes zero ranges as holes.
 
 Metal receives memory beside the final disk transfer. It waits for both transfers. Each completed transfer has its own checkpoint. An incomplete memory transfer restarts from its first file.
 
-Metal checks file sizes and SHA-256 checksums before it publishes memory staging with an atomic rename. The directory is `machines/<vm-id>/migration/memory-snapshot/`. Metal adds `disk-snapshot.json` with the final disk sequence and GUID.
+Metal checks file sizes and the zstd content size and checksum before it publishes memory staging with an atomic rename. The directory is `machines/<vm-id>/migration/memory-snapshot/`. Metal adds `disk-snapshot.json` with the final disk sequence and GUID.
 
 | Validation point | Check |
 | --- | --- |

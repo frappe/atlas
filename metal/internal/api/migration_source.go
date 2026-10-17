@@ -1,12 +1,11 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/labstack/echo/v4"
 
 	"github.com/frappe/atlas/metal/internal/vm/migration"
@@ -88,7 +87,7 @@ func (s *Server) stopMigrationSource(c echo.Context) error {
 	return c.JSON(http.StatusOK, snapshot)
 }
 
-// streamMigrationMemorySnapshotFile streams one memory snapshot file over the node TLS listener.
+// streamMigrationMemorySnapshotFile streams one zstd-compressed memory snapshot file over the node TLS listener.
 func (s *Server) streamMigrationMemorySnapshotFile(c echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
@@ -103,15 +102,23 @@ func (s *Server) streamMigrationMemorySnapshotFile(c echo.Context) error {
 		return err
 	}
 	defer file.Close()
-
-	c.Response().Header().Set("Content-Type", "application/octet-stream")
-	c.Response().Header().Set("Trailer", "X-Snapshot-SHA256")
-	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(c.Response(), hash), file); err != nil {
+	information, err := file.Stat()
+	if err != nil {
 		return err
 	}
-	c.Response().Header().Set("X-Snapshot-SHA256", hex.EncodeToString(hash.Sum(nil)))
-	return nil
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		return err
+	}
+
+	c.Response().Header().Set("Content-Type", "application/octet-stream")
+	c.Response().Header().Set("Content-Encoding", "zstd")
+	encoder.ResetContentSize(c.Response(), information.Size())
+	// Do not close the encoder after a failed copy. The destination rejects a frame without its end.
+	if _, err := io.Copy(encoder, file); err != nil {
+		return err
+	}
+	return encoder.Close()
 }
 
 // startMigrationSource restores the source during rollback.
