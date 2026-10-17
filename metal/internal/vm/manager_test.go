@@ -32,13 +32,18 @@ type fakeRuntime struct {
 	diskLimitMiBps int
 	inspectError   error
 	restoreError   error
-	saveError      error
-	deleteError    error
-	coldStartError error
-	pauseError     error
-	pingError      error
-	usage          RuntimeUsage
-	usageError     error
+	// restoreFailureState is the state a failed saved-state restore leaves behind.
+	restoreFailureState State
+	saveError           error
+	deleteError         error
+	coldStartError      error
+	pauseError          error
+	resumeError         error
+	// resumeFailureState is the state a failed resume leaves behind.
+	resumeFailureState State
+	pingError          error
+	usage              RuntimeUsage
+	usageError         error
 
 	migrationRestores  int
 	migrationDirectory string
@@ -88,6 +93,9 @@ func (runtime *fakeRuntime) SaveAndStop(context.Context, RuntimeMachine) error {
 func (runtime *fakeRuntime) Restore(context.Context, RuntimeMachine) error {
 	runtime.restores++
 	if runtime.restoreError != nil {
+		if runtime.restoreFailureState != "" {
+			runtime.state = runtime.restoreFailureState
+		}
 		return runtime.restoreError
 	}
 	runtime.state = StateRunning
@@ -135,6 +143,12 @@ func (runtime *fakeRuntime) Pause(context.Context, RuntimeMachine) error {
 
 func (runtime *fakeRuntime) Resume(context.Context, RuntimeMachine) error {
 	runtime.resumes++
+	if runtime.resumeError != nil {
+		if runtime.resumeFailureState != "" {
+			runtime.state = runtime.resumeFailureState
+		}
+		return runtime.resumeError
+	}
 	runtime.state = StateRunning
 	return nil
 }

@@ -51,9 +51,9 @@ Because most sleepy VMs are asleep at any time, the `balanced` strategy divides 
 ## Limits and recovery
 
 - **The first packet can be lost** while the VM wakes. Clients must retry, as they would on any network.
-- **Saved state is local.** A sleeping VM cannot move to another host with its memory. A migration cold-boots it on the new host.
+- **Migration keeps the memory only with a memory snapshot.** A memory snapshot migration sends the saved state, and the VM resumes awake on the new host. A disk-only migration wakes the VM, shuts it down, and cold-boots it on the new host.
 - **Some actions throw the saved state away:** an explicit stop, a restart, a shape change, or deleting the VM. The next start is a normal boot.
-- **A failed restore keeps the saved state** for another try. Metal never cold-boots instead, because that would lose the VM's memory without warning.
+- **A failed restore keeps the saved state** for another try. Metal never cold-boots instead, because that would lose the VM's memory without warning. The exception is a migration rollback: Metal cold-boots the source so the migration cannot stay stuck.
 - A `metald` restart resets the idle clock, so a VM can sleep later than expected, never earlier.
 - A start resets the idle clock, so a VM is never put to sleep before the guest has booted.
 

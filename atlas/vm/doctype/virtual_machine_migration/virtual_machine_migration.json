@@ -14,6 +14,7 @@
   "source_metal_server",
   "destination_metal_server",
   "has_memory_snapshot",
+  "allow_disk_only_fallback",
   "section_break_time",
   "scheduled_at",
   "column_break_timing",
@@ -120,8 +121,17 @@
    "fieldname": "has_memory_snapshot",
    "fieldtype": "Check",
    "label": "Memory Snapshot",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.has_memory_snapshot",
+   "description": "Cold boots the guest if its memory cannot move.",
+   "fieldname": "allow_disk_only_fallback",
+   "fieldtype": "Check",
+   "label": "Allow Disk-Only Fallback",
    "read_only": 1,
-   "set_only_once": 1
+   "show_description_on_click": 1
   },
   {
    "collapsible": 1,
@@ -283,7 +293,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-14 12:00:00.000000",
+ "modified": "2026-10-17 14:53:17.786858",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Migration",

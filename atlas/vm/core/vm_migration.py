@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
 from frappe.utils import get_datetime, now_datetime
+from rq.timeouts import JobTimeoutException
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
@@ -31,6 +32,11 @@ TRANSITION_PHASES = frozenset({"stopping", "starting"})
 MAXIMUM_RUN_DURATION = timedelta(minutes=30)
 MIGRATION_JOB_TIMEOUT_SECONDS = int(MAXIMUM_RUN_DURATION.total_seconds()) + 120
 DESTINATION_VISIBILITY_TIMEOUT = timedelta(minutes=10)
+# A copy slower than this throughput, plus the margin, is stuck. The margin covers Metal's
+# 30-minute incremental copy budget.
+MINIMUM_COPY_THROUGHPUT_MIBPS = 25
+COPY_TIMEOUT_MARGIN = timedelta(hours=1)
+COPY_STATUSES = frozenset({"preparing", "copying"})
 TERMINAL_STATUSES = frozenset({"completed", "failed", "aborted"})
 
 
@@ -39,6 +45,7 @@ class MigrationService:
 
 	def __init__(self, migration: VirtualMachineMigration) -> None:
 		self.migration = migration
+		self.last_contact_at: datetime | None = None
 
 	@classmethod
 	@use_read_committed
@@ -48,6 +55,7 @@ class MigrationService:
 		destination_metal_server: str | None = None,
 		resize: VirtualMachineShape | None = None,
 		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		if is_vm_migration_paused_for_create():
@@ -72,6 +80,7 @@ class MigrationService:
 				"source_metal_server": locked.server,
 				"destination_metal_server": destination_metal_server,
 				"has_memory_snapshot": has_memory_snapshot,
+				"allow_disk_only_fallback": allow_disk_only_fallback,
 			}
 		)
 		if resize:
@@ -154,20 +163,36 @@ class MigrationService:
 				return
 			frappe.db.commit()  # nosemgrep
 
+		# Metal bounds the copy and the cutover. At the deadline the reconciler starts a new run.
+		deadline = now_datetime() + MAXIMUM_RUN_DURATION
+		self.last_contact_at = now_datetime()
+		self.request_destination()
+		self.poll_until_settled(deadline)
+
+	def request_destination(self) -> None:
+		"""Ask the destination to continue or to abort. The poll loop retries a retryable error."""
 		if self.is_canceling:
 			self.request_destination_abort()
-		else:
+			return
+		try:
 			self.send_request()
+		except MetalClientError as error:
+			if not error.retryable:
+				raise
+			self.record_error(error)
 
-		deadline = now_datetime() + MAXIMUM_RUN_DURATION
+	def poll_until_settled(self, deadline: datetime) -> None:
+		"""Poll Metal until the migration settles, and fail a copy that outlives its limit."""
+		copy_deadline = self.copy_deadline()
 		while now_datetime() < deadline:
 			status = self.poll()
 			if self.advance(status):
 				return
+			is_copying = self.status_from_response(status) in COPY_STATUSES
+			if is_copying and not self.is_canceling and copy_deadline and now_datetime() > copy_deadline:
+				self.fail("copy_timeout", f"The copy did not reach cutover by {copy_deadline}.")
+				self.request_destination_abort()
 			time.sleep(self.poll_interval(status))
-
-		self.fail("migration_timeout", f"The migration did not settle within {MAXIMUM_RUN_DURATION}.")
-		self.request_destination_abort()
 
 	def select_destination_metal_server(self) -> bool:
 		"""Reserve the requested or an eligible destination. Return False to retry later."""
@@ -218,29 +243,33 @@ class MigrationService:
 				self.settle("failed")
 			return False
 
+		values: dict[str, Any] = {
+			"destination_metal_server": destination,
+			"status": "preparing",
+			"started_at": now_datetime(),
+			"destination_metal_server_selection_message": None,
+			"progress_percent": 5,
+		}
 		try:
+			# A sleeping VM wants to run and keeps its saved memory; a stopped VM has none.
+			if self.migration.has_memory_snapshot and virtual_machine.desired_state == "stopped":
+				raise AtlasUserError(_("A stopped VM has no memory to move."))
 			self.validate_compatibility(destination, virtual_machine.architecture)
 		except AtlasUserError as error:
-			self.update(
-				{
-					"error_code": "migration_incompatible",
-					"error_message": str(error),
-					"error_at": now_datetime(),
-				}
-			)
-			self.settle("failed")
-			return False
+			if not self.migration.allow_disk_only_fallback:
+				self.update(
+					{
+						"error_code": "migration_incompatible",
+						"error_message": str(error),
+						"error_at": now_datetime(),
+					}
+				)
+				self.settle("failed")
+				return False
+			values["has_memory_snapshot"] = 0
+			values["error_message"] = memory_snapshot_skipped_message(str(error))
 
-		started_at = now_datetime()
-		self.update(
-			{
-				"destination_metal_server": destination,
-				"status": "preparing",
-				"started_at": started_at,
-				"destination_metal_server_selection_message": None,
-				"progress_percent": 5,
-			}
-		)
+		self.update(values)
 		return self.migration.status not in TERMINAL_STATUSES and not self.is_canceling
 
 	def validate_compatibility(self, destination: str, architecture: str) -> None:
@@ -329,6 +358,7 @@ class MigrationService:
 			source_coordination_url,
 			resize,
 			has_memory_snapshot=bool(self.migration.has_memory_snapshot),
+			allow_disk_only_fallback=bool(self.migration.allow_disk_only_fallback),
 		)
 
 	def poll(self) -> dict[str, Any]:
@@ -341,6 +371,7 @@ class MigrationService:
 					self.record_error(error)
 				return {"status": "missing"}
 			raise
+		self.last_contact_at = now_datetime()
 		self.store_progress(status)
 		return status
 
@@ -361,6 +392,13 @@ class MigrationService:
 			values["progress_percent"] = self.progress_percent(status, transfers)
 		if self.migration.has_memory_snapshot and response.get("memory_snapshot_status"):
 			values["memory_snapshot_status"] = response["memory_snapshot_status"]
+		# A definite failure keeps its own message.
+		if response.get("memory_snapshot_error") and self.migration.error_code in (
+			None,
+			"",
+			"metal_client_error",
+		):
+			values["error_message"] = memory_snapshot_skipped_message(response["memory_snapshot_error"])
 		self.update(values, transfers=transfers, commit=True)
 
 	def status_from_response(self, response: dict[str, Any]) -> str | None:
@@ -500,7 +538,9 @@ class MigrationService:
 		}
 		if status == "completed":
 			values["progress_percent"] = 100
-		if self.migration.has_memory_snapshot:
+		# A migration that completed after a disk-only fallback keeps its failed memory snapshot status.
+		is_fallback = status == "completed" and self.migration.memory_snapshot_status == "failed"
+		if self.migration.has_memory_snapshot and not is_fallback:
 			values["memory_snapshot_status"] = status
 		self.update(values)
 		self.release_virtual_machine()
@@ -531,10 +571,7 @@ class MigrationService:
 				values.get("error_code") == "metal_client_error"
 				and migration.error_code not in (None, "", "metal_client_error")
 			)
-			or (
-				migration.status == "canceling"
-				and values.get("error_code") in ("destination_unreachable", "migration_timeout")
-			)
+			or (migration.status == "canceling" and values.get("error_code") == "destination_unreachable")
 		):
 			self.migration = migration
 			if commit:
@@ -600,11 +637,20 @@ class MigrationService:
 
 	@property
 	def is_expired(self) -> bool:
-		"""Report whether a selected destination exceeded the visibility timeout."""
+		"""Report whether the destination stayed silent for the visibility timeout."""
+		last_contact_at = self.last_contact_at or self.migration.started_at
 		return bool(
-			self.migration.started_at
-			and now_datetime() > get_datetime(self.migration.started_at) + DESTINATION_VISIBILITY_TIMEOUT
+			last_contact_at
+			and now_datetime() > get_datetime(last_contact_at) + DESTINATION_VISIBILITY_TIMEOUT
 		)
+
+	def copy_deadline(self) -> datetime | None:
+		"""Return when a copy that has not reached cutover counts as stuck."""
+		if not self.migration.started_at:
+			return None
+		disk_mib = frappe.db.get_value("Virtual Machine", self.migration.virtual_machine, "disk_mib")
+		copy_duration = timedelta(seconds=disk_mib / MINIMUM_COPY_THROUGHPUT_MIBPS)
+		return get_datetime(self.migration.started_at) + copy_duration + COPY_TIMEOUT_MARGIN
 
 	@property
 	def duration_seconds(self) -> int:
@@ -672,6 +718,11 @@ class MigrationService:
 			raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
 
 
+def memory_snapshot_skipped_message(reason: str) -> str:
+	"""Explain why a memory snapshot migration continued with the disk only."""
+	return _("Memory snapshot skipped, migrating the disk only: {0}").format(reason)
+
+
 def reconcile_migration(migration_name: str) -> None:
 	"""Queue the worker that advances one migration. A second call is deduplicated."""
 	frappe.enqueue(
@@ -694,10 +745,20 @@ def run_migration(migration_name: str) -> None:
 	try:
 		service.run()
 	except Exception as error:
-		service.fail("migration_worker_error", str(error))
+		frappe.db.rollback()
 		frappe.log_error(
 			title=f"Virtual Machine migration {migration_name} failed", message=frappe.get_traceback()
 		)
+		if is_transient_error(error):
+			return
+		service.fail("migration_worker_error", str(error))
+
+
+def is_transient_error(error: Exception) -> bool:
+	"""Report an error that the next reconcile can retry without failing the migration."""
+	if isinstance(error, MetalClientError):
+		return error.retryable
+	return isinstance(error, frappe.QueryDeadlockError | frappe.QueryTimeoutError | JobTimeoutException)
 
 
 @run_as_admin

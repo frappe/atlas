@@ -200,6 +200,14 @@ function migrateVirtualMachine(frm) {
 				label: __("Memory Snapshot"),
 				default: 0,
 			},
+			{
+				fieldtype: "Check",
+				fieldname: "allow_disk_only_fallback",
+				label: __("Allow Disk-Only Fallback"),
+				description: __("Cold boots the guest if its memory cannot move."),
+				default: 1,
+				depends_on: "has_memory_snapshot",
+			},
 		],
 		primary_action_label: __("Migrate"),
 		primary_action(values) {
@@ -210,6 +218,7 @@ function migrateVirtualMachine(frm) {
 				args: {
 					destination_metal_server: values.destination_metal_server || null,
 					has_memory_snapshot: Boolean(values.has_memory_snapshot),
+					allow_disk_only_fallback: Boolean(values.allow_disk_only_fallback),
 				},
 				freeze: true,
 				freeze_message: __("Scheduling migration..."),
