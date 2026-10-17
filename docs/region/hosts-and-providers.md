@@ -78,6 +78,10 @@ Only one update can be Running or Paused. A step runs every 5 seconds and contin
 
 A failed upgrade or check pauses the update. [When a server fails](../operate/roll-out-metald.md#when-a-server-fails) explains how to continue or go back to an earlier build.
 
+### Run a script on many hosts
+
+**Server Console** runs a script as `root` on many Metal Servers at once, over each host SSH address (wg0). Enter titles, names, or IP addresses, or use **Pick Servers**. Each entry must match one server. The Server Console Log shows the live output of each server.
+
 ### Upgrade on one host
 
 `upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. It keeps the new binaries when the new build has a [metald patch](../develop/metal.md#change-stored-state-with-a-patch) that the host has not applied, because the previous build cannot read the patched state. A repeated upgrade to the running build changes nothing.
