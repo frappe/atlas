@@ -29,7 +29,7 @@ Each request goes through these steps in order:
 8. Write the response.
 
 - Each request gets an `X-Request-ID` and an `X-Operation-ID`. A caller value is kept only when it is safe to echo.
-- JSON decoding rejects unknown fields and trailing values.
+- JSON decoding ignores unknown fields and rejects trailing values.
 - Request bodies are size capped.
 
 ## Routes

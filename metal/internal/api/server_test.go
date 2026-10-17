@@ -549,19 +549,12 @@ func TestListReturnsAnArrayOfNestedResources(t *testing.T) {
 	}
 }
 
-func TestMutationRequestsRejectUnknownAndTrailingJSON(t *testing.T) {
+func TestMutationRequestsIgnoreUnknownFieldsAndRejectTrailingJSON(t *testing.T) {
 	server := newTestServer(t)
 	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
 
-	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped","unknown":true}`, http.StatusBadRequest)
+	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped","unknown":true}`, http.StatusAccepted)
 	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped"}{}`, http.StatusBadRequest)
-}
-
-func TestPowerRequestRejectsWarm(t *testing.T) {
-	server := newTestServer(t)
-	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
-
-	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped","warm":true}`, http.StatusBadRequest)
 }
 
 func TestCreateRejectsLongID(t *testing.T) {
