@@ -16,18 +16,19 @@ import (
 )
 
 type options struct {
-	configFile         string
-	cfg                firecracker.Config
-	pool, imagesDir    string
-	listen             string
-	baseDir            string
-	wireGuardName      string
-	mesh               meshOptions
-	trafficMonitor     trafficMonitorOptions
-	migration          migrationOptions
-	tls                tlsOptions
-	telemetry          telemetryOptions
-	coordinationListen string
+	configFile            string
+	cfg                   firecracker.Config
+	pool, imagesDir       string
+	listen                string
+	baseDir               string
+	wireGuardName         string
+	mesh                  meshOptions
+	trafficMonitor        trafficMonitorOptions
+	migration             migrationOptions
+	tls                   tlsOptions
+	telemetry             telemetryOptions
+	coordinationListen    string
+	isCPUTemplateDisabled bool
 }
 
 // telemetryOptions configures the metric push to Datum. Atlas writes datum_url
@@ -146,9 +147,10 @@ type metaldFile struct {
 }
 
 type firecrackerFile struct {
-	BinaryPath      string `toml:"binary_path"`
-	SocketsDir      string `toml:"sockets_dir"`
-	CPUTemplateFile string `toml:"cpu_template_file"`
+	BinaryPath          string `toml:"binary_path"`
+	SocketsDir          string `toml:"sockets_dir"`
+	CPUTemplateFile     string `toml:"cpu_template_file"`
+	CPUTemplateDisabled bool   `toml:"cpu_template_disabled"`
 }
 
 type jailerFile struct {
@@ -185,12 +187,17 @@ func load(path string) (options, error) {
 	if err := applyFile(&resolvedOptions, path); err != nil {
 		return options{}, err
 	}
+	// A host without the baseline boots its VMs without a template and reports why.
 	if len(resolvedOptions.cfg.CPUTemplate) == 0 {
 		template, err := firecracker.DefaultCPUTemplate()
-		if err != nil {
+		switch {
+		case errors.Is(err, firecracker.ErrUnsupportedCPUTemplate):
+			resolvedOptions.cfg.DefaultCPUTemplateError = err.Error()
+		case err != nil:
 			return options{}, fmt.Errorf("select default CPU template: %w", err)
+		case !resolvedOptions.isCPUTemplateDisabled:
+			resolvedOptions.cfg.CPUTemplate = template
 		}
-		resolvedOptions.cfg.CPUTemplate = template
 	}
 	resolvedOptions.deriveDirs()
 	return resolvedOptions, nil
@@ -216,6 +223,10 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.coordinationListen, fc.Metald.CoordinationListen)
 	overlay(&resolvedOptions.cfg.FirecrackerBin, fc.Firecracker.BinaryPath)
 	overlay(&resolvedOptions.cfg.SocketsDir, fc.Firecracker.SocketsDir)
+	if fc.Firecracker.CPUTemplateDisabled && fc.Firecracker.CPUTemplateFile != "" {
+		return errors.New("set firecracker.cpu_template_disabled or firecracker.cpu_template_file, not both")
+	}
+	resolvedOptions.isCPUTemplateDisabled = fc.Firecracker.CPUTemplateDisabled
 	if fc.Firecracker.CPUTemplateFile != "" {
 		template, err := os.ReadFile(fc.Firecracker.CPUTemplateFile)
 		if err != nil {

@@ -22,6 +22,8 @@ binary_path = "/usr/bin/firecracker"
 sockets_dir = "/run/metal"
 # Empty selects the built-in Intel, AMD, or ARM64 guest CPU baseline.
 cpu_template_file = ""
+# true boots every VM without a CPU template. Cannot be set with cpu_template_file.
+cpu_template_disabled = false
 
 [jailer]
 binary_path = "/usr/bin/jailer"

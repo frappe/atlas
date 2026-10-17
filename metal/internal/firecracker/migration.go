@@ -25,6 +25,7 @@ func (runtime *Runtime) HostCompatibility(ctx context.Context) (vm.HostCompatibi
 	if err != nil {
 		return vm.HostCompatibility{}, err
 	}
+	result.DefaultCPUTemplateError = runtime.configuration.DefaultCPUTemplateError
 	result.CPUProfile, err = runtime.cpuProfile()
 	if err != nil {
 		return vm.HostCompatibility{}, err

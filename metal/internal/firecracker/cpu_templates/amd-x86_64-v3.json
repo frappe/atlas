@@ -7,7 +7,7 @@
       "modifiers": [
         {
           "register": "ecx",
-          "bitmap": "0bx000xx0xx00xx00000x000x0000000xx"
+          "bitmap": "0bx0xxxxxxxx0xx00000xx00x0000000xx"
         },
         {
           "register": "edx",
@@ -26,7 +26,7 @@
         },
         {
           "register": "ebx",
-          "bitmap": "0b000000000000000000x000000x000000"
+          "bitmap": "0b000000000000000000x0000x0xx0x000"
         },
         {
           "register": "ecx",
@@ -45,7 +45,7 @@
       "modifiers": [
         {
           "register": "eax",
-          "bitmap": "0b000000000000000000000000000000xx"
+          "bitmap": "0b00000000000000000000000000000xxx"
         },
         {
           "register": "edx",
@@ -71,7 +71,7 @@
       "modifiers": [
         {
           "register": "ecx",
-          "bitmap": "0b000000000x000000000000000000000x"
+          "bitmap": "0b000000000x0000000000000000x0000x"
         },
         {
           "register": "edx",

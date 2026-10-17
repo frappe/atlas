@@ -24,6 +24,15 @@ machines_dir=$base_dir/machines
 images_dir=$base_dir/images
 sockets_dir=/run/metal
 config_file=$base_dir/metald.toml
+# An Atlas build from before the setting does not send it.
+case "${CPU_TEMPLATE_DISABLED:-false}" in
+true) cpu_template_line="cpu_template_disabled = true" ;;
+false) cpu_template_line="" ;;
+*)
+	echo "CPU_TEMPLATE_DISABLED must be true or false" >&2
+	exit 1
+	;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "install-metald must run as root" >&2
@@ -236,6 +245,13 @@ EOF
 	mesh_sections
 	tls_sections
 	chmod 600 "$config_file"
+fi
+# Atlas owns this line: metald boots every VM without a CPU template while it is present.
+sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
+if [ -n "$cpu_template_line" ] && grep -q '^\[firecracker\]' "$config_file"; then
+	sed -i "/^\[firecracker\]/a $cpu_template_line" "$config_file"
+elif [ -n "$cpu_template_line" ]; then
+	printf '\n[firecracker]\n%s\n' "$cpu_template_line" >>"$config_file"
 fi
 
 
