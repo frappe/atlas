@@ -1,0 +1,134 @@
+{
+ "actions": [],
+ "autoname": "metal-server-console-log-.#####",
+ "creation": "2026-10-17 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "column_break_timeout",
+  "timeout_seconds",
+  "column_break_started_at",
+  "started_at",
+  "column_break_dykx",
+  "ended_at",
+  "results_section",
+  "results",
+  "script_section",
+  "servers",
+  "script"
+ ],
+ "fields": [
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nSuccess\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_timeout",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Timeout (Seconds)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_started_at",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ended_at",
+   "fieldtype": "Datetime",
+   "label": "Ended At",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "true",
+   "fieldname": "script_section",
+   "fieldtype": "Section Break",
+   "label": "Runner Config"
+  },
+  {
+   "fieldname": "servers",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Servers",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "script",
+   "fieldtype": "Code",
+   "label": "Script",
+   "options": "Shell",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "results_section",
+   "fieldtype": "Section Break",
+   "label": "Results"
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "Table",
+   "label": "Results",
+   "options": "Metal Server Console Result",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_dykx",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "in_create": 1,
+ "links": [],
+ "modified": "2026-10-17 16:01:37.350304",
+ "modified_by": "Administrator",
+ "module": "Operations",
+ "name": "Metal Server Console Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Pending"
+  },
+  {
+   "color": "Blue",
+   "title": "Running"
+  },
+  {
+   "color": "Green",
+   "title": "Success"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  }
+ ]
+}

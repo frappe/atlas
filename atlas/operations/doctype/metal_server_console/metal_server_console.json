@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "creation": "2026-10-17 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "servers",
+  "script_section",
+  "script",
+  "advanced_section",
+  "timeout_seconds"
+ ],
+ "fields": [
+  {
+   "description": "Comma-separated titles, names or IP addresses of Metal Servers. The script runs as root.",
+   "fieldname": "servers",
+   "fieldtype": "Small Text",
+   "label": "Servers"
+  },
+  {
+   "default": "300",
+   "fieldname": "timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Timeout (Seconds)"
+  },
+  {
+   "fieldname": "script_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "script",
+   "fieldtype": "Code",
+   "label": "Script",
+   "options": "Shell"
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "true",
+   "fieldname": "advanced_section",
+   "fieldtype": "Section Break",
+   "label": "Advanced"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-17 15:45:25.771865",
+ "modified_by": "Administrator",
+ "module": "Operations",
+ "name": "Metal Server Console",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
