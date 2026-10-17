@@ -52,7 +52,7 @@ type stubMigrationManager struct {
 	memoryPath           string
 }
 
-func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, hasMemorySnapshot bool) (migration.DestinationProgress, error) {
+func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize, hasMemorySnapshot, _ bool) (migration.DestinationProgress, error) {
 	m.createArgs = []string{migrationID, virtualMachineID, source}
 	m.createResize = resize
 	m.createMemorySnapshot = hasMemorySnapshot

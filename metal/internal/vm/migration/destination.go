@@ -228,7 +228,7 @@ func (m *Manager) RequestFinish(ctx context.Context, migrationID string) error {
 
 // advanceFinish activates the destination and removes source and staging data.
 func (m *Manager) advanceFinish(ctx context.Context, record destinationRecord) error {
-	if record.HasMemorySnapshot {
+	if record.usesMemorySnapshot() {
 		unlock, err := m.host.LockOperation(ctx, record.VirtualMachineID)
 		if err != nil {
 			return err
