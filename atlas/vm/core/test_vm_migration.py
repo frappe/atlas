@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import frappe
 from frappe.tests import UnitTestCase
+from frappe.utils import now_datetime
+from rq.timeouts import JobTimeoutException
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility
-from atlas.vm.core.vm_migration import MigrationService
+from atlas.vm.core.vm_migration import MigrationService, run_migration
 
 
 def migration_doc(**overrides: object) -> SimpleNamespace:
@@ -435,6 +438,72 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 
 		service.settle.assert_called_once_with("aborted")
 		service.request_destination_abort.assert_not_called()
+
+
+class TestMigrationRunResilience(UnitTestCase):
+	def test_a_recent_answer_keeps_an_old_migration_visible(self) -> None:
+		service = MigrationService(migration_doc(started_at="2026-09-21 12:00:00"))
+		self.assertTrue(service.is_expired)
+		service.last_contact_at = now_datetime()
+		self.assertFalse(service.is_expired)
+
+	def test_a_run_survives_an_unreachable_destination_and_its_deadline(self) -> None:
+		service = MigrationService(migration_doc(status="copying"))
+		with (
+			patch("atlas.vm.core.vm_migration.MAXIMUM_RUN_DURATION", timedelta(0)),
+			patch.object(service, "send_request", side_effect=MetalClientError("offline", retryable=True)),
+			patch.object(service, "record_error") as record_error,
+			patch.object(service, "fail") as fail,
+			patch.object(service, "request_destination_abort") as abort,
+		):
+			service.run()
+		record_error.assert_called_once()
+		fail.assert_not_called()
+		abort.assert_not_called()
+
+	def test_only_a_stuck_copy_that_nobody_canceled_fails(self) -> None:
+		for status, phase, is_failed in (
+			("copying", "copying", True),
+			("copying", "stopping", False),
+			("copying", None, False),
+			("canceling", "copying", False),
+		):
+			response = {"status": "running", "phase": phase} if phase else {"status": "missing"}
+			service = MigrationService(migration_doc(status=status, started_at="2026-09-21 12:00:00"))
+			with (
+				self.subTest(status=status, phase=phase),
+				patch("atlas.vm.core.vm_migration.frappe.db.get_value", return_value=102400),
+				patch("atlas.vm.core.vm_migration.now_datetime", return_value=datetime(2026, 9, 21, 14, 18)),
+				patch("atlas.vm.core.vm_migration.MAXIMUM_RUN_DURATION", timedelta(hours=1)),
+				patch.object(service, "send_request"),
+				patch.object(service, "poll", return_value=response),
+				patch.object(service, "advance", side_effect=[False, True]),
+				patch.object(service, "fail") as fail,
+				patch.object(service, "request_destination_abort") as abort,
+				patch("atlas.vm.core.vm_migration.time.sleep"),
+			):
+				service.run()
+			self.assertEqual(fail.called, is_failed)
+			# A canceling run asks the destination to abort before it polls.
+			self.assertEqual(abort.called, is_failed or status == "canceling")
+
+	def test_only_a_definite_worker_error_fails_the_migration(self) -> None:
+		for error, is_failed in (
+			(frappe.QueryDeadlockError("deadlock"), False),
+			(JobTimeoutException("job timed out"), False),
+			(MetalClientError("offline", retryable=True), False),
+			(ValueError("bug"), True),
+		):
+			with (
+				self.subTest(error=type(error).__name__),
+				patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=migration_doc()),
+				patch("atlas.vm.core.vm_migration.frappe.db"),
+				patch("atlas.vm.core.vm_migration.frappe.log_error"),
+				patch.object(MigrationService, "run", side_effect=error),
+				patch.object(MigrationService, "fail") as fail,
+			):
+				run_migration("mig-00001")
+			self.assertEqual(fail.called, is_failed)
 
 
 class TestMigrationLock(UnitTestCase):

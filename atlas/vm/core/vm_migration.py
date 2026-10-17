@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
 from frappe.utils import get_datetime, now_datetime
+from rq.timeouts import JobTimeoutException
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
@@ -31,6 +32,11 @@ TRANSITION_PHASES = frozenset({"stopping", "starting"})
 MAXIMUM_RUN_DURATION = timedelta(minutes=30)
 MIGRATION_JOB_TIMEOUT_SECONDS = int(MAXIMUM_RUN_DURATION.total_seconds()) + 120
 DESTINATION_VISIBILITY_TIMEOUT = timedelta(minutes=10)
+# A copy slower than this throughput, plus the margin, is stuck. The margin covers Metal's
+# 30-minute incremental copy budget.
+MINIMUM_COPY_THROUGHPUT_MIBPS = 25
+COPY_TIMEOUT_MARGIN = timedelta(hours=1)
+COPY_STATUSES = frozenset({"preparing", "copying"})
 TERMINAL_STATUSES = frozenset({"completed", "failed", "aborted"})
 
 
@@ -39,6 +45,7 @@ class MigrationService:
 
 	def __init__(self, migration: VirtualMachineMigration) -> None:
 		self.migration = migration
+		self.last_contact_at: datetime | None = None
 
 	@classmethod
 	@use_read_committed
@@ -156,20 +163,29 @@ class MigrationService:
 				return
 			frappe.db.commit()  # nosemgrep
 
+		# Metal bounds the copy and the cutover. At the deadline the reconciler starts a new run.
+		deadline = now_datetime() + MAXIMUM_RUN_DURATION
+		self.last_contact_at = now_datetime()
 		if self.is_canceling:
 			self.request_destination_abort()
 		else:
-			self.send_request()
+			try:
+				self.send_request()
+			except MetalClientError as error:
+				if not error.retryable:
+					raise
+				self.record_error(error)
 
-		deadline = now_datetime() + MAXIMUM_RUN_DURATION
+		copy_deadline = self.copy_deadline
 		while now_datetime() < deadline:
 			status = self.poll()
 			if self.advance(status):
 				return
+			is_copying = self.status_from_response(status) in COPY_STATUSES
+			if is_copying and not self.is_canceling and copy_deadline and now_datetime() > copy_deadline:
+				self.fail("copy_timeout", f"The copy did not reach cutover by {copy_deadline}.")
+				self.request_destination_abort()
 			time.sleep(self.poll_interval(status))
-
-		self.fail("migration_timeout", f"The migration did not settle within {MAXIMUM_RUN_DURATION}.")
-		self.request_destination_abort()
 
 	def select_destination_metal_server(self) -> bool:
 		"""Reserve the requested or an eligible destination. Return False to retry later."""
@@ -348,6 +364,7 @@ class MigrationService:
 					self.record_error(error)
 				return {"status": "missing"}
 			raise
+		self.last_contact_at = now_datetime()
 		self.store_progress(status)
 		return status
 
@@ -547,10 +564,7 @@ class MigrationService:
 				values.get("error_code") == "metal_client_error"
 				and migration.error_code not in (None, "", "metal_client_error")
 			)
-			or (
-				migration.status == "canceling"
-				and values.get("error_code") in ("destination_unreachable", "migration_timeout")
-			)
+			or (migration.status == "canceling" and values.get("error_code") == "destination_unreachable")
 		):
 			self.migration = migration
 			if commit:
@@ -616,11 +630,21 @@ class MigrationService:
 
 	@property
 	def is_expired(self) -> bool:
-		"""Report whether a selected destination exceeded the visibility timeout."""
+		"""Report whether the destination stayed silent for the visibility timeout."""
+		last_contact_at = self.last_contact_at or self.migration.started_at
 		return bool(
-			self.migration.started_at
-			and now_datetime() > get_datetime(self.migration.started_at) + DESTINATION_VISIBILITY_TIMEOUT
+			last_contact_at
+			and now_datetime() > get_datetime(last_contact_at) + DESTINATION_VISIBILITY_TIMEOUT
 		)
+
+	@property
+	def copy_deadline(self) -> datetime | None:
+		"""Return when a copy that has not reached cutover counts as stuck."""
+		if not self.migration.started_at:
+			return None
+		disk_mib = frappe.db.get_value("Virtual Machine", self.migration.virtual_machine, "disk_mib")
+		copy_duration = timedelta(seconds=disk_mib / MINIMUM_COPY_THROUGHPUT_MIBPS)
+		return get_datetime(self.migration.started_at) + copy_duration + COPY_TIMEOUT_MARGIN
 
 	@property
 	def duration_seconds(self) -> int:
@@ -715,10 +739,20 @@ def run_migration(migration_name: str) -> None:
 	try:
 		service.run()
 	except Exception as error:
-		service.fail("migration_worker_error", str(error))
+		frappe.db.rollback()
 		frappe.log_error(
 			title=f"Virtual Machine migration {migration_name} failed", message=frappe.get_traceback()
 		)
+		if is_transient_error(error):
+			return
+		service.fail("migration_worker_error", str(error))
+
+
+def is_transient_error(error: Exception) -> bool:
+	"""Report an error that the next reconcile can retry without failing the migration."""
+	if isinstance(error, MetalClientError):
+		return error.retryable
+	return isinstance(error, frappe.QueryDeadlockError | frappe.QueryTimeoutError | JobTimeoutException)
 
 
 @run_as_admin

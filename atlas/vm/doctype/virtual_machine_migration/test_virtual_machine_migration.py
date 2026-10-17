@@ -139,7 +139,6 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 			service.request_abort()
 			self.assertTrue(stale.is_expired)
 			self.assertFalse(stale.advance({"status": "missing"}))
-			stale.fail("migration_timeout", "The worker reached its run duration")
 			self.assertTrue(stale.advance({"status": "aborted"}))
 		self.assertEqual(stale.migration.status, "aborted")
 		self.assertEqual(stale.migration.memory_snapshot_status, "aborted")
