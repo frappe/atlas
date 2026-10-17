@@ -1,15 +1,19 @@
 // Copyright (c) 2026, Frappe and contributors
 // For license information, please see license.txt
 
-frappe.ui.form.on("Server Console", {
+frappe.ui.form.on("Metal Server Console", {
 	refresh(frm) {
 		frm.disable_save();
 		frm.page.set_primary_action(__("Execute"), () =>
 			frm
 				.call({ method: "execute", doc: frm.doc, freeze: true })
-				.then(({ message }) => frappe.set_route("Form", "Server Console Log", message))
+				.then(({ message }) =>
+					frappe.set_route("Form", "Metal Server Console Log", message)
+				)
 		);
-		frm.add_custom_button(__("Logs"), () => frappe.set_route("List", "Server Console Log"));
+		frm.add_custom_button(__("Logs"), () =>
+			frappe.set_route("List", "Metal Server Console Log")
+		);
 		frm.add_custom_button(__("Pick Servers"), () => pickServers(frm));
 		// Adding a button shows the menu again, so hide it last. Developers keep it to edit the DocType.
 		if (!frappe.boot.developer_mode) frm.page.hide_menu();

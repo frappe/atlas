@@ -46,7 +46,7 @@
  "modified": "2026-10-17 15:45:25.771865",
  "modified_by": "Administrator",
  "module": "Operations",
- "name": "Server Console",
+ "name": "Metal Server Console",
  "owner": "Administrator",
  "permissions": [
   {

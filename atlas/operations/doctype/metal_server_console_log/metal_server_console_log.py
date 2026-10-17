@@ -17,8 +17,8 @@ from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.ssh import SSHRunner
 
 if TYPE_CHECKING:
-	from atlas.operations.doctype.server_console_log_server.server_console_log_server import (
-		ServerConsoleLogServer,
+	from atlas.operations.doctype.metal_server_console_result.metal_server_console_result import (
+		MetalServerConsoleResult,
 	)
 
 SAVE_INTERVAL_SECONDS = 1
@@ -32,7 +32,7 @@ SERVER_LOOKUP_FIELDS = (
 )
 
 
-class ServerConsoleLog(Document):
+class MetalServerConsoleLog(Document):
 	"""One script run as root on many Metal Servers at once, with the result of each server."""
 
 	# begin: auto-generated types
@@ -43,12 +43,12 @@ class ServerConsoleLog(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from atlas.operations.doctype.server_console_log_server.server_console_log_server import (
-			ServerConsoleLogServer,
+		from atlas.operations.doctype.metal_server_console_result.metal_server_console_result import (
+			MetalServerConsoleResult,
 		)
 
 		ended_at: DF.Datetime | None
-		results: DF.Table[ServerConsoleLogServer]
+		results: DF.Table[MetalServerConsoleResult]
 		script: DF.Code
 		servers: DF.SmallText
 		started_at: DF.Datetime | None
@@ -126,7 +126,7 @@ class ServerConsoleLog(Document):
 	def _publish_progress(self, changes: list[dict]) -> None:
 		"""Send changed values to the open form. A form reload would close an open row."""
 		frappe.publish_realtime(
-			"server_console_log_update",
+			"metal_server_console_log_update",
 			{
 				"name": self.name,
 				"log": {field: self.get(field) for field in ("status", "started_at", "ended_at")},
@@ -140,7 +140,7 @@ class ServerConsoleLog(Document):
 class ServerRun:
 	"""The script run on one server. Its thread writes only to this object, and the job thread saves it."""
 
-	def __init__(self, row: ServerConsoleLogServer) -> None:
+	def __init__(self, row: MetalServerConsoleResult) -> None:
 		self.row = row
 		self.output_chunks: list[str] = []
 		self.exit_code: int | None = None

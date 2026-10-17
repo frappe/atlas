@@ -9,7 +9,7 @@ from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.core.ssh import SSHResult
 
-MODULE = "atlas.operations.doctype.server_console_log.server_console_log"
+MODULE = "atlas.operations.doctype.metal_server_console_log.metal_server_console_log"
 
 
 def insert_server(title: str, public_ipv4_address: str, status: str = "Running") -> str:
@@ -30,7 +30,12 @@ def insert_server(title: str, public_ipv4_address: str, status: str = "Running")
 
 def insert_log(servers: str) -> frappe.Document:
 	return frappe.get_doc(
-		{"doctype": "Server Console Log", "servers": servers, "script": "uptime", "timeout_seconds": 300}
+		{
+			"doctype": "Metal Server Console Log",
+			"servers": servers,
+			"script": "uptime",
+			"timeout_seconds": 300,
+		}
 	).insert(ignore_permissions=True)
 
 

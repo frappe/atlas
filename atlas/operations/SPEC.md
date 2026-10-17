@@ -12,8 +12,8 @@ Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a
 | `MetaldUpdateServer` (DocType) | Server batch, status, versions, and upgrade SSH Task. |
 | `run_metald_update_steps` | Runs one step of each Planning or Running update every 5 seconds. |
 | `read_server_versions` | Reads one host and records a planning or check result. |
-| `ServerConsole` (Single DocType) | Desk form that starts a Server Console Log. It does not save. |
-| `ServerConsoleLog` (DocType) | One script run as root on many Metal Servers, its servers, and their results. |
+| `MetalServerConsole` (Single DocType) | Desk form that starts a Metal Server Console Log. It does not save. |
+| `MetalServerConsoleLog` (DocType) | One script run as root on many Metal Servers, its servers, and their results. |
 | `ServerRun` | The run on one server. Its thread writes only to this object. |
 
 ## Invariants
@@ -22,4 +22,4 @@ Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a
 - A step does not start an upgrade while the Metal Server `metald_job_id` job runs.
 - Metal Server stores no version. Versions come from `MetalClient.get_versions`, and a `404` means that the server needs the build.
 - Atlas keeps each File that an update links, so a duplicate can roll the servers back.
-- A Server Console Log runs one thread per server in one `long` job. Only the job thread writes to the database.
+- A Metal Server Console Log runs one thread per server in one `long` job. Only the job thread writes to the database.

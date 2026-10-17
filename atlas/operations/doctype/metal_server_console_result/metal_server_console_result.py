@@ -4,8 +4,8 @@
 from frappe.model.document import Document
 
 
-class ServerConsoleLogServer(Document):
-	"""One server in a Server Console Log and its script result."""
+class MetalServerConsoleResult(Document):
+	"""One server in a Metal Server Console Log and its script result."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
