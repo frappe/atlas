@@ -2,8 +2,6 @@ package migration
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +11,9 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/klauspost/compress/zstd"
+
+	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -79,20 +80,23 @@ func (c *SourceClient) receiveMemorySnapshotFile(ctx context.Context, address, m
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("source returned HTTP %d", response.StatusCode)
 	}
+	decoder, err := zstd.NewReader(response.Body)
+	if err != nil {
+		return err
+	}
+	defer decoder.Close()
+
 	file, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	hash := sha256.New()
-	size, copyError := io.Copy(io.MultiWriter(file, hash), io.LimitReader(response.Body, limit+1))
-	if err := errors.Join(copyError, file.Close()); err != nil {
+	// The zstd frame checksum and content size reject a corrupt or truncated stream.
+	size, copyError := io.CopyBuffer(&storage.SparseWriter{File: file}, io.LimitReader(decoder, limit+1), make([]byte, 1<<20))
+	if err := errors.Join(copyError, file.Truncate(size), file.Close()); err != nil {
 		return err
 	}
 	if size <= 0 || size > limit {
 		return fmt.Errorf("invalid file size %d (limit %d)", size, limit)
-	}
-	if hex.EncodeToString(hash.Sum(nil)) != response.Trailer.Get("X-Snapshot-SHA256") {
-		return errors.New("snapshot checksum does not match the source")
 	}
 	return nil
 }

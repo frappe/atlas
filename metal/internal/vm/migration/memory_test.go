@@ -1,9 +1,8 @@
 package migration
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,11 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func TestReceiveMemorySnapshotChecksFiles(t *testing.T) {
-	for _, failure := range []string{"", "checksum", "truncated", "oversized", "missing"} {
+	// The sparse writer skips trailing zeros, so the file must keep its full length.
+	memory := append([]byte("memory"), make([]byte, 256<<10)...)
+	for _, failure := range []string{"", "checksum", "truncated", "uncompressed", "oversized", "missing"} {
 		t.Run(failure, func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Query().Get("sequence") != "2" || request.URL.Query().Get("virtual_machine_id") != "vm-1" {
@@ -28,18 +31,26 @@ func TestReceiveMemorySnapshotChecksFiles(t *testing.T) {
 					return
 				}
 				contents := []byte(request.URL.Query().Get("file"))
-				if failure == "oversized" && request.URL.Query().Get("file") == "memory" {
-					contents = make([]byte, (1<<20)+1)
+				if request.URL.Query().Get("file") == "memory" {
+					contents = memory
+					if failure == "oversized" {
+						contents = make([]byte, (1<<20)+1)
+					}
 				}
-				digest := sha256.Sum256(contents)
-				writer.Header().Set("Trailer", "X-Snapshot-SHA256")
-				_, _ = writer.Write(contents)
-				if failure == "checksum" {
-					digest[0] ^= 1
+				if failure == "uncompressed" {
+					_, _ = writer.Write(contents)
+					return
 				}
-				if failure != "truncated" {
-					writer.Header().Set("X-Snapshot-SHA256", hex.EncodeToString(digest[:]))
+				encoder, _ := zstd.NewWriter(nil)
+				compressed := encoder.EncodeAll(contents, nil)
+				switch failure {
+				case "checksum":
+					compressed[len(compressed)-1] ^= 1
+				case "truncated":
+					compressed = compressed[:len(compressed)-4]
 				}
+				writer.Header().Set("Content-Encoding", "zstd")
+				_, _ = writer.Write(compressed)
 			}))
 			defer server.Close()
 			client := NewSourceClient(0, nil)
@@ -51,9 +62,13 @@ func TestReceiveMemorySnapshotChecksFiles(t *testing.T) {
 			}
 			if failure == "" {
 				for _, name := range []string{"state", "memory", "metadata.json"} {
+					expected := []byte(name)
+					if name == "memory" {
+						expected = memory
+					}
 					contents, err := os.ReadFile(filepath.Join(directory, name))
-					if err != nil || string(contents) != name {
-						t.Fatalf("%s = %q, %v", name, contents, err)
+					if err != nil || !bytes.Equal(contents, expected) {
+						t.Fatalf("%s has %d bytes, %v", name, len(contents), err)
 					}
 				}
 			}
