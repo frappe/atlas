@@ -154,6 +154,9 @@ func (c *SourceClient) do(request *http.Request, client *http.Client) ([]byte, e
 	if response.StatusCode == http.StatusConflict {
 		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrConflict)
 	}
+	if response.StatusCode == http.StatusUnprocessableEntity {
+		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, ErrNoMemoryToSave)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("source %s %s returned HTTP %d", request.Method, request.URL.Path, response.StatusCode)
 	}

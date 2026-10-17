@@ -30,6 +30,7 @@ type fakeMigrationHost struct {
 
 	normalizeCalls      int
 	saveMemoryCalls     int
+	saveMemoryError     error
 	removeNetworkCalls  int
 	ensureNetworkCalls  int
 	applyStateCalls     int
@@ -644,7 +645,7 @@ func TestDestinationReservationsCountOnlyMigrationsWithConfig(t *testing.T) {
 
 func (f *fakeMigrationHost) SaveAndStopSource(context.Context, string) error {
 	f.saveMemoryCalls++
-	return nil
+	return f.saveMemoryError
 }
 
 func (c *fakeSourceOperations) ReceiveMemorySnapshot(ctx context.Context, _, _, _ string, _ int, directory string, _ int) error {

@@ -11,6 +11,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
+	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
 
 // errorBody is the error object every failed response carries.
@@ -77,6 +78,8 @@ func publicAPIError(err error) *apiError {
 	switch {
 	case errors.Is(err, network.ErrInvalidPeers), errors.Is(err, storage.ErrInvalidUpload), errors.Is(err, vm.ErrMetadataServiceTooLarge):
 		return newAPIError(http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, migration.ErrNoMemoryToSave):
+		return newAPIError(http.StatusUnprocessableEntity, "memory_snapshot_unavailable", err.Error())
 	case errors.Is(err, vm.ErrNotFound), errors.Is(err, storage.ErrNotFound):
 		return newAPIError(http.StatusNotFound, "not_found", "resource not found")
 	case errors.Is(err, storage.ErrImageConflict):
