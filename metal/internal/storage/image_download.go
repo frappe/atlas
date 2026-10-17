@@ -227,6 +227,7 @@ type SparseWriter struct {
 
 var zeroBuffer = make([]byte, downloadBufferSize)
 
+// Write writes data at the next offset and skips an all-zero chunk. The caller sets the final file length.
 func (writer *SparseWriter) Write(data []byte) (int, error) {
 	if len(data) > len(zeroBuffer) || !bytes.Equal(data, zeroBuffer[:len(data)]) {
 		if _, err := writer.File.WriteAt(data, writer.offset); err != nil {
