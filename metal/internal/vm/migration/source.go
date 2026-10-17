@@ -414,6 +414,9 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 			stop = m.host.SaveAndStopSource
 		}
 		if err := stop(ctx, virtualMachineID); err != nil {
+			if hasMemorySnapshot && errors.Is(err, vm.ErrConflict) {
+				return SourceSnapshot{}, fmt.Errorf("%w: %w", ErrNoMemoryToSave, err)
+			}
 			return SourceSnapshot{}, err
 		}
 		record.State = sourceStopped

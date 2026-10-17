@@ -331,6 +331,7 @@ class MetalClient:
 		source: str,
 		resize: dict[str, Any] | None = None,
 		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = False,
 	) -> dict[str, Any]:
 		"""Store one migration request at the target host. Safe to repeat."""
 		request: dict[str, Any] = {"virtual_machine_id": virtual_machine_id, "source": source}
@@ -338,6 +339,7 @@ class MetalClient:
 			request["resize"] = resize
 		if has_memory_snapshot:
 			request["has_memory_snapshot"] = True
+			request["allow_disk_only_fallback"] = allow_disk_only_fallback
 		return self._request(
 			"PUT",
 			f"/v1/migrations/{quote(migration_id, safe='')}",

@@ -480,6 +480,13 @@ class MetalServer(Document):
 			enqueue_after_commit=True,
 		)
 
+	@frappe.whitelist(methods=["POST"])
+	def toggle_cpu_template(self) -> None:
+		"""Flip Disable CPU Template and queue Upgrade Metald to apply it."""
+		self.is_cpu_template_disabled = int(not self.is_cpu_template_disabled)
+		self.save()
+		self.upgrade_metald()
+
 	@staticmethod
 	def provision(
 		size: str,

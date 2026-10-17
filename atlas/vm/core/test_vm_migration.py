@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import frappe
 from frappe.tests import UnitTestCase
+from frappe.utils import now_datetime
+from rq.timeouts import JobTimeoutException
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility
-from atlas.vm.core.vm_migration import MigrationService
+from atlas.vm.core.vm_migration import MigrationService, run_migration
 
 
 def migration_doc(**overrides: object) -> SimpleNamespace:
@@ -28,6 +31,8 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"target_memory_mib": 0,
 		"target_disk_mib": 0,
 		"has_memory_snapshot": 0,
+		"allow_disk_only_fallback": 1,
+		"error_code": None,
 		"transfers": [],
 	}
 	values.update(overrides)
@@ -42,6 +47,7 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 		"is_draft": 0,
 		"is_terminating": 0,
 		"current_state": "running",
+		"desired_state": "running",
 		"architecture": "amd64",
 		"tenant_id": 7,
 		"is_network_gateway": 0,
@@ -104,6 +110,37 @@ class TestMigrationStatus(UnitTestCase):
 		)
 		self.assertEqual(service.progress_percent("starting", []), 90)
 
+	def test_a_metal_fallback_reports_its_reason_and_keeps_the_failed_status(self) -> None:
+		service = MigrationService(migration_doc(has_memory_snapshot=1, memory_snapshot_status="failed"))
+		with (
+			patch.object(service, "update") as update,
+			patch.object(service, "release_virtual_machine"),
+			patch("atlas.vm.core.vm_migration.frappe.db.commit"),
+			patch("atlas.vm.core.vm_migration.count"),
+			patch("atlas.vm.core.vm_migration.observe"),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+		):
+			service.store_progress(
+				{
+					"status": "ready",
+					"memory_snapshot_status": "failed",
+					"memory_snapshot_error": "load failed",
+				}
+			)
+			self.assertIn("load failed", update.call_args.args[0]["error_message"])
+			service.settle("completed")
+		self.assertNotIn("memory_snapshot_status", update.call_args.args[0])
+
+	def test_a_metal_fallback_keeps_a_later_failure_message(self) -> None:
+		service = MigrationService(
+			migration_doc(has_memory_snapshot=1, error_code="migration_error", error_message="Restore failed")
+		)
+		with patch.object(service, "update") as update:
+			service.store_progress(
+				{"status": "running", "phase": "rollback", "memory_snapshot_error": "load failed"}
+			)
+		self.assertNotIn("error_message", update.call_args.args[0])
+
 	def test_aborted_destination_becomes_failed_after_a_metal_error(self) -> None:
 		service = MigrationService(migration_doc(error_code="migration_error"))
 		service.settle = Mock()
@@ -161,24 +198,49 @@ class TestMigrationCompatibility(UnitTestCase):
 						with self.assertRaises(AtlasUserError):
 							service.validate_compatibility("metal-2", source.architecture)
 
-	def test_missing_facts_block_the_request(self) -> None:
+	def test_missing_facts_fall_back_to_a_disk_only_migration(self) -> None:
 		service = MigrationService(migration_doc(status="scheduled", has_memory_snapshot=True))
-		service.update = Mock()
-		service.settle = Mock()
-		service.send_request = Mock()
 		with (
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
 			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
 			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
-			patch("atlas.vm.core.vm_migration.frappe.db.get_value") as read_report,
+			patch("atlas.vm.core.vm_migration.frappe.db.get_value", return_value=None),
+			patch.object(service, "update") as update,
 		):
-			read_report.return_value = None
-			service.run()
-		service.update.assert_called_once()
-		self.assertEqual(service.update.call_args.args[0]["error_code"], "migration_incompatible")
-		self.assertNotIn("commit", service.update.call_args.kwargs)
-		service.settle.assert_called_once_with("failed")
-		service.send_request.assert_not_called()
+			service.select_destination_metal_server()
+		values = update.call_args.args[0]
+		self.assertEqual(values["has_memory_snapshot"], 0)
+		self.assertIn("no CPU compatibility report", values["error_message"])
+
+	def test_a_stopped_vm_migrates_its_disk_only(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled", has_memory_snapshot=True))
+		with (
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				return_value=source_vm(current_state="stopped", desired_state="stopped"),
+			),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
+			patch.object(service, "update") as update,
+		):
+			service.select_destination_metal_server()
+		self.assertEqual(update.call_args.args[0]["has_memory_snapshot"], 0)
+
+	def test_missing_facts_fail_a_migration_without_fallback(self) -> None:
+		service = MigrationService(
+			migration_doc(status="scheduled", has_memory_snapshot=True, allow_disk_only_fallback=0)
+		)
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
+			patch("atlas.vm.core.vm_migration.frappe.db.get_value", return_value=None),
+			patch.object(service, "update") as update,
+			patch.object(service, "settle") as settle,
+		):
+			self.assertFalse(service.select_destination_metal_server())
+		self.assertEqual(update.call_args.args[0]["error_code"], "migration_incompatible")
+		settle.assert_called_once_with("failed")
 
 	def test_memory_resize_is_rejected_before_reading_facts(self) -> None:
 		service = MigrationService(migration_doc(has_memory_snapshot=True, target_memory_mib=1024))
@@ -315,6 +377,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			"https://10.0.0.1:9001",
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
 			has_memory_snapshot=False,
+			allow_disk_only_fallback=True,
 		)
 
 	def test_a_plain_migration_sends_no_resize(self) -> None:
@@ -375,6 +438,72 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 
 		service.settle.assert_called_once_with("aborted")
 		service.request_destination_abort.assert_not_called()
+
+
+class TestMigrationRunResilience(UnitTestCase):
+	def test_a_recent_answer_keeps_an_old_migration_visible(self) -> None:
+		service = MigrationService(migration_doc(started_at="2026-09-21 12:00:00"))
+		self.assertTrue(service.is_expired)
+		service.last_contact_at = now_datetime()
+		self.assertFalse(service.is_expired)
+
+	def test_a_run_survives_an_unreachable_destination_and_its_deadline(self) -> None:
+		service = MigrationService(migration_doc(status="copying"))
+		with (
+			patch("atlas.vm.core.vm_migration.MAXIMUM_RUN_DURATION", timedelta(0)),
+			patch.object(service, "send_request", side_effect=MetalClientError("offline", retryable=True)),
+			patch.object(service, "record_error") as record_error,
+			patch.object(service, "fail") as fail,
+			patch.object(service, "request_destination_abort") as abort,
+		):
+			service.run()
+		record_error.assert_called_once()
+		fail.assert_not_called()
+		abort.assert_not_called()
+
+	def test_only_a_stuck_copy_that_nobody_canceled_fails(self) -> None:
+		for status, phase, is_failed in (
+			("copying", "copying", True),
+			("copying", "stopping", False),
+			("copying", None, False),
+			("canceling", "copying", False),
+		):
+			response = {"status": "running", "phase": phase} if phase else {"status": "missing"}
+			service = MigrationService(migration_doc(status=status, started_at="2026-09-21 12:00:00"))
+			with (
+				self.subTest(status=status, phase=phase),
+				patch("atlas.vm.core.vm_migration.frappe.db.get_value", return_value=102400),
+				patch("atlas.vm.core.vm_migration.now_datetime", return_value=datetime(2026, 9, 21, 14, 18)),
+				patch("atlas.vm.core.vm_migration.MAXIMUM_RUN_DURATION", timedelta(hours=1)),
+				patch.object(service, "send_request"),
+				patch.object(service, "poll", return_value=response),
+				patch.object(service, "advance", side_effect=[False, True]),
+				patch.object(service, "fail") as fail,
+				patch.object(service, "request_destination_abort") as abort,
+				patch("atlas.vm.core.vm_migration.time.sleep"),
+			):
+				service.run()
+			self.assertEqual(fail.called, is_failed)
+			# A canceling run asks the destination to abort before it polls.
+			self.assertEqual(abort.called, is_failed or status == "canceling")
+
+	def test_only_a_definite_worker_error_fails_the_migration(self) -> None:
+		for error, is_failed in (
+			(frappe.QueryDeadlockError("deadlock"), False),
+			(JobTimeoutException("job timed out"), False),
+			(MetalClientError("offline", retryable=True), False),
+			(ValueError("bug"), True),
+		):
+			with (
+				self.subTest(error=type(error).__name__),
+				patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=migration_doc()),
+				patch("atlas.vm.core.vm_migration.frappe.db"),
+				patch("atlas.vm.core.vm_migration.frappe.log_error"),
+				patch.object(MigrationService, "run", side_effect=error),
+				patch.object(MigrationService, "fail") as fail,
+			):
+				run_migration("mig-00001")
+			self.assertEqual(fail.called, is_failed)
 
 
 class TestMigrationLock(UnitTestCase):

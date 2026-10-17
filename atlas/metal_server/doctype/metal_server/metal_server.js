@@ -17,6 +17,23 @@ frappe.ui.form.on("Metal Server", {
 		const is_running = frm.doc.status === "Running";
 		const is_stopped = frm.doc.status === "Stopped";
 		const is_bmc_power_off = frm.doc.bmc_power_state === "Off";
+		const server_label = `${frm.doc.title.bold()} (${frm.doc.name})`;
+		const cpu_template_confirm_message = [
+			frm.doc.is_cpu_template_disabled
+				? __("Enable the CPU template on {0}?", [server_label])
+				: __("Disable the CPU template on {0}?", [server_label]),
+			[
+				__("This runs Upgrade Metald, which restarts metald."),
+				__("Running VMs keep their CPU configuration until their next cold boot."),
+				__("Sleepy VMs lose their saved state and cold boot on their next start."),
+			].join("<br>"),
+			!frm.doc.is_cpu_template_disabled &&
+				__(
+					"<b>Risk:</b> a memory snapshot migration to or from this host falls back to disk-only, with a guest reboot, unless the other host also has the CPU template disabled and the same CPU model and features."
+				),
+		]
+			.filter(Boolean)
+			.join("<br><br>");
 
 		[
 			[
@@ -61,7 +78,17 @@ frappe.ui.form.on("Metal Server", {
 				"upgrade_metald",
 				is_running,
 				__("Upgrading Metald..."),
-				__("Upgrade Metald on {0}?", [frm.doc.name.bold()]),
+				__("Upgrade Metald on {0}?", [server_label]),
+				true,
+			],
+			[
+				frm.doc.is_cpu_template_disabled
+					? __("Enable CPU Template")
+					: __("Disable CPU Template"),
+				"toggle_cpu_template",
+				is_running,
+				__("Upgrading Metald..."),
+				cpu_template_confirm_message,
 				true,
 			],
 			[
@@ -69,9 +96,7 @@ frappe.ui.form.on("Metal Server", {
 				"renew_tls_certificate",
 				is_running && frm.doc.is_provisioning_completed,
 				__("Renewing TLS certificate..."),
-				__("Renew the TLS certificate on {0}? Metal restarts with it.", [
-					frm.doc.name.bold(),
-				]),
+				__("Renew the TLS certificate on {0}? Metal restarts with it.", [server_label]),
 				false,
 			],
 			[
@@ -79,14 +104,14 @@ frappe.ui.form.on("Metal Server", {
 				"configure_telemetry",
 				is_running && frm.doc.is_provisioning_completed,
 				__("Configuring telemetry..."),
-				__("Install Vector and a new Datum token on {0}?", [frm.doc.name.bold()]),
+				__("Install Vector and a new Datum token on {0}?", [server_label]),
 			],
 			[
 				__("Reboot"),
 				"reboot_server",
 				!is_deleted && !is_stopped,
 				__("Rebooting server..."),
-				__("Reboot {0}?", [frm.doc.name.bold()]),
+				__("Reboot {0}?", [server_label]),
 				true,
 			],
 			[
@@ -94,7 +119,7 @@ frappe.ui.form.on("Metal Server", {
 				"poweroff_server",
 				!is_deleted && !is_stopped,
 				__("Powering off server..."),
-				__("Power off {0}?", [frm.doc.name.bold()]),
+				__("Power off {0}?", [server_label]),
 				true,
 			],
 			[
@@ -109,7 +134,7 @@ frappe.ui.form.on("Metal Server", {
 				!is_deleted,
 				__("Archiving server..."),
 				__("Delete the provider server for {0}? The machine and its data are lost.", [
-					frm.doc.name.bold(),
+					server_label,
 				]),
 				true,
 			],

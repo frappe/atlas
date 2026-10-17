@@ -20,6 +20,8 @@ type createMigrationRequest struct {
 	Source            string                  `json:"source"`
 	Resize            *migrationResizeRequest `json:"resize,omitempty"`
 	HasMemorySnapshot bool                    `json:"has_memory_snapshot,omitempty" default:"false"`
+	// AllowDiskOnlyFallback cold-boots the received disk when the memory snapshot cannot restore.
+	AllowDiskOnlyFallback bool `json:"allow_disk_only_fallback,omitempty" default:"false"`
 }
 
 // migrationResizeRequest is the CPU, memory, and disk size the destination gives the VM.
@@ -66,6 +68,7 @@ type migrationResponse struct {
 	Status               string                  `json:"status"`
 	Phase                string                  `json:"phase"`
 	MemorySnapshotStatus string                  `json:"memory_snapshot_status,omitempty"`
+	MemorySnapshotError  string                  `json:"memory_snapshot_error,omitempty"`
 	Transfers            []migrationTransfer     `json:"transfers,omitempty"`
 	Error                *migrationErrorResponse `json:"error,omitempty"`
 }
@@ -103,7 +106,7 @@ func (s *Server) createMigration(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize(), request.HasMemorySnapshot)
+	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize(), request.HasMemorySnapshot, request.AllowDiskOnlyFallback)
 	if err != nil {
 		return err
 	}
@@ -159,6 +162,7 @@ func toMigration(record migration.DestinationProgress) migrationResponse {
 		Status:               string(record.Status),
 		Phase:                string(record.Phase),
 		MemorySnapshotStatus: record.MemorySnapshotStatus,
+		MemorySnapshotError:  record.MemorySnapshotError,
 	}
 	for _, interval := range record.Intervals {
 		response.Transfers = append(response.Transfers, toMigrationTransfer(interval))

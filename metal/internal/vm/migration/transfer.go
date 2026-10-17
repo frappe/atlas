@@ -22,6 +22,9 @@ var throttleSteps = []int{64, 32, 16, 8}
 // errTransferFailed marks a definite failure that already updated the record.
 var errTransferFailed = errors.New("migration transfer failed")
 
+// ErrNoMemoryToSave reports a memory snapshot request for a source that is not running or paused.
+var ErrNoMemoryToSave = errors.New("source has no guest memory to save")
+
 // backgroundOperation cancels one VM's background worker and signals its exit.
 type backgroundOperation struct {
 	cancel context.CancelFunc
@@ -165,6 +168,9 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 		lastCompletedSequence(record),
 		record.HasMemorySnapshot,
 	)
+	if errors.Is(err, ErrNoMemoryToSave) {
+		return m.failTransfer(ctx, record, "stop source: "+err.Error())
+	}
 	if err != nil {
 		return err
 	}
@@ -219,16 +225,8 @@ func (m *Manager) advanceStarting(ctx context.Context, record destinationRecord)
 		}
 	}
 	if record.State == destinationApplyingState {
-		if record.HasMemorySnapshot {
-			err = m.restoreMemorySnapshot(ctx, record)
-		} else {
-			err = m.host.ApplyMigratedDestinationState(ctx, record.VirtualMachineID)
-		}
-		if err != nil {
-			if isWorkerCancelled(ctx, err) {
-				return err
-			}
-			return m.failTransfer(ctx, record, "apply destination state: "+err.Error())
+		if err := m.applyDestinationState(ctx, record); err != nil {
+			return err
 		}
 	}
 
@@ -418,4 +416,44 @@ func hasInterval(intervals []TransferProgress, sequence int) bool {
 		}
 	}
 	return false
+}
+
+// applyDestinationState restores the memory snapshot paused, or cold-boots the received disk for
+// a disk-only migration or an allowed fallback.
+func (m *Manager) applyDestinationState(ctx context.Context, record destinationRecord) error {
+	if record.usesMemorySnapshot() {
+		err := m.restoreMemorySnapshot(ctx, record)
+		if err == nil || !record.AllowDiskOnlyFallback || isWorkerCancelled(ctx, err) {
+			return m.failApply(ctx, record, err)
+		}
+		// The cleanup is repeatable, so a failure retries on the next pass.
+		if record, err = m.discardMemorySnapshot(ctx, record, err); err != nil {
+			return err
+		}
+	}
+	return m.failApply(ctx, record, m.host.ApplyMigratedDestinationState(ctx, record.VirtualMachineID))
+}
+
+// failApply fails the transfer for an apply error. A cancelled worker leaves it for the next pass.
+func (m *Manager) failApply(ctx context.Context, record destinationRecord, err error) error {
+	if err == nil || isWorkerCancelled(ctx, err) {
+		return err
+	}
+	return m.failTransfer(ctx, record, "apply destination state: "+err.Error())
+}
+
+// discardMemorySnapshot removes a failed memory restore and its network, recreates the
+// network, and records the cause, so the received disk cold-boots like a disk-only migration.
+func (m *Manager) discardMemorySnapshot(ctx context.Context, record destinationRecord, cause error) (destinationRecord, error) {
+	m.logger.Warn("memory snapshot restore failed, cold booting the received disk",
+		"migration_id", record.ID, "virtual_machine_id", record.VirtualMachineID, "error", cause)
+	if err := m.host.RemoveMigratedRuntime(ctx, record.VirtualMachineID); err != nil {
+		return record, errors.Join(cause, err)
+	}
+	if err := m.host.EnsureMigrationNetwork(ctx, record.VirtualMachineID); err != nil {
+		return record, errors.Join(cause, err)
+	}
+	return m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
+		destination.MemorySnapshotError = cause.Error()
+	})
 }

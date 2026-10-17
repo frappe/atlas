@@ -15,13 +15,13 @@
   "metald_tls_expires_on",
   "is_sleepy_vm_host",
   "section_break_configuration",
-  "server_image",
-  "column_break_njar",
-  "server_size",
-  "column_break_iiyh",
   "architecture",
   "tsc_scaling_supported",
+  "column_break_njar",
+  "server_image",
   "is_cpu_template_disabled",
+  "column_break_iiyh",
+  "server_size",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -333,10 +333,10 @@
   },
   {
    "default": "0",
-   "description": "Boots every VM on this host without a CPU template. Applies on the next Upgrade Metald.",
    "fieldname": "is_cpu_template_disabled",
    "fieldtype": "Check",
-   "label": "Disable CPU Template"
+   "label": "Disable CPU Template",
+   "read_only": 1
   },
   {
    "fieldname": "host_compatibility_report",
@@ -366,7 +366,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-16 16:00:00.000000",
+ "modified": "2026-10-17 12:57:52.605466",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

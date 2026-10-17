@@ -374,7 +374,12 @@ class VirtualMachine(Document):
 			)
 
 	@frappe.whitelist(methods=["POST"])
-	def migrate(self, destination_metal_server: str | None = None, has_memory_snapshot: bool = False) -> str:
+	def migrate(
+		self,
+		destination_metal_server: str | None = None,
+		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
+	) -> str:
 		"""Schedule this VM for migration, with an optional destination Metal Server."""
 		self.check_permission("write")
 		from atlas.vm.core.vm_migration import MigrationService
@@ -383,6 +388,7 @@ class VirtualMachine(Document):
 			self,
 			destination_metal_server=destination_metal_server or None,
 			has_memory_snapshot=bool(cint(has_memory_snapshot)),
+			allow_disk_only_fallback=bool(cint(allow_disk_only_fallback)),
 		)
 
 	def ensure_not_migrating(self) -> None:

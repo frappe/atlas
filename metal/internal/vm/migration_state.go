@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -161,7 +162,9 @@ func (host *MigrationHost) ActivateMigratedDestination(ctx context.Context, virt
 	if status.State != desired.State {
 		switch {
 		case desired.State == StateRunning && status.State == StatePaused:
-			err = manager.runtime.Resume(ctx, machine)
+			if err = manager.runtime.Resume(ctx, machine); err != nil {
+				err = manager.recoverFailedResume(ctx, machine, err)
+			}
 		case desired.State == StatePaused && status.State == StateRunning:
 			err = manager.runtime.Pause(ctx, machine)
 		case desired.State == StateStopped:
@@ -170,6 +173,10 @@ func (host *MigrationHost) ActivateMigratedDestination(ctx context.Context, virt
 			(observed.State == StateRunning || observed.State == StatePaused):
 			// A lost process can have changed the disk after its memory snapshot.
 			_, err = manager.coldStartForState(ctx, desired.State, machine)
+		case status.State == StateCreated:
+			// A failed cold boot can leave a process that never started the guest.
+			_, err = manager.coldRestartForState(ctx, desired.State, machine,
+				&TransitionError{DesiredState: desired.State, ObservedState: status.State})
 		default:
 			return &TransitionError{DesiredState: desired.State, ObservedState: status.State}
 		}
@@ -201,15 +208,22 @@ func (host *MigrationHost) RestoreRuntimeState(ctx context.Context, virtualMachi
 		if inspectError != nil {
 			return inspectError
 		}
-		if status.State != desiredState {
-			switch desiredState {
-			case StateRunning:
+		switch {
+		case status.State == desiredState:
+		case desiredState == StatePaused && status.State == StateRunning:
+			// An earlier cold boot ran the guest, so only its pause remains.
+			err = manager.runtime.Pause(ctx, machine)
+		case desiredState == StateRunning || desiredState == StatePaused:
+			if desiredState == StateRunning {
 				err = manager.runtime.Restore(ctx, machine)
-			case StatePaused:
+			} else {
 				err = manager.runtime.RestorePaused(ctx, machine)
-			default:
-				return &TransitionError{DesiredState: desiredState, ObservedState: status.State}
 			}
+			if err != nil {
+				resultState, err = manager.recoverFailedRestore(ctx, desiredState, machine, err)
+			}
+		default:
+			return &TransitionError{DesiredState: desiredState, ObservedState: status.State}
 		}
 	} else {
 		resultState, err = manager.coldStartForState(ctx, desiredState, machine)
@@ -259,6 +273,52 @@ func (host *MigrationHost) RefreshSourceDisk(ctx context.Context, virtualMachine
 		return err
 	}
 	return manager.runtime.RefreshDisk(ctx, runtimeMachine(desired, observed.NetworkInterface))
+}
+
+// recoverFailedResume inspects the guest after a resume error. A guest that resumed despite the
+// error keeps its memory, and a still-paused guest retries the resume on the next pass. Only a
+// guest whose process is gone cold-boots.
+func (manager *Manager) recoverFailedResume(ctx context.Context, machine RuntimeMachine, cause error) error {
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	switch status.State {
+	case StateRunning:
+		return nil
+	case StatePaused:
+		return cause
+	default:
+		_, err = manager.coldRestartForState(ctx, StateRunning, machine, cause)
+		return err
+	}
+}
+
+// recoverFailedRestore inspects the guest after a restore error. A guest that reached the desired
+// state keeps its memory; any other guest cold-boots.
+func (manager *Manager) recoverFailedRestore(ctx context.Context, desiredState State, machine RuntimeMachine, cause error) (State, error) {
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return "", errors.Join(cause, err)
+	}
+	if status.State == desiredState {
+		return desiredState, nil
+	}
+	return manager.coldRestartForState(ctx, desiredState, machine, cause)
+}
+
+// coldRestartForState discards guest memory that cannot resume and boots the current disk.
+// The disk stays consistent; only the guest RAM state is lost.
+func (manager *Manager) coldRestartForState(ctx context.Context, desiredState State, machine RuntimeMachine, cause error) (State, error) {
+	manager.logger.WarnContext(ctx, "cold booting a virtual machine whose memory cannot resume",
+		"virtual_machine_id", machine.ID, "error", cause)
+	if err := manager.runtime.Remove(ctx, machine); err != nil {
+		return "", errors.Join(cause, err)
+	}
+	if err := manager.runtime.DeleteSavedState(ctx, machine); err != nil {
+		return "", errors.Join(cause, err)
+	}
+	return manager.coldStartForState(ctx, desiredState, machine)
 }
 
 // coldStartForState cold-starts the disk for the desired state.
