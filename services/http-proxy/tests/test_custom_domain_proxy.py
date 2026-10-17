@@ -270,6 +270,44 @@ def test_wildcard_acme_challenge_is_served_locally_not_proxied():
 	assert status == "404", res.stdout
 
 
+@pytest.mark.parametrize("host", [CUSTOM_DOMAIN, "unrouted.custom.example"])
+def test_pre_authorize_answers_with_the_zone(host: str):
+	"""The proxy answers before and after a domain is routed; it never forwards the path."""
+	sync_domains(json.dumps({CUSTOM_DOMAIN: ACME_BACKEND}))
+	res = subprocess.run(
+		[
+			"curl",
+			"-s",
+			"-D",
+			"/dev/stderr",
+			"--resolve",
+			f"{host}:8080:127.0.0.1",
+			f"http://{host}:8080/.well-known/frappe-pre-authorize/",
+		],
+		capture_output=True,
+		text=True,
+	)
+	assert res.stdout == ZONE, res.stdout
+	assert "cache-control: no-store" in res.stderr.lower(), res.stderr
+
+
+def test_pre_authorize_without_a_zone_is_unavailable():
+	res = compose_exec(
+		"proxy-noregion",
+		"curl",
+		"-s",
+		"-o",
+		"/dev/null",
+		"-w",
+		"%{http_code}",
+		"-H",
+		f"Host: {CUSTOM_DOMAIN}",
+		"http://127.0.0.1/.well-known/frappe-pre-authorize/",
+		check=False,
+	)
+	assert res.stdout == "503", res.stdout
+
+
 def test_passthrough_carries_the_client_address():
 	"""The backend receives the original client address."""
 	sync_domains(json.dumps({CUSTOM_DOMAIN: SNI_BACKEND}))
