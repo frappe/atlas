@@ -166,17 +166,24 @@ class MigrationService:
 		# Metal bounds the copy and the cutover. At the deadline the reconciler starts a new run.
 		deadline = now_datetime() + MAXIMUM_RUN_DURATION
 		self.last_contact_at = now_datetime()
+		self.request_destination()
+		self.poll_until_settled(deadline)
+
+	def request_destination(self) -> None:
+		"""Ask the destination to continue or to abort. The poll loop retries a retryable error."""
 		if self.is_canceling:
 			self.request_destination_abort()
-		else:
-			try:
-				self.send_request()
-			except MetalClientError as error:
-				if not error.retryable:
-					raise
-				self.record_error(error)
+			return
+		try:
+			self.send_request()
+		except MetalClientError as error:
+			if not error.retryable:
+				raise
+			self.record_error(error)
 
-		copy_deadline = self.copy_deadline
+	def poll_until_settled(self, deadline: datetime) -> None:
+		"""Poll Metal until the migration settles, and fail a copy that outlives its limit."""
+		copy_deadline = self.copy_deadline()
 		while now_datetime() < deadline:
 			status = self.poll()
 			if self.advance(status):
@@ -637,7 +644,6 @@ class MigrationService:
 			and now_datetime() > get_datetime(last_contact_at) + DESTINATION_VISIBILITY_TIMEOUT
 		)
 
-	@property
 	def copy_deadline(self) -> datetime | None:
 		"""Return when a copy that has not reached cutover counts as stuck."""
 		if not self.migration.started_at:
