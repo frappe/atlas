@@ -72,6 +72,8 @@ Control calls use mutual TLS on the source's [migration network](../region/metal
 Source zfs send -> Go TLS connection -> Destination zfs receive
 ```
 
+The source sends disk blocks as ZFS stores them, with `zfs send --compressed`, so it does not decompress them. ZFS stores all-zero blocks as holes, so the stream skips them. Transfer sizes are compressed sizes.
+
 The source permits one outbound disk stream per host because streams share a fixed port. A listener closes after 2 minutes without a connection or progress. The source stream context has a 30-minute limit.
 
 Default source control calls have a 60-second timeout. Stop calls have a 120-second timeout. Memory downloads have a 30-minute timeout. See the [Metal API reference](/api/metal/) for operations and schemas.

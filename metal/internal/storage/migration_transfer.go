@@ -432,6 +432,7 @@ func (transfer *MigrationTransfer) sendArguments(virtualMachineID, snapshotName,
 	if resumeToken != "" {
 		return append(arguments, "-t", resumeToken)
 	}
+	arguments = append(arguments, "--compressed")
 	if baseSnapshotName != "" {
 		arguments = append(arguments, "-i", transfer.pool.snapshot(virtualMachineID, baseSnapshotName))
 	}
