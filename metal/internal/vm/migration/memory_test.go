@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -370,5 +371,34 @@ func TestMemoryRestoreChecksDiskBeforeReadyAndActivatesBeforeCleanup(t *testing.
 				t.Fatal("staging remained after finish")
 			}
 		})
+	}
+}
+
+func TestMemoryStopFailsASourceWithoutMemory(t *testing.T) {
+	manager, machines, _ := newMigrationManager(t)
+	machines.create("vm-1", testSpecification())
+	setObservedState(t, machines, "vm-1", vm.StateRunning)
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	machines.saveMemoryError = vm.ErrConflict
+	if _, err := manager.StopSource(t.Context(), "mig-1", "vm-1", 0, true); !errors.Is(err, ErrNoMemoryToSave) {
+		t.Fatalf("stop error = %v", err)
+	}
+
+	destination, destinationMachines, source := newMigrationManager(t)
+	store := writeCopyingDestination(t, destinationMachines, vm.StateRunning)
+	record, err := store.readDestination("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.State, record.HasMemorySnapshot = destinationStopping, true
+	if err := store.writeDestination(record); err != nil {
+		t.Fatal(err)
+	}
+	source.stopError = fmt.Errorf("source: %w", ErrNoMemoryToSave)
+	destination.runTransfer(t.Context(), "vm-1")
+	if record, err = store.readDestination("vm-1"); err != nil || record.State != destinationFailed {
+		t.Fatalf("destination = %s, %v; want failed", record.State, err)
 	}
 }

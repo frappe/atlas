@@ -22,6 +22,9 @@ var throttleSteps = []int{64, 32, 16, 8}
 // errTransferFailed marks a definite failure that already updated the record.
 var errTransferFailed = errors.New("migration transfer failed")
 
+// ErrNoMemoryToSave reports a memory snapshot request for a source that is not running or paused.
+var ErrNoMemoryToSave = errors.New("source has no guest memory to save")
+
 // backgroundOperation cancels one VM's background worker and signals its exit.
 type backgroundOperation struct {
 	cancel context.CancelFunc
@@ -165,6 +168,9 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 		lastCompletedSequence(record),
 		record.HasMemorySnapshot,
 	)
+	if errors.Is(err, ErrNoMemoryToSave) {
+		return m.failTransfer(ctx, record, "stop source: "+err.Error())
+	}
 	if err != nil {
 		return err
 	}
