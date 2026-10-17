@@ -68,7 +68,11 @@ class TestServerConsoleLog(IntegrationTestCase):
 	def test_one_failed_server_does_not_stop_the_others(self) -> None:
 		log = insert_log("metal-console-test-1,metal-console-test-2,metal-console-test-3")
 
-		with patch(f"{MODULE}.SSHRunner", FakeSSHRunner), patch.object(frappe.db, "commit"):
+		with (
+			patch(f"{MODULE}.SSHRunner", FakeSSHRunner),
+			patch.object(frappe.db, "commit"),
+			patch(f"{MODULE}.frappe.publish_realtime") as publish_realtime,
+		):
 			log.execute()
 
 		log.reload()
@@ -77,3 +81,10 @@ class TestServerConsoleLog(IntegrationTestCase):
 		self.assertEqual([row.exit_code for row in log.results[:2]], [0, 3])
 		self.assertEqual(log.results[0].output, "uptime on 192.0.2.10")
 		self.assertIn("Connection refused", log.results[2].output)
+
+		published_output = {row.name: "" for row in log.results}
+		for call in publish_realtime.call_args_list:
+			for change in call.args[1]["results"]:
+				self.assertEqual(change["offset"], len(published_output[change["name"]]))
+				published_output[change["name"]] += change["new_output"]
+		self.assertEqual(published_output, {row.name: row.output for row in log.results})

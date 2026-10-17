@@ -118,19 +118,19 @@ class ServerConsoleLog(Document):
 		return list(dict.fromkeys(servers))
 
 	def _save_progress(self, server_runs: list[ServerRun]) -> None:
-		changed_rows = [run.row for run in server_runs if run.save()]
-		if changed_rows:
+		changes = [change for run in server_runs if (change := run.save())]
+		if changes:
 			frappe.db.commit()  # nosemgrep
-			self._publish_progress(changed_rows)
+			self._publish_progress(changes)
 
-	def _publish_progress(self, rows: list[ServerConsoleLogServer]) -> None:
+	def _publish_progress(self, changes: list[dict]) -> None:
 		"""Send changed values to the open form. A form reload would close an open row."""
 		frappe.publish_realtime(
 			"server_console_log_update",
 			{
 				"name": self.name,
 				"log": {field: self.get(field) for field in ("status", "started_at", "ended_at")},
-				"results": [row.as_dict(no_default_fields=True) | {"name": row.name} for row in rows],
+				"results": changes,
 			},
 			doctype=self.doctype,
 			docname=self.name,
@@ -166,14 +166,22 @@ class ServerRun:
 		finally:
 			self.is_finished = True
 
-	def save(self) -> bool:
-		"""Save new output and status to the row. Return true when the row changed."""
-		values = {"output": "".join(self.output_chunks), "status": self.status}
+	def save(self) -> dict | None:
+		"""Save new output and status to the row. Return the change for the form, or None."""
+		output = "".join(self.output_chunks)
+		values = {"output": output, "status": self.status}
 		# The exit code column cannot be null. A run without an exit code keeps the default.
 		if self.exit_code is not None:
 			values["exit_code"] = self.exit_code
 		if all(self.row.get(field) == value for field, value in values.items()):
-			return False
+			return None
 
+		offset = len(self.row.output or "")
 		self.row.db_set(values, update_modified=False)
-		return True
+		return {
+			"name": self.row.name,
+			"status": self.row.status,
+			"exit_code": self.row.exit_code,
+			"offset": offset,
+			"new_output": output[offset:],
+		}
