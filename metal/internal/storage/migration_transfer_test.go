@@ -56,11 +56,11 @@ func TestSendArgumentsFormsFullIncrementalAndResume(t *testing.T) {
 	transfer := newTransfer(&fakeRunner{})
 
 	full := transfer.sendArguments("vm-1", "migration-m1-2", "", "", false)
-	if commandKey(full...) != "send metal/vms/vm-1@migration-m1-2" {
+	if commandKey(full...) != "send --compressed metal/vms/vm-1@migration-m1-2" {
 		t.Fatalf("full = %v", full)
 	}
 	incremental := transfer.sendArguments("vm-1", "migration-m1-2", "migration-m1-1", "", false)
-	if commandKey(incremental...) != "send -i metal/vms/vm-1@migration-m1-1 metal/vms/vm-1@migration-m1-2" {
+	if commandKey(incremental...) != "send --compressed -i metal/vms/vm-1@migration-m1-1 metal/vms/vm-1@migration-m1-2" {
 		t.Fatalf("incremental = %v", incremental)
 	}
 	resume := transfer.sendArguments("vm-1", "migration-m1-2", "migration-m1-1", "token-xyz", false)
@@ -68,7 +68,7 @@ func TestSendArgumentsFormsFullIncrementalAndResume(t *testing.T) {
 		t.Fatalf("resume = %v", resume)
 	}
 	estimate := transfer.sendArguments("vm-1", "migration-m1-2", "migration-m1-1", "", true)
-	if commandKey(estimate...) != "send -nP -i metal/vms/vm-1@migration-m1-1 metal/vms/vm-1@migration-m1-2" {
+	if commandKey(estimate...) != "send -nP --compressed -i metal/vms/vm-1@migration-m1-1 metal/vms/vm-1@migration-m1-2" {
 		t.Fatalf("estimate = %v", estimate)
 	}
 }
@@ -299,8 +299,8 @@ func TestSnapshotGUIDReadsTheValue(t *testing.T) {
 
 func TestEstimateStreamBytesParsesFullAndIncremental(t *testing.T) {
 	runner := &fakeRunner{outputs: map[string]string{
-		"send -nP metal/vms/vm-1@migration-m1-1":                                  "full\tmetal/vms/vm-1@migration-m1-1\t268435456\nsize\t268435456\n",
-		"send -nP -i metal/vms/vm-1@migration-m1-1 metal/vms/vm-1@migration-m1-2": "incremental\tmigration-m1-1\tmetal/vms/vm-1@migration-m1-2\t1048576\nsize\t1048576\n",
+		"send -nP --compressed metal/vms/vm-1@migration-m1-1":                                  "full\tmetal/vms/vm-1@migration-m1-1\t268435456\nsize\t268435456\n",
+		"send -nP --compressed -i metal/vms/vm-1@migration-m1-1 metal/vms/vm-1@migration-m1-2": "incremental\tmigration-m1-1\tmetal/vms/vm-1@migration-m1-2\t1048576\nsize\t1048576\n",
 	}}
 	transfer := newTransfer(runner)
 

@@ -347,7 +347,7 @@ func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64)
 		return nil, err
 	}
 	destination.device = device
-	return &sparseVolumeWriter{file: device}, nil
+	return &SparseWriter{File: device}, nil
 }
 
 func (destination *volumeDestination) commit() error {

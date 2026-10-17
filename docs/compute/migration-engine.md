@@ -72,17 +72,19 @@ Control calls use mutual TLS on the source's [migration network](../region/metal
 Source zfs send -> Go TLS connection -> Destination zfs receive
 ```
 
+The source sends disk blocks as ZFS stores them, with `zfs send --compressed`, so it does not decompress them. ZFS stores all-zero blocks as holes, so the stream skips them. Transfer sizes are compressed sizes.
+
 The source permits one outbound disk stream per host because streams share a fixed port. A listener closes after 2 minutes without a connection or progress. The source stream context has a 30-minute limit.
 
 Default source control calls have a 60-second timeout. Stop calls have a 120-second timeout. Memory downloads have a 30-minute timeout. See the [Metal API reference](/api/metal/) for operations and schemas.
 
 ## How does Metal validate transferred memory?
 
-The destination downloads `state`, `memory`, and `metadata.json` through the mutual-TLS API. The source exposes these files only after network removal and final snapshot creation.
+The destination downloads `state`, `memory`, and `metadata.json` through the mutual-TLS API. The source exposes these files only after network removal and final snapshot creation. The source compresses each file with zstd. Free guest memory is zero, so it compresses to almost nothing. The destination writes zero ranges as holes.
 
 Metal receives memory beside the final disk transfer. It waits for both transfers. Each completed transfer has its own checkpoint. An incomplete memory transfer restarts from its first file.
 
-Metal checks file sizes and SHA-256 checksums before it publishes memory staging with an atomic rename. The directory is `machines/<vm-id>/migration/memory-snapshot/`. Metal adds `disk-snapshot.json` with the final disk sequence and GUID.
+Metal checks file sizes and the zstd content size and checksum before it publishes memory staging with an atomic rename. The directory is `machines/<vm-id>/migration/memory-snapshot/`. Metal adds `disk-snapshot.json` with the final disk sequence and GUID.
 
 | Validation point | Check |
 | --- | --- |

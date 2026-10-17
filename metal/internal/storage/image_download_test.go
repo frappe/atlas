@@ -133,7 +133,7 @@ func TestSparseVolumeWriterSkipsZeroChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writer := &sparseVolumeWriter{file: file}
+	writer := &SparseWriter{File: file}
 	if _, err := writer.Write(make([]byte, 4)); err != nil {
 		t.Fatal(err)
 	}
