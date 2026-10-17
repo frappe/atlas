@@ -76,6 +76,8 @@ OpenResty does not decrypt custom-domain TLS traffic. It connects to the site VM
 
 OpenResty sends an HTTP-01 challenge for a custom domain to the site VM on port `80` with the requested host. A challenge for a name in the wildcard zone stays local and reads `/var/lib/nginx/acme`.
 
+`http://<any host>/.well-known/frappe-pre-authorize/` returns the wildcard zone as plain text with `Cache-Control: no-store`. Central reads it before it routes a custom domain: the zone proves that the domain points at this region, also through a CDN such as Cloudflare. OpenResty answers it for every host, routed or not, and never forwards it. Without a zone, it returns `503`.
+
 The HTTP and stream workers use separate maps. A custom-domain change passes through the private SNI bridge so both workers receive the same state.
 
 ## Route state
