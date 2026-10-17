@@ -48,6 +48,7 @@ class MigrationService:
 		destination_metal_server: str | None = None,
 		resize: VirtualMachineShape | None = None,
 		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		if is_vm_migration_paused_for_create():
@@ -72,6 +73,7 @@ class MigrationService:
 				"source_metal_server": locked.server,
 				"destination_metal_server": destination_metal_server,
 				"has_memory_snapshot": has_memory_snapshot,
+				"allow_disk_only_fallback": allow_disk_only_fallback,
 			}
 		)
 		if resize:
@@ -218,29 +220,33 @@ class MigrationService:
 				self.settle("failed")
 			return False
 
+		values: dict[str, Any] = {
+			"destination_metal_server": destination,
+			"status": "preparing",
+			"started_at": now_datetime(),
+			"destination_metal_server_selection_message": None,
+			"progress_percent": 5,
+		}
 		try:
+			# A sleeping VM wants to run and keeps its saved memory; a stopped VM has none.
+			if self.migration.has_memory_snapshot and virtual_machine.desired_state == "stopped":
+				raise AtlasUserError(_("A stopped VM has no memory to move."))
 			self.validate_compatibility(destination, virtual_machine.architecture)
 		except AtlasUserError as error:
-			self.update(
-				{
-					"error_code": "migration_incompatible",
-					"error_message": str(error),
-					"error_at": now_datetime(),
-				}
-			)
-			self.settle("failed")
-			return False
+			if not self.migration.allow_disk_only_fallback:
+				self.update(
+					{
+						"error_code": "migration_incompatible",
+						"error_message": str(error),
+						"error_at": now_datetime(),
+					}
+				)
+				self.settle("failed")
+				return False
+			values["has_memory_snapshot"] = 0
+			values["error_message"] = memory_snapshot_skipped_message(str(error))
 
-		started_at = now_datetime()
-		self.update(
-			{
-				"destination_metal_server": destination,
-				"status": "preparing",
-				"started_at": started_at,
-				"destination_metal_server_selection_message": None,
-				"progress_percent": 5,
-			}
-		)
+		self.update(values)
 		return self.migration.status not in TERMINAL_STATUSES and not self.is_canceling
 
 	def validate_compatibility(self, destination: str, architecture: str) -> None:
@@ -329,6 +335,7 @@ class MigrationService:
 			source_coordination_url,
 			resize,
 			has_memory_snapshot=bool(self.migration.has_memory_snapshot),
+			allow_disk_only_fallback=bool(self.migration.allow_disk_only_fallback),
 		)
 
 	def poll(self) -> dict[str, Any]:
@@ -361,6 +368,13 @@ class MigrationService:
 			values["progress_percent"] = self.progress_percent(status, transfers)
 		if self.migration.has_memory_snapshot and response.get("memory_snapshot_status"):
 			values["memory_snapshot_status"] = response["memory_snapshot_status"]
+		# A definite failure keeps its own message.
+		if response.get("memory_snapshot_error") and self.migration.error_code in (
+			None,
+			"",
+			"metal_client_error",
+		):
+			values["error_message"] = memory_snapshot_skipped_message(response["memory_snapshot_error"])
 		self.update(values, transfers=transfers, commit=True)
 
 	def status_from_response(self, response: dict[str, Any]) -> str | None:
@@ -500,7 +514,9 @@ class MigrationService:
 		}
 		if status == "completed":
 			values["progress_percent"] = 100
-		if self.migration.has_memory_snapshot:
+		# A migration that completed after a disk-only fallback keeps its failed memory snapshot status.
+		is_fallback = status == "completed" and self.migration.memory_snapshot_status == "failed"
+		if self.migration.has_memory_snapshot and not is_fallback:
 			values["memory_snapshot_status"] = status
 		self.update(values)
 		self.release_virtual_machine()
@@ -670,6 +686,11 @@ class MigrationService:
 			and not target.tsc_scaling
 		):
 			raise AtlasUserError(_("The destination cannot scale the source CPU clock."))
+
+
+def memory_snapshot_skipped_message(reason: str) -> str:
+	"""Explain why a memory snapshot migration continued with the disk only."""
+	return _("Memory snapshot skipped, migrating the disk only: {0}").format(reason)
 
 
 def reconcile_migration(migration_name: str) -> None:
