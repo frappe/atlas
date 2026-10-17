@@ -27,11 +27,16 @@ frappe.ui.form.on("Server Console Log", {
 			Object.keys(log).forEach((field) => frm.refresh_field(field));
 			frm.refresh_header();
 
-			results.forEach((values) => {
-				Object.assign(locals["Server Console Log Server"][values.name], values);
-				const row = grid.grid_rows_by_docname[values.name];
+			results.forEach(({ name, offset, new_output, ...values }) => {
+				const doc = locals["Server Console Log Server"][name];
+				const output = doc.output || "";
+				if (output.length < offset) return frm.reload_doc();
+				Object.assign(doc, values, { output: output.slice(0, offset) + new_output });
+
+				const row = grid.grid_rows_by_docname[name];
+				if (!row) return;
 				["status", "exit_code", "output"].forEach((field) => row.refresh_field(field));
-				row.grid_form?.terminal?.write_output(values.output);
+				row.grid_form?.terminal?.write_output(doc.output);
 			});
 		});
 	},
