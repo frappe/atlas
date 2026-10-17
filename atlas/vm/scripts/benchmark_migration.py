@@ -310,7 +310,7 @@ def measure_migration(
 			raise RuntimeError("Observer could not establish a healthy SSH baseline")
 		started = time.monotonic()
 		migration_id = virtual_machine.migrate(
-			destination_metal_server=destination, has_memory_snapshot=memory
+			destination_metal_server=destination, has_memory_snapshot=memory, allow_disk_only_fallback=False
 		)
 		frappe.db.commit()  # nosemgrep
 		emit("migration_started", migration_id=migration_id, memory=memory, observer=arguments.observer)

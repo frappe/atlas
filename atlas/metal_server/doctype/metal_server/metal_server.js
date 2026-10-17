@@ -29,7 +29,7 @@ frappe.ui.form.on("Metal Server", {
 			].join("<br>"),
 			!frm.doc.is_cpu_template_disabled &&
 				__(
-					"<b>Risk:</b> memory snapshot migration to or from this host fails unless the other host also has the CPU template disabled and the same CPU model and features. Disk-only migration still works."
+					"<b>Risk:</b> a memory snapshot migration to or from this host falls back to disk-only, with a guest reboot, unless the other host also has the CPU template disabled and the same CPU model and features."
 				),
 		]
 			.filter(Boolean)

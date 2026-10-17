@@ -556,6 +556,7 @@ class TestMetalClientMigrations(UnitTestCase):
 				"source": "http://10.0.0.3:9000",
 				"resize": resize,
 				"has_memory_snapshot": True,
+				"allow_disk_only_fallback": False,
 			},
 		)
 

@@ -22,6 +22,7 @@ class VirtualMachineMigration(Document):
 			VirtualMachineMigrationTransfer,
 		)
 
+		allow_disk_only_fallback: DF.Check
 		destination_metal_server: DF.Link | None
 		destination_metal_server_selection_attempts: DF.Int
 		destination_metal_server_selection_message: DF.SmallText | None
