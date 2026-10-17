@@ -245,6 +245,99 @@ func TestMigrationMemorySaveAndRollback(t *testing.T) {
 	}
 }
 
+func TestMigrationRollbackColdBootsWhenSavedMemoryCannotResume(t *testing.T) {
+	for _, state := range []State{StateRunning, StatePaused} {
+		t.Run(string(state), func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, state)
+			runtime.hasSavedState = true
+			runtime.restoreError = errors.New("snapshot load failed")
+			host := NewMigrationHost(machines)
+			for range 2 {
+				if err := host.RestoreRuntimeState(t.Context(), "vm-1", state, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if runtime.state != state || runtime.coldStarts != 1 || runtime.hasSavedState {
+				t.Fatalf("rollback did not cold boot the source: %+v", runtime)
+			}
+		})
+	}
+}
+
+func TestMigrationRollbackKeepsAGuestThatResumedDespiteAnError(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StateRunning)
+	runtime.hasSavedState = true
+	runtime.restoreError = errors.New("saved state cleanup failed")
+	runtime.restoreFailureState = StateRunning
+	if err := NewMigrationHost(machines).RestoreRuntimeState(t.Context(), "vm-1", StateRunning, true); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.coldStarts != 0 || runtime.removes != 0 {
+		t.Fatalf("rollback replaced a resumed guest: %+v", runtime)
+	}
+}
+
+func TestMigrationRollbackRetriesOnlyThePauseAfterAColdBoot(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StatePaused)
+	runtime.hasSavedState = true
+	runtime.restoreError = errors.New("snapshot load failed")
+	runtime.pauseError = errors.New("pause interrupted")
+	host := NewMigrationHost(machines)
+	if err := host.RestoreRuntimeState(t.Context(), "vm-1", StatePaused, true); err == nil {
+		t.Fatal("rollback hid the pause failure")
+	}
+	runtime.pauseError = nil
+	if err := host.RestoreRuntimeState(t.Context(), "vm-1", StatePaused, true); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.state != StatePaused || runtime.coldStarts != 1 || runtime.pauses != 2 {
+		t.Fatalf("rollback rebooted the guest again: %+v", runtime)
+	}
+}
+
+func TestMemoryActivationRecoversFromAFailedColdBoot(t *testing.T) {
+	machines, runtime, _, _ := newTestManager(t)
+	seedDestinationVM(t, machines, StateRunning)
+	runtime.state = StateCreated
+	host := NewMigrationHost(machines)
+	if err := host.ActivateMigratedDestination(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.state != StateRunning || runtime.removes != 1 || runtime.coldStarts != 1 {
+		t.Fatalf("activation did not recover the created process: %+v", runtime)
+	}
+}
+
+func TestMemoryActivationRecoversFromAFailedResume(t *testing.T) {
+	for _, test := range []struct {
+		stateAfterFailure State
+		wantError         bool
+		wantColdStarts    int
+	}{
+		{StatePaused, true, 0},
+		{StateRunning, false, 0},
+		{StateFailed, false, 1},
+	} {
+		t.Run(string(test.stateAfterFailure), func(t *testing.T) {
+			machines, runtime, _, _ := newTestManager(t)
+			seedDestinationVM(t, machines, StateRunning)
+			runtime.state = StatePaused
+			runtime.resumeError = errors.New("resume failed")
+			runtime.resumeFailureState = test.stateAfterFailure
+			err := NewMigrationHost(machines).ActivateMigratedDestination(t.Context(), "vm-1")
+			if (err != nil) != test.wantError || runtime.coldStarts != test.wantColdStarts {
+				t.Fatalf("error = %v, runtime = %+v", err, runtime)
+			}
+			if !test.wantError && runtime.state != StateRunning {
+				t.Fatalf("state = %s, want running", runtime.state)
+			}
+		})
+	}
+}
+
 func TestMemoryDestinationLoadsPausedThenActivates(t *testing.T) {
 	for _, desiredState := range []State{StateRunning, StatePaused, StateStopped} {
 		t.Run(string(desiredState), func(t *testing.T) {
