@@ -254,5 +254,5 @@ class TestRescueTools(TestCase):
 				) as command,
 				self.assertRaisesRegex(RuntimeError, "Cannot inspect"),
 			):
-				rescue.execute(SimpleNamespace(command="fsck", repair=True, worker=True))
+				rescue.execute("fsck", repair=True, worker=True)
 			self.assertEqual(command.call_count, 1, "Failed inspection must not start filesystem repair")

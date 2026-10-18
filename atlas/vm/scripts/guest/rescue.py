@@ -411,18 +411,17 @@ def show_status() -> None:
 			print(path.read_text()[-16000:])
 
 
-def check_or_resize_filesystem(args: argparse.Namespace) -> None:
-	command = args.command
+def check_or_resize_filesystem(command: str, *, repair: bool, worker: bool) -> None:
 	require_supported_filesystem()
 	require_unmounted_original_disk()
-	if command == "resize" or args.repair:
+	if command == "resize" or repair:
 		require_writable()
-	if not args.worker:
-		if command == "resize" or args.repair:
+	if not worker:
+		if command == "resize" or repair:
 			confirm("Modify the original filesystem? Copy important data out first.")
-		start_operation(command, ["--repair"] if args.repair else [])
+		start_operation(command, ["--repair"] if repair else [])
 	else:
-		_run_filesystem_repair(command, args.repair)
+		_run_filesystem_repair(command, repair)
 
 
 def _run_filesystem_repair(command: str, repair: bool) -> None:
@@ -457,16 +456,16 @@ def show_disk_usage() -> None:
 	run("du", "-x", "-h", "--max-depth=1", str(ROOT))
 
 
-def copy_recovery_files(args: argparse.Namespace) -> None:
+def copy_recovery_files(destination: str | None, *, worker: bool) -> None:
 	mount_original(read_only=True)
-	if args.destination:
-		if args.worker:
-			export_recovery_files(args.destination)
+	if destination:
+		if worker:
+			export_recovery_files(destination)
 		else:
 			confirm(
 				"Copy configs, attachments, app code, backups and local database files to the selected destination? It must be off the original disk and will contain secrets."
 			)
-			start_operation("copy-out", ["--destination", args.destination])
+			start_operation("copy-out", ["--destination", destination])
 	else:
 		print(json.dumps(discover_recovery_files(ROOT), indent=2))
 		print(
@@ -489,23 +488,32 @@ def exit_rescue() -> None:
 	)
 
 
-def execute(args: argparse.Namespace) -> None:
+def execute(
+	command: str,
+	*,
+	read_only: bool = False,
+	repair: bool = False,
+	worker: bool = False,
+	user: str | None = None,
+	unlock: bool = False,
+	destination: str | None = None,
+) -> None:
 	actions = {
 		"status": show_status,
-		"mount": lambda: mount_original(args.read_only),
+		"mount": lambda: mount_original(read_only),
 		"umount": lambda: run("umount", str(ROOT)),
-		"fsck": lambda: check_or_resize_filesystem(args),
-		"resize": lambda: check_or_resize_filesystem(args),
-		"passwd": lambda: reset_password(args.user, args.unlock),
-		"add-keys": lambda: add_keys(args.user),
+		"fsck": lambda: check_or_resize_filesystem(command, repair=repair, worker=worker),
+		"resize": lambda: check_or_resize_filesystem(command, repair=repair, worker=worker),
+		"passwd": lambda: reset_password(user, unlock),
+		"add-keys": lambda: add_keys(user),
 		"chroot": chroot,
 		"logs": show_installed_logs,
 		"usage": show_disk_usage,
-		"copy-out": lambda: copy_recovery_files(args),
+		"copy-out": lambda: copy_recovery_files(destination, worker=worker),
 		"shell": open_expert_shell,
 		"exit": exit_rescue,
 	}
-	actions[args.command]()
+	actions[command]()
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -544,13 +552,13 @@ def _parse_arguments() -> argparse.Namespace:
 
 def _execute_locked(args: argparse.Namespace, lock: TextIO) -> None:
 	if args.command in {"status", "shell"}:
-		execute(args)
+		execute(**vars(args))
 		return
 	try:
 		fcntl.flock(lock, fcntl.LOCK_EX if args.worker else fcntl.LOCK_EX | fcntl.LOCK_NB)
 	except BlockingIOError:
 		raise RuntimeError("Another managed action is running. Use atlas-rescue status.")
-	execute(args)
+	execute(**vars(args))
 	if args.worker:
 		(STATE / "result.json").write_text(json.dumps({"command": args.command, "success": True}))
 
