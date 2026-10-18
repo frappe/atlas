@@ -173,7 +173,6 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 			self.assertFalse(state.rescue.enabled)
 			self.assertIsNone(state.rescue.image)
 			self.assertEqual(state.rescue_generation, 0)
-		self.assertEqual(machine.desired.recovery.generation, 0)
 
 	def test_malformed_rescue_fields_are_rejected(self) -> None:
 		for group in ("desired", "observed"):

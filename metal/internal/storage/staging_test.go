@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type stagingRunner struct {
@@ -29,7 +31,7 @@ func (runner *stagingRunner) Output(context.Context, string, ...string) (string,
 }
 
 func TestSnapshotStoreShutdownRejectsNewUploads(t *testing.T) {
-	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil, telemetry.NewRegistry(nil)).Snapshots
 	shutdownContext, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	if err := store.Shutdown(shutdownContext); err != nil {
@@ -42,7 +44,7 @@ func TestSnapshotStoreShutdownRejectsNewUploads(t *testing.T) {
 
 func TestPruneStagedSnapshotsRechecksActivityAfterLockWait(t *testing.T) {
 	imagesDirectory := filepath.Join(t.TempDir(), "images")
-	store := NewStores(t.Context(), "test", imagesDirectory, nil).Snapshots
+	store := NewStores(t.Context(), "test", imagesDirectory, nil, telemetry.NewRegistry(nil)).Snapshots
 	now := time.Now().UTC()
 	metadata := stagedSnapshotMetadata{
 		ID:                     "snapshot-1",
@@ -80,7 +82,7 @@ func TestPruneStagedSnapshotsRechecksActivityAfterLockWait(t *testing.T) {
 }
 
 func TestPruneStagedSnapshotsKeepsAStagingCloneDuringUpload(t *testing.T) {
-	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil, telemetry.NewRegistry(nil)).Snapshots
 	now := time.Now().UTC()
 	metadata := stagedSnapshotMetadata{
 		ID:                     "snapshot-1",
@@ -105,7 +107,7 @@ func TestPruneStagedSnapshotsKeepsAStagingCloneDuringUpload(t *testing.T) {
 }
 
 func TestPruneStagedSnapshotsRemovesInvalidMetadata(t *testing.T) {
-	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil, telemetry.NewRegistry(nil)).Snapshots
 	runner := &stagingRunner{origin: "test/vms/vm-1@snapshot-1\n"}
 	store.runner = runner
 	directory := store.snapshotDirectory("snapshot-1")
@@ -128,7 +130,7 @@ func TestPruneStagedSnapshotsRemovesInvalidMetadata(t *testing.T) {
 }
 
 func TestInvalidMetadataCleanupCanRetryAfterSourceRemovalFails(t *testing.T) {
-	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil, telemetry.NewRegistry(nil)).Snapshots
 	sourceSnapshot := "test/vms/vm-1@snapshot-1"
 	runner := &stagingRunner{
 		origin:        sourceSnapshot + "\n",
@@ -159,7 +161,7 @@ func TestInvalidMetadataCleanupCanRetryAfterSourceRemovalFails(t *testing.T) {
 }
 
 func TestUploadStatusReportsPersistedState(t *testing.T) {
-	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil, telemetry.NewRegistry(nil)).Snapshots
 
 	if _, err := store.UploadStatus(t.Context(), "missing"); err != ErrNotFound {
 		t.Fatalf("missing snapshot: got %v, want ErrNotFound", err)

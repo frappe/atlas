@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func savedStateFixture(t *testing.T, configuration Config, requirement savedStateRequirement) savedStateMetadata {
@@ -26,6 +28,10 @@ func savedStateFixture(t *testing.T, configuration Config, requirement savedStat
 		CreatedAt:                time.Now().UTC(), StateFileName: memorySnapshotStateFileName,
 		MemoryFileName: memorySnapshotMemoryFileName, StateFileSizeBytes: stateSize,
 		MemoryFileSizeBytes: memorySize,
+		Shape:               requirement.MigratedShape,
+	}
+	if requirement.MigratedShape != nil {
+		metadata.TapMACAddress = "02:11:22:33:44:55"
 	}
 	data, err := json.Marshal(metadata)
 	if err != nil {
@@ -81,7 +87,23 @@ func TestLoadSavedStateRejectsAnIncompatibleGeneration(t *testing.T) {
 	}
 }
 
-func TestLoadSavedStateRejectsUnknownMetadata(t *testing.T) {
+func TestLoadSavedStateReportsAnIncompatibleFirecracker(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, FirecrackerCompatibility: "firecracker:1"}
+	savedStateFixture(t, configuration, requirement)
+
+	requirement.FirecrackerCompatibility = "firecracker:1:cpu:abc"
+	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want errSavedStateIncompatible", err)
+	}
+
+	requirement.SpecificationGeneration = 3
+	if _, err := configuration.loadSavedState(requirement); errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, a generation mismatch must stay a hard error", err)
+	}
+}
+
+func TestLoadSavedStateReportsUnknownMetadataAsIncompatible(t *testing.T) {
 	configuration := Config{MachinesDir: t.TempDir()}
 	requirement := savedStateRequirement{VirtualMachineID: "vm-1"}
 	savedStateFixture(t, configuration, requirement)
@@ -95,8 +117,59 @@ func TestLoadSavedStateRejectsUnknownMetadata(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := configuration.loadSavedState(requirement); err == nil {
-		t.Fatal("want an unknown metadata field error")
+	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want errSavedStateIncompatible", err)
+	}
+}
+
+func TestLoadSavedStateChecksKnownFieldsBeforeUnknownFields(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001}
+	savedStateFixture(t, configuration, requirement)
+	path := filepath.Join(configuration.savedStateDirectory("vm-1"), savedStateMetadataFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[len(data)-1] = ','
+	data = append(data, []byte(`"unknown":true}`)...)
+	if err := os.WriteFile(path, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	requirement.SpecificationGeneration = 3
+	if _, err := configuration.loadSavedState(requirement); err == nil || errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want a hard generation error", err)
+	}
+}
+
+func TestHasSavedStateRemovesAnIncompatibleState(t *testing.T) {
+	runtime := &Runtime{configuration: Config{MachinesDir: t.TempDir(), FirecrackerBin: "/missing/firecracker"}}
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: 1001}
+	requirement := runtime.newMachine(input).savedStateRequirement()
+	savedStateFixture(t, runtime.configuration, requirement)
+
+	runtime.configuration.CPUTemplate = []byte(`{"cpuid_modifiers":[]}`)
+	has, err := runtime.hasSavedState(input)
+	if err != nil || has {
+		t.Fatalf("hasSavedState = %v, %v, want false and no error", has, err)
+	}
+	if _, err := os.Stat(runtime.configuration.savedStateDirectory("vm-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("saved state still exists: %v", err)
+	}
+}
+
+func TestLoadSavedStateRejectsMalformedMetadata(t *testing.T) {
+	configuration := Config{MachinesDir: t.TempDir()}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1"}
+	savedStateFixture(t, configuration, requirement)
+	path := filepath.Join(configuration.savedStateDirectory(requirement.VirtualMachineID), savedStateMetadataFileName)
+	if err := os.WriteFile(path, []byte(`{"virtual_machine_id":`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configuration.loadSavedState(requirement)
+	if err == nil || errors.Is(err, errSavedStateIncompatible) {
+		t.Fatalf("error = %v, want a hard decode error", err)
 	}
 }
 
@@ -148,6 +221,57 @@ func TestRemoveSavedStateKeepsVMRecords(t *testing.T) {
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrationMetadataValidatesPortableIdentityAndShape(t *testing.T) {
+	shape := vm.MemorySnapshotConfiguration{VirtualCPUCount: 2, MemoryMiB: 1, DiskMiB: 4}
+	requirement := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, MigratedShape: &shape}
+	configuration := Config{MachinesDir: t.TempDir()}
+	metadata := savedStateFixture(t, configuration, requirement)
+	metadata.UserID = 2002
+	metadata.FirecrackerCompatibility = "source-only-build-marker"
+	if err := metadata.validate(requirement); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"cpu", "memory", "disk", "generation", "restart", "vm", "missing_metadata", "missing_mac", "invalid_mac", "multicast_mac", "extended_mac"} {
+		t.Run(field, func(t *testing.T) {
+			candidate := metadata
+			changed := shape
+			candidate.Shape = &changed
+			switch field {
+			case "cpu":
+				changed.VirtualCPUCount++
+			case "memory":
+				changed.MemoryMiB++
+			case "disk":
+				changed.DiskMiB++
+			case "generation":
+				candidate.SpecificationGeneration++
+			case "restart":
+				candidate.RestartGeneration++
+			case "vm":
+				candidate.VirtualMachineID = "another-vm"
+			case "missing_metadata":
+				candidate.Shape = nil
+			case "missing_mac":
+				candidate.TapMACAddress = ""
+			case "invalid_mac":
+				candidate.TapMACAddress = "not-a-mac"
+			case "multicast_mac":
+				candidate.TapMACAddress = "33:33:00:00:00:01"
+			case "extended_mac":
+				candidate.TapMACAddress = "02:11:22:33:44:55:66:77"
+			}
+			if err := candidate.validate(requirement); err == nil {
+				t.Fatal("incompatible migration metadata accepted")
+			}
+		})
+	}
+	// The host-specific user ID remains enforced for ordinary local restores.
+	requirement.MigratedShape = nil
+	if err := metadata.validate(requirement); err == nil {
+		t.Fatal("local restore ignored its host user ID")
 	}
 }
 

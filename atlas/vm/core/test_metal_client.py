@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import requests
 from frappe.tests import UnitTestCase
 
-from atlas.vm.core.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.metal_client import MetalClient, MetalClientError, get_metal_route
 
 
 def build_client() -> MetalClient:
@@ -545,6 +545,24 @@ class TestMetalClientMigrations(UnitTestCase):
 			client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", resize)
 
 		self.assertEqual(request.call_args.kwargs["json"]["resize"], resize)
+		with patch(
+			"atlas.vm.core.metal_client.requests.Session.request",
+			return_value=build_response(202, {"status": "running"}),
+		) as request:
+			client.put_migration(
+				"mig-00001", "vm-00001", "http://10.0.0.3:9000", resize, has_memory_snapshot=True
+			)
+
+		self.assertEqual(
+			request.call_args.kwargs["json"],
+			{
+				"virtual_machine_id": "vm-00001",
+				"source": "http://10.0.0.3:9000",
+				"resize": resize,
+				"has_memory_snapshot": True,
+				"allow_disk_only_fallback": False,
+			},
+		)
 
 	def test_get_migration_reads_status(self) -> None:
 		client = build_client()
@@ -599,8 +617,28 @@ class TestMetalClientMigrations(UnitTestCase):
 		with self.assertRaises(MetalClientError):
 			MetalClient.get_api_url(server)
 
-	def test_coordination_url_uses_the_wireguard_address(self) -> None:
-		server = Mock(wireguard_ip_address="fdab::12")
+	def test_coordination_url_follows_the_migration_network_setting(self) -> None:
+		server = Mock(wireguard_ip_address="fdab::12", private_ipv4_address="10.0.0.12")
 		server.name = "metal-1"
 
-		self.assertEqual(MetalClient.get_coordination_url(server), "https://[fdab::12]:9001")
+		for is_migration_on_wireguard, url in ((0, "https://10.0.0.12:9001"), (1, "https://[fdab::12]:9001")):
+			server.settings.is_migration_on_wireguard = is_migration_on_wireguard
+			with self.subTest(is_migration_on_wireguard=is_migration_on_wireguard):
+				self.assertEqual(MetalClient.get_coordination_url(server), url)
+
+	def test_coordination_url_rejects_a_server_without_a_private_ipv4_address(self) -> None:
+		for address in (None, "", "fdab::12"):
+			server = Mock(private_ipv4_address=address)
+			server.name = "metal-1"
+			server.settings.is_migration_on_wireguard = 0
+
+			with self.subTest(address=address), self.assertRaises(MetalClientError):
+				MetalClient.get_coordination_url(server)
+
+
+class TestMetalRoute(UnitTestCase):
+	def test_a_resource_id_becomes_one_route_so_metrics_get_no_series_per_vm(self) -> None:
+		self.assertEqual(get_metal_route("/v1/vms/vm-1-0001/actions?wait=1"), "/v1/vms/:id/actions")
+		self.assertEqual(get_metal_route("/v1/migrations/mig-7"), "/v1/migrations/:id")
+		self.assertEqual(get_metal_route("/v1/snapshots/01a1/upload"), "/v1/snapshots/:id/upload")
+		self.assertEqual(get_metal_route("/v1/sync"), "/v1/sync")

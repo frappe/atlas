@@ -4,11 +4,6 @@ import "context"
 
 // Storage manages virtual machine disks.
 type Storage interface {
-	CheckRescueCheckpointSpace(context.Context, string) (RescueCheckpointSpace, error)
-	CreateRescueCheckpoint(context.Context, string, uint64) (string, error)
-	RescueCheckpointGUID(context.Context, string, uint64) (string, error)
-	RollbackRescueCheckpoint(context.Context, string, uint64, string) error
-	DiscardRescueCheckpoint(context.Context, string, uint64, string) error
 	HasDisk(context.Context, string) (bool, error)
 	DiskUsage(context.Context, string) (DiskUsage, error)
 	ResizeDisk(context.Context, string, int) error

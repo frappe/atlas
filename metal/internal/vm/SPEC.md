@@ -59,11 +59,7 @@ Idle behavior is in [Sleepy VMs](../../../docs/compute/sleepy-vms.md).
 
 The handbook owns [rescue behavior](../../../docs/compute/rescue.md). `RescueGeneration` identifies each mode transition. Runtime and storage preserve the same session across cold boots. Reconciliation stops the guest before deleting its rescue disk. Entry and exit invalidate saved memory. Rescue suppresses original user data and idle sleep.
 
-Migration, snapshots, and resource resizing must reject unresolved recovery. `DesiredRecord.Recovery` owns the checkpoint generation, GUID, original expiry, accepted disposition, and persisted rollback completion under the VM operation lock. `recovery.go` applies that lifecycle only after guest descriptors close; expiry discards without restoring.
-
-`recovery_test.go` covers retention, re-entry, active expiry, conflicting dispositions, and interruption retries.
-
-`rescue_test.go` covers stopped selection, cleanup retry, URL refresh, and guest reboot intent. `RuntimeStatus.RescueRebootRequested` is authoritative only for the current boot and session.
+Migration, snapshots, and resource resizing reject active rescue or an unapplied exit. Reboot and Stop/Start preserve rescue selection. `rescue_test.go` covers power state, cleanup retry, URL refresh, and guest stops.
 
 ## Migration
 

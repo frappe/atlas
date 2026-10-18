@@ -3,18 +3,27 @@ package reconciler
 import (
 	"context"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
-// passScheduler runs one reconcile pass on an interval and on demand. Both
-// reconcilers embed it, so they share one wake and shutdown behavior.
+// passScheduler runs one reconcile pass on an interval and on demand. Every
+// reconciler embeds it, so they share one wake, shutdown, and metric behavior.
 type passScheduler struct {
-	interval time.Duration
-	wake     chan struct{}
+	loop      string
+	interval  time.Duration
+	wake      chan struct{}
+	telemetry *telemetry.Registry
 }
 
-// newPassScheduler returns a scheduler that ticks at interval.
-func newPassScheduler(interval time.Duration) passScheduler {
-	return passScheduler{interval: interval, wake: make(chan struct{}, 1)}
+// newPassScheduler returns a scheduler for loop that ticks at interval.
+func newPassScheduler(loop string, interval time.Duration, registry *telemetry.Registry) passScheduler {
+	return passScheduler{loop: loop, interval: interval, wake: make(chan struct{}, 1), telemetry: registry}
+}
+
+// countFailure counts one failed item or list call of the loop.
+func (s *passScheduler) countFailure() {
+	s.telemetry.Count("metal_reconciler_failures_total", 1, telemetry.Labels{"loop": s.loop})
 }
 
 // Wake requests a pass without blocking the caller. A pending request absorbs
@@ -32,7 +41,12 @@ func (s *passScheduler) run(ctx context.Context, pass func(context.Context)) {
 	defer ticker.Stop()
 
 	for {
+		startedAt := time.Now()
 		pass(ctx)
+		labels := telemetry.Labels{"loop": s.loop}
+		s.telemetry.Count("metal_reconciler_passes_total", 1, labels)
+		s.telemetry.Count("metal_reconciler_pass_duration_seconds_total", time.Since(startedAt).Seconds(), labels)
+		s.telemetry.Set("metal_reconciler_last_pass_timestamp_seconds", float64(time.Now().Unix()), labels)
 
 		select {
 		case <-ctx.Done():

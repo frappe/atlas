@@ -10,6 +10,45 @@ from atlas.vm.core.models import Route, parse_routes
 
 
 @dataclass(frozen=True, slots=True)
+class MetalHostCompatibility:
+	"""Store host facts from the last successful sync."""
+
+	architecture: str
+	cpu_profile: str
+	cpu_vendor: str
+	cpu_model: str
+	cpu_features: str
+	snapshot_host: str
+	tsc_khz: int
+	tsc_scaling: bool
+	default_cpu_template_error: str = ""
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalHostCompatibility:
+		"""Validate the optional sync report at the Metal boundary."""
+		report = object_value(value, "host_compatibility")
+		strings = {
+			field: string_field(report, field)
+			for field in (
+				"architecture",
+				"cpu_profile",
+				"cpu_vendor",
+				"cpu_model",
+				"cpu_features",
+				"snapshot_host",
+			)
+		}
+		if not all(strings.values()) or strings["architecture"] not in {"amd64", "arm64"}:
+			raise ValueError("Host compatibility report is incomplete")
+		return cls(
+			**strings,
+			tsc_khz=integer_field(report, "tsc_khz"),
+			tsc_scaling=boolean_field(report, "tsc_scaling"),
+			default_cpu_template_error=string_field(report, "default_cpu_template_error", default=""),
+		)
+
+
+@dataclass(frozen=True, slots=True)
 class MetalCompute:
 	"""Store the desired compute configuration."""
 
@@ -107,20 +146,6 @@ class MetalRescue:
 
 	enabled: bool
 	image: MetalImage | None
-	access: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class MetalRecovery:
-	"""Durable recovery state reported by Metal."""
-
-	generation: int = 0
-	checkpoint: bool = False
-	active: bool = False
-	expires_at: str = ""
-	action: str = ""
-	complete: bool = False
-	rollback_applied: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +162,6 @@ class MetalDesiredState:
 	image: MetalImage
 	network: MetalNetwork
 	guest: MetalGuest
-	recovery: MetalRecovery = MetalRecovery()
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,17 +335,7 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 	network = object_field(value, "network")
 	firewall = object_field(network, "firewall")
 	guest = object_field(value, "guest")
-	recovery = object_value(value.get("recovery", {}), "recovery")
 	return MetalDesiredState(
-		recovery=MetalRecovery(
-			generation=integer_field(recovery, "generation", default=0),
-			checkpoint=boolean_field(recovery, "checkpoint", default=False),
-			active=boolean_field(recovery, "active", default=False),
-			expires_at=string_field(recovery, "expires_at", default=""),
-			action=string_field(recovery, "action", default=""),
-			complete=boolean_field(recovery, "complete", default=False),
-			rollback_applied=boolean_field(recovery, "rollback_applied", default=False),
-		),
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		rescue_generation=integer_field(value, "rescue_generation", default=0),
@@ -402,7 +416,6 @@ def parse_rescue(value: dict[str, Any]) -> MetalRescue:
 	"""Parse rescue selection and the optional immutable image identity."""
 	image = value.get("image")
 	return MetalRescue(
-		access=string_field(value, "access", default=""),
 		enabled=boolean_field(value, "enabled"),
 		image=parse_image(object_value(image, "image")) if image is not None else None,
 	)

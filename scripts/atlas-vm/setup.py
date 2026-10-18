@@ -445,7 +445,7 @@ class Setup:
 			self.pilot(f"frappe --site {configuration.site} build-ubuntu-base-image {arguments}")
 		self.pilot(
 			f"frappe --site {configuration.site} build-ubuntu-rescue-image"
-			" --storage site-file --skip-existing --set-default-if-missing"
+			" --storage site-file --skip-existing"
 		)
 
 	def run(self) -> None:

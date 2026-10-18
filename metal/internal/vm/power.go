@@ -11,9 +11,6 @@ func (manager *Manager) SetPowerState(ctx context.Context, identifier string, st
 		if record.State == state {
 			return false, nil
 		}
-		if record.Recovery.Action != "" && !record.Recovery.Complete {
-			return false, ErrConflict
-		}
 		record.State = state
 		return true, nil
 	})

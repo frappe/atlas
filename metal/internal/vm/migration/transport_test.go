@@ -77,12 +77,23 @@ func TestStopSourceReturnsFinalSnapshot(t *testing.T) {
 	}))
 	defer server.Close()
 
-	snapshot, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2)
+	snapshot, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snapshot.Sequence != 3 || request.ReceivedSequence != 2 {
 		t.Fatalf("snapshot = %+v received = %d", snapshot, request.ReceivedSequence)
+	}
+}
+
+func TestStopSourceReportsASourceWithoutMemory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	}))
+	defer server.Close()
+
+	if _, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2, true); !errors.Is(err, ErrNoMemoryToSave) {
+		t.Fatalf("stop error = %v", err)
 	}
 }
 

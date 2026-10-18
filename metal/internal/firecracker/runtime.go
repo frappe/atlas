@@ -2,6 +2,7 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -27,7 +29,6 @@ const maxConcurrentSSHSessions = 32
 
 // virtualMachineStorage prepares and releases the disk of one VM.
 type virtualMachineStorage interface {
-	PrepareRescueBoot(context.Context, storage.VirtualMachineRescueBootRequest) (storage.BootConfiguration, error)
 	PrepareBoot(ctx context.Context, request storage.VirtualMachineStorageRequest) (storage.BootConfiguration, error)
 	PrepareRootFileSystem(ctx context.Context, request storage.VirtualMachineStorageRequest) error
 	HasDisk(ctx context.Context, virtualMachineID string) (bool, error)
@@ -57,9 +58,6 @@ type serialBroker interface {
 
 // Runtime manages Firecracker virtual machines on one host.
 type Runtime struct {
-	rescueMutex           sync.Mutex
-	rescueListeners       map[string]*rescueListener
-	rescueClosed          bool
 	configuration         Config
 	units                 platform.UnitManager
 	sshUnits              sshSessionUnits
@@ -69,6 +67,7 @@ type Runtime struct {
 	sshMutex              sync.Mutex
 	sshSessions           map[string]*sshSession
 	logger                *slog.Logger
+	telemetry             *telemetry.Registry
 }
 
 var _ vm.Runtime = (*Runtime)(nil)
@@ -82,9 +81,15 @@ func NewRuntime(
 	imageStore imageStore,
 	serialBroker serialBroker,
 	logger *slog.Logger,
+	registry *telemetry.Registry,
 ) *Runtime {
+	configuration.CPUTemplate = bytes.Clone(configuration.CPUTemplate)
 	if logger == nil {
 		logger = slog.Default()
+	}
+	// A failure counter starts at zero, so its first failure reads as an increase.
+	for _, kind := range []string{"cold", "warm", "restore"} {
+		registry.Count("metal_vm_boot_unreachable_total", 0, telemetry.Labels{"kind": kind})
 	}
 
 	return &Runtime{
@@ -96,7 +101,21 @@ func NewRuntime(
 		serialBroker:          serialBroker,
 		sshSessions:           make(map[string]*sshSession),
 		logger:                logger,
+		telemetry:             registry,
 	}
+}
+
+// countBoot counts one VM boot. A cold boot names why warm memory was not used
+// when the image had it.
+func (runtime *Runtime) countBoot(kind, fallbackReason string) {
+	runtime.telemetry.Count("metal_vm_boots_total", 1, telemetry.Labels{"kind": kind, "fallback_reason": fallbackReason})
+}
+
+// CollectTelemetry reports the open guest SSH sessions.
+func (runtime *Runtime) CollectTelemetry(context.Context) ([]telemetry.Sample, error) {
+	runtime.sshMutex.Lock()
+	defer runtime.sshMutex.Unlock()
+	return []telemetry.Sample{{Metric: "metal_ssh_sessions", Value: float64(len(runtime.sshSessions))}}, nil
 }
 
 // Inspect returns the current systemd and Firecracker state.
@@ -106,16 +125,26 @@ func (runtime *Runtime) Inspect(ctx context.Context, input vm.RuntimeMachine) (v
 		return vm.RuntimeStatus{}, fmt.Errorf("inspect Firecracker VM: %w", err)
 	}
 
-	_, savedStateError := runtime.configuration.loadSavedState(runtime.newMachine(input).savedStateRequirement())
-	hasSavedState := savedStateError == nil
-	if savedStateError != nil && !errors.Is(savedStateError, errSavedStateNotFound) {
-		return vm.RuntimeStatus{}, fmt.Errorf("validate saved VM state: %w", savedStateError)
-	}
-	reboot, err := runtime.inspectRescueBoot(input, state)
+	hasSavedState, err := runtime.hasSavedState(input)
 	if err != nil {
 		return vm.RuntimeStatus{}, err
 	}
-	return vm.RuntimeStatus{State: state, HasSavedState: hasSavedState, RescueRebootRequested: reboot}, nil
+	return vm.RuntimeStatus{State: state, HasSavedState: hasSavedState}, nil
+}
+
+// hasSavedState reports whether the VM has a state it can restore. An incompatible state is
+// removed, because a cold boot changes the disk and the old memory must not resume over it.
+func (runtime *Runtime) hasSavedState(input vm.RuntimeMachine) (bool, error) {
+	_, err := runtime.configuration.loadSavedState(runtime.newMachine(input).savedStateRequirement())
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, errSavedStateNotFound):
+		return false, nil
+	case errors.Is(err, errSavedStateIncompatible):
+		return false, runtime.removeSavedState(input.ID)
+	}
+	return false, fmt.Errorf("validate saved VM state: %w", err)
 }
 
 // Start launches a VM from a warm image or a cold boot.
@@ -169,10 +198,6 @@ func (runtime *Runtime) Resume(ctx context.Context, input vm.RuntimeMachine) err
 
 // Remove stops the process and removes runtime-owned files.
 func (runtime *Runtime) Remove(ctx context.Context, input vm.RuntimeMachine) error {
-	if err := runtime.clearRescueBoot(input.ID); err != nil {
-		return err
-	}
-
 	if err := runtime.newMachine(input).cleanupSystemd(ctx); err != nil {
 		return err
 	}
@@ -204,17 +229,28 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	if status.State != vm.StateRunning && status.State != vm.StatePaused {
 		return nil
 	}
-
 	paths := []string{rootDrivePath}
 	if input.Specification.Rescue.Enabled {
 		paths = append(paths, "/disk.img")
 	}
+	limiter := driveRateLimiter(input.Specification.Disk, len(paths))
+	if limiter == nil {
+		limiter = &api.RateLimiter{}
+	}
+	// PATCH retains omitted buckets, so unlimited values must explicitly clear them.
+	if limiter.Bandwidth == nil {
+		limiter.Bandwidth = &api.TokenBucket{}
+	}
+	if limiter.Ops == nil {
+		limiter.Ops = &api.TokenBucket{}
+	}
+
 	client := api.New(runtime.configuration.socketPath(input.ID))
 	for index, path := range paths {
 		if err := client.PatchDrive(ctx, api.PartialDrive{
 			DriveID:     fmt.Sprintf("drive%d", index),
 			PathOnHost:  path,
-			RateLimiter: driveRateLimiter(input.Specification.Disk, len(paths)),
+			RateLimiter: limiter,
 		}); err != nil {
 			return err
 		}

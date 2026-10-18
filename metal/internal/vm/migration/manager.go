@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -25,7 +26,8 @@ type sourceOperations interface {
 	StartSnapshotStream(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
 	// StopSource acknowledges the last received snapshot, stops the source, and
 	// returns its final snapshot.
-	StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int) (SourceSnapshot, error)
+	StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (SourceSnapshot, error)
+	ReceiveMemorySnapshot(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, directory string, memoryMiB int) error
 	// StartSource restores the source during rollback.
 	StartSource(ctx context.Context, address, migrationID, virtualMachineID string) error
 	// FinishSource destroys the stopped source and migration state.
@@ -62,10 +64,13 @@ type migrationHost interface {
 	ReleaseStorage(ctx context.Context, virtualMachineID string) error
 	VirtualMachineRecordsDirectory() string
 	NormalizeSourceToStopped(ctx context.Context, virtualMachineID string) error
+	SaveAndStopSource(ctx context.Context, virtualMachineID string) error
 	RemoveMigrationNetwork(ctx context.Context, virtualMachineID string) error
 	EnsureMigrationNetwork(ctx context.Context, virtualMachineID string) error
 	ApplyMigratedDestinationState(ctx context.Context, virtualMachineID string) error
-	RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState vm.State) error
+	RestoreMigratedMemorySnapshot(ctx context.Context, virtualMachineID, directory string) error
+	ActivateMigratedDestination(ctx context.Context, virtualMachineID string) error
+	RestoreRuntimeState(ctx context.Context, virtualMachineID string, desiredState vm.State, fromSavedState bool) error
 	RemoveMigratedRuntime(ctx context.Context, virtualMachineID string) error
 	RefreshSourceDisk(ctx context.Context, virtualMachineID string) error
 	LimitSourceDisk(ctx context.Context, virtualMachineID string, throughputMiBps int) (int, error)
@@ -113,6 +118,7 @@ type Manager struct {
 	finalDeltaMiB int
 	locks         vm.KeyedLocks
 	logger        *slog.Logger
+	telemetry     *telemetry.Registry
 	now           func() time.Time
 
 	destinationCreationLocks vm.KeyedLocks
@@ -129,18 +135,22 @@ type Manager struct {
 	sourceStreamsMutex     sync.Mutex
 	sourceStreams          map[string]*backgroundOperation
 	sourceStreamsWaitGroup sync.WaitGroup
+
+	// downtimeStarts maps a migration to when its source was asked to stop.
+	downtimeMutex  sync.Mutex
+	downtimeStarts map[string]time.Time
 }
 
 // NewManager validates records and returns a host migration manager.
-func NewManager(host *vm.MigrationHost, source *SourceClient, disks *storage.MigrationTransfer, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger) (*Manager, error) {
+func NewManager(host *vm.MigrationHost, source *SourceClient, disks *storage.MigrationTransfer, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
 	if host == nil || source == nil || disks == nil {
 		return nil, fmt.Errorf("migration manager dependencies are required")
 	}
-	return newManager(host, source, disks, capacity, finalDeltaMiB, logger)
+	return newManager(host, source, disks, capacity, finalDeltaMiB, logger, registry)
 }
 
-func newManager(host migrationHost, source sourceOperations, disks migrationStorage, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger) (*Manager, error) {
-	if host == nil || source == nil || disks == nil || capacity == nil {
+func newManager(host migrationHost, source sourceOperations, disks migrationStorage, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
+	if host == nil || source == nil || disks == nil || capacity == nil || registry == nil {
 		return nil, fmt.Errorf("migration manager dependencies are required")
 	}
 	if logger == nil {
@@ -155,26 +165,31 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 	}
 	rootContext, rootCancel := context.WithCancel(context.Background())
 	return &Manager{
-		host:          host,
-		store:         store,
-		source:        source,
-		disks:         disks,
-		capacity:      capacity,
-		finalDeltaMiB: finalDeltaMiB,
-		logger:        logger,
-		now:           func() time.Time { return time.Now().UTC() },
-		transfers:     make(map[string]*backgroundOperation),
-		sourceStreams: make(map[string]*backgroundOperation),
-		rootContext:   rootContext,
-		rootCancel:    rootCancel,
+		host:           host,
+		store:          store,
+		source:         source,
+		disks:          disks,
+		capacity:       capacity,
+		finalDeltaMiB:  finalDeltaMiB,
+		logger:         logger,
+		telemetry:      registry,
+		now:            func() time.Time { return time.Now().UTC() },
+		transfers:      make(map[string]*backgroundOperation),
+		sourceStreams:  make(map[string]*backgroundOperation),
+		downtimeStarts: make(map[string]time.Time),
+		rootContext:    rootContext,
+		rootCancel:     rootCancel,
 	}, nil
 }
 
 // CreateDestination reserves a VM ID or returns a matching in-progress record. An
-// optional resize replaces the source shape on the destination.
-func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize) (DestinationProgress, error) {
+// optional resize replaces the source shape.
+func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize, hasMemorySnapshot, allowDiskOnlyFallback bool) (DestinationProgress, error) {
 	if !vm.ValidIdentifier(migrationID) || !vm.ValidIdentifier(virtualMachineID) || !validSourceAddress(source) {
 		return DestinationProgress{}, vm.ErrConflict
+	}
+	if hasMemorySnapshot && resize != nil {
+		return DestinationProgress{}, fmt.Errorf("memory snapshot migration cannot resize the VM: %w", vm.ErrConflict)
 	}
 	unlockCreation, err := m.destinationCreationLocks.Lock(ctx, migrationID)
 	if err != nil {
@@ -203,7 +218,8 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 			if existing.State.terminal() {
 				return existing.progress(), nil
 			}
-			if existing.Source != source || !existing.Resize.equal(resize) {
+			if existing.Source != source || !existing.Resize.equal(resize) || existing.HasMemorySnapshot != hasMemorySnapshot ||
+				existing.AllowDiskOnlyFallback != allowDiskOnlyFallback {
 				return DestinationProgress{}, vm.ErrConflict
 			}
 			return existing.progress(), nil
@@ -228,15 +244,17 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		return DestinationProgress{}, err
 	}
 	record := destinationRecord{
-		ID:               migrationID,
-		VirtualMachineID: virtualMachineID,
-		Source:           source,
-		Resize:           resize,
-		State:            destinationPreparing,
-		CreatedAt:        m.now(),
-		LastControlAt:    m.now(),
+		ID:                    migrationID,
+		VirtualMachineID:      virtualMachineID,
+		Source:                source,
+		Resize:                resize,
+		HasMemorySnapshot:     hasMemorySnapshot,
+		AllowDiskOnlyFallback: allowDiskOnlyFallback,
+		State:                 destinationPreparing,
+		CreatedAt:             m.now(),
+		LastControlAt:         m.now(),
 	}
-	if err := m.store.writeDestination(record); err != nil {
+	if err := m.saveDestination(record); err != nil {
 		return DestinationProgress{}, errors.Join(err, m.store.remove(virtualMachineID))
 	}
 	return record.progress(), nil
@@ -307,7 +325,7 @@ func (m *Manager) mutateDestination(
 		return destinationRecord{}, err
 	}
 	apply(&record)
-	if err := m.store.writeDestination(record); err != nil {
+	if err := m.saveDestination(record); err != nil {
 		return destinationRecord{}, err
 	}
 	return record, nil
@@ -338,7 +356,7 @@ func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) err
 		return nil
 	}
 	record.State = destinationRemovingRuntime
-	return m.store.writeDestination(record)
+	return m.saveDestination(record)
 }
 
 // DestinationReservations returns capacity held by active destinations.

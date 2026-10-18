@@ -10,36 +10,51 @@ import (
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/network/traffic"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type fakeRuntime struct {
-	rescueRebootRequested bool
-	state                 State
-	hasSavedState         bool
-	starts                int
-	stops                 int
-	saves                 int
-	restores              int
-	restoresPaused        int
-	deletes               int
-	pauses                int
-	resumes               int
-	removes               int
-	coldStarts            int
-	metadata              int
-	diskRefresh           int
-	diskLimitMiBps        int
-	inspectError          error
-	restoreError          error
-	saveError             error
-	deleteError           error
-	coldStartError        error
-	usage                 RuntimeUsage
-	usageError            error
+	state          State
+	hasSavedState  bool
+	starts         int
+	stops          int
+	saves          int
+	restores       int
+	restoresPaused int
+	deletes        int
+	pauses         int
+	resumes        int
+	removes        int
+	coldStarts     int
+	metadata       int
+	diskRefresh    int
+	diskLimitMiBps int
+	inspectError   error
+	restoreError   error
+	// restoreFailureState is the state a failed saved-state restore leaves behind.
+	restoreFailureState State
+	saveError           error
+	deleteError         error
+	coldStartError      error
+	pauseError          error
+	resumeError         error
+	// resumeFailureState is the state a failed resume leaves behind.
+	resumeFailureState State
+	pingError          error
+	usage              RuntimeUsage
+	usageError         error
+
+	migrationRestores  int
+	migrationDirectory string
+	metadataError      error
+	diskError          error
+	guestCheckError    error
+	guestChecks        int
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
-	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState, RescueRebootRequested: runtime.rescueRebootRequested}, runtime.inspectError
+	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState}, runtime.inspectError
 }
 
 func (runtime *fakeRuntime) Start(context.Context, RuntimeMachine) error {
@@ -78,6 +93,9 @@ func (runtime *fakeRuntime) SaveAndStop(context.Context, RuntimeMachine) error {
 func (runtime *fakeRuntime) Restore(context.Context, RuntimeMachine) error {
 	runtime.restores++
 	if runtime.restoreError != nil {
+		if runtime.restoreFailureState != "" {
+			runtime.state = runtime.restoreFailureState
+		}
 		return runtime.restoreError
 	}
 	runtime.state = StateRunning
@@ -95,6 +113,16 @@ func (runtime *fakeRuntime) RestorePaused(context.Context, RuntimeMachine) error
 	return nil
 }
 
+func (runtime *fakeRuntime) RestorePausedFrom(_ context.Context, _ RuntimeMachine, directory string) error {
+	runtime.migrationRestores++
+	runtime.migrationDirectory = directory
+	if runtime.restoreError != nil {
+		return runtime.restoreError
+	}
+	runtime.state = StatePaused
+	return nil
+}
+
 func (runtime *fakeRuntime) DeleteSavedState(context.Context, RuntimeMachine) error {
 	runtime.deletes++
 	if runtime.deleteError != nil {
@@ -106,31 +134,40 @@ func (runtime *fakeRuntime) DeleteSavedState(context.Context, RuntimeMachine) er
 
 func (runtime *fakeRuntime) Pause(context.Context, RuntimeMachine) error {
 	runtime.pauses++
+	if runtime.pauseError != nil {
+		return runtime.pauseError
+	}
 	runtime.state = StatePaused
 	return nil
 }
 
 func (runtime *fakeRuntime) Resume(context.Context, RuntimeMachine) error {
 	runtime.resumes++
+	if runtime.resumeError != nil {
+		if runtime.resumeFailureState != "" {
+			runtime.state = runtime.resumeFailureState
+		}
+		return runtime.resumeError
+	}
 	runtime.state = StateRunning
 	return nil
 }
 
 func (runtime *fakeRuntime) Remove(context.Context, RuntimeMachine) error {
 	runtime.removes++
-	runtime.state = StateDestroyed
+	runtime.state = StateStopped
 	return nil
 }
 
 func (runtime *fakeRuntime) RefreshMetadata(context.Context, RuntimeMachine) error {
 	runtime.metadata++
-	return nil
+	return runtime.metadataError
 }
 
 func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachine) error {
 	runtime.diskRefresh++
 	runtime.diskLimitMiBps = machine.Specification.Disk.ThroughputMiBps
-	return nil
+	return runtime.diskError
 }
 
 func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error) {
@@ -139,6 +176,15 @@ func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSess
 
 func (runtime *fakeRuntime) ResumeSSH(string, string) (SSHSession, error) {
 	return nil, nil
+}
+
+func (runtime *fakeRuntime) Ping(context.Context, RuntimeMachine) error {
+	return runtime.pingError
+}
+
+func (runtime *fakeRuntime) CheckMigratedGuestSSH(context.Context, RuntimeMachine) error {
+	runtime.guestChecks++
+	return runtime.guestCheckError
 }
 
 func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error) {
@@ -161,19 +207,13 @@ func (network *fakeNetwork) Release(context.Context, NetworkReleaseRequest) erro
 }
 
 type fakeStorage struct {
-	checkpointGUID      string
-	checkpointCreates   int
-	checkpointRollbacks int
-	checkpointDiscards  int
-	checkpointError     error
-	preflightError      error
-	missingDisk         bool
-	runtime             *fakeRuntime
-	resizes             int
-	releases            int
-	releaseError        error
-	rescueDiskReleases  int
-	releaseRescueError  error
+	missingDisk        bool
+	runtime            *fakeRuntime
+	resizes            int
+	releases           int
+	releaseError       error
+	rescueDiskReleases int
+	releaseRescueError error
 }
 
 func (storage *fakeStorage) HasDisk(context.Context, string) (bool, error) {
@@ -221,6 +261,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 			Storage:   storage,
 			Snapshots: fakeSnapshots{},
 			Traffic:   &traffic.Monitor{},
+			Telemetry: telemetry.NewRegistry(nil),
 		},
 	)
 	if err != nil {
@@ -232,7 +273,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 func TestNewManagerAllowsTrafficMonitoringToBeDisabled(t *testing.T) {
 	_, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir()},
-		ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}},
+		ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Telemetry: telemetry.NewRegistry(nil)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -516,7 +557,7 @@ func TestNewManagerRejectsUnknownAndTrailingRecordData(t *testing.T) {
 		}
 		_, err := NewManager(
 			ManagerConfig{MachinesDirectory: directory},
-			ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}},
+			ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil)},
 		)
 		if err == nil {
 			t.Fatalf("NewManager accepted record %s", data)
@@ -624,7 +665,7 @@ func TestRestartIntentSurvivesManagerRecreation(t *testing.T) {
 	}
 	recreated, err := NewManager(manager.configuration, ManagerDependencies{
 		Runtime: runtime, Network: network, Storage: storage, Snapshots: fakeSnapshots{},
-		Traffic: &traffic.Monitor{},
+		Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -663,7 +704,7 @@ func TestRequestRescueEntersAndCyclesThePower(t *testing.T) {
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
@@ -697,13 +738,13 @@ func TestRequestRescueRepeatingTheSameImageIsANoOp(t *testing.T) {
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
@@ -722,7 +763,7 @@ func TestRequestRescueRejectsAPausedVM(t *testing.T) {
 	if err := manager.SetPowerState(context.Background(), "machine-1", StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); !errors.Is(err, ErrConflict) {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("error = %v, want ErrConflict", err)
 	}
 }
@@ -735,7 +776,7 @@ func TestRequestRescueExitReleasesTheRescueDiskAndCyclesThePower(t *testing.T) {
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(context.Background(), "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
@@ -967,43 +1008,4 @@ func TestInformationReportsRequestedDiskSize(t *testing.T) {
 	if information.DiskMiB != 25600 || information.DiskUsedMiB != 512 {
 		t.Fatalf("disk = %d MiB, used = %d MiB", information.DiskMiB, information.DiskUsedMiB)
 	}
-}
-
-func (storage *fakeStorage) CheckRescueCheckpointSpace(context.Context, string) (RescueCheckpointSpace, error) {
-	return RescueCheckpointSpace{}, storage.preflightError
-}
-func (storage *fakeStorage) CreateRescueCheckpoint(context.Context, string, uint64) (string, error) {
-	if storage.checkpointError != nil {
-		return "", storage.checkpointError
-	}
-	storage.checkpointCreates++
-	storage.checkpointGUID = "42"
-	return "42", nil
-}
-func (storage *fakeStorage) RescueCheckpointGUID(context.Context, string, uint64) (string, error) {
-	if storage.checkpointError != nil {
-		return "", storage.checkpointError
-	}
-	if storage.checkpointGUID == "" {
-		return "", ErrNotFound
-	}
-	return storage.checkpointGUID, nil
-}
-func (storage *fakeStorage) RollbackRescueCheckpoint(context.Context, string, uint64, string) error {
-	if storage.runtime != nil && storage.runtime.state != StateStopped {
-		return errors.New("rollback while running")
-	}
-	if storage.checkpointError != nil {
-		return storage.checkpointError
-	}
-	storage.checkpointRollbacks++
-	return nil
-}
-func (storage *fakeStorage) DiscardRescueCheckpoint(context.Context, string, uint64, string) error {
-	if storage.checkpointError != nil {
-		return storage.checkpointError
-	}
-	storage.checkpointDiscards++
-	storage.checkpointGUID = ""
-	return nil
 }

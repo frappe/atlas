@@ -7,7 +7,7 @@ const text = fs.readFileSync(path.join(__dirname, "../atlas/vm/doctype/virtual_m
 const source = text.slice(text.indexOf("function rescueRequest("));
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const normal = {
-	desired: { rescue: { enabled: false }, rescue_generation: 0, recovery: {} },
+	desired: { rescue: { enabled: false }, rescue_generation: 0 },
 	observed: { state: "running", rescue_generation: 0 },
 };
 
@@ -89,27 +89,18 @@ async function check(state, expected, excluded, failFirst = false) {
 }
 
 (async () => {
-	await check(normal, ["Enter protected rescue", "Enter read-only rescue", "Enter rescue without undo"], ["Roll back to the recovery checkpoint"]);
-	await check(normal, ["Enter protected rescue"], [], true);
+	await check(normal, ["Enter rescue"], ["Exit rescue"]);
+	await check(normal, ["Enter rescue"], [], true);
 	const active = structuredClone(normal);
-	active.desired.rescue = { enabled: true, access: "protected" };
-	active.desired.recovery = { checkpoint: true, active: true, generation: 7 };
-	await check(active, ["Keep changes and exit rescue", "Roll back to the recovery checkpoint"], ["Finish recovery", "Enter rescue without undo"]);
-	const failed = structuredClone(normal);
-	failed.desired.recovery = { checkpoint: true, action: "rollback", generation: 7 };
+	active.desired.rescue = { enabled: true };
+	await check(active, ["Exit rescue"], ["Enter rescue"]);
+	const failed = structuredClone(active);
 	failed.observed.error = { message: "<script>bad</script>" };
-	await check(failed, ["Roll back to the recovery checkpoint"], ["Finish recovery", "Enter protected rescue", "Keep changes and exit rescue"]);
-	const retained = structuredClone(normal);
-	retained.desired.recovery = { checkpoint: true, generation: 7, expires_at: "2026-10-11T02:00:00Z" };
-	await check(retained, ["Finish recovery", "Enter protected rescue", "Roll back to the recovery checkpoint"], ["Enter rescue without undo"]);
+	await check(failed, ["Exit rescue"], ["Enter rescue"]);
 
 	for (const [state, operation, request] of [
-		[normal, "protected", { enabled: true, access: "protected" }],
-		[normal, "read_only", { enabled: true, access: "read_only" }],
-		[normal, "unprotected", { enabled: true, access: "unprotected", allow_unprotected: true }],
-		[active, "keep", { enabled: false }],
-		[active, "rollback", { enabled: false, action: "rollback", recovery_generation: 7 }],
-		[retained, "finish", { enabled: false, action: "finish", recovery_generation: 7 }],
+		[normal, "enter", { enabled: true }],
+		[active, "exit", { enabled: false }],
 	]) {
 		const view = await open(state);
 		view.submit(operation);
@@ -120,14 +111,13 @@ async function check(state, expected, excluded, failFirst = false) {
 		assert.equal(view.requests.length, 0);
 		assert(!view.disabled);
 		view.submit(operation);
-		view.state.desired.recovery.generation = 99;
 		await view.poll();
 		let release;
 		view.mutation = new Promise(resolve => { release = resolve; });
 		const accepted = view.confirmations[1].accept();
 		view.submit(operation);
 		assert.equal(view.confirmations.length, 2);
-		assert.deepEqual(view.requests, [request], "Confirmation must retain the original checkpoint generation");
+		assert.deepEqual(view.requests, [request], "Confirmation must retain the selected action");
 		release({});
 		await accepted;
 		view.dialog.onhide();
@@ -135,14 +125,14 @@ async function check(state, expected, excluded, failFirst = false) {
 	const pending = structuredClone(active);
 	pending.desired.rescue_generation++;
 	const view = await open(pending);
-	view.submit("rollback");
+	view.submit("exit");
 	assert.equal(view.confirmations.length, 0);
 	view.state.observed.error = { message: "retry" };
 	await view.poll();
-	view.submit("rollback");
+	view.submit("exit");
 	view.mutation = Promise.reject(new Error("request failed"));
 	await assert.rejects(view.confirmations[0].accept(), /request failed/);
 	assert(!view.disabled, "A failed request must allow retry");
 	view.dialog.onhide();
-	console.log("PASS recovery states, escaping, polling, six actions, cancellation, generation capture, duplicate suppression and failed-request retry");
+	console.log("PASS rescue states, escaping, polling, entry/exit, cancellation, duplicate suppression and failed-request retry");
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,0 +1,34 @@
+{
+  "vcpu_features": [
+    {
+      "index": 0,
+      "bitmap": "0bxxxxxxxxxxxxxxxxxxxxxxxxx0000xxx"
+    }
+  ],
+  "reg_modifiers": [
+    {
+      "addr": "0x603000000013c020",
+      "bitmap": "0bxxxxxxxx000000000000xxxxxxxx00000000xxxx00000000xxxxxxxxxxxxxxxx"
+    },
+    {
+      "addr": "0x603000000013c021",
+      "bitmap": "0bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0000xxxxxxxxxxxx0000xxxx0000"
+    },
+    {
+      "addr": "0x603000000013c030",
+      "bitmap": "0b0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "addr": "0x603000000013c031",
+      "bitmap": "0b0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "addr": "0x603000000013c032",
+      "bitmap": "0b0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "addr": "0x603000000013c03a",
+      "bitmap": "0bxxxxxxxxxxxxxxxxxxxxxxxxxxxx0000xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  ]
+}

@@ -16,6 +16,7 @@ from atlas.metal_server.doctype.metal_server.metal_server import (
 	MetalServer,
 	renew_expiring_tls_certificates,
 )
+from atlas.vm.core.metal_client import MetalClientError
 
 
 def _disk(device: str) -> dict:
@@ -123,7 +124,7 @@ class TestServer(UnitTestCase):
 		server = SimpleNamespace(
 			get=lambda fieldname: tags,
 			_validate_title=Mock(),
-			_validate_bmc=Mock(),
+			_validate_cpu_template=Mock(),
 			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
@@ -132,12 +133,51 @@ class TestServer(UnitTestCase):
 		self.assertEqual((tags[0].key, tags[0].value), ("env", "local"))
 		server._set_wireguard_ip_address_if_not_set.assert_called_once_with()
 
+	def test_a_host_that_cannot_run_the_cpu_template_keeps_it_disabled(self) -> None:
+		report = frappe.as_json({"default_cpu_template_error": "missing avx2"})
+		for is_disabled in (0, 1):
+			with self.subTest(is_disabled=is_disabled):
+				server = SimpleNamespace(
+					name=SERVER_NAME,
+					is_cpu_template_disabled=is_disabled,
+					host_compatibility_report=report,
+					get_doc_before_save=lambda: None,
+				)
+				if is_disabled:
+					MetalServer._validate_cpu_template(server)
+				else:
+					with self.assertRaisesRegex(frappe.ValidationError, "missing avx2"):
+						MetalServer._validate_cpu_template(server)
+
+	def test_before_save_preserves_synced_host_facts(self) -> None:
+		for previous in (
+			None,
+			SimpleNamespace(host_compatibility_report="new report", tsc_scaling_supported=1),
+			SimpleNamespace(host_compatibility_report=None, tsc_scaling_supported=0),
+		):
+			with self.subTest(previous=previous):
+				server = SimpleNamespace(
+					host_compatibility_report="old report",
+					tsc_scaling_supported=0,
+					get_doc_before_save=lambda: previous,
+				)
+
+				MetalServer.before_save(server)
+
+				self.assertEqual(
+					server.host_compatibility_report,
+					previous.host_compatibility_report if previous else "old report",
+				)
+				self.assertEqual(
+					server.tsc_scaling_supported, previous.tsc_scaling_supported if previous else 0
+				)
+
 	def test_validate_rejects_a_repeated_tag_key(self) -> None:
 		tags = [SimpleNamespace(key="env", value="local"), SimpleNamespace(key="env", value="dev")]
 		server = SimpleNamespace(
 			get=lambda fieldname: tags,
 			_validate_title=Mock(),
-			_validate_bmc=Mock(),
+			_validate_cpu_template=Mock(),
 			_set_wireguard_ip_address_if_not_set=Mock(),
 		)
 
@@ -146,51 +186,37 @@ class TestServer(UnitTestCase):
 
 		server._set_wireguard_ip_address_if_not_set.assert_not_called()
 
-	def test_validate_bmc_requires_the_url_username_and_password_together(self) -> None:
-		MetalServer._validate_bmc(
-			SimpleNamespace(has_bmc_driver=True, bmc_url=None, bmc_username=None, bmc_password=None)
-		)
-		MetalServer._validate_bmc(
-			SimpleNamespace(
-				has_bmc_driver=True, bmc_url="https://bmc.local", bmc_username="admin", bmc_password="secret"
-			)
-		)
-
-		with self.assertRaises(frappe.ValidationError):
-			MetalServer._validate_bmc(
-				SimpleNamespace(
-					has_bmc_driver=True, bmc_url="https://bmc.local", bmc_username="admin", bmc_password=None
-				)
-			)
-
-	def test_validate_bmc_ignores_the_bmc_fields_without_a_driver(self) -> None:
-		"""The form hides the BMC fields without a driver, so stale values must not block a save."""
-		MetalServer._validate_bmc(
-			SimpleNamespace(
-				has_bmc_driver=False, bmc_url="https://bmc.local", bmc_username=None, bmc_password=None
-			)
-		)
-
-	def test_bmc_power_state_skips_the_bmc_without_a_driver(self) -> None:
-		client = Mock()
-		server = SimpleNamespace(has_bmc_driver=False, bmc_url="https://bmc.local", bmc_client=client)
-
-		self.assertIsNone(MetalServer.bmc_power_state.fget(server))
-		client.read_power_state.assert_not_called()
-
 	def test_bmc_power_state_shows_a_failed_read_in_the_form(self) -> None:
-		client = Mock()
-		client.read_power_state.side_effect = RedfishError("status 401")
+		provider = Mock()
+		provider.read_bmc_power_state.side_effect = RedfishError("status 401")
 		server = SimpleNamespace(
-			has_bmc_driver=True,
-			bmc_url="https://bmc.local",
-			bmc_client=client,
+			name="bmc-failure",
+			modified="2026-10-15 10:00:00",
+			settings=SimpleNamespace(server_provider_controller=provider),
 			set_onload=Mock(),
 		)
 
 		self.assertIsNone(MetalServer.bmc_power_state.fget(server))
 
 		server.set_onload.assert_called_once_with("bmc_power_error", "status 401")
+
+	def test_bmc_power_state_is_read_again_after_the_server_is_saved(self) -> None:
+		provider = Mock()
+		provider.read_bmc_power_state.side_effect = ["On", "Off"]
+		server = SimpleNamespace(
+			name="bmc-cache",
+			modified="2026-10-15 10:00:00",
+			settings=SimpleNamespace(server_provider_controller=provider),
+			set_onload=Mock(),
+		)
+
+		self.assertEqual(MetalServer.bmc_power_state.fget(server), "On")
+		self.assertEqual(MetalServer.bmc_power_state.fget(server), "On")
+		self.assertEqual(provider.read_bmc_power_state.call_count, 1)
+
+		server.modified = "2026-10-15 10:05:00"
+		self.assertEqual(MetalServer.bmc_power_state.fget(server), "Off")
+		self.assertEqual(provider.read_bmc_power_state.call_count, 2)
 
 	def test_ensure_provider_server_identifies_the_host_by_name(self) -> None:
 		provider = SimpleNamespace(
@@ -451,9 +477,8 @@ class TestServer(UnitTestCase):
 
 	def test_resize_volume_queues_growth_without_waiting_for_commit(self) -> None:
 		server = self._server(status="Running")
-		volumes = Mock()
-		server.settings.server_provider = "AWS"
-		server._aws_volumes = Mock(return_value=volumes)
+		server._validate_volume_kind = Mock()
+		server.settings.server_provider_controller = Mock()
 
 		with (
 			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
@@ -461,7 +486,9 @@ class TestServer(UnitTestCase):
 		):
 			MetalServer.resize_volume(server, "storage", 600, 3000, 250)
 
-		volumes.modify.assert_called_once_with(server, "storage", 600, 3000, 250)
+		server.settings.server_provider_controller.resize_volume.assert_called_once_with(
+			server, "storage", 600, 3000, 250
+		)
 		self.assertFalse(enqueue_doc.call_args.kwargs["enqueue_after_commit"])
 
 	# An unprovisioned host has no Metal token.
@@ -597,10 +624,11 @@ class TestServer(UnitTestCase):
 				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
 				"LISTEN_ADDRESS": "[fdab:1::7]:9000",
 				"ATLAS_COMMON_NAME": "atlas.example.test",
-				"COORDINATION_LISTEN_ADDRESS": "[fdab:1::7]:9001",
+				"COORDINATION_LISTEN_ADDRESS": "10.0.0.7:9001",
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
 				"PRIVATE_NETWORK_CIDR": "10.0.0.0/20",
 				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
+				"CPU_TEMPLATE_DISABLED": "false",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(
@@ -627,6 +655,32 @@ class TestServer(UnitTestCase):
 				MetalServer.enqueue_tls_certificate_renewal(server)
 
 		enqueue_doc.assert_not_called()
+
+	def test_install_host_firewall_rejects_a_server_that_is_not_running(self) -> None:
+		server = self._server(status="Stopped")
+
+		with (
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
+			),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
+		):
+			with self.assertRaises(ValueError):
+				MetalServer.install_host_firewall(server)
+
+		enqueue_doc.assert_not_called()
+
+	def test_install_host_firewall_worker_installs_only_the_firewall(self) -> None:
+		server = self._server(status="Running")
+
+		with patch(
+			"atlas.metal_server.doctype.metal_server.metal_server.HostInstallation"
+		) as host_installation:
+			MetalServer._install_host_firewall(server)
+
+		host_installation.assert_called_once_with(server)
+		host_installation.return_value.install_host_firewall.assert_called_once_with()
 
 	def test_renew_tls_certificate_rejects_a_server_that_is_not_provisioned(self) -> None:
 		server = self._server(status="Running")
@@ -659,6 +713,24 @@ class TestServer(UnitTestCase):
 				MetalServer.upgrade_metald(server)
 
 		enqueue_doc.assert_not_called()
+
+	def test_cpu_template_toggle_flips_the_check_and_upgrades_metald(self) -> None:
+		server = self._server(status="Running")
+		server.save, server.upgrade_metald = Mock(), Mock()
+
+		for is_disabled in (1, 0):
+			MetalServer.toggle_cpu_template(server)
+			self.assertEqual(server.is_cpu_template_disabled, is_disabled)
+
+		self.assertEqual((server.save.call_count, server.upgrade_metald.call_count), (2, 2))
+
+	def test_cpu_template_toggle_fails_when_metald_cannot_upgrade(self) -> None:
+		"""The request transaction then rolls back the saved check."""
+		server = self._server(status="Stopped")
+		server.save, server.upgrade_metald = Mock(), Mock(side_effect=ValueError)
+
+		with self.assertRaises(ValueError):
+			MetalServer.toggle_cpu_template(server)
 
 	def test_upgrade_metald_rejects_a_server_that_is_not_running(self) -> None:
 		server = self._server(status="Stopped")
@@ -693,10 +765,11 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
-	def test_upgrade_metald_worker_sends_only_the_download_urls_and_digests(self) -> None:
-		"""The upgrade replaces the binaries. It does not rewrite host configuration."""
+	def test_upgrade_metald_worker_sends_the_builds_and_the_private_coordination_address(self) -> None:
+		"""The upgrade sets the migration listener to the host's private IPv4 address."""
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
+		server.is_cpu_template_disabled = 1
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
 
 		with (
@@ -720,8 +793,26 @@ class TestServer(UnitTestCase):
 				"METALD_SHA256": "metald-binary-sha256",
 				"WG_MESH_DOWNLOAD_URL": "https://atlas.test/files/metald-linux-amd64",
 				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
+				"COORDINATION_LISTEN_ADDRESS": "10.0.0.7:9001",
+				"CPU_TEMPLATE_DISABLED": "true",
 			},
 		)
+
+	def test_upgrade_metald_rejects_a_server_without_a_private_address(self) -> None:
+		server = self._server(status="Running")
+		server.settings.metald_binary_x86_64_file = "metald-file"
+		server.private_ipv4_address = None
+
+		with (
+			patch("atlas.metal_server.core.host_installation.get_download_url"),
+			patch(
+				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
+			) as create_for_script_file,
+		):
+			with self.assertRaises(MetalClientError):
+				MetalServer._upgrade_metald(server)
+
+		create_for_script_file.assert_not_called()
 
 	def test_upgrade_metald_reports_the_reason_the_script_printed(self) -> None:
 		server = self._server(status="Running")
@@ -1231,6 +1322,7 @@ class TestServer(UnitTestCase):
 			private_ipv4_address="10.0.0.7",
 			public_ipv4_address="203.0.113.7",
 			private_network_interface="eno1.1878",
+			is_cpu_template_disabled=0,
 			ssh_host="192.0.2.7",
 			port=51820,
 			settings=SimpleNamespace(
@@ -1247,6 +1339,7 @@ class TestServer(UnitTestCase):
 				wildcard_domain="example.test",
 				region_id=1,
 				private_network_mtu=1500,
+				is_migration_on_wireguard=0,
 				private_network_cidr="10.0.0.0/20",
 				wireguard_ip_address="fdaa:1::ffff:ffff:ffff:ffff",
 				wireguard_public_key="atlas-key",

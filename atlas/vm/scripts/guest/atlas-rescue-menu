@@ -27,8 +27,7 @@ while true; do
     8) args=(usage);;
     9) args=(copy-out);;
     10) args=(shell);;
-    11) read -r -p 'Keep changes [k] or rollback instructions [r]: ' mode
-        case "$mode" in k) args=(exit);; r) args=(exit --rollback);; *) continue;; esac ;;
+    11) args=(exit);;
     *) continue;;
   esac
   printf 'Command: atlas-rescue'; printf ' %q' "${args[@]}"; printf '\n'

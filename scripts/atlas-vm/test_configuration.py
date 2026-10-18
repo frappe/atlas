@@ -336,7 +336,7 @@ class TestRescueBootstrap(unittest.TestCase):
 		with patch.object(installer, "pilot") as pilot:
 			installer.build_images()
 		pilot.assert_called_once_with(
-			"frappe --site atlas.test build-ubuntu-rescue-image --storage site-file --skip-existing --set-default-if-missing"
+			"frappe --site atlas.test build-ubuntu-rescue-image --storage site-file --skip-existing"
 		)
 
 	def test_both_image_builders_receive_scoped_sudo(self) -> None:

@@ -59,10 +59,11 @@ function abortMigration(frm) {
 			[frm.doc.source_metal_server]
 		),
 		() =>
-			frm
+			frappe
 				.call({
-					method: "abort",
-					doc: frm.doc,
+					// The worker saves this record on every poll, so send its name, not a stale copy.
+					method: "run_doc_method",
+					args: { dt: frm.doctype, dn: frm.doc.name, method: "abort" },
 					freeze: true,
 					freeze_message: __("Requesting abort..."),
 				})

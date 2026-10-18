@@ -29,7 +29,7 @@ Each request goes through these steps in order:
 8. Write the response.
 
 - Each request gets an `X-Request-ID` and an `X-Operation-ID`. A caller value is kept only when it is safe to echo.
-- JSON decoding rejects unknown fields and trailing values.
+- JSON decoding ignores unknown fields and rejects trailing values.
 - Request bodies are size capped.
 
 ## Routes
@@ -42,6 +42,7 @@ The generated [Metal API reference](/api/metal/) lists each route. Rules:
 - The network PUT requires the complete network object, including `firewall`.
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.
 - The coordination stop route is idempotent. It returns the final snapshot.
+- The coordination memory snapshot route streams one memory snapshot file for the final sequence with a SHA-256 trailer. The migration manager checks the source lock and file name.
 
 | Listener | Caller | Routes |
 |---|---|---|

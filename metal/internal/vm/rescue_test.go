@@ -3,7 +3,6 @@ package vm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -28,7 +27,7 @@ func TestRescueStoppedSelectionAndExitPreservePower(t *testing.T) {
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
@@ -56,14 +55,14 @@ func TestRescueURLRefreshKeepsSessionAndDifferentImageConflicts(t *testing.T) {
 	manager, runtime, _ := rescueMachine(t)
 	ctx := context.Background()
 	image := testRescueImage()
-	if err := manager.RequestRescue(ctx, "machine-1", image, RescueProtected); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", image); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
 		t.Fatal(err)
 	}
 	image.RootfsURL += "?renewed=true"
-	if err := manager.RequestRescue(ctx, "machine-1", image, RescueProtected); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", image); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
@@ -77,15 +76,15 @@ func TestRescueURLRefreshKeepsSessionAndDifferentImageConflicts(t *testing.T) {
 		t.Fatal("URL refresh restarted rescue or lost the refreshed URL")
 	}
 	image.Name = "different-image"
-	if err := manager.RequestRescue(ctx, "machine-1", image, RescueProtected); !errors.Is(err, ErrConflict) {
+	if err := manager.RequestRescue(ctx, "machine-1", image); !errors.Is(err, ErrConflict) {
 		t.Fatalf("different image: %v", err)
 	}
 }
 
-func TestRescueStopStartPreservesSessionAndRestartExits(t *testing.T) {
+func TestRescueStopStartAndRestartPreserveSession(t *testing.T) {
 	manager, runtime, storage := rescueMachine(t)
 	ctx := context.Background()
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []State{StateRunning, StateStopped, StateRunning} {
@@ -106,6 +105,16 @@ func TestRescueStopStartPreservesSessionAndRestartExits(t *testing.T) {
 	if err := manager.RequestRestart(ctx, "machine-1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	desired, err = manager.store.readDesired("machine-1")
+	if err != nil || !desired.Specification.Rescue.Enabled || storage.rescueDiskReleases != 0 {
+		t.Fatalf("restart ended rescue: %v", err)
+	}
+	if err := manager.RequestRescueExit(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
 	storage.releaseRescueError = errors.New("cleanup failed")
 	if err := manager.Reconcile(ctx, "machine-1"); err == nil {
 		t.Fatal("cleanup failure was ignored")
@@ -122,7 +131,7 @@ func TestRescueStopStartPreservesSessionAndRestartExits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if desired.Specification.Rescue.Enabled || runtime.state != StateRunning {
-		t.Fatal("restart did not exit rescue")
+		t.Fatal("explicit exit did not return to normal boot")
 	}
 }
 
@@ -130,11 +139,11 @@ func TestRescueRequiresDiskAndBlocksResize(t *testing.T) {
 	manager, _, storage := rescueMachine(t)
 	ctx := context.Background()
 	storage.missingDisk = true
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); !errors.Is(err, ErrConflict) {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("missing original disk: %v", err)
 	}
 	storage.missingDisk = false
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.SetPowerState(ctx, "machine-1", StateStopped); err != nil {
@@ -170,40 +179,32 @@ func TestRescueMetadataKeepsKeysAndSuppressesUserData(t *testing.T) {
 	}
 }
 
-func TestRescueUnexpectedStopPreservesSessionAndReportedRebootExits(t *testing.T) {
-	for _, reported := range []bool{false, true} {
-		t.Run(fmt.Sprint(reported), func(t *testing.T) {
-			manager, runtime, storage := rescueMachine(t)
-			ctx := context.Background()
-			if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
-				t.Fatal(err)
-			}
-			if err := manager.Reconcile(ctx, "machine-1"); err != nil {
-				t.Fatal(err)
-			}
-			runtime.state = StateStopped
-			runtime.rescueRebootRequested = reported
-			if err := manager.Reconcile(ctx, "machine-1"); err != nil {
-				t.Fatal(err)
-			}
-			desired, err := manager.store.readDesired("machine-1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if desired.Specification.Rescue.Enabled == reported || runtime.state != StateRunning {
-				t.Fatalf("reported=%v rescue=%v state=%v", reported, desired.Specification.Rescue.Enabled, runtime.state)
-			}
-			if (storage.rescueDiskReleases > 0) != reported {
-				t.Fatal("unexpected rescue disk cleanup")
-			}
-		})
+func TestRescueGuestStopPreservesSession(t *testing.T) {
+	manager, runtime, storage := rescueMachine(t)
+	ctx := context.Background()
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateStopped
+	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !desired.Specification.Rescue.Enabled || runtime.state != StateRunning || storage.rescueDiskReleases != 0 {
+		t.Fatal("guest stop changed rescue selection or discarded its disk")
 	}
 }
 
 func TestRescueBlocksSnapshotsUntilExitIsApplied(t *testing.T) {
 	manager, _, _ := rescueMachine(t)
 	ctx := context.Background()
-	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage(), RescueProtected); err != nil {
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.CreateSnapshot(ctx, "machine-1"); !errors.Is(err, ErrConflict) {
@@ -214,5 +215,31 @@ func TestRescueBlocksSnapshotsUntilExitIsApplied(t *testing.T) {
 	}
 	if _, err := manager.CreateSnapshot(ctx, "machine-1"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("pending exit snapshot: %v", err)
+	}
+}
+
+func TestRescueReentryWaitsForPreviousDiskCleanup(t *testing.T) {
+	manager, _, storage := rescueMachine(t)
+	ctx := t.Context()
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescueExit(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("reentered before cleanup: %v", err)
+	}
+	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if storage.rescueDiskReleases != 1 {
+		t.Fatal("previous rescue disk was not released")
+	}
+	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
+		t.Fatal(err)
 	}
 }

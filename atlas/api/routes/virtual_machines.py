@@ -291,16 +291,10 @@ def set_virtual_machine_rescue(
 ) -> ApiResult[VirtualMachineResponse]:
 	"""Set rescue mode.
 
-	Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue progress.
+	Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM detail route for rescue progress.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
-	virtual_machine.set_rescue(
-		payload.enabled,
-		payload.access,
-		payload.allow_unprotected,
-		payload.action,
-		payload.recovery_generation,
-	)
+	virtual_machine.set_rescue(payload.enabled)
 	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
 
 

@@ -24,7 +24,8 @@ type SourceSnapshot struct {
 
 // SnapshotAcknowledgement acknowledges the last snapshot that the destination received.
 type SnapshotAcknowledgement struct {
-	ReceivedSequence int `json:"received_sequence,omitempty"`
+	ReceivedSequence  int  `json:"received_sequence,omitempty"`
+	HasMemorySnapshot bool `json:"has_memory_snapshot,omitempty"`
 }
 
 // SnapshotStreamRequest describes the snapshot stream that the source must start.
@@ -164,7 +165,7 @@ func (m *Manager) LockSource(ctx context.Context, migrationID, virtualMachineID 
 	if err != nil {
 		return SourceDescription{}, err
 	}
-	if desired.Specification.Rescue.Enabled || desired.Recovery.Unresolved() || observed.RescueGeneration != desired.RescueGeneration ||
+	if desired.Specification.Rescue.Enabled || observed.RescueGeneration != desired.RescueGeneration ||
 		observed.State == vm.StateFailed || observed.State == vm.StateUnknown {
 		return SourceDescription{}, vm.ErrConflict
 	}
@@ -204,7 +205,7 @@ func (m *Manager) UnlockSource(ctx context.Context, migrationID, virtualMachineI
 		return vm.ErrConflict
 	}
 	if existing.State == sourceExpired {
-		return vm.ErrConflict
+		return nil
 	}
 	if existing.State == sourceStopped || existing.State == sourceDetached {
 		return vm.ErrConflict
@@ -244,8 +245,13 @@ func (m *Manager) StartSourceRollback(ctx context.Context, migrationID, virtualM
 	if err := m.host.EnsureMigrationNetwork(ctx, virtualMachineID); err != nil {
 		return err
 	}
-	if err := m.host.RestoreRuntimeState(ctx, virtualMachineID, record.OriginalDesired); err != nil {
+	if err := m.host.RestoreRuntimeState(ctx, virtualMachineID, record.OriginalDesired, record.HasMemorySnapshot != nil && *record.HasMemorySnapshot); err != nil {
 		return err
+	}
+	if record.TemporaryDiskLimitMiBps > 0 {
+		if err := m.host.RefreshSourceDisk(ctx, virtualMachineID); err != nil {
+			return err
+		}
 	}
 	record.State = sourceRestored
 	return m.writeSourceContact(record)
@@ -378,7 +384,7 @@ func (m *Manager) NextSourceSnapshot(ctx context.Context, migrationID, virtualMa
 
 // StopSource records the last received sequence, stops the source, and creates
 // the final snapshot. Checkpoints make repeats safe.
-func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (SourceSnapshot, error) {
+func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (SourceSnapshot, error) {
 	unlock, err := m.host.LockOperation(ctx, virtualMachineID)
 	if err != nil {
 		return SourceSnapshot{}, err
@@ -397,13 +403,30 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 	}
 
 	if record.State == sourceLocked {
-		if err := m.host.NormalizeSourceToStopped(ctx, virtualMachineID); err != nil {
+		if record.HasMemorySnapshot != nil && *record.HasMemorySnapshot != hasMemorySnapshot {
+			return SourceSnapshot{}, vm.ErrConflict
+		}
+		record.HasMemorySnapshot = &hasMemorySnapshot
+		if err := m.writeSourceContact(record); err != nil {
+			return SourceSnapshot{}, err
+		}
+		stop := m.host.NormalizeSourceToStopped
+		if hasMemorySnapshot {
+			stop = m.host.SaveAndStopSource
+		}
+		if err := stop(ctx, virtualMachineID); err != nil {
+			if hasMemorySnapshot && errors.Is(err, vm.ErrConflict) {
+				return SourceSnapshot{}, fmt.Errorf("%w: %w", ErrNoMemoryToSave, err)
+			}
 			return SourceSnapshot{}, err
 		}
 		record.State = sourceStopped
 		if err := m.writeSourceContact(record); err != nil {
 			return SourceSnapshot{}, err
 		}
+	}
+	if (record.HasMemorySnapshot != nil && *record.HasMemorySnapshot) != hasMemorySnapshot {
+		return SourceSnapshot{}, vm.ErrConflict
 	}
 	if record.State == sourceStopped {
 		if err := m.host.RemoveMigrationNetwork(ctx, virtualMachineID); err != nil {

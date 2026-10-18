@@ -21,6 +21,10 @@ This rule prevents the [warm-memory disk corruption incident](../incidents/2026-
 
 Firecracker receives guest CPUs rounded up from the millicore entitlement. systemd applies the exact CPU quota. Firecracker drive limiters enforce disk throughput and IOPS.
 
+### Common CPU configuration
+
+Metal selects a built-in Intel x86-64, AMD x86-64, or ARM64 CPU template at startup and applies it before every cold boot. `firecracker.cpu_template_file` overrides this selection with an explicit JSON file. See [guest CPU templates](cpu-templates.md) for the profiles, migration limits, validation, and snapshot upgrade requirements.
+
 ## Stop, pause, and restore a guest
 
 Power requests accept `running`, `paused`, or `stopped`.
@@ -29,7 +33,7 @@ Power requests accept `running`, `paused`, or `stopped`.
 | --- | --- | --- |
 | Explicit stop | Removed. | Guest shutdown requested. Metal waits for the unit. |
 | Automatic idle stop | Memory and device state saved under `machines/<id>/saved-state/`. | Desired state stays `running`. Observed state becomes `stopped`. |
-| Guest-directed IPv4 or IPv6 traffic | Same VM state restored. | Idle VM wakes. |
+| Guest-directed IPv4 or IPv6 traffic, except ICMP | Same VM state restored. | Idle VM wakes. |
 | Restart or shape change | Removed. | Next start follows the normal boot path. |
 | VM removal | Removed. | Guest resources are deleted. |
 

@@ -28,14 +28,13 @@ const (
 
 // DesiredRecord stores the complete desired state of one virtual machine.
 type DesiredRecord struct {
-	Recovery          Recovery `json:"recovery,omitempty"`
-	SchemaVersion     int      `json:"schema_version"`
-	ID                string   `json:"id"`
-	UserID            uint32   `json:"user_id"`
-	GroupID           uint32   `json:"group_id"`
-	CreateFingerprint string   `json:"create_fingerprint"`
-	Generation        uint64   `json:"generation"`
-	RestartGeneration uint64   `json:"restart_generation"`
+	SchemaVersion     int    `json:"schema_version"`
+	ID                string `json:"id"`
+	UserID            uint32 `json:"user_id"`
+	GroupID           uint32 `json:"group_id"`
+	CreateFingerprint string `json:"create_fingerprint"`
+	Generation        uint64 `json:"generation"`
+	RestartGeneration uint64 `json:"restart_generation"`
 	// SpecificationGeneration identifies the compute, disk, and network shape.
 	SpecificationGeneration uint64        `json:"specification_generation,omitempty"`
 	RescueGeneration        uint64        `json:"rescue_generation,omitempty"`
@@ -160,9 +159,6 @@ func (store *recordStore) readDesired(identifier string) (DesiredRecord, error) 
 	fingerprint, fingerprintError := hex.DecodeString(record.CreateFingerprint)
 	if fingerprintError != nil || len(fingerprint) != sha256.Size || record.Generation == 0 || !IsDesiredState(record.State) {
 		return DesiredRecord{}, fmt.Errorf("read %s: invalid desired record", store.desiredPath(identifier))
-	}
-	if err := record.Recovery.validate(); err != nil {
-		return DesiredRecord{}, fmt.Errorf("read recovery: %w", err)
 	}
 	return record, nil
 }

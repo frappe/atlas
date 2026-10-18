@@ -93,7 +93,9 @@ Each peer uses:
 
 `wg set` does not install these routes itself.
 
-At startup, `metald` runs WG Mesh `configure` to install or replace its programs without interruption. VM mesh registration follows veth creation and is removed before link deletion.
+At startup, `metald` runs WG Mesh `configure` to install or replace its programs without interruption. A `wg0` restart removes the program on `wg0`, so `configure-wireguard.sh` restarts `metald` after it restarts `wg0`.
+
+VM mesh registration follows veth creation and is removed before link deletion.
 
 Metal syncs changed VM mesh state on the next reconciliation pass. It skips unchanged registrations, so it does not scan the WG Mesh route map every five seconds. Restarting `metald` syncs all VMs.
 

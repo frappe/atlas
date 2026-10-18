@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // Artifact names for the stored upload progress of one staged snapshot.
@@ -174,7 +176,10 @@ func (store *SnapshotStore) StartUpload(_ context.Context, snapshotID string, re
 
 // runUpload sends both artifacts and records the result.
 func (store *SnapshotStore) runUpload(ctx context.Context, snapshotID string, upload *snapshotUpload, rootfsSize, kernelSize int64, request SnapshotUploadRequest) {
+	startedAt := time.Now()
+	result := "failed"
 	defer func() {
+		store.recordUpload(ctx, snapshotID, startedAt, upload.uploaded.Load(), result)
 		store.removeUpload(snapshotID, upload)
 		close(upload.done)
 		store.uploadsWaitGroup.Done()
@@ -193,6 +198,24 @@ func (store *SnapshotStore) runUpload(ctx context.Context, snapshotID string, up
 		return
 	}
 	store.finishUpload(snapshotID, SnapshotUploadResult{Rootfs: rootfs, Kernel: kernel})
+	result = "ok"
+}
+
+// recordUpload logs and observes one upload. A shutdown cancels an upload
+// that resumes later, so it counts as canceled, not failed.
+func (store *SnapshotStore) recordUpload(ctx context.Context, snapshotID string, startedAt time.Time, uploadedBytes int64, result string) {
+	if result != "ok" && ctx.Err() != nil {
+		result = "canceled"
+	}
+	duration := time.Since(startedAt)
+	labels := telemetry.Labels{"result": result}
+	store.telemetry.Count("metal_snapshot_uploads_total", 1, labels)
+	store.telemetry.Observe("metal_snapshot_upload_duration_seconds", duration.Seconds(), labels)
+	store.telemetry.Observe("metal_snapshot_uploaded_bytes", float64(uploadedBytes), labels)
+	store.logger.Info("snapshot upload finished",
+		"component", "storage", "snapshot_id", snapshotID, "result", result,
+		"duration", duration, "uploaded_bytes", uploadedBytes,
+	)
 }
 
 // finishUpload records a completed upload and its result.

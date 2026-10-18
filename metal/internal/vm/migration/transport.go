@@ -23,8 +23,9 @@ const (
 
 // SourceClient calls the source coordination API over mutual TLS.
 type SourceClient struct {
-	client     *http.Client
-	stopClient *http.Client
+	client         *http.Client
+	stopClient     *http.Client
+	transferClient *http.Client
 }
 
 // NewSourceClient returns a client with the given per-call control timeout.
@@ -37,8 +38,9 @@ func NewSourceClient(timeout time.Duration, tlsConfiguration *tls.Config) *Sourc
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfiguration
 	return &SourceClient{
-		client:     &http.Client{Timeout: timeout, Transport: transport},
-		stopClient: &http.Client{Timeout: stopTimeout, Transport: transport.Clone()},
+		client:         &http.Client{Timeout: timeout, Transport: transport},
+		stopClient:     &http.Client{Timeout: stopTimeout, Transport: transport.Clone()},
+		transferClient: &http.Client{Timeout: maxTransferDuration, Transport: transport.Clone()},
 	}
 }
 
@@ -90,8 +92,8 @@ func (c *SourceClient) PrepareSource(ctx context.Context, address, migrationID, 
 }
 
 // StopSource stops the VM and returns its final snapshot.
-func (c *SourceClient) StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int) (SourceSnapshot, error) {
-	body, err := json.Marshal(SnapshotAcknowledgement{ReceivedSequence: receivedSequence})
+func (c *SourceClient) StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (SourceSnapshot, error) {
+	body, err := json.Marshal(SnapshotAcknowledgement{ReceivedSequence: receivedSequence, HasMemorySnapshot: hasMemorySnapshot})
 	if err != nil {
 		return SourceSnapshot{}, err
 	}
@@ -148,6 +150,12 @@ func (c *SourceClient) do(request *http.Request, client *http.Client) ([]byte, e
 	}
 	if response.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrNotFound)
+	}
+	if response.StatusCode == http.StatusConflict {
+		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrConflict)
+	}
+	if response.StatusCode == http.StatusUnprocessableEntity {
+		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, ErrNoMemoryToSave)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("source %s %s returned HTTP %d", request.Method, request.URL.Path, response.StatusCode)

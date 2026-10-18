@@ -68,19 +68,9 @@ def metadata(path: str) -> str:
 	)
 
 
-def access_mode() -> str:
-	try:
-		mode = metadata("rescue/access")
-		return mode if mode in {"protected", "read_only", "unprotected"} else "unknown"
-	except OSError:
-		return "unknown"
-
-
 def require_writable() -> None:
-	if access_mode() not in {"protected", "unprotected"} or capture("blockdev", "--getro", DEVICE) != "0":
-		raise RuntimeError(
-			"Writes are disabled. Select protected rescue or explicitly approve unprotected writes in Atlas."
-		)
+	if capture("blockdev", "--getro", DEVICE) != "0":
+		raise RuntimeError("The original disk is read-only.")
 
 
 def require_supported_filesystem() -> None:
@@ -412,7 +402,7 @@ def chroot() -> None:
 
 
 def show_status() -> None:
-	print("Original disk access:", access_mode())
+	print("Original disk read-only:", capture("blockdev", "--getro", DEVICE))
 	print("Mounts:", ", ".join(original_disk_mounts()) or "unmounted")
 	print("Managed operation:", "running" if operation_running() else "not running")
 	for name in ("operation.log", "result.json"):
@@ -485,31 +475,24 @@ def copy_recovery_files(args: argparse.Namespace) -> None:
 
 
 def open_expert_shell() -> None:
-	print(
-		"Expert shell. Managed-operation locks do not protect arbitrary commands. Original-disk access:",
-		access_mode(),
-	)
+	print("Expert shell. Commands can modify the original disk. Take a snapshot before repair.")
 	subprocess.run(["/bin/bash"])
 
 
-def exit_rescue(rollback: bool) -> None:
+def exit_rescue() -> None:
 	if operation_running():
 		raise RuntimeError("A managed operation is running. Wait for its result before exiting.")
-	if rollback:
-		print(
-			"Use Atlas > Rescue Mode > Roll back. This also restores writes made during normal boot; no keep-exit was requested."
-		)
-	else:
-		confirm("Keep original-disk changes and discard the rescue disk? Copy rescue-disk files out first.")
-		if original_disk_mounts():
-			run("umount", "-R", str(ROOT))
-		run("systemctl", "reboot")
+	if original_disk_mounts():
+		run("umount", "-R", str(ROOT))
+	print(
+		"Use Atlas > Rescue Mode > Exit rescue to boot normally. Copy files off the rescue disk first. Reboot stays in rescue mode."
+	)
 
 
 def execute(args: argparse.Namespace) -> None:
 	actions = {
 		"status": show_status,
-		"mount": lambda: mount_original(args.read_only or access_mode() not in {"protected", "unprotected"}),
+		"mount": lambda: mount_original(args.read_only),
 		"umount": lambda: run("umount", str(ROOT)),
 		"fsck": lambda: check_or_resize_filesystem(args),
 		"resize": lambda: check_or_resize_filesystem(args),
@@ -520,7 +503,7 @@ def execute(args: argparse.Namespace) -> None:
 		"usage": show_disk_usage,
 		"copy-out": lambda: copy_recovery_files(args),
 		"shell": open_expert_shell,
-		"exit": lambda: exit_rescue(args.rollback),
+		"exit": exit_rescue,
 	}
 	actions[args.command]()
 
@@ -550,7 +533,6 @@ def _parse_arguments() -> argparse.Namespace:
 	parser.add_argument("--read-only", action="store_true")
 	parser.add_argument("--repair", action="store_true")
 	parser.add_argument("--unlock", action="store_true")
-	parser.add_argument("--rollback", action="store_true")
 	parser.add_argument("--destination")
 	args = parser.parse_args()
 	if os.geteuid() != 0:

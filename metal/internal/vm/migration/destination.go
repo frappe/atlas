@@ -43,7 +43,7 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 			"status", record.State.status(), "phase", record.State.phase(),
 			"idle_seconds", int(m.now().Sub(record.LastControlAt).Seconds()))
 		record.State = destinationRemovingRuntime
-		if err := m.store.writeDestination(record); err != nil {
+		if err := m.saveDestination(record); err != nil {
 			return err
 		}
 		m.StartTransfer(virtualMachineID)
@@ -61,7 +61,7 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	if m.now().Sub(record.CreatedAt) > reservationTimeout {
 		m.logger.Warn("migration destination expired before source preparation started", "migration_id", record.ID)
 		record.State = destinationRemovingRuntime
-		if err := m.store.writeDestination(record); err != nil {
+		if err := m.saveDestination(record); err != nil {
 			return err
 		}
 		m.StartTransfer(virtualMachineID)
@@ -177,7 +177,7 @@ func (m *Manager) reconstructDestination(record destinationRecord, definition Vi
 	record.SourceObservedState = observedState
 	record.CopyStartedAt = m.now()
 	record.Error = nil
-	return m.store.writeDestination(record)
+	return m.saveDestination(record)
 }
 
 func (m *Manager) reuseOrAllocateUserID(virtualMachineID string) (uint32, error) {
@@ -191,7 +191,7 @@ func (m *Manager) reuseOrAllocateUserID(virtualMachineID string) (uint32, error)
 
 func (m *Manager) recordDestinationError(record destinationRecord, cause error) error {
 	record.Error = &vm.OperationError{Code: "migration_error", Message: cause.Error(), UpdatedAt: m.now()}
-	if writeError := m.store.writeDestination(record); writeError != nil {
+	if writeError := m.saveDestination(record); writeError != nil {
 		return errors.Join(cause, writeError)
 	}
 	return cause
@@ -223,16 +223,33 @@ func (m *Manager) RequestFinish(ctx context.Context, migrationID string) error {
 		return vm.ErrConflict
 	}
 	record.State = destinationFinishing
-	return m.store.writeDestination(record)
+	return m.saveDestination(record)
 }
 
-// advanceFinish destroys the source and writes a completed record. Each step is
-// idempotent, so a retry after the source is gone still completes.
+// advanceFinish activates the destination and removes source and staging data.
 func (m *Manager) advanceFinish(ctx context.Context, record destinationRecord) error {
+	if record.usesMemorySnapshot() {
+		unlock, err := m.host.LockOperation(ctx, record.VirtualMachineID)
+		if err != nil {
+			return err
+		}
+		if err := m.host.EnsureMigrationNetwork(ctx, record.VirtualMachineID); err != nil {
+			unlock()
+			return fmt.Errorf("restore destination network: %w", err)
+		}
+		err = m.host.ActivateMigratedDestination(ctx, record.VirtualMachineID)
+		unlock()
+		if err != nil {
+			return fmt.Errorf("activate migrated memory: %w", err)
+		}
+	}
 	if err := m.source.FinishSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
 		return err
 	}
 	if err := m.removeReceivedSnapshots(ctx, record); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(m.store.memorySnapshotDirectory(record.VirtualMachineID)); err != nil {
 		return err
 	}
 
@@ -276,6 +293,12 @@ func (m *Manager) advanceAbort(ctx context.Context, record destinationRecord) er
 	}
 	if record.State == destinationUnlockingSource {
 		if err := m.source.RemoveSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
+			if errors.Is(err, vm.ErrConflict) {
+				// The source can stop without its reply reaching the destination.
+				_, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
+					destination.State = destinationRestoringSource
+				})
+			}
 			return err
 		}
 	}
@@ -300,6 +323,11 @@ func (m *Manager) cleanAbortDestination(ctx context.Context, record destinationR
 		record = updated
 	}
 	if record.State == destinationRemovingStorage {
+		for _, directory := range []string{m.store.memorySnapshotDirectory(record.VirtualMachineID), m.store.memorySnapshotDirectory(record.VirtualMachineID) + "-pending"} {
+			if err := os.RemoveAll(directory); err != nil {
+				return record, err
+			}
+		}
 		if err := m.disks.AbortReceive(ctx, record.VirtualMachineID); err != nil {
 			return record, err
 		}

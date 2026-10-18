@@ -84,6 +84,7 @@ func (m *machine) Start(ctx context.Context) error {
 		return m.coldBoot(ctx)
 	}
 
+	startedAt := time.Now()
 	hasDisk, err := m.runtime.virtualMachineStorage.HasDisk(ctx, m.input.ID)
 	if err != nil {
 		return err
@@ -94,6 +95,8 @@ func (m *machine) Start(ctx context.Context) error {
 		err := m.runtime.launchWarmImage(ctx, m.input, m.input.Specification.Image.Name)
 		if err == nil {
 			m.recordImageUse()
+			m.runtime.countBoot("warm", "")
+			m.runtime.recordBoot(m.input, "warm", startedAt)
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -101,6 +104,7 @@ func (m *machine) Start(ctx context.Context) error {
 		}
 		if errors.Is(err, storage.ErrDiskNotFresh) {
 			m.runtime.logger.Warn("VM disk changed, using cold boot", "virtual_machine_id", m.input.ID, "error", err)
+			m.runtime.countBoot("cold", "disk_changed")
 			return m.coldBoot(ctx)
 		}
 
@@ -108,13 +112,17 @@ func (m *machine) Start(ctx context.Context) error {
 		if err := m.runtime.virtualMachineStorage.Release(ctx, m.input.ID); err != nil {
 			return err
 		}
+		m.runtime.countBoot("cold", "warm_boot_failed")
+		return m.coldBoot(ctx)
 	}
 
+	m.runtime.countBoot("cold", "")
 	return m.coldBoot(ctx)
 }
 
 // coldBoot discards the previous jail and boots the guest fresh.
 func (m *machine) coldBoot(ctx context.Context) error {
+	startedAt := time.Now()
 	if err := m.runtime.relaunch(ctx, m.input); err != nil {
 		return err
 	}
@@ -122,6 +130,7 @@ func (m *machine) coldBoot(ctx context.Context) error {
 		return err
 	}
 	m.recordImageUse()
+	m.runtime.recordBoot(m.input, "cold", startedAt)
 
 	return nil
 }
@@ -144,6 +153,9 @@ func (m *machine) restoreSavedState(ctx context.Context, resume bool) (bool, err
 		return false, nil
 	}
 	if err != nil {
+		return false, err
+	}
+	if err := snapshot.restoreNetwork(ctx, m.input.NetworkInterface); err != nil {
 		return false, err
 	}
 
@@ -174,6 +186,7 @@ func (m *machine) startFromSavedState(ctx context.Context, resume bool) error {
 		return vm.ErrConflict
 	}
 
+	startedAt := time.Now()
 	restored, err := m.restoreSavedState(ctx, resume)
 	if err != nil {
 		return err
@@ -182,16 +195,16 @@ func (m *machine) startFromSavedState(ctx context.Context, resume bool) error {
 		return fmt.Errorf("restore saved VM state: %w", errSavedStateNotFound)
 	}
 	m.recordImageUse()
+	// A paused restore does not run the guest, so only a resumed one is timed.
+	if resume {
+		m.runtime.recordBoot(m.input, "restore", startedAt)
+	}
 
 	return nil
 }
 
 // Stop shuts down the guest and deletes saved state.
 func (m *machine) Stop(ctx context.Context) error {
-	if err := m.runtime.clearRescueBoot(m.input.ID); err != nil {
-		return err
-	}
-
 	unitStatus, err := m.runtime.units.Status(ctx, m.input.ID)
 	if err != nil {
 		return err

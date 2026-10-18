@@ -67,8 +67,6 @@ if [ -t 0 ] && [ -t 1 ] && [ -z "${ATLAS_RESCUE_MENU_SHOWN:-}" ]; then
   /usr/local/sbin/atlas-rescue-menu
 fi
 PROFILE
-	install -D -m 0755 "$script_directory/guest/rescue-reboot" \
-		"$rootfs_directory/usr/lib/systemd/system-shutdown/atlas-rescue"
 	install -D -m 0644 "$script_directory/guest/rescue-motd" "$rootfs_directory/etc/motd"
 	# Cloud-init must not mount or resize the original VM disk.
 	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-rescue.cfg" <<'EOF'
@@ -106,9 +104,6 @@ EOF
 	ln -s /etc/machine-id "$rootfs_directory/var/lib/dbus/machine-id"
 	rm "$rootfs_directory/usr/sbin/policy-rc.d" "$rootfs_directory/etc/resolv.conf"
 	ln -s ../run/systemd/resolve/stub-resolv.conf "$rootfs_directory/etc/resolv.conf"
-	# Ubuntu ships the vsock transport as a module. Load it before shutdown begins.
-	install -d -m 0755 "$rootfs_directory/etc/modules-load.d"
-	printf 'vmw_vsock_virtio_transport\n' > "$rootfs_directory/etc/modules-load.d/atlas-rescue.conf"
 }
 
 fetch "$rootfs_url" "$rootfs_sha256" "$rootfs_path"

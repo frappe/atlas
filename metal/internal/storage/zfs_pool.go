@@ -83,18 +83,3 @@ func (pool *ZFSPool) stagingDataset(snapshotID string) string {
 func (pool *ZFSPool) stagingDevicePath(snapshotID string) string {
 	return "/dev/zvol/" + pool.stagingDataset(snapshotID)
 }
-
-// rescueDataset holds the throwaway rescue clone of one virtual machine. It is
-// reset on every rescue entry and never shares state with the VM's own disk.
-func (pool *ZFSPool) rescueDataset(virtualMachineID string) string {
-	return pool.name + "/rescue/" + virtualMachineID
-}
-
-// rescueDevicePath is the block device of one rescue clone.
-func (pool *ZFSPool) rescueDevicePath(virtualMachineID string) string {
-	return "/dev/zvol/" + pool.rescueDataset(virtualMachineID)
-}
-
-func (pool *ZFSPool) rescueCheckpoint(virtualMachineID string, generation uint64) string {
-	return pool.snapshot(virtualMachineID, "rescue-"+strconv.FormatUint(generation, 10))
-}

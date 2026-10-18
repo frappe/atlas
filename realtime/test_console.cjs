@@ -22,7 +22,7 @@ vm.runInNewContext(source, {
 		addEventListener() {},
 	},
 	document: {
-		getElementById(id) { return elements[id] ||= { style: {} }; },
+		getElementById(id) { return elements[id] ||= { style: {}, addEventListener() {} }; },
 	},
 	Terminal: class {
 		cols = 80;

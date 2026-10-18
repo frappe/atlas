@@ -137,19 +137,10 @@ class TestRescueTools(TestCase):
 			self.assertNotIn("DO-NOT-REPORT", str(report))
 			self.assertNotIn("SECRET", str(report))
 
-	def test_unknown_and_read_only_access_refuse_mutation(self):
-		for mode in ("unknown", "read_only"):
-			with (
-				patch.object(rescue, "access_mode", return_value=mode),
-				self.assertRaisesRegex(RuntimeError, "Writes are disabled"),
-			):
-				rescue.require_writable()
-
-	def test_host_enforced_read_only_overrides_metadata(self):
+	def test_read_only_disk_refuses_mutation(self):
 		with (
-			patch.object(rescue, "access_mode", return_value="protected"),
 			patch.object(rescue, "capture", return_value="1"),
-			self.assertRaisesRegex(RuntimeError, "Writes are disabled"),
+			self.assertRaisesRegex(RuntimeError, "original disk is read-only"),
 		):
 			rescue.require_writable()
 

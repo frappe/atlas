@@ -44,6 +44,11 @@ func (client *Client) PutMachineConfig(ctx context.Context, configuration Machin
 	return client.send(ctx, http.MethodPut, "/machine-config", configuration, nil)
 }
 
+// PutCPUConfig applies a custom CPU template before guest boot.
+func (client *Client) PutCPUConfig(ctx context.Context, template json.RawMessage) error {
+	return client.send(ctx, http.MethodPut, "/cpu-config", template, nil)
+}
+
 // PutBootSource sets the kernel and boot arguments.
 func (client *Client) PutBootSource(ctx context.Context, source BootSource) error {
 	return client.send(ctx, http.MethodPut, "/boot-source", source, nil)
@@ -68,11 +73,6 @@ func (client *Client) PutNetworkInterface(ctx context.Context, networkInterface 
 		networkInterface,
 		nil,
 	)
-}
-
-// PutVsock connects the guest's vsock device to a host Unix socket.
-func (client *Client) PutVsock(ctx context.Context, configuration Vsock) error {
-	return client.send(ctx, http.MethodPut, "/vsock", configuration, nil)
 }
 
 // InstanceStart starts the virtual machine.

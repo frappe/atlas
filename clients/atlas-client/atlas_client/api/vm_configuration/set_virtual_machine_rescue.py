@@ -122,9 +122,9 @@ def sync_detailed(
     """ Set rescue mode
 
      Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
-    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
-    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
-    progress.
+    is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start
+    preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM
+    detail route for rescue progress.
 
     Args:
         virtual_machine_id (str):
@@ -164,9 +164,9 @@ def sync(
     """ Set rescue mode
 
      Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
-    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
-    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
-    progress.
+    is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start
+    preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM
+    detail route for rescue progress.
 
     Args:
         virtual_machine_id (str):
@@ -201,9 +201,9 @@ async def asyncio_detailed(
     """ Set rescue mode
 
      Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
-    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
-    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
-    progress.
+    is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start
+    preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM
+    detail route for rescue progress.
 
     Args:
         virtual_machine_id (str):
@@ -243,9 +243,9 @@ async def asyncio(
     """ Set rescue mode
 
      Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk
-    is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot
-    or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue
-    progress.
+    is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start
+    preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM
+    detail route for rescue progress.
 
     Args:
         virtual_machine_id (str):

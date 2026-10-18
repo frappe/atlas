@@ -374,12 +374,22 @@ class VirtualMachine(Document):
 			)
 
 	@frappe.whitelist(methods=["POST"])
-	def migrate(self, destination_metal_server: str | None = None) -> str:
+	def migrate(
+		self,
+		destination_metal_server: str | None = None,
+		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
+	) -> str:
 		"""Schedule this VM for migration, with an optional destination Metal Server."""
 		self.check_permission("write")
 		from atlas.vm.core.vm_migration import MigrationService
 
-		return MigrationService.create(self, destination_metal_server=destination_metal_server or None)
+		return MigrationService.create(
+			self,
+			destination_metal_server=destination_metal_server or None,
+			has_memory_snapshot=bool(cint(has_memory_snapshot)),
+			allow_disk_only_fallback=bool(cint(allow_disk_only_fallback)),
+		)
 
 	def ensure_not_migrating(self) -> None:
 		"""Reject a mutable action while a migration owns this VM."""
@@ -600,14 +610,7 @@ class VirtualMachine(Document):
 		return VirtualMachineService(self).require_information().as_dict()
 
 	@frappe.whitelist(methods=["POST"])
-	def set_rescue(
-		self,
-		enabled: bool,
-		access: str = "protected",
-		allow_unprotected: bool = False,
-		action: str = "",
-		recovery_generation: int = 0,
-	) -> dict[str, Any]:
+	def set_rescue(self, enabled: bool) -> dict[str, Any]:
 		"""Enter or exit rescue without starting a stopped VM."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
@@ -616,19 +619,7 @@ class VirtualMachine(Document):
 				_("Wait until the Virtual Machine is ready before changing rescue mode."), exc=AtlasUserError
 			)
 		enabled = strict_bool(enabled, "enabled")
-		allow_unprotected = strict_bool(allow_unprotected, "allow_unprotected")
-		if access not in {"protected", "read_only", "unprotected"} or action not in {
-			"",
-			"rollback",
-			"finish",
-		}:
-			frappe.throw(_("Invalid recovery action or access mode."), exc=AtlasUserError)
-		self._validate_recovery_action(enabled, action, recovery_generation)
-		if enabled and ((access == "unprotected") != allow_unprotected):
-			frappe.throw(_("Unprotected writes require explicit acknowledgement."), exc=AtlasUserError)
-		return VirtualMachineService(self).set_rescue(
-			enabled, access, allow_unprotected, action, recovery_generation
-		)
+		return VirtualMachineService(self).set_rescue(enabled)
 
 	@frappe.whitelist(methods=["POST"])
 	def reboot(self) -> None:
@@ -647,17 +638,6 @@ class VirtualMachine(Document):
 
 		connection = VirtualMachineService(self).get_console_connection(mode)
 		return {"token": issue_console_token(connection)}
-
-	def _validate_recovery_action(self, enabled: bool, action: str, recovery_generation: int) -> None:
-		"""Require a valid checkpoint session for recovery actions."""
-		if type(recovery_generation) is not int or recovery_generation < 0 or recovery_generation > 2**64 - 1:
-			frappe.throw(_("Invalid recovery session."), exc=AtlasUserError)
-		if bool(action) != bool(recovery_generation):
-			frappe.throw(
-				_("Select the current recovery checkpoint before confirming this action."), exc=AtlasUserError
-			)
-		if enabled and action:
-			frappe.throw(_("A recovery action cannot enable rescue mode."), exc=AtlasUserError)
 
 
 @frappe.whitelist(methods=["POST"])

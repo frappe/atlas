@@ -17,7 +17,7 @@ Settled facts as of October 2026. Check current code before relying on a detail.
 - Runtime VM fields are virtual; `frappe.get_all` cannot select them. Use `get_doc` or `Virtual Machine State`.
 - Metal mutations store desired state, wake the reconciler, return `202`; generations signal completion. Host sets (peers, image policies, privileged addresses) arrive complete via `POST /v1/sync`.
 - Metal records reject unknown fields. A breaking change ships a metald patch in the same build, and patches only move forward.
-- Memory snapshots and Firecracker state never leave the host.
+- Memory migrations transfer Firecracker state and guest memory with the final disk snapshot. Disk-only migration remains the default.
 
 ## Units and identifiers
 

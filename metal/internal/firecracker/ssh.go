@@ -20,6 +20,7 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
+	"github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/vm"
 	"golang.org/x/crypto/ssh"
 )
@@ -63,6 +64,27 @@ type sshSession struct {
 type sshSessionRecord struct {
 	VirtualMachineID string `json:"virtual_machine_id"`
 	KeyIndex         string `json:"key_index"`
+}
+
+// CheckMigratedGuestSSH requires a guest SSH handshake when enabled for memory snapshot migrations.
+func (runtime *Runtime) CheckMigratedGuestSSH(ctx context.Context, input vm.RuntimeMachine) error {
+	if !runtime.configuration.RequireMigratedGuestSSH {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	output, err := platform.RunInNetworkNamespace(ctx,
+		filepath.Base(input.NetworkInterface.NetworkNamespacePath),
+		"ssh-keyscan", "-T", "5", "-t", "ed25519,rsa", input.NetworkInterface.GuestIPAddress,
+	)
+	if err != nil {
+		return fmt.Errorf("guest SSH handshake: %w", err)
+	}
+	if strings.TrimSpace(output) == "" {
+		return fmt.Errorf("guest SSH handshake returned no host key")
+	}
+	return nil
 }
 
 // ConnectSSH opens an interactive SSH session to a VM guest. Authorization is a

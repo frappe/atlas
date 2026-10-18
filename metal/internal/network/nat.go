@@ -98,8 +98,18 @@ func defaultRouteInterface() (string, error) {
 
 // claimPublicIPv4 makes the host answer ARP for the public address on the public interface.
 // The kernel answers a proxy entry only when the address routes through another device.
-func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, publicIPv4 string) error {
+// A new claim is announced first, so a failed announcement leaves no entry and the next pass retries it.
+func claimPublicIPv4(ctx context.Context, userID uint32, publicInterfaceName, publicIPv4 string, announce announcer) error {
 	hostVirtualEthernet, _ := virtualEthernetNames(userID)
+	isClaimed, err := hasProxyNeighbour(ctx, "-4", publicIPv4, publicInterfaceName)
+	if err != nil {
+		return err
+	}
+	if !isClaimed {
+		if err := announce(publicInterfaceName, publicIPv4); err != nil {
+			return err
+		}
+	}
 	return runSteps(ctx, [][]string{
 		{"ip", "-4", "route", "replace", publicIPv4 + "/32", "dev", hostVirtualEthernet, "proto", "static"},
 		{"ip", "-4", "neigh", "replace", "proxy", publicIPv4, "dev", publicInterfaceName},
@@ -136,10 +146,21 @@ func releasePublicIPv4Claims(ctx context.Context, userID uint32, publicInterface
 }
 
 // claimPublicIPv6 makes the host answer NDP for the public address on the public interface.
-func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string) error {
+// A new claim is announced first, so a failed announcement leaves no entry and the next pass retries it.
+func claimPublicIPv6(ctx context.Context, publicInterfaceName, publicIPv6 string, announce announcer) error {
+	address := strings.TrimSuffix(publicIPv6, "/128")
+	isClaimed, err := hasProxyNeighbour(ctx, "-6", address, publicInterfaceName)
+	if err != nil {
+		return err
+	}
+	if !isClaimed {
+		if err := announce(publicInterfaceName, address); err != nil {
+			return err
+		}
+	}
 	return runSteps(ctx, [][]string{
 		{"sysctl", "-q", "-w", "net.ipv6.conf." + publicInterfaceName + ".proxy_ndp=1"},
-		{"ip", "-6", "neigh", "replace", "proxy", strings.TrimSuffix(publicIPv6, "/128"), "dev", publicInterfaceName},
+		{"ip", "-6", "neigh", "replace", "proxy", address, "dev", publicInterfaceName},
 	})
 }
 
@@ -168,10 +189,16 @@ func releasePublicIPv6Claims(ctx context.Context, userID uint32, publicInterface
 	return nil
 }
 
+// hasProxyNeighbour reports whether the host already answers for the address on the public interface.
+func hasProxyNeighbour(ctx context.Context, familyFlag, address, publicInterfaceName string) (bool, error) {
+	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address, "dev", publicInterfaceName)
+	return strings.TrimSpace(output) != "", err
+}
+
 // removeProxyNeighbour skips an absent entry, so a retried release does not fail.
 func removeProxyNeighbour(ctx context.Context, familyFlag, address, publicInterfaceName string) error {
-	output, err := platform.Output(ctx, "ip", familyFlag, "neigh", "show", "proxy", address, "dev", publicInterfaceName)
-	if err != nil || strings.TrimSpace(output) == "" {
+	exists, err := hasProxyNeighbour(ctx, familyFlag, address, publicInterfaceName)
+	if err != nil || !exists {
 		return err
 	}
 	return platform.Run(ctx, "ip", familyFlag, "neigh", "del", "proxy", address, "dev", publicInterfaceName)

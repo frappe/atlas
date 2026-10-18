@@ -31,18 +31,8 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 
 ## Rescue storage
 
-`PrepareRescueBoot` requires an existing original disk. It clones the selected rescue image into `<pool>/rescue/<vm>` and records `atlas:rescue-generation` on the clone. A matching session reuses the disk. A different generation replaces it only after the VM manager stops the old guest. `Release` removes both VM-owned disks. See [rescue mode](../../../docs/compute/rescue.md).
-
-The storage request supports `OriginalReadOnly`. This sets the Firecracker drive flag for the original disk, not the temporary rescue root. The Firecracker runtime selects this option for read-only rescue.
-
-`rescue_checkpoint.go` supplies checkpoint operations for the VM recovery lifecycle. Creation checks capacity and returns the ZFS GUID. Adoption requires a local session-generation property. Rollback and deletion verify the saved GUID. Rollback uses no recursive flag and rejects a missing checkpoint. Cleanup alone accepts absence.
-
-The caller must stop the guest and serialize storage operations. It must persist the checkpoint GUID before writable rescue starts, and persist rollback completion before cleanup. Creation is only for a new session or its interrupted creation retry. It must not recreate a lost, previously recorded checkpoint.
-
-Capacity checks subtract unused volume reservation from the reported available bytes. They allow for the smaller of referenced bytes and the reservation, plus headroom of 1 GiB or 5 percent of pool size, whichever is larger. Existing shared blocks can reduce the actual cost. This is a conservative preflight, not a capacity reservation or a guarantee against later pool exhaustion.
+`PrepareBoot` provisions a rescue image through the normal disk path under `<pool>/vms/rescue/<vm>`. `AttachedVirtualMachineID` exposes the original disk as the secondary drive. Existing disks are reused across boots. `ReleaseRescueDisk` uses normal disk cleanup after the guest stops. `Release` removes both VM-owned disks. See [rescue mode](../../../docs/compute/rescue.md).
 
 ## Validation
 
 Use [image upload tests](image_upload_test.go) and [migration transfer tests](migration_transfer_test.go) for retry and cleanup changes. The [VM manager contract](../vm/SPEC.md) coordinates storage with runtime and network.
-
-`rescue_checkpoint_test.go` covers capacity boundaries, identity checks, retries, and missing snapshots. `TestRescueCheckpointZFS` runs only when `ATLAS_RESCUE_TEST_POOL` names a pool on a disposable Linux host. Run it as root. It creates unique test volumes under that pool's existing `vms` dataset and removes them after the test. It does not use an existing VM disk.

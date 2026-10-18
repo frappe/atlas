@@ -1677,44 +1677,10 @@
         "additionalProperties": false,
         "description": "Select rescue mode. Atlas chooses the image for each new session.",
         "properties": {
-          "access": {
-            "default": "protected",
-            "enum": [
-              "protected",
-              "read_only",
-              "unprotected"
-            ],
-            "title": "Access",
-            "type": "string"
-          },
-          "action": {
-            "default": "",
-            "enum": [
-              "",
-              "rollback",
-              "finish"
-            ],
-            "title": "Action",
-            "type": "string"
-          },
-          "allow_unprotected": {
-            "default": false,
-            "description": "Explicit acknowledgement of writes without undo.",
-            "title": "Allow Unprotected",
-            "type": "boolean"
-          },
           "enabled": {
             "description": "Enter rescue when true; exit when false.",
             "title": "Enabled",
             "type": "boolean"
-          },
-          "recovery_generation": {
-            "default": 0,
-            "description": "Checkpoint session shown to the user; required for rollback and finish.",
-            "maximum": 18446744073709551615,
-            "minimum": 0,
-            "title": "Recovery Generation",
-            "type": "integer"
           }
         },
         "required": [
@@ -2643,58 +2609,9 @@
         "title": "VirtualMachineNetworkUsage",
         "type": "object"
       },
-      "VirtualMachineRecovery": {
-        "description": "Checkpoint protection retained independently of rescue boot.",
-        "properties": {
-          "action": {
-            "title": "Action",
-            "type": "string"
-          },
-          "active": {
-            "title": "Active",
-            "type": "boolean"
-          },
-          "checkpoint": {
-            "title": "Checkpoint",
-            "type": "boolean"
-          },
-          "complete": {
-            "title": "Complete",
-            "type": "boolean"
-          },
-          "expires_at": {
-            "title": "Expires At",
-            "type": "string"
-          },
-          "generation": {
-            "title": "Generation",
-            "type": "integer"
-          },
-          "rollback_applied": {
-            "title": "Rollback Applied",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "generation",
-          "checkpoint",
-          "active",
-          "expires_at",
-          "action",
-          "complete",
-          "rollback_applied"
-        ],
-        "title": "VirtualMachineRecovery",
-        "type": "object"
-      },
       "VirtualMachineRescue": {
         "description": "Requested and applied rescue mode from the assigned host.",
         "properties": {
-          "access": {
-            "default": "",
-            "title": "Access",
-            "type": "string"
-          },
           "enabled": {
             "description": "Requested rescue mode.",
             "title": "Enabled",
@@ -2718,20 +2635,9 @@
             "type": "boolean"
           },
           "pending": {
-            "description": "Whether the host has an unapplied rescue selection or recovery action.",
+            "description": "Whether the host has an unapplied rescue selection.",
             "title": "Pending",
             "type": "boolean"
-          },
-          "recovery": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/VirtualMachineRecovery"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
           }
         },
         "required": [
@@ -6432,7 +6338,7 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/rescue": {
       "put": {
-        "description": "Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk is unmounted; the selected access mode controls writes. Stop/Start preserves the rescue disk. Reboot or explicit exit ends the session and discards the rescue disk. Poll the VM detail route for rescue progress.",
+        "description": "Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM detail route for rescue progress.",
         "operationId": "set_virtual_machine_rescue",
         "parameters": [
           {

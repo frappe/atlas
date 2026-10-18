@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -19,12 +20,51 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
+func TestCPUTemplateSeparatesMemorySnapshotCompatibility(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firecracker")
+	if err := os.WriteFile(path, []byte("binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &Runtime{configuration: Config{FirecrackerBin: path}}
+	defaultCompatibility := runtime.firecrackerCompatibility()
+	runtime.configuration.CPUTemplate = []byte(`{"cpuid_modifiers":[]}`)
+	profileCompatibility := runtime.firecrackerCompatibility()
+	if profileCompatibility == defaultCompatibility {
+		t.Fatal("CPU profile reused unprofiled memory")
+	}
+	runtime.configuration.CPUTemplate = []byte(`{"cpuid_modifiers":[{}]}`)
+	if runtime.firecrackerCompatibility() == profileCompatibility {
+		t.Fatal("changed CPU profile reused previous memory")
+	}
+}
+
 func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 	units := &stubUnits{active: false} // inactive reports stopped
 	m := testMachine(units, fcSocket(t, nil), time.Minute)
 
 	if err := m.saveAndStop(context.Background()); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+}
+
+func TestKillFinishesWhenTheUnitStoppedDespiteASignalError(t *testing.T) {
+	units := &stubUnits{failed: true, killError: errors.New("Failed to send signal SIGKILL to auxiliary processes")}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+
+	if err := m.kill(context.Background()); err != nil {
+		t.Fatalf("kill = %v, want nil", err)
+	}
+	if units.failed {
+		t.Fatal("the failed unit was not reset")
+	}
+}
+
+func TestKillReportsASignalErrorWhenStopFails(t *testing.T) {
+	units := &stubUnits{active: true, killError: errors.New("access denied"), stopError: errors.New("access denied")}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+
+	if err := m.kill(context.Background()); err == nil {
+		t.Fatal("want the signal error")
 	}
 }
 
@@ -261,10 +301,6 @@ func (images *fakeImages) PrepareBoot(
 	storage.VirtualMachineStorageRequest,
 ) (storage.BootConfiguration, error) {
 	return storage.BootConfiguration{}, nil
-}
-
-func (images *fakeImages) PrepareRescueBoot(context.Context, storage.VirtualMachineRescueBootRequest) (storage.BootConfiguration, error) {
-	return storage.BootConfiguration{Drives: []storage.Drive{{Path: "/rootfs.img", Root: true}, {Path: "/disk.img"}}}, nil
 }
 
 func (images *fakeImages) PrepareRootFileSystem(

@@ -22,6 +22,7 @@ class VirtualMachineMigration(Document):
 			VirtualMachineMigrationTransfer,
 		)
 
+		allow_disk_only_fallback: DF.Check
 		destination_metal_server: DF.Link | None
 		destination_metal_server_selection_attempts: DF.Int
 		destination_metal_server_selection_message: DF.SmallText | None
@@ -30,7 +31,11 @@ class VirtualMachineMigration(Document):
 		error_code: DF.Data | None
 		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
+		has_memory_snapshot: DF.Check
 		last_destination_metal_server_selection_at: DF.Datetime | None
+		memory_snapshot_status: DF.Literal[
+			"not_started", "creating", "transferring", "restoring", "completed", "failed", "aborted"
+		]
 		progress_percent: DF.Int
 		scheduled_at: DF.Datetime | None
 		source_metal_server: DF.Link
@@ -77,6 +82,13 @@ class VirtualMachineMigration(Document):
 
 		MigrationService(self).request_abort()
 		reconcile_migration(self.name)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_vm_migration_paused(is_paused: bool) -> None:
+	"""Pause or resume new VM migrations. Running migrations continue."""
+	frappe.get_doc("Atlas Settings").check_permission("write")
+	frappe.db.set_single_value("Atlas Settings", "is_vm_migration_paused", int(frappe.parse_json(is_paused)))
 
 
 def on_doctype_update() -> None:

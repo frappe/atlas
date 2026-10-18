@@ -16,7 +16,6 @@ type virtualMachineResponse struct {
 
 // desiredVirtualMachineResponse is the stored controller intent.
 type desiredVirtualMachineResponse struct {
-	Recovery          recoveryResponse            `json:"recovery"`
 	Rescue            rescueResponse              `json:"rescue"`
 	RescueGeneration  uint64                      `json:"rescue_generation"`
 	Generation        uint64                      `json:"generation"`
@@ -155,7 +154,6 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 		ID: information.ID,
 		Desired: desiredVirtualMachineResponse{
 			Rescue:            toRescue(information.Rescue),
-			Recovery:          toRecovery(information.Recovery),
 			RescueGeneration:  information.DesiredRescueGeneration,
 			Generation:        information.DesiredGeneration,
 			RestartGeneration: information.DesiredRestartGeneration,
@@ -273,42 +271,15 @@ func toMemorySnapshotConfiguration(configuration *vm.MemorySnapshotConfiguration
 
 // rescueResponse reports selected boot mode without disclosing artifact URLs.
 type rescueResponse struct {
-	Access  string                       `json:"access,omitempty"`
 	Enabled bool                         `json:"enabled"`
 	Image   *virtualMachineImageResponse `json:"image,omitempty"`
 }
 
 func toRescue(rescue vm.Rescue) rescueResponse {
-	response := rescueResponse{Enabled: rescue.Enabled, Access: string(rescue.Access)}
+	response := rescueResponse{Enabled: rescue.Enabled}
 	if rescue.Enabled {
 		image := toVirtualMachineImage(rescue.Image)
 		response.Image = &image
 	}
 	return response
-}
-
-// recoveryResponse reports actual checkpoint lifecycle without a host storage path.
-type recoveryResponse struct {
-	Generation      uint64 `json:"generation"`
-	Checkpoint      bool   `json:"checkpoint"`
-	Active          bool   `json:"active"`
-	ExpiresAt       string `json:"expires_at,omitempty"`
-	Action          string `json:"action,omitempty"`
-	Complete        bool   `json:"complete"`
-	RollbackApplied bool   `json:"rollback_applied"`
-}
-
-func toRecovery(recovery vm.Recovery) recoveryResponse {
-	result := recoveryResponse{
-		Generation:      recovery.Generation,
-		Checkpoint:      recovery.HasCheckpoint(),
-		Active:          recovery.Active,
-		Action:          recovery.Action,
-		Complete:        recovery.Complete,
-		RollbackApplied: recovery.RollbackApplied,
-	}
-	if !recovery.ExpiresAt.IsZero() {
-		result.ExpiresAt = recovery.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
-	}
-	return result
 }

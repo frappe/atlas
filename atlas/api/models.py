@@ -866,30 +866,6 @@ class RescuePayload(StrictModel):
 	"""Select rescue mode. Atlas chooses the image for each new session."""
 
 	enabled: bool = Field(strict=True, description="Enter rescue when true; exit when false.")
-	access: Literal["protected", "read_only", "unprotected"] = "protected"
-	allow_unprotected: bool = Field(
-		default=False, strict=True, description="Explicit acknowledgement of writes without undo."
-	)
-	action: Literal["", "rollback", "finish"] = ""
-	recovery_generation: int = Field(
-		default=0,
-		strict=True,
-		ge=0,
-		le=2**64 - 1,
-		description="Checkpoint session shown to the user; required for rollback and finish.",
-	)
-
-
-class VirtualMachineRecovery(BaseModel):
-	"""Checkpoint protection retained independently of rescue boot."""
-
-	generation: int
-	checkpoint: bool
-	active: bool
-	expires_at: str
-	action: str
-	complete: bool
-	rollback_applied: bool
 
 
 class VirtualMachineRescue(BaseModel):
@@ -897,12 +873,8 @@ class VirtualMachineRescue(BaseModel):
 
 	enabled: bool = Field(description="Requested rescue mode.")
 	observed_enabled: bool = Field(description="Last successfully applied rescue mode.")
-	pending: bool = Field(
-		description="Whether the host has an unapplied rescue selection or recovery action."
-	)
+	pending: bool = Field(description="Whether the host has an unapplied rescue selection.")
 	image_ref: str | None = Field(description="Image pinned to this rescue session, or null.")
-	access: str = ""
-	recovery: VirtualMachineRecovery | None = None
 
 
 class VirtualMachineDetailResponse(BaseModel):
@@ -987,13 +959,10 @@ class VirtualMachineDetailResponse(BaseModel):
 			public_ipv6=allocations.get(6),
 			rescue=VirtualMachineRescue(
 				enabled=desired.rescue.enabled,
-				access=desired.rescue.access,
-				recovery=VirtualMachineRecovery(**asdict(desired.recovery)),
 				observed_enabled=observed.rescue.enabled,
 				pending=(
 					desired.rescue_generation != observed.rescue_generation
 					or desired.rescue.enabled != observed.rescue.enabled
-					or bool(desired.recovery.action and not desired.recovery.complete)
 				),
 				image_ref=desired.rescue.image.ref if desired.rescue.image else None,
 			)

@@ -1,3 +1,12 @@
+queue_rules:
+  - name: backport
+    queue_conditions:
+      - base=master
+      - author=mergify[bot]
+    merge_method: merge
+    # Queue backports when Mergify opens them, so master takes them in develop order.
+    branch_protection_injection_mode: merge
+
 pull_request_rules:
   - name: Close direct pull requests to master
     conditions:
@@ -21,6 +30,14 @@ pull_request_rules:
           - master
         assignees:
           - "{{ author }}"
+
+  - name: Queue backports to master
+    conditions:
+      - base=master
+      - author=mergify[bot]
+    actions:
+      queue:
+        name: backport
 
   - name: Keep pull requests up to date
     conditions:

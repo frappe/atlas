@@ -1015,25 +1015,15 @@ class TestVirtualMachineConsolePermission(UnitTestCase):
 		issue.assert_called_once_with({})
 
 
-class TestVirtualMachineRecoveryPermission(UnitTestCase):
-	def test_read_only_actor_cannot_request_recovery(self):
+class TestVirtualMachineRescuePermission(UnitTestCase):
+	def test_read_only_actor_cannot_request_rescue(self):
 		machine = VirtualMachine.__new__(VirtualMachine)
 		machine.check_permission = Mock(side_effect=frappe.PermissionError)
 		with (
 			patch.object(VirtualMachineService, "set_rescue") as request,
 			self.assertRaises(frappe.PermissionError),
 		):
-			machine.set_rescue(False, action="rollback", recovery_generation=1)
-		request.assert_not_called()
-
-	def test_checkpoint_actions_require_the_displayed_session(self):
-		machine = VirtualMachine.__new__(VirtualMachine)
-		machine.check_permission = Mock()
-		machine.ensure_not_migrating = Mock()
-		machine.is_draft = False
-		machine.is_terminating = False
-		with patch.object(VirtualMachineService, "set_rescue") as request, self.assertRaises(AtlasUserError):
-			machine.set_rescue(False, action="rollback")
+			machine.set_rescue(False)
 		request.assert_not_called()
 
 

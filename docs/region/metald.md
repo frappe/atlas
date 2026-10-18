@@ -18,9 +18,25 @@ flowchart LR
 | Coordination API | Calls between source and destination during migration. | A certificate from the regional authority. |
 | Snapshot stream | Direct ZFS transfer between migration hosts. | One-shot mutual TLS with regional authority validation. |
 
-The listeners separate Atlas control calls from host-to-host migration calls. The control listener accepts the pinned Atlas client identity. The coordination listener belongs on WireGuard and accepts regional node certificates without a pinned node common name.
+The listeners separate Atlas control calls from host-to-host migration calls. The control listener accepts the pinned Atlas client identity. The coordination listener accepts regional node certificates without a pinned node common name.
 
 Disk snapshots use a separate stream because they carry ZFS data rather than API messages. The control and coordination APIs use TLS 1.3. Read [Metal listener security](../interfaces/security.md#metal-listeners) before you expose an address.
+
+The control listener uses the WireGuard address. The coordination listener and the snapshot stream use the migration network. By default, this is the host's private IPv4 address.
+
+Migration traffic already uses TLS, so by default it skips WireGuard. This removes a second encryption layer and the smaller WireGuard MTU from large transfers.
+
+To move migration traffic to WireGuard, follow these steps:
+
+1. Click **Pause VM Migrations** in the Virtual Machine Migration list.
+2. Wait until no migration is running.
+3. Turn on **Migrate VM over WireGuard** in Atlas Settings, under Networking, and save.
+4. Run **Upgrade Metald** on each Metal Server.
+5. Click **Resume VM Migrations**.
+
+Atlas refuses the change unless migrations are paused and none is running. Atlas uses the new network for the source address at once. Each host moves its listener at its upgrade. Until then, a migration from that host fails before the source locks.
+
+The host firewall admits migration traffic on both networks, so a change needs no firewall update.
 
 ## What happens at startup
 
@@ -45,7 +61,7 @@ At startup, Metal compares running VM units with adopted console handles. If sys
 | Setting | Default | What to check |
 | --- | --- | --- |
 | Control address | `127.0.0.1:8080` | Installation binds the host WireGuard address. See [Atlas access to hosts](host-access.md). A Unix socket is also accepted. |
-| Coordination address | `127.0.0.1:9001` | Use the host's WireGuard address when installed. |
+| Coordination address | `127.0.0.1:9001` | Installation and `upgrade_metald` bind the host address on the migration network. |
 | Snapshot port | `9002` | Binds on the coordination host address, not a wildcard. |
 | `base_dir` | `/var/lib/metal` | Holds VM records and host state. |
 | `zfs.pool` | `metal` | Names the pool Metal uses. Installation selects its device. |

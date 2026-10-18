@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 // writeSourceRecord sets up a source lock for transfer tests.
@@ -88,7 +90,7 @@ func TestSourceRejectsInvalidAcknowledgedSequence(t *testing.T) {
 		if _, err := migrationManager.NextSourceSnapshot(t.Context(), "mig-1", "vm-1", receivedSequence); !errors.Is(err, vm.ErrConflict) {
 			t.Errorf("next snapshot sequence %d = %v, want ErrConflict", receivedSequence, err)
 		}
-		if _, err := migrationManager.StopSource(t.Context(), "mig-1", "vm-1", receivedSequence); !errors.Is(err, vm.ErrConflict) {
+		if _, err := migrationManager.StopSource(t.Context(), "mig-1", "vm-1", receivedSequence, false); !errors.Is(err, vm.ErrConflict) {
 			t.Errorf("stop source sequence %d = %v, want ErrConflict", receivedSequence, err)
 		}
 	}
@@ -119,7 +121,7 @@ func TestUnlockWaitsUntilAStartingStreamIsRegistered(t *testing.T) {
 	host.operationCalls = make(chan string, 2)
 	serverRelease := make(chan struct{})
 	storage := &fakeMigrationStorage{sendStarted: make(chan struct{}), serverRelease: serverRelease}
-	manager, err := newManager(host, &fakeSourceOperations{}, storage, ampleCapacity, 0, nil)
+	manager, err := newManager(host, &fakeSourceOperations{}, storage, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +182,7 @@ func TestStopSourceStopsAndCreatesFinalSnapshot(t *testing.T) {
 	transfer.sizeBytes = 500
 	seedSourceVM(t, migrationManager, machines, vm.StateRunning, 2)
 
-	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 2)
+	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +219,7 @@ func TestStopSourceAcknowledgesTheLastReceivedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3)
+	snapshot, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +235,7 @@ func TestStopSourceRejectsASequenceTheSourceDidNotCreate(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	seedSourceVM(t, migrationManager, machines, vm.StateRunning, 2)
 
-	_, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3)
+	_, err := migrationManager.StopSource(context.Background(), "mig-1", "vm-1", 3, false)
 	if !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("stop source = %v, want ErrConflict", err)
 	}
@@ -245,13 +247,13 @@ func TestStopSourceIsIdempotent(t *testing.T) {
 	seedSourceVM(t, migrationManager, machines, vm.StateRunning, 0)
 	ctx := context.Background()
 
-	first, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0)
+	first, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	created := len(transfer.created)
 
-	second, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0)
+	second, err := migrationManager.StopSource(ctx, "mig-1", "vm-1", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,6 +591,29 @@ func TestExpireSourceKeepsAStoppedSource(t *testing.T) {
 	}
 }
 
+func TestAbortAfterSourceExpiryKeepsTheTombstoneAndAllowsANewMigration(t *testing.T) {
+	manager, machines, _ := newMigrationManager(t)
+	machines.create("vm-1", testSpecification())
+	setObservedState(t, machines, "vm-1", vm.StateRunning)
+	record := expirableSourceRecord(manager, "vm-1")
+	if err := manager.store.writeSource(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ExpireSource(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.UnlockSource(t.Context(), record.ID, "vm-1"); err != nil {
+		t.Fatalf("abort an expired migration: %v", err)
+	}
+	if _, err := manager.LockSource(t.Context(), record.ID, "vm-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("expired migration revived: %v", err)
+	}
+	if _, err := manager.LockSource(t.Context(), "mig-new", "vm-1"); err != nil {
+		t.Fatalf("start a new migration: %v", err)
+	}
+}
+
 func TestExpireSourceKeepsARecentLock(t *testing.T) {
 	manager, _, _ := newMigrationManager(t)
 	record := expirableSourceRecord(manager, "vm-1")
@@ -638,11 +663,15 @@ func TestATombstoneRefusesItsOwnMigrationAndAcceptsANewOne(t *testing.T) {
 	if _, err := manager.LockSource(context.Background(), "mig-idle", "vm-1"); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("resurrecting the expired migration = %v, want a conflict", err)
 	}
-	if _, err := manager.StopSource(context.Background(), "mig-idle", "vm-1", 0); !errors.Is(err, vm.ErrConflict) {
+	if _, err := manager.StopSource(context.Background(), "mig-idle", "vm-1", 0, false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("stop against a tombstone = %v, want a conflict", err)
 	}
-	if err := manager.UnlockSource(context.Background(), "mig-idle", "vm-1"); !errors.Is(err, vm.ErrConflict) {
-		t.Fatalf("unlock against a tombstone = %v, want a conflict", err)
+	if err := manager.UnlockSource(context.Background(), "mig-idle", "vm-1"); err != nil {
+		t.Fatalf("unlock against a tombstone = %v", err)
+	}
+	tombstone, err := manager.store.readSource("vm-1")
+	if err != nil || tombstone.State != sourceExpired {
+		t.Fatalf("unlock removed the tombstone: %+v, %v", tombstone, err)
 	}
 
 	if _, err := manager.LockSource(context.Background(), "mig-new", "vm-1"); err != nil {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -43,6 +44,8 @@ type MemorySnapshotBuilder interface {
 
 // ImageConfig controls image reconciliation.
 type ImageConfig struct {
+	// Telemetry counts passes and failures. It is required.
+	Telemetry *telemetry.Registry
 	// Logger receives image reconciliation errors.
 	Logger              *slog.Logger
 	OperationTimeout    time.Duration
@@ -85,7 +88,7 @@ func NewImageReconciler(
 	}
 
 	return &ImageReconciler{
-		passScheduler:       newPassScheduler(interval),
+		passScheduler:       newPassScheduler("image", interval, configuration.Telemetry),
 		imageStore:          imageStore,
 		snapshotStore:       snapshotStore,
 		builder:             builder,
@@ -169,5 +172,6 @@ func (r *ImageReconciler) logFailure(ctx context.Context, operation string, err 
 		return
 	}
 
+	r.countFailure()
 	r.logger.Error("image reconciliation failed", "operation", operation, "error", err)
 }

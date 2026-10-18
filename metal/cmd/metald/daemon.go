@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -46,19 +45,18 @@ type trafficMonitorResource interface {
 }
 
 type daemon struct {
-	virtualMachineRuntime io.Closer
-	context               context.Context
-	cancel                context.CancelFunc
-	logger                *slog.Logger
-	snapshotUploads       snapshotUploadOwner
-	serialBroker          serialBroker
-	systemd               systemdConnection
-	trafficMonitor        trafficMonitorResource
-	workers               sync.WaitGroup
-	httpServers           []daemonHTTPServer
-	httpServerErrors      chan error
-	httpServerExits       int
-	migrations            migrationShutdownOwner
+	context          context.Context
+	cancel           context.CancelFunc
+	logger           *slog.Logger
+	snapshotUploads  snapshotUploadOwner
+	serialBroker     serialBroker
+	systemd          systemdConnection
+	trafficMonitor   trafficMonitorResource
+	workers          sync.WaitGroup
+	httpServers      []daemonHTTPServer
+	httpServerErrors chan error
+	httpServerExits  int
+	migrations       migrationShutdownOwner
 }
 
 // OwnMigrations makes the daemon stop migration transfers at shutdown.
@@ -169,11 +167,6 @@ func (daemon *daemon) Shutdown(shutdownContext context.Context) error {
 	}
 	if err := daemon.snapshotUploads.Shutdown(shutdownContext); err != nil {
 		shutdownErrors = append(shutdownErrors, err)
-	}
-	if daemon.virtualMachineRuntime != nil {
-		if err := daemon.virtualMachineRuntime.Close(); err != nil {
-			shutdownErrors = append(shutdownErrors, err)
-		}
 	}
 	daemon.serialBroker.Shutdown()
 	daemon.systemd.Close()

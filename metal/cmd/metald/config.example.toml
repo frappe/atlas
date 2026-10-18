@@ -6,8 +6,8 @@
 base_dir = "/var/lib/metal"
 # TCP address or unix:/path.
 listen = "127.0.0.1:8080"
-# Mutual-TLS API for communication between Metal nodes.
-coordination_listen = "[fdab::1]:9001"
+# Mutual-TLS API for communication between Metal nodes, on the private IPv4 address.
+coordination_listen = "10.0.0.1:9001"
 
 [tls]
 ca_file = "/var/lib/metal/tls/ca.crt"
@@ -20,6 +20,10 @@ atlas_common_name = "atlas.example.com"
 binary_path = "/usr/bin/firecracker"
 # Short paths to VM API sockets.
 sockets_dir = "/run/metal"
+# Empty selects the built-in Intel, AMD, or ARM64 guest CPU baseline.
+cpu_template_file = ""
+# true boots every VM without a CPU template. Cannot be set with cpu_template_file.
+cpu_template_disabled = false
 
 [jailer]
 binary_path = "/usr/bin/jailer"
@@ -52,3 +56,12 @@ final_delta_mib = 512
 # TCP port the source listens on for the disk stream. Use the same value on
 # every host in the region.
 transfer_port = 9002
+# Require a guest SSH handshake before memory snapshot migration source cleanup.
+require_guest_ssh = false
+
+[telemetry]
+# Written by Atlas. metald rereads both daily, or when the token expires.
+datum_url = "https://datum.example.com"
+datum_token = "<token>"
+interval = "30s"
+restart_count_units = ["metal.service", "atlas-host-firewall.service", "wg-quick@wg0.service", "vector.service"]

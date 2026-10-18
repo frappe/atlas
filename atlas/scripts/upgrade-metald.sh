@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replace metald and atlas-wg-mesh on a provisioned host.
+# Replace metald and atlas-wg-mesh on a provisioned host and set its coordination address.
 
 set -eu
 # A failed command inside $(...) also stops the script.
@@ -9,12 +9,24 @@ shopt -s inherit_errexit
 : "${METALD_SHA256:?METALD_SHA256 is required}"
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
+: "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
 
 metald_binary=${METALD_BINARY_PATH:-/usr/bin/metald}
 mesh_binary=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
 service=metal.service
 ready_timeout_seconds=120
 patches_file=/var/lib/metal/patches.json
+config_file=/var/lib/metal/metald.toml
+coordination_line="coordination_listen = \"$COORDINATION_LISTEN_ADDRESS\""
+# An Atlas build from before the setting does not send it.
+case "${CPU_TEMPLATE_DISABLED:-false}" in
+true) cpu_template_line="cpu_template_disabled = true" ;;
+false) cpu_template_line="" ;;
+*)
+	echo "CPU_TEMPLATE_DISABLED must be true or false" >&2
+	exit 1
+	;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
@@ -45,13 +57,32 @@ reported_version() {
 	echo "$tool_version"
 }
 
+# cpu_template_config_line returns the CPU template line of the config, or nothing.
+cpu_template_config_line() {
+	grep '^cpu_template_disabled[[:space:]]*=' "$config_file" || true
+}
+
+# set_cpu_template_line replaces the CPU template line. An empty argument removes it.
+set_cpu_template_line() {
+	sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
+	if [ -z "$1" ]; then
+		return
+	fi
+	if grep -q '^\[firecracker\]' "$config_file"; then
+		sed -i "/^\[firecracker\]/a $1" "$config_file"
+	else
+		printf '\n[firecracker]\n%s\n' "$1" >>"$config_file"
+	fi
+}
+
 # unit_property returns a systemd service property.
 unit_property() {
 	systemctl show "$service" -p "$1" --value 2>/dev/null || echo ""
 }
 
+# A restart stops the transient warm image build units, so only tenant VMs count.
 active_virtual_machine_count() {
-	systemctl list-units "metal-vm@*" --state=active --no-legend --plain | wc -l
+	systemctl list-units "metal-vm@*" --state=active --no-legend --plain | awk '$1 !~ /^metal-vm@warm-/' | wc -l
 }
 
 # service_is_stable checks that the service stays active.
@@ -126,6 +157,16 @@ restore_previous() {
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
+	# Restore only these lines. install-telemetry.sh can change the rest of the file meanwhile.
+	exec 8>"$config_file.lock"
+	flock 8
+	if [ -n "$previous_coordination_line" ]; then
+		sed -i "s|^coordination_listen[[:space:]]*=.*|$previous_coordination_line|" "$config_file"
+	else
+		sed -i '/^coordination_listen[[:space:]]*=/d' "$config_file"
+	fi
+	set_cpu_template_line "$previous_cpu_template_line"
+	exec 8>&-
 	systemctl reset-failed "$service" 2>/dev/null || true
 	if ! systemctl restart "$service" || ! service_is_stable; then
 		echo "    $service did not start with the previous build" >&2
@@ -144,6 +185,8 @@ current_version=$(reported_version "$metald_binary")
 
 # A repeated upgrade after a success changes nothing.
 if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" &&
+	grep -qxF "$coordination_line" "$config_file" &&
+	[ "$(cpu_template_config_line)" = "$cpu_template_line" ] &&
 	[ "$(unit_property StatusText)" = "ready $new_version" ]; then
 	step "metald $new_version and atlas-wg-mesh are already installed and running"
 	exit 0
@@ -172,6 +215,20 @@ new_patches=${new_patches# }
 step "back up the running binaries"
 cp -a "$metald_binary" "$metald_binary.previous"
 cp -a "$mesh_binary" "$mesh_binary.previous"
+
+step "set the coordination address to $COORDINATION_LISTEN_ADDRESS"
+# install-telemetry.sh edits the same file under this lock.
+exec 8>"$config_file.lock"
+flock 8
+previous_coordination_line=$(grep '^coordination_listen[[:space:]]*=' "$config_file" || true)
+if [ -n "$previous_coordination_line" ]; then
+	sed -i "s|^coordination_listen[[:space:]]*=.*|$coordination_line|" "$config_file"
+else
+	sed -i "/^listen[[:space:]]*=/a $coordination_line" "$config_file"
+fi
+previous_cpu_template_line=$(cpu_template_config_line)
+set_cpu_template_line "$cpu_template_line"
+exec 8>&-
 
 # Rename instead of overwrite. The running process keeps its own inode.
 step "install the new binaries"

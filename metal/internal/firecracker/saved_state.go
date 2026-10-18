@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	platform "github.com/frappe/atlas/metal/internal/platform"
@@ -22,7 +24,11 @@ const (
 	savedStateMetadataFileName     = "metadata.json"
 )
 
-var errSavedStateNotFound = errors.New("saved VM state not found")
+var (
+	errSavedStateNotFound = errors.New("saved VM state not found")
+	// errSavedStateIncompatible marks state that a changed Firecracker build or CPU template cannot resume.
+	errSavedStateIncompatible = errors.New("saved VM state is incompatible with this Firecracker")
+)
 
 type savedStateRequirement struct {
 	VirtualMachineID         string
@@ -31,26 +37,41 @@ type savedStateRequirement struct {
 	RestartGeneration        uint64
 	RescueGeneration         uint64
 	FirecrackerCompatibility string
+	MigratedShape            *vm.MemorySnapshotConfiguration
 }
 
 type savedStateMetadata struct {
-	VirtualMachineID         string    `json:"virtual_machine_id"`
-	UserID                   uint32    `json:"user_id"`
-	SpecificationGeneration  uint64    `json:"specification_generation"`
-	RestartGeneration        uint64    `json:"restart_generation"`
-	RescueGeneration         uint64    `json:"rescue_generation"`
-	FirecrackerCompatibility string    `json:"firecracker_compatibility"`
-	CreatedAt                time.Time `json:"created_at"`
-	StateFileName            string    `json:"state_file_name"`
-	MemoryFileName           string    `json:"memory_file_name"`
-	StateFileSizeBytes       int64     `json:"state_file_size_bytes"`
-	MemoryFileSizeBytes      int64     `json:"memory_file_size_bytes"`
+	VirtualMachineID         string                          `json:"virtual_machine_id"`
+	UserID                   uint32                          `json:"user_id"`
+	SpecificationGeneration  uint64                          `json:"specification_generation"`
+	RestartGeneration        uint64                          `json:"restart_generation"`
+	FirecrackerCompatibility string                          `json:"firecracker_compatibility"`
+	CreatedAt                time.Time                       `json:"created_at"`
+	StateFileName            string                          `json:"state_file_name"`
+	MemoryFileName           string                          `json:"memory_file_name"`
+	StateFileSizeBytes       int64                           `json:"state_file_size_bytes"`
+	MemoryFileSizeBytes      int64                           `json:"memory_file_size_bytes"`
+	TapMACAddress            string                          `json:"tap_mac_address,omitempty"`
+	Shape                    *vm.MemorySnapshotConfiguration `json:"shape,omitempty"`
+	RescueGeneration         uint64                          `json:"rescue_generation"`
 }
 
 type savedState struct {
 	Metadata   savedStateMetadata
 	StatePath  string
 	MemoryPath string
+}
+
+func (snapshot savedState) restoreNetwork(ctx context.Context, networkInterface vm.NetworkInterface) error {
+	if snapshot.Metadata.TapMACAddress == "" {
+		return nil
+	}
+	// Restored ARP and NDP caches still map the gateway to the source TAP MAC.
+	if _, err := platform.RunInNetworkNamespace(ctx, filepath.Base(networkInterface.NetworkNamespacePath),
+		"ip", "link", "set", "dev", networkInterface.TapName, "address", snapshot.Metadata.TapMACAddress); err != nil {
+		return fmt.Errorf("restore snapshot TAP MAC: %w", err)
+	}
+	return nil
 }
 
 func (configuration Config) savedStateDirectory(id string) string {
@@ -63,6 +84,10 @@ func (configuration Config) pendingSavedStateDirectory(id string) string {
 
 func (configuration Config) loadSavedState(requirement savedStateRequirement) (savedState, error) {
 	directory := configuration.savedStateDirectory(requirement.VirtualMachineID)
+	return loadSavedState(directory, requirement)
+}
+
+func loadSavedState(directory string, requirement savedStateRequirement) (savedState, error) {
 	data, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
 	if errors.Is(err, fs.ErrNotExist) {
 		return savedState{}, errSavedStateNotFound
@@ -70,12 +95,15 @@ func (configuration Config) loadSavedState(requirement savedStateRequirement) (s
 	if err != nil {
 		return savedState{}, fmt.Errorf("read saved state metadata: %w", err)
 	}
-	metadata, err := decodeSavedStateMetadata(data)
-	if err != nil {
-		return savedState{}, err
+	metadata, decodeErr := decodeSavedStateMetadata(data)
+	if decodeErr != nil && !errors.Is(decodeErr, errSavedStateIncompatible) {
+		return savedState{}, decodeErr
 	}
 	if err := metadata.validate(requirement); err != nil {
 		return savedState{}, err
+	}
+	if decodeErr != nil {
+		return savedState{}, decodeErr
 	}
 	statePath, err := validateSavedStateFile(directory, memorySnapshotStateFileName, metadata.StateFileSizeBytes)
 	if err != nil {
@@ -89,6 +117,11 @@ func (configuration Config) loadSavedState(requirement savedStateRequirement) (s
 }
 
 func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.RuntimeMachine) (savedState, error) {
+	tapMAC, err := platform.RunInNetworkNamespace(ctx, filepath.Base(machine.NetworkInterface.NetworkNamespacePath),
+		"cat", filepath.Join("/sys/class/net", machine.NetworkInterface.TapName, "address"))
+	if err != nil {
+		return savedState{}, fmt.Errorf("read snapshot TAP MAC: %w", err)
+	}
 	pending := runtime.configuration.pendingSavedStateDirectory(machine.ID)
 	if err := os.RemoveAll(pending); err != nil {
 		return savedState{}, fmt.Errorf("remove pending saved state: %w", err)
@@ -117,6 +150,12 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		MemoryFileName:           memorySnapshotMemoryFileName,
 		StateFileSizeBytes:       stateSize,
 		MemoryFileSizeBytes:      memorySize,
+		TapMACAddress:            strings.TrimSpace(tapMAC),
+		Shape: &vm.MemorySnapshotConfiguration{
+			VirtualCPUCount: machine.Specification.VirtualCPUCount(),
+			MemoryMiB:       machine.Specification.MemoryMiB,
+			DiskMiB:         machine.Specification.DiskMiB,
+		},
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
@@ -141,10 +180,23 @@ func (runtime *Runtime) removeSavedState(id string) error {
 }
 
 func (metadata savedStateMetadata) validate(requirement savedStateRequirement) error {
+	if err := metadata.validateIdentity(requirement); err != nil {
+		return err
+	}
+	if err := metadata.validateFiles(); err != nil {
+		return err
+	}
+	if err := metadata.validateNetwork(requirement); err != nil {
+		return err
+	}
+	return metadata.validateMigration(requirement)
+}
+
+func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequirement) error {
 	switch {
 	case metadata.VirtualMachineID != requirement.VirtualMachineID:
 		return fmt.Errorf("saved state VM ID %q does not match %q", metadata.VirtualMachineID, requirement.VirtualMachineID)
-	case metadata.UserID != requirement.UserID:
+	case requirement.MigratedShape == nil && metadata.UserID != requirement.UserID:
 		return fmt.Errorf("saved state user ID %d does not match %d", metadata.UserID, requirement.UserID)
 	case metadata.SpecificationGeneration != requirement.SpecificationGeneration:
 		return fmt.Errorf("saved state specification generation %d does not match %d", metadata.SpecificationGeneration, requirement.SpecificationGeneration)
@@ -152,8 +204,14 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
 	case metadata.RescueGeneration != requirement.RescueGeneration:
 		return fmt.Errorf("saved state rescue generation %d does not match %d", metadata.RescueGeneration, requirement.RescueGeneration)
-	case metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
-		return fmt.Errorf("saved state Firecracker compatibility %q does not match %q", metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
+	case requirement.MigratedShape == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
+		return fmt.Errorf("%w: saved state Firecracker compatibility %q does not match %q", errSavedStateIncompatible, metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
+	}
+	return nil
+}
+
+func (metadata savedStateMetadata) validateFiles() error {
+	switch {
 	case metadata.StateFileName != memorySnapshotStateFileName || metadata.MemoryFileName != memorySnapshotMemoryFileName:
 		return errors.New("saved state metadata has unexpected file names")
 	case metadata.StateFileSizeBytes <= 0 || metadata.MemoryFileSizeBytes <= 0:
@@ -164,11 +222,41 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 	return nil
 }
 
+func (metadata savedStateMetadata) validateNetwork(requirement savedStateRequirement) error {
+	if metadata.TapMACAddress != "" {
+		address, err := net.ParseMAC(metadata.TapMACAddress)
+		if err != nil || len(address) != 6 || address[0]&1 != 0 {
+			return errors.New("saved state has an invalid TAP MAC address")
+		}
+	}
+	if requirement.MigratedShape != nil && metadata.TapMACAddress == "" {
+		return errors.New("saved state has no TAP MAC address")
+	}
+	return nil
+}
+
+func (metadata savedStateMetadata) validateMigration(requirement savedStateRequirement) error {
+	if requirement.MigratedShape != nil {
+		if metadata.Shape == nil {
+			return errors.New("saved state has no VM shape")
+		}
+		if *metadata.Shape != *requirement.MigratedShape {
+			return errors.New("saved state VM shape does not match the destination")
+		}
+	}
+	return nil
+}
+
 func decodeSavedStateMetadata(data []byte) (savedStateMetadata, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var metadata savedStateMetadata
 	if err := decoder.Decode(&metadata); err != nil {
+		// A newer build can add a field. Return the known fields, so validate still checks them.
+		var known savedStateMetadata
+		if json.Unmarshal(data, &known) == nil {
+			return known, fmt.Errorf("%w: decode saved state metadata: %w", errSavedStateIncompatible, err)
+		}
 		return savedStateMetadata{}, fmt.Errorf("decode saved state metadata: %w", err)
 	}
 	var trailing any

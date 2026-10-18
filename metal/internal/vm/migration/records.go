@@ -186,26 +186,35 @@ type TransferProgress struct {
 
 // DestinationProgress is the controller-facing state of a destination migration.
 type DestinationProgress struct {
-	ID               string
-	VirtualMachineID string
-	Status           Status
-	Phase            Phase
-	Intervals        []TransferProgress
-	Error            *vm.OperationError
+	ID                   string
+	VirtualMachineID     string
+	Status               Status
+	Phase                Phase
+	MemorySnapshotStatus string
+	MemorySnapshotError  string
+	Intervals            []TransferProgress
+	MemoryTransfer       *TransferProgress
+	Error                *vm.OperationError
 }
 
 type destinationRecord struct {
-	SchemaVersion       int                       `json:"schema_version"`
-	ID                  string                    `json:"id"`
-	VirtualMachineID    string                    `json:"virtual_machine_id"`
-	Source              string                    `json:"source"`
-	Resize              *Resize                   `json:"resize,omitempty"`
-	State               destinationState          `json:"state"`
-	Definition          *VirtualMachineDefinition `json:"config,omitempty"`
-	SourceObservedState vm.State                  `json:"source_observed_state,omitempty"`
-	CopyStartedAt       time.Time                 `json:"copy_started_at,omitempty"`
-	Intervals           []TransferProgress        `json:"intervals,omitempty"`
-	SourceStopped       bool                      `json:"source_stopped,omitempty"`
+	SchemaVersion         int     `json:"schema_version"`
+	ID                    string  `json:"id"`
+	VirtualMachineID      string  `json:"virtual_machine_id"`
+	Source                string  `json:"source"`
+	Resize                *Resize `json:"resize,omitempty"`
+	HasMemorySnapshot     bool    `json:"has_memory_snapshot,omitempty"`
+	AllowDiskOnlyFallback bool    `json:"allow_disk_only_fallback,omitempty"`
+	// MemorySnapshotError records why the destination cold-booted instead of restoring memory.
+	MemorySnapshotError    string                    `json:"memory_snapshot_error,omitempty"`
+	MemorySnapshotDiskGUID string                    `json:"memory_snapshot_disk_guid,omitempty"`
+	State                  destinationState          `json:"state"`
+	Definition             *VirtualMachineDefinition `json:"config,omitempty"`
+	SourceObservedState    vm.State                  `json:"source_observed_state,omitempty"`
+	CopyStartedAt          time.Time                 `json:"copy_started_at,omitempty"`
+	Intervals              []TransferProgress        `json:"intervals,omitempty"`
+	MemoryTransfer         *TransferProgress         `json:"memory_transfer,omitempty"`
+	SourceStopped          bool                      `json:"source_stopped,omitempty"`
 
 	Error      *vm.OperationError `json:"error,omitempty"`
 	CreatedAt  time.Time          `json:"created_at"`
@@ -221,12 +230,51 @@ func (record destinationRecord) progress() DestinationProgress {
 		phase = PhaseCopying
 	}
 	return DestinationProgress{
-		ID:               record.ID,
-		VirtualMachineID: record.VirtualMachineID,
-		Status:           record.State.status(),
-		Phase:            phase,
-		Intervals:        record.Intervals,
-		Error:            record.Error,
+		ID:                   record.ID,
+		VirtualMachineID:     record.VirtualMachineID,
+		Status:               record.State.status(),
+		Phase:                phase,
+		MemorySnapshotStatus: record.memorySnapshotStatus(),
+		MemorySnapshotError:  record.MemorySnapshotError,
+		Intervals:            record.Intervals,
+		MemoryTransfer:       record.MemoryTransfer,
+		Error:                record.Error,
+	}
+}
+
+// usesMemorySnapshot reports whether the destination resumes the transferred memory.
+func (record destinationRecord) usesMemorySnapshot() bool {
+	return record.HasMemorySnapshot && record.MemorySnapshotError == ""
+}
+
+func (record destinationRecord) memorySnapshotStatus() string {
+	if !record.HasMemorySnapshot {
+		return ""
+	}
+	if record.MemorySnapshotError != "" {
+		return "failed"
+	}
+	switch record.State {
+	case destinationStopping:
+		if record.SourceStopped {
+			return "transferring"
+		}
+		return "creating"
+	case destinationCreatingNetwork, destinationApplyingState:
+		return "restoring"
+	case destinationReady, destinationFinishing, destinationCompleted:
+		return "completed"
+	case destinationFailed:
+		return "failed"
+	case destinationRemovingRuntime, destinationRemovingStorage, destinationRestoringSource, destinationUnlockingSource:
+		if record.Error != nil {
+			return "failed"
+		}
+		return "aborted"
+	case destinationAborted:
+		return "aborted"
+	default:
+		return "not_started"
 	}
 }
 
@@ -252,6 +300,7 @@ func isValidSourceState(state sourceState) bool {
 }
 
 type sourceRecord struct {
+	HasMemorySnapshot       *bool       `json:"has_memory_snapshot,omitempty"`
 	SchemaVersion           int         `json:"schema_version"`
 	ID                      string      `json:"id"`
 	VirtualMachineID        string      `json:"virtual_machine_id"`
@@ -383,12 +432,14 @@ func (store *migrationStore) readDestination(virtualMachineID string) (destinati
 
 func terminalDestinationRecord(record destinationRecord, state destinationState, finishedAt time.Time) destinationRecord {
 	return destinationRecord{
-		SchemaVersion:    migrationSchemaVersion,
-		ID:               record.ID,
-		VirtualMachineID: record.VirtualMachineID,
-		State:            state,
-		CreatedAt:        record.CreatedAt,
-		FinishedAt:       finishedAt,
+		SchemaVersion:       migrationSchemaVersion,
+		ID:                  record.ID,
+		VirtualMachineID:    record.VirtualMachineID,
+		State:               state,
+		HasMemorySnapshot:   record.HasMemorySnapshot,
+		MemorySnapshotError: record.MemorySnapshotError,
+		CreatedAt:           record.CreatedAt,
+		FinishedAt:          finishedAt,
 	}
 }
 

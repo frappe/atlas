@@ -9,16 +9,19 @@
   "title",
   "status",
   "is_provisioning_completed",
+  "is_in_maintenance",
   "column_break_qbap",
   "provider_server_id",
   "metald_tls_expires_on",
   "is_sleepy_vm_host",
   "section_break_configuration",
-  "server_image",
-  "column_break_njar",
-  "server_size",
-  "column_break_iiyh",
   "architecture",
+  "tsc_scaling_supported",
+  "column_break_njar",
+  "server_image",
+  "is_cpu_template_disabled",
+  "column_break_iiyh",
+  "server_size",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -44,6 +47,7 @@
   "tags_section",
   "tags",
   "section_break_metadata",
+  "host_compatibility_report",
   "provider_metadata",
   "hidden_data_section",
   "column_break_xhax",
@@ -64,6 +68,14 @@
    "fieldname": "is_sleepy_vm_host",
    "fieldtype": "Check",
    "label": "Sleepy VM Host"
+  },
+  {
+   "default": "0",
+   "description": "Placement skips this host. Existing VMs keep running.",
+   "fieldname": "is_in_maintenance",
+   "fieldtype": "Check",
+   "label": "In Maintenance",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "metald_tls_expires_on",
@@ -165,7 +177,7 @@
    "collapsible": 1,
    "fieldname": "section_break_metadata",
    "fieldtype": "Section Break",
-   "label": "Provider Metadata"
+   "label": "Metadata"
   },
   {
    "fieldname": "provider_metadata",
@@ -310,6 +322,29 @@
    "label": "Tags",
    "options": "Atlas Tag",
    "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "tsc_scaling_supported",
+   "fieldtype": "Check",
+   "label": "TSC Scaling Supported",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_cpu_template_disabled",
+   "fieldtype": "Check",
+   "label": "Disable CPU Template",
+   "read_only": 1
+  },
+  {
+   "fieldname": "host_compatibility_report",
+   "fieldtype": "Code",
+   "label": "Host Compatibility Report",
+   "no_copy": 1,
+   "options": "JSON",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -331,7 +366,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-10-05 16:32:01.049346",
+ "modified": "2026-10-17 12:57:52.605466",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

@@ -42,9 +42,6 @@ func (specification Specification) MetadataServiceData(virtualMachineID, ipAddre
 		metadata["attributes"] = specification.Metadata
 	}
 
-	if specification.Rescue.Enabled {
-		metadata["rescue"] = map[string]any{"access": string(specification.Rescue.Access), "original-device": "/dev/vdb"}
-	}
 	latest := map[string]any{"meta-data": metadata}
 	if specification.UserData != "" && !specification.Rescue.Enabled {
 		latest["user-data"] = specification.UserData

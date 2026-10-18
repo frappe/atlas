@@ -32,7 +32,7 @@ class TestRescueAPI(UnitTestCase):
 			status, body = call_route(set_virtual_machine_rescue, "vm-00001")
 		self.assertEqual(status, 202, body)
 		owned.assert_called_once_with("Virtual Machine", "vm-00001")
-		machine.set_rescue.assert_called_once_with(True, "protected", False, "", 0)
+		machine.set_rescue.assert_called_once_with(True)
 
 	def test_route_rejects_missing_or_coerced_boolean(self):
 		for body in ({}, {"enabled": "true"}, {"enabled": 1}, {"enabled": True, "image": "mine"}):
@@ -53,18 +53,3 @@ class TestRescueAPI(UnitTestCase):
 		self.assertTrue(detail.rescue.enabled)
 		self.assertFalse(detail.rescue.observed_enabled)
 		self.assertTrue(detail.rescue.pending)
-
-	def test_detail_reports_pending_retained_checkpoint_cleanup(self):
-		from atlas.vm.core.metal_models import MetalRecovery
-
-		information = build_metal_information()
-		information.desired.recovery = MetalRecovery(generation=1, checkpoint=True, action="finish")
-		with (
-			patch("atlas.api.models.public_ip_allocations_for", return_value={}),
-			patch("atlas.api.models.read_tags", return_value={}),
-		):
-			detail = VirtualMachineDetailResponse.from_document_and_metal(
-				build_virtual_machine(), information
-			)
-		self.assertTrue(detail.rescue.pending)
-		self.assertEqual(detail.rescue.recovery.action, "finish")

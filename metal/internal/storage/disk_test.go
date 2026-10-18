@@ -51,32 +51,6 @@ func TestKernelArgumentsUsesFileValueWhenPresent(t *testing.T) {
 	}
 }
 
-func TestRescueDiskRetainsSessionAndReplacesAnOlderSession(t *testing.T) {
-	for _, generation := range []uint64{1, 3} {
-		t.Run(fmt.Sprint(generation), func(t *testing.T) {
-			logFile := fakeZFS(t, "1\n", "none")
-			store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
-			err := store.provisionRescueDisk(context.Background(), VirtualMachineRescueBootRequest{
-				VirtualMachineID: "vm-1", RescueImageReference: "rescue", RescueGeneration: generation,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			commands := commandLog(t, logFile)
-			if generation == 1 {
-				if len(commands) != 2 {
-					t.Fatalf("existing session mutated: %v", commands)
-				}
-				return
-			}
-			if len(commands) != 4 || commands[2] != "destroy -r metal/rescue/vm-1" ||
-				commands[3] != "clone -p -o atlas:rescue-generation=3 metal/images/rescue@ready metal/rescue/vm-1" {
-				t.Fatalf("new session commands = %v", commands)
-			}
-		})
-	}
-}
-
 func TestParseCloneList(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -121,6 +95,10 @@ func fakeZFS(t *testing.T, clones string, failures ...string) string {
 
 	script := fmt.Sprintf(`#!/bin/sh
 echo "$*" >> %q
+if [ "$1" = "get" ] && [ "$5" = "type" ]; then
+  echo "${ATLAS_TEST_DATASET_TYPE:-volume}"
+  exit 0
+fi
 case "$1" in
 get) cat %q ;;
 %s) exit 1 ;;
@@ -153,7 +131,11 @@ func TestReleasePromotesStagingClonesBeforeDestroy(t *testing.T) {
 	}
 
 	want := []string{
-		"destroy -r metal/rescue/vm-1",
+		"get -Hp -o value type metal/vms/rescue/vm-1",
+		"get -Hp -r -t snapshot -o value clones metal/vms/rescue/vm-1",
+		"promote metal/staging/snap-1",
+		"destroy -r metal/vms/rescue/vm-1",
+		"get -Hp -o value type metal/vms/vm-1",
 		"get -Hp -r -t snapshot -o value clones metal/vms/vm-1",
 		"promote metal/staging/snap-1",
 		"destroy -r metal/vms/vm-1",
@@ -195,13 +177,13 @@ func TestReleaseRescueDiskDestroysTheClone(t *testing.T) {
 	if err := store.ReleaseRescueDisk(context.Background(), "vm-1"); err != nil {
 		t.Fatal(err)
 	}
-	if got := commandLog(t, logFile); !slices.Equal(got, []string{"destroy -r metal/rescue/vm-1"}) {
+	if got := commandLog(t, logFile); !slices.Equal(got, []string{"get -Hp -o value type metal/vms/rescue/vm-1", "get -Hp -r -t snapshot -o value clones metal/vms/rescue/vm-1", "destroy -r metal/vms/rescue/vm-1"}) {
 		t.Errorf("commands = %v", got)
 	}
 }
 
 func TestReleaseRescueDiskToleratesAMissingClone(t *testing.T) {
-	fakeZFSDestroy(t, "cannot open 'metal/rescue/vm-1': dataset does not exist")
+	fakeZFSDestroy(t, "cannot open 'metal/vms/rescue/vm-1': dataset does not exist")
 	store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
 
 	if err := store.ReleaseRescueDisk(context.Background(), "vm-1"); err != nil {
@@ -218,6 +200,9 @@ func fakeZFSDestroy(t *testing.T, message string) string {
 
 	script := fmt.Sprintf(`#!/bin/sh
 echo "$*" >> %q
+if [ "$1" = "get" ] && [ "$5" = "type" ]; then
+  echo volume
+fi
 if [ "$1" = "destroy" ] && [ -n %q ]; then
 	echo %q >&2
 	exit 1
@@ -229,4 +214,18 @@ fi
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	return logFile
+}
+
+func TestReleaseRefusesBootDiskDirectory(t *testing.T) {
+	logFile := fakeZFS(t, "-\n", "none")
+	t.Setenv("ATLAS_TEST_DATASET_TYPE", "filesystem")
+	store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
+	if err := store.releaseDisk(t.Context(), "rescue"); err == nil {
+		t.Fatal("accepted a filesystem as a VM disk")
+	}
+	for _, command := range commandLog(t, logFile) {
+		if strings.HasPrefix(command, "destroy ") {
+			t.Fatalf("destroyed boot disk directory: %s", command)
+		}
+	}
 }

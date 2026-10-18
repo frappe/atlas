@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 const (
@@ -25,6 +27,8 @@ type VirtualMachineManager interface {
 
 // VirtualMachineConfig controls reconciliation work within one pass.
 type VirtualMachineConfig struct {
+	// Telemetry counts passes and failures. It is required.
+	Telemetry *telemetry.Registry
 	// Logger receives reconciliation errors.
 	Logger *slog.Logger
 	// MaxConcurrentOperations limits active VM operations in one pass.
@@ -41,6 +45,7 @@ type VirtualMachineReconciler struct {
 	maxConcurrentOperations int
 	operationTimeout        time.Duration
 	logger                  *slog.Logger
+	backoff                 *backoff
 }
 
 // NewVirtualMachineReconciler returns a reconciler that runs at interval.
@@ -60,12 +65,19 @@ func NewVirtualMachineReconciler(
 	}
 
 	return &VirtualMachineReconciler{
-		passScheduler:           newPassScheduler(interval),
+		passScheduler:           newPassScheduler("virtual_machine", interval, configuration.Telemetry),
 		manager:                 manager,
 		maxConcurrentOperations: configuration.MaxConcurrentOperations,
 		operationTimeout:        configuration.OperationTimeout,
 		logger:                  configuration.Logger,
+		backoff:                 newBackoff(interval),
 	}
+}
+
+// Wake requests a pass and clears every backoff, so a request does not wait for a retry time.
+func (r *VirtualMachineReconciler) Wake() {
+	r.backoff.reset()
+	r.passScheduler.Wake()
 }
 
 // Run reconciles every VM until ctx is canceled.
@@ -116,13 +128,24 @@ func (r *VirtualMachineReconciler) reconcileAll(ctx context.Context) {
 }
 
 // reconcile applies one VM's desired record under the operation timeout.
+// A VM that failed waits for its backoff before the next attempt.
 func (r *VirtualMachineReconciler) reconcile(ctx context.Context, id string) {
+	if r.backoff.isWaiting(id) {
+		return
+	}
+
 	operationContext, cancel := context.WithTimeout(ctx, r.operationTimeout)
 	defer cancel()
 
+	startedAt := r.backoff.now()
 	if err := r.manager.Reconcile(operationContext, id); err != nil {
+		if ctx.Err() == nil {
+			r.backoff.fail(id, startedAt)
+		}
 		r.logFailure(ctx, "virtual machine reconciliation failed", err, "virtual_machine_id", id)
+		return
 	}
+	r.backoff.succeed(id)
 }
 
 // logFailure reports an error unless ctx ended, because a canceled pass fails
@@ -132,5 +155,6 @@ func (r *VirtualMachineReconciler) logFailure(ctx context.Context, message strin
 		return
 	}
 
+	r.countFailure()
 	r.logger.Error(message, append([]any{"error", err}, fields...)...)
 }

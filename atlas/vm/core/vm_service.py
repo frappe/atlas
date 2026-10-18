@@ -282,14 +282,7 @@ class VirtualMachineService:
 			)
 		)
 
-	def set_rescue(
-		self,
-		enabled: bool,
-		access: str = "protected",
-		allow_unprotected: bool = False,
-		action: str = "",
-		recovery_generation: int = 0,
-	) -> dict[str, Any]:
+	def set_rescue(self, enabled: bool) -> dict[str, Any]:
 		"""Select rescue mode or renew the pinned image URLs for an active session."""
 		current = self.require_information()
 		if current.desired.state not in {"running", "stopped"}:
@@ -311,10 +304,6 @@ class VirtualMachineService:
 				cast(str, self.virtual_machine.name),
 				enabled,
 				image_request,
-				access=access,
-				allow_unprotected=allow_unprotected,
-				action=action,
-				recovery_generation=recovery_generation,
 			)
 		)
 		return information.as_dict()
@@ -338,20 +327,33 @@ class VirtualMachineService:
 			if not image_name:
 				frappe.throw(_("The pinned rescue image is no longer available."), exc=AtlasConflictError)
 		else:
-			image_name = frappe.get_single("Atlas Settings").rescue_virtual_machine_image
-			if not image_name:
-				frappe.throw(_("Select a rescue image in Atlas Settings first."), exc=AtlasUserError)
+			images = frappe.get_all(
+				"Virtual Machine Image",
+				filters=[
+					["Virtual Machine Image", "image_type", "=", "system"],
+					["Virtual Machine Image", "status", "=", "Available"],
+					["Virtual Machine Image", "enabled", "=", 1],
+					["Virtual Machine Image", "architecture", "=", self.virtual_machine.architecture],
+					["Atlas Tag", "key", "=", "purpose"],
+					["Atlas Tag", "value", "=", "rescue"],
+				],
+				order_by="creation desc, name desc",
+				limit_page_length=1,
+				pluck="name",
+			)
+			if not images:
+				frappe.throw(_("No available rescue image matches this Virtual Machine."), exc=AtlasUserError)
+			image_name = images[0]
 		return self.get_image(image_name, self.virtual_machine.tenant_id)
 
 	def ensure_rescue_inactive(self, information: MetalVirtualMachine) -> None:
 		"""Block disk layout changes until rescue exit has been applied."""
 		if (
 			information.desired.rescue.enabled
-			or (information.desired.recovery.generation > 0 and not information.desired.recovery.complete)
 			or information.desired.rescue_generation != information.observed.rescue_generation
 		):
 			frappe.throw(
-				_("Exit rescue and finish recovery before resizing, migrating, or taking a snapshot."),
+				_("Exit rescue before resizing, migrating, or taking a snapshot."),
 				exc=AtlasConflictError,
 			)
 

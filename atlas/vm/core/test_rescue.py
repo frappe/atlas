@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
-from atlas.vm.core.metal_models import MetalRecovery, MetalRescue, MetalVirtualMachine
+from atlas.vm.core.metal_models import MetalRescue, MetalVirtualMachine
 from atlas.vm.core.test_metal_models import complete_response
 from atlas.vm.core.vm_service import VirtualMachineService
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
@@ -22,12 +22,12 @@ class TestRescueSelection(UnitTestCase):
 			patch.object(self.service, "require_information", return_value=self.current)
 		)
 
-	def test_new_session_uses_settings_and_requires_compatible_image(self):
+	def test_new_session_uses_tag_lookup_and_requires_compatible_image(self):
 		image = Mock(architecture="amd64")
 		with (
 			patch(
-				"atlas.vm.core.vm_service.frappe.get_single",
-				return_value=SimpleNamespace(rescue_virtual_machine_image="rescue-1"),
+				"atlas.vm.core.vm_service.frappe.get_all",
+				return_value=["rescue-1"],
 			),
 			patch.object(self.service, "get_image", return_value=image) as get_image,
 		):
@@ -38,16 +38,12 @@ class TestRescueSelection(UnitTestCase):
 				"vm-1",
 				True,
 				image.get_metal_image_request.return_value,
-				access="protected",
-				allow_unprotected=False,
-				action="",
-				recovery_generation=0,
 			)
 			image.architecture = "arm64"
 			with self.assertRaises(AtlasUserError):
 				self.service.set_rescue(True)
 
-	def test_repeat_does_not_change_pinned_image_after_setting_changes(self):
+	def test_repeat_does_not_change_pinned_image_after_tagged_image_changes(self):
 		image = object.__new__(VirtualMachineImage)
 		for key, value in {
 			"name": "rescue-1",
@@ -69,15 +65,13 @@ class TestRescueSelection(UnitTestCase):
 		pinned = replace(self.current.desired.image, ref=image.immutable_reference, memory_snapshot=False)
 		self.information.return_value = replace(
 			self.current,
-			desired=replace(
-				self.current.desired, state="stopped", rescue=MetalRescue(True, pinned, "protected")
-			),
+			desired=replace(self.current.desired, state="stopped", rescue=MetalRescue(True, pinned)),
 		)
 		with (
 			patch(
-				"atlas.vm.core.vm_service.frappe.get_single",
-				return_value=SimpleNamespace(rescue_virtual_machine_image="new-default"),
-			) as settings,
+				"atlas.vm.core.vm_service.frappe.get_all",
+				return_value=["new-default"],
+			) as image_query,
 			patch("atlas.vm.core.vm_service.frappe.db.get_value", return_value=image.name) as lookup,
 			patch("atlas.vm.core.vm_service.frappe.get_doc", return_value=image),
 			patch.object(image, "get_object_url") as sign,
@@ -91,7 +85,7 @@ class TestRescueSelection(UnitTestCase):
 				self.assertEqual(request["kernel"]["sha256"], pinned.kernel.sha256)
 				for artifact in ("rootfs", "kernel"):
 					self.assertTrue(request[artifact]["url"].endswith(f"renewal={renewal}"))
-			settings.assert_not_called()
+			self.assertNotIn("Virtual Machine Image", [call.args[0] for call in image_query.call_args_list])
 			lookup.assert_called_with(
 				"Virtual Machine Image",
 				{
@@ -111,15 +105,17 @@ class TestRescueSelection(UnitTestCase):
 			with self.subTest(pinned=pinned):
 				self.information.return_value = replace(
 					self.current,
-					desired=replace(self.current.desired, rescue=MetalRescue(True, pinned, "protected")),
+					desired=replace(self.current.desired, rescue=MetalRescue(True, pinned)),
 				)
 				with (
-					patch("atlas.vm.core.vm_service.frappe.get_single") as settings,
+					patch("atlas.vm.core.vm_service.frappe.get_all") as image_query,
 					patch("atlas.vm.core.vm_service.frappe.db.get_value", return_value=None),
 					self.assertRaises(AtlasConflictError),
 				):
 					self.service.set_rescue(True)
-				settings.assert_not_called()
+				self.assertNotIn(
+					"Virtual Machine Image", [call.args[0] for call in image_query.call_args_list]
+				)
 		self.client.set_virtual_machine_rescue.assert_not_called()
 
 	def test_paused_vm_must_stop_first(self):
@@ -133,51 +129,17 @@ class TestRescueSelection(UnitTestCase):
 	def test_exit_does_not_require_the_image_record(self):
 		self.information.return_value = replace(
 			self.current,
-			desired=replace(
-				self.current.desired, rescue=MetalRescue(True, self.current.desired.image, "protected")
-			),
+			desired=replace(self.current.desired, rescue=MetalRescue(True, self.current.desired.image)),
 		)
-		with patch("atlas.vm.core.vm_service.frappe.get_single") as settings:
+		with patch("atlas.vm.core.vm_service.frappe.get_all") as image_query:
 			self.service.set_rescue(False)
-		settings.assert_not_called()
-		self.client.set_virtual_machine_rescue.assert_called_once_with(
-			"vm-1", False, None, access="protected", allow_unprotected=False, action="", recovery_generation=0
-		)
+		self.assertNotIn("Virtual Machine Image", [call.args[0] for call in image_query.call_args_list])
+		self.client.set_virtual_machine_rescue.assert_called_once_with("vm-1", False, None)
 
 	def test_resize_migration_and_snapshot_guard_waits_for_exit(self):
 		for desired in (
 			replace(self.current.desired, rescue=MetalRescue(True, None)),
 			replace(self.current.desired, rescue_generation=2),
-			replace(self.current.desired, recovery=MetalRecovery(generation=7, checkpoint=True)),
 		):
 			with self.assertRaises(AtlasConflictError):
 				self.service.ensure_rescue_inactive(replace(self.current, desired=desired))
-
-	def test_completed_recovery_allows_storage_changes(self):
-		information = replace(
-			self.current,
-			desired=replace(self.current.desired, recovery=MetalRecovery(generation=7, complete=True)),
-		)
-		self.service.ensure_rescue_inactive(information)
-
-	def test_exit_defers_pending_disposition_conflicts_to_metal(self):
-		for action in ("rollback", "finish"):
-			with self.subTest(action=action):
-				self.information.return_value = replace(
-					self.current,
-					desired=replace(
-						self.current.desired,
-						recovery=MetalRecovery(generation=7, checkpoint=True, action=action),
-					),
-				)
-				self.client.set_virtual_machine_rescue.reset_mock()
-				self.service.set_rescue(False)
-				self.client.set_virtual_machine_rescue.assert_called_once_with(
-					"vm-1",
-					False,
-					None,
-					access="protected",
-					allow_unprotected=False,
-					action="",
-					recovery_generation=0,
-				)

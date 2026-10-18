@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import time
 from datetime import datetime
 from time import monotonic
@@ -9,12 +10,17 @@ from urllib.parse import quote
 
 import frappe
 import requests
+from frappe.monitor import get_trace_id
 
+from atlas.atlas.core.telemetry.events import count, observe
 from atlas.atlas.core.tls.metal import ca_file, client_certificate_files
 from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
+
+# Replace resource IDs to keep one metric series per route.
+METAL_ROUTE_IDENTIFIER = re.compile(r"^(/v1/(?:vms|migrations|snapshots)/)[^/]+")
 
 
 class MetalClientError(Exception):
@@ -71,8 +77,19 @@ class MetalClient:
 
 	@classmethod
 	def get_coordination_url(cls, server: "MetalServer") -> str:
-		"""Return the Metal coordination address for one server."""
-		return f"https://[{cls.get_wireguard_address(server)}]:{cls.coordination_port}"
+		"""Return the Metal coordination URL on the selected migration network."""
+		return f"https://{cls.get_coordination_address(server)}"
+
+	@classmethod
+	def get_coordination_address(cls, server: "MetalServer") -> str:
+		"""Return the coordination host and port on the migration network that Atlas Settings selects."""
+		if server.settings.is_migration_on_wireguard:
+			return f"[{cls.get_wireguard_address(server)}]:{cls.coordination_port}"
+		try:
+			address = ipaddress.IPv4Address(server.private_ipv4_address)
+		except ipaddress.AddressValueError as error:
+			raise MetalClientError(f"Server {server.name} has no valid private IPv4 address") from error
+		return f"{address}:{cls.coordination_port}"
 
 	@staticmethod
 	def get_wireguard_address(server: "MetalServer") -> ipaddress.IPv6Address:
@@ -160,18 +177,9 @@ class MetalClient:
 		virtual_machine_id: str,
 		enabled: bool,
 		image: dict[str, Any] | None = None,
-		*,
-		access: str = "protected",
-		allow_unprotected: bool = False,
-		action: str = "",
-		recovery_generation: int = 0,
 	) -> MetalVirtualMachine:
 		"""Select rescue mode while preserving the requested power state."""
 		request: dict[str, Any] = {"enabled": enabled}
-		if enabled:
-			request.update(access=access, allow_unprotected=allow_unprotected)
-		elif action:
-			request.update(action=action, recovery_generation=recovery_generation)
 		if image is not None:
 			request["image"] = image
 		response = self._request(
@@ -341,11 +349,16 @@ class MetalClient:
 		virtual_machine_id: str,
 		source: str,
 		resize: dict[str, Any] | None = None,
+		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = False,
 	) -> dict[str, Any]:
 		"""Store one migration request at the target host. Safe to repeat."""
 		request: dict[str, Any] = {"virtual_machine_id": virtual_machine_id, "source": source}
 		if resize is not None:
 			request["resize"] = resize
+		if has_memory_snapshot:
+			request["has_memory_snapshot"] = True
+			request["allow_disk_only_fallback"] = allow_disk_only_fallback
 		return self._request(
 			"PUT",
 			f"/v1/migrations/{quote(migration_id, safe='')}",
@@ -452,6 +465,7 @@ class MetalClient:
 		**kwargs: Any,
 	) -> dict[str, Any]:
 		timeout = kwargs.pop("timeout", self.timeout_seconds)
+		started_at = time.perf_counter()
 		try:
 			response = self.session.request(
 				method,
@@ -459,10 +473,13 @@ class MetalClient:
 				timeout=timeout,
 				verify=self.ca_file,
 				cert=self.client_certificate,
+				headers=get_correlation_headers(),
 				**kwargs,
 			)
 		except requests.RequestException as error:
+			record_metal_request(method, path, "unreachable", started_at)
 			raise MetalClientError(str(error), retryable=True, uncertain=uncertain_on_failure) from error
+		record_metal_request(method, path, str(response.status_code), started_at)
 
 		if response.status_code >= 400:
 			message, code, response_retryable = self._error_data(response)
@@ -534,3 +551,24 @@ class MetalClient:
 						retryable if isinstance(retryable, bool) else None,
 					)
 		return f"Metal returned HTTP {response.status_code}", None, None
+
+
+def get_correlation_headers() -> dict[str, str]:
+	"""Send the ID of this Atlas request or job, so Metal logs the same ID."""
+	trace_id = get_trace_id()
+	return {"X-Request-ID": trace_id} if trace_id else {}
+
+
+def get_metal_route(path: str) -> str:
+	"""Return the route of a Metal path, with the VM, migration, or snapshot ID as :id."""
+	return METAL_ROUTE_IDENTIFIER.sub(r"\1:id", path.partition("?")[0])
+
+
+def record_metal_request(method: str, path: str, status: str, started_at: float) -> None:
+	"""Count Metal calls and observe mutation latency, except frequent host syncs."""
+	route = get_metal_route(path)
+	duration = time.perf_counter() - started_at
+	count("atlas_metal_requests_total", method=method, route=route, status=status)
+	count("atlas_metal_request_duration_seconds_total", duration, method=method, route=route)
+	if method != "GET" and route != "/v1/sync":
+		observe("atlas_metal_request_duration_seconds", duration, method=method, route=route, status=status)

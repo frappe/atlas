@@ -7,7 +7,6 @@ from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasConflictError
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.metal_models import MetalRecovery
 from atlas.vm.core.models import Route, VirtualMachineCreateRequest
 from atlas.vm.core.placement import OutOfCapacity, PlacementStrategy
 from atlas.vm.core.vm_service import (
@@ -240,7 +239,6 @@ class TestVirtualMachineDisk(UnitTestCase):
 				disk=SimpleNamespace(size_mib=size_mib, throughput_mibps=50, iops=2000),
 				rescue=SimpleNamespace(enabled=False),
 				rescue_generation=0,
-				recovery=MetalRecovery(),
 			),
 			observed=SimpleNamespace(rescue_generation=0),
 		)

@@ -1,6 +1,7 @@
 import functools
 import inspect
 import re
+import time
 import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from atlas.api.core.errors import (
 	log_unexpected_error,
 )
 from atlas.atlas.core.tags import find_names_with_tags
+from atlas.atlas.core.telemetry.events import count, observe
 from atlas.auth.identity import (
 	MAXIMUM_TENANT_ID,
 	TENANT_HEADER,
@@ -361,6 +363,8 @@ class RouteHandler:
 		if request is None or not hasattr(request, "method"):
 			return self.function(*args, **kwargs)
 
+		started_at = time.monotonic()
+		status = 200
 		try:
 			if self.central_only:
 				require_central_identity()
@@ -370,11 +374,27 @@ class RouteHandler:
 			if frappe.flags.in_test:
 				return result
 
-			return build_response(result, self.router.default_headers)
-		except HTTPException:
+			response = build_response(result, self.router.default_headers)
+			status = response.status_code
+			return response
+		except HTTPException as exception:
+			status = (
+				exception.response.status_code if exception.response is not None else exception.code or 500
+			)
 			raise
 		except Exception as exception:
-			raise HTTPException(response=self.build_error_response(exception))
+			error_response = self.build_error_response(exception)
+			status = error_response.status_code
+			raise HTTPException(response=error_response)
+		finally:
+			self.record_request(request.method, status, time.monotonic() - started_at)
+
+	def record_request(self, method: str, status: int, duration: float) -> None:
+		"""Count one API request by operation. A change request is also observed."""
+		labels = {"operation": self.function.__name__, "method": method, "status": str(status)}
+		count("atlas_api_requests_total", **labels)
+		if method not in ("GET", "HEAD"):
+			observe("atlas_api_request_duration_seconds", duration, **labels)
 
 	def read_parameters(self, request: Request, args: tuple, kwargs: dict) -> dict[str, Any]:
 		"""Decode the query and payload parameters that the caller did not supply."""

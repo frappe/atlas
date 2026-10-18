@@ -2,11 +2,14 @@ package migration
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/frappe/atlas/metal/internal/patches"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -47,6 +50,55 @@ func TestAColdCopyReportsCopyingUntilTheFinalSnapshotArrives(t *testing.T) {
 	record.Intervals = []TransferProgress{{Sequence: 1, Completed: true}}
 	if phase := record.progress().Phase; phase != PhaseStopping {
 		t.Fatalf("live cutover phase = %s, want %s", phase, PhaseStopping)
+	}
+}
+
+func TestMemoryProgressSurvivesReloadAndTerminalCleanup(t *testing.T) {
+	store := newMigrationStore(t.TempDir())
+	record := newDestinationRecord()
+	record.HasMemorySnapshot = true
+	for _, step := range []struct {
+		state   destinationState
+		stopped bool
+		failure bool
+		want    string
+	}{
+		{destinationPreparing, false, false, "not_started"},
+		{destinationCopying, false, false, "not_started"},
+		{destinationStopping, false, false, "creating"},
+		{destinationStopping, true, false, "transferring"},
+		{destinationCreatingNetwork, true, false, "restoring"},
+		{destinationApplyingState, true, false, "restoring"},
+		{destinationReady, true, false, "completed"},
+		{destinationFinishing, true, false, "completed"},
+		{destinationFailed, true, true, "failed"},
+		{destinationRemovingRuntime, true, true, "failed"},
+		{destinationRestoringSource, true, false, "aborted"},
+		{destinationCompleted, true, false, "completed"},
+		{destinationAborted, true, false, "aborted"},
+	} {
+		record.State, record.SourceStopped = step.state, step.stopped
+		record.Error = nil
+		if step.failure {
+			record.Error = &vm.OperationError{Code: "transfer_failed"}
+		}
+		if step.state.terminal() {
+			record = terminalDestinationRecord(record, step.state, time.Now().UTC())
+		}
+		if err := store.writeDestination(record); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := store.readDestination(record.VirtualMachineID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := loaded.progress().MemorySnapshotStatus; got != step.want {
+			t.Fatalf("%s: snapshot status = %s, want %s", step.state, got, step.want)
+		}
+		loaded.HasMemorySnapshot = false
+		if got := loaded.progress().MemorySnapshotStatus; got != "" {
+			t.Fatalf("disk-only migration reported snapshot status %s", got)
+		}
 	}
 }
 
@@ -136,6 +188,46 @@ func TestSourceRecordRoundTrips(t *testing.T) {
 	}
 	if got.OriginalDesired != vm.StateRunning {
 		t.Fatalf("source record = %+v", got)
+	}
+}
+
+func TestMemoryMigrationPatchKeepsLegacyRecordsReadable(t *testing.T) {
+	baseDirectory := t.TempDir()
+	store := newMigrationStore(filepath.Join(baseDirectory, "machines"))
+	source := sourceRecord{
+		SchemaVersion: migrationSchemaVersion,
+		ID:            "mig-1", VirtualMachineID: "vm-1",
+		State: sourceLocked, OriginalDesired: vm.StateRunning,
+		Sequence: 2, AcknowledgedSequence: 1,
+	}
+	destination := newDestinationRecord()
+	destination.SchemaVersion = migrationSchemaVersion
+	destination.VirtualMachineID = "vm-2"
+	destination.State = destinationCopying
+	destination.Intervals = []TransferProgress{{Sequence: 1, GUID: "g1", Completed: true}}
+	if err := store.writeSource(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.writeDestination(destination); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := patches.Run(baseDirectory, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatal(err)
+	}
+	gotSource, err := store.readSource("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotSource, source) {
+		t.Fatalf("source record = %+v, want %+v", gotSource, source)
+	}
+	gotDestination, err := store.readDestination("vm-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotDestination, destination) {
+		t.Fatalf("destination record = %+v, want %+v", gotDestination, destination)
 	}
 }
 

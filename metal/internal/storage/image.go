@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/platform"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -116,7 +117,9 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 	// An import that does not reach the manifest write leaves nothing behind.
 	completed := found
 	if !found {
+		startedAt := time.Now()
 		defer func() {
+			store.recordImport(imageReference, startedAt, completed)
 			if completed {
 				return
 			}
@@ -145,6 +148,18 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 		completed = true
 	}
 	return nil
+}
+
+// recordImport logs and observes one image import, which a VM create can wait for.
+func (store *ImageStore) recordImport(imageReference string, startedAt time.Time, completed bool) {
+	result := "ok"
+	if !completed {
+		result = "failed"
+	}
+	duration := time.Since(startedAt)
+	store.telemetry.Count("metal_image_imports_total", 1, telemetry.Labels{"result": result})
+	store.telemetry.Observe("metal_image_import_duration_seconds", duration.Seconds(), telemetry.Labels{"result": result})
+	store.logger.Info("image import finished", "component", "storage", "image", imageReference, "result", result, "duration", duration)
 }
 
 // removeImageArtifacts deletes the base dataset and directory of one image.
@@ -332,7 +347,7 @@ func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64)
 		return nil, err
 	}
 	destination.device = device
-	return &sparseVolumeWriter{file: device}, nil
+	return &SparseWriter{File: device}, nil
 }
 
 func (destination *volumeDestination) commit() error {

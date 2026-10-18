@@ -21,6 +21,8 @@ import (
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
+
+	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
 type fakeVM struct {
@@ -364,7 +366,7 @@ func newServerWithServices(
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := New(Config{}, Dependencies{
+	server, err := New(Config{Telemetry: telemetry.NewRegistry(nil)}, Dependencies{
 		MetricsStore:          store,
 		VirtualMachineManager: virtualMachineManager,
 		MigrationManager:      &stubMigrationManager{},
@@ -547,19 +549,12 @@ func TestListReturnsAnArrayOfNestedResources(t *testing.T) {
 	}
 }
 
-func TestMutationRequestsRejectUnknownAndTrailingJSON(t *testing.T) {
+func TestMutationRequestsIgnoreUnknownFieldsAndRejectTrailingJSON(t *testing.T) {
 	server := newTestServer(t)
 	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
 
-	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped","unknown":true}`, http.StatusBadRequest)
+	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped","unknown":true}`, http.StatusAccepted)
 	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped"}{}`, http.StatusBadRequest)
-}
-
-func TestPowerRequestRejectsWarm(t *testing.T) {
-	server := newTestServer(t)
-	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
-
-	do(t, server, http.MethodPut, "/v1/vms/vm1/power", `{"state":"stopped","warm":true}`, http.StatusBadRequest)
 }
 
 func TestCreateRejectsLongID(t *testing.T) {
@@ -932,7 +927,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestNewRequiresAuthenticationHash(t *testing.T) {
-	_, err := New(Config{}, Dependencies{})
+	_, err := New(Config{Telemetry: telemetry.NewRegistry(nil)}, Dependencies{})
 	if err == nil {
 		t.Fatal("New accepted missing authentication configuration")
 	}
@@ -972,6 +967,9 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	}
 	if response.Capacity.TotalStorageMiB != 1000 || response.Capacity.AvailableStorageMiB != 750 {
 		t.Fatalf("storage capacity = %d/%d", response.Capacity.TotalStorageMiB, response.Capacity.AvailableStorageMiB)
+	}
+	if strings.Contains(recorder.Body.String(), "\"host_compatibility\"") {
+		t.Fatal("sync includes unavailable optional compatibility facts")
 	}
 }
 
@@ -1083,26 +1081,6 @@ func TestSyncSelectsMulticastNDPMode(t *testing.T) {
 
 	if services.unicast || services.peerSyncs != 1 {
 		t.Fatalf("unicast = %t, peer syncs = %d", services.unicast, services.peerSyncs)
-	}
-}
-
-func TestOpenAPIRescueRequestIncludesAccess(t *testing.T) {
-	server := newTestServer(t)
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/docs/swagger.json", nil))
-
-	var document struct {
-		Definitions map[string]struct {
-			Properties map[string]struct {
-				Type string `json:"type"`
-			} `json:"properties"`
-		} `json:"definitions"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
-		t.Fatal(err)
-	}
-	if document.Definitions["api.rescueRequest"].Properties["access"].Type != "string" {
-		t.Fatal("OpenAPI rescue request must describe the access field as a string")
 	}
 }
 
@@ -1306,12 +1284,12 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	}
 }
 
-func (manager *fakeVirtualMachineManager) RequestRescue(_ context.Context, id string, image vm.Image, access vm.RescueAccess) error {
+func (manager *fakeVirtualMachineManager) RequestRescue(_ context.Context, id string, image vm.Image) error {
 	machine, found := manager.virtualMachines[id]
 	if !found {
 		return vm.ErrNotFound
 	}
-	machine.info.Rescue = vm.Rescue{Enabled: true, Image: image, Access: access}
+	machine.info.Rescue = vm.Rescue{Enabled: true, Image: image}
 	return nil
 }
 
@@ -1327,7 +1305,7 @@ func (manager *fakeVirtualMachineManager) RequestRescueExit(_ context.Context, i
 func TestRescueAPIRequiresExplicitModeAndColdImage(t *testing.T) {
 	server := newTestServer(t)
 	do(t, server, http.MethodPut, "/v1/vms/vm-1", validCreateRequest, http.StatusAccepted)
-	for _, body := range []string{`{}`, `{"enabled":true}`, `{"enabled":false,"image":{}}`, `{"enabled":"true"}`, `{"enabled":false,"unknown":1}`} {
+	for _, body := range []string{`{}`, `{"enabled":true}`, `{"enabled":false,"image":{}}`, `{"enabled":"true"}`} {
 		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", body, http.StatusBadRequest)
 	}
 	var create map[string]json.RawMessage
@@ -1347,39 +1325,5 @@ func TestRescueAPIRequiresExplicitModeAndColdImage(t *testing.T) {
 		t.Fatal("response leaked artifact URL")
 	}
 	do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":false}`, http.StatusAccepted)
-}
-
-func (manager *fakeVirtualMachineManager) RequestRecoveryAction(_ context.Context, id, action string, generation uint64) error {
-	if _, ok := manager.virtualMachines[id]; !ok {
-		return vm.ErrNotFound
-	}
-	return nil
-}
-
-func TestRescueAPIAccessAcknowledgementAndDisposition(t *testing.T) {
-	server := newTestServer(t)
-	do(t, server, http.MethodPut, "/v1/vms/vm-1", validCreateRequest, http.StatusAccepted)
-	var create map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(validCreateRequest), &create); err != nil {
-		t.Fatal(err)
-	}
-	image := string(create["image"])
-	for _, selection := range []string{
-		`"access":"unprotected"`,
-		`"access":"protected","allow_unprotected":true`,
-		`"access":"read_only","allow_unprotected":true`,
-		`"access":"invalid"`,
-		`"action":"rollback"`,
-	} {
-		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":true,"image":`+image+`,`+selection+`}`, http.StatusBadRequest)
-	}
-	for _, selection := range []string{`"access":"read_only"`, `"access":"unprotected","allow_unprotected":true`} {
-		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":true,"image":`+image+`,`+selection+`}`, http.StatusAccepted)
-	}
-	for _, body := range []string{`{"enabled":false,"access":"unprotected"}`, `{"enabled":false,"allow_unprotected":true}`, `{"enabled":false,"action":"other"}`} {
-		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", body, http.StatusBadRequest)
-	}
-	for _, action := range []string{"rollback", "finish"} {
-		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":false,"action":"`+action+`","recovery_generation":1}`, http.StatusAccepted)
-	}
+	do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":false,"unknown":1}`, http.StatusAccepted)
 }

@@ -22,7 +22,6 @@
   "region_id",
   "ssh_section",
   "public_ssh_key",
-  "rescue_virtual_machine_image",
   "metald_section",
   "metald_binary_x86_64_file",
   "metald_source_hash",
@@ -46,6 +45,7 @@
   "networking_tab",
   "private_network_config_section",
   "private_network_cidr",
+  "is_migration_on_wireguard",
   "column_break_jzip",
   "private_network_mtu",
   "is_unicast_network_enabled",
@@ -142,6 +142,8 @@
   "column_break_dxsw",
   "use_dedicated_sleepy_vm_hosts",
   "sleepy_vm_overcommit_factor",
+  "migration_section",
+  "is_vm_migration_paused",
   "section_break_azkc",
   "auto_spawn_metal_server",
   "column_break_tckj",
@@ -248,6 +250,23 @@
    "fieldname": "is_unicast_network_enabled",
    "fieldtype": "Check",
    "label": "Use Unicast Networking",
+   "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "description": "Off: hosts send disk and memory snapshots over the private network. On: hosts send them over WireGuard.",
+   "fieldname": "is_migration_on_wireguard",
+   "fieldtype": "Check",
+   "label": "Migrate VM over WireGuard",
+   "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "description": "Pause VM migrations from the Virtual Machine Migration list. Pause them and wait for running ones before you change the network.",
+   "fieldname": "is_vm_migration_paused",
+   "fieldtype": "Check",
+   "label": "VM Migration Paused",
+   "read_only": 1,
    "show_description_on_click": 1
   },
   {
@@ -971,18 +990,16 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "rescue_virtual_machine_image",
-   "fieldtype": "Link",
-   "label": "Rescue Virtual Machine Image",
-   "options": "Virtual Machine Image",
-   "description": "Enabled System image tagged purpose=rescue with repair tools and the Atlas reboot hook. New sessions use this image."
+   "fieldname": "migration_section",
+   "fieldtype": "Section Break",
+   "label": "Migration"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-13 01:30:00.000000",
+ "modified": "2026-10-15 19:27:05.702712",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

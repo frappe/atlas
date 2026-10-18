@@ -44,6 +44,8 @@ wg show atlas0
 
 The service also applies table `inet atlas_atlas0`. It admits TCP `22`, `80`, `443`, and `2222` on `atlas0`, plus ICMPv6 and replies.
 
+On a machine with NetworkManager, the install script marks `atlas0` as unmanaged. Otherwise NetworkManager removes the `atlas0` address when the desktop disconnects the link. If the development listener reports that no interface has its address, run the install script again.
+
 To change the TCP ports, run the install script again with `ATLAS_WIREGUARD_TCP_PORTS`. For a development listener on port `8000`, set the value to `"22, 80, 443, 2222, 8000"`.
 
 WireGuard needs no port on `atlas0`, because Atlas starts every handshake from the uplink.
@@ -93,7 +95,7 @@ Atlas reads the VM host for each connection. The guest needs no public address f
 | --- | --- |
 | WireGuard UDP | The private network, and the local atlas-vm (`tap-atlas`). |
 | SSH and Metal control `9000` | The Atlas address on `wg0`. |
-| Migration `9001` and `9002` | Host addresses on `wg0`. |
+| Migration `9001` and `9002` | Host addresses on `wg0`, and the private network on the private uplink. |
 | SSH for recovery | The private network on the private uplink. |
 | ICMP, DHCP, and replies | Any address. |
 

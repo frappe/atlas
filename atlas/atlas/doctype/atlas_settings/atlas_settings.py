@@ -77,9 +77,11 @@ class AtlasSettings(Document):
 		ipv6_router_package_hash: DF.Data | None
 		is_dns_setup_completed: DF.Check
 		is_letsencrypt_staging: DF.Check
+		is_migration_on_wireguard: DF.Check
 		is_server_provider_setup_completed: DF.Check
 		is_setup_completed: DF.Check
 		is_unicast_network_enabled: DF.Check
+		is_vm_migration_paused: DF.Check
 		is_wildcard_tls_auto_renew_enabled: DF.Check
 		jwt_signing_key_id: DF.Data | None
 		jwt_signing_private_key: DF.Password | None
@@ -107,7 +109,6 @@ class AtlasSettings(Document):
 		public_ssh_key: DF.SmallText
 		region_id: DF.Int
 		region_name: DF.Data
-		rescue_virtual_machine_image: DF.Link | None
 		route53_access_key_id: DF.Data | None
 		route53_access_key_secret: DF.Password | None
 		route53_dns_zone_id: DF.Data | None
@@ -180,6 +181,11 @@ class AtlasSettings(Document):
 		return f"atlas-wg-gateway:{self.region_id}"
 
 	@property
+	def datum_audience_id(self) -> str:
+		"""Return the audience that a token for the regional Datum must carry."""
+		return f"atlas-datum:{self.region_id}"
+
+	@property
 	def issuer(self) -> str:
 		"""Return this region's Atlas issuer."""
 		return f"atlas:{self.region_id}"
@@ -243,8 +249,7 @@ class AtlasSettings(Document):
 			frappe.throw(_("Unknown placement strategy: {0}.").format(self.placement_strategy))
 
 		self._validate_sleepy_vm_overcommit_factor()
-		if self.rescue_virtual_machine_image:
-			frappe.get_doc("Virtual Machine Image", self.rescue_virtual_machine_image).validate_rescue_image()
+		self._validate_vm_migration_network_change()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
 			if frappe.db.exists("Virtual Machine") or frappe.db.exists(
@@ -285,6 +290,27 @@ class AtlasSettings(Document):
 				_("Region name {0} must make host titles one lowercase DNS label.").format(self.region_name)
 			)
 
+	def _validate_vm_migration_network_change(self) -> None:
+		"""Allow a network change only while VM migrations are paused and none is running."""
+		if self.is_new():
+			return
+
+		if self.has_value_changed("is_vm_migration_paused"):
+			frappe.throw(_("Use Pause or Resume in the Virtual Machine Migration list."))
+
+		if not self.has_value_changed("is_migration_on_wireguard"):
+			return
+
+		from atlas.vm.core.vm_migration import has_running_migration
+
+		if not frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused", cache=False):
+			frappe.throw(_("Pause VM migrations before you change the migration network."))
+
+		if has_running_migration():
+			frappe.throw(
+				_("Wait for running VM migrations to finish before you change the migration network.")
+			)
+
 	def _validate_sleepy_vm_overcommit_factor(self) -> None:
 		factor = flt(self.sleepy_vm_overcommit_factor)
 		if not isfinite(factor) or factor < 1.0:
@@ -296,6 +322,17 @@ class AtlasSettings(Document):
 		"""Skip provider checks when the empty settings document is created."""
 		if self.flags.in_insert:
 			return
+
+		if self.has_value_changed("is_migration_on_wireguard"):
+			frappe.msgprint(
+				_(
+					"Each host keeps its old migration network until you run Upgrade Metald on it. "
+					"A migration from a host that is not upgraded fails. "
+					"Upgrade every Metal Server, then click Resume VM Migrations in the Virtual Machine Migration list."
+				),
+				title=_("Upgrade Metald on every host"),
+				indicator="orange",
+			)
 
 		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
 			self.server_provider_controller.validate_credentials()

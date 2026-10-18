@@ -176,11 +176,6 @@ def build_ubuntu_base_image(
 @click.command("build-ubuntu-rescue-image")
 @click.option("--title", default="ubuntu-24.04-rescue", show_default=True)
 @click.option(
-	"--set-default-if-missing",
-	is_flag=True,
-	help="Configure rescue mode without replacing an existing image selection.",
-)
-@click.option(
 	"--skip-existing", is_flag=True, help="Skip sites with an Available rescue image of this title."
 )
 @click.option(
@@ -199,7 +194,6 @@ def build_ubuntu_rescue_image_command(
 	skip_existing: bool,
 	storage: str,
 	output_directory: Path,
-	set_default_if_missing: bool,
 ) -> None:
 	"""Build and publish an independent Ubuntu 24.04 amd64 rescue image."""
 	if not context.sites:
@@ -217,25 +211,6 @@ def build_ubuntu_rescue_image_command(
 		_publish_image_to_sites(
 			target_sites, title, "24.04", "amd64", image_path, kernel_path, storage, "rescue"
 		)
-	if set_default_if_missing:
-		for site in context.sites:
-			try:
-				frappe.init(site)
-				frappe.connect()
-				settings = frappe.get_doc("Atlas Settings", for_update=True)
-				if not settings.rescue_virtual_machine_image:
-					images = get_available_ubuntu_images(title, "amd64", "rescue")
-					if len(images) != 1:
-						raise click.UsageError(
-							"Select a rescue image in Atlas Settings; the title is not unique."
-						)
-					images[0].validate_rescue_image()
-					frappe.db.set_single_value(
-						"Atlas Settings", "rescue_virtual_machine_image", images[0].name
-					)
-					frappe.db.commit()  # nosemgrep
-			finally:
-				frappe.destroy()
 
 
 def _publish_image_to_sites(

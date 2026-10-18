@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -13,16 +16,26 @@ import (
 )
 
 type options struct {
-	cfg                firecracker.Config
-	pool, imagesDir    string
-	listen             string
-	baseDir            string
-	wireGuardName      string
-	mesh               meshOptions
-	trafficMonitor     trafficMonitorOptions
-	migration          migrationOptions
-	tls                tlsOptions
-	coordinationListen string
+	configFile            string
+	cfg                   firecracker.Config
+	pool, imagesDir       string
+	listen                string
+	baseDir               string
+	wireGuardName         string
+	mesh                  meshOptions
+	trafficMonitor        trafficMonitorOptions
+	migration             migrationOptions
+	tls                   tlsOptions
+	telemetry             telemetryOptions
+	coordinationListen    string
+	isCPUTemplateDisabled bool
+}
+
+// telemetryOptions configures the metric push to Datum. Atlas writes datum_url
+// and datum_token into [telemetry], and the push client reads them itself.
+type telemetryOptions struct {
+	interval          time.Duration
+	restartCountUnits []string
 }
 
 type tlsOptions struct {
@@ -66,6 +79,14 @@ func defaultOptions() options {
 		trafficMonitor:     trafficMonitorOptions{enabled: true},
 		migration:          migrationOptions{finalDeltaMiB: 512, transferPort: 9002},
 		coordinationListen: "127.0.0.1:9001",
+		configFile:         defaultConfigPath,
+		telemetry: telemetryOptions{
+			interval: 30 * time.Second,
+			restartCountUnits: []string{
+				"metal.service", "atlas-host-firewall.service", "wg-quick@wg0.service", "vector.service",
+				"ssh.service", "chrony.service", "systemd-timesyncd.service", "zfs-zed.service",
+			},
+		},
 		// TCP host:port by default; "unix:/path" for a unix socket instead.
 		listen: "127.0.0.1:8080",
 	}
@@ -89,6 +110,12 @@ type fileConfig struct {
 	Traffic     trafficFile     `toml:"traffic_monitor"`
 	Migration   migrationFile   `toml:"migration"`
 	TLS         tlsFile         `toml:"tls"`
+	Telemetry   telemetryFile   `toml:"telemetry"`
+}
+
+type telemetryFile struct {
+	Interval          *tomlDuration `toml:"interval"`
+	RestartCountUnits []string      `toml:"restart_count_units"`
 }
 
 type tlsFile struct {
@@ -120,8 +147,10 @@ type metaldFile struct {
 }
 
 type firecrackerFile struct {
-	BinaryPath string `toml:"binary_path"`
-	SocketsDir string `toml:"sockets_dir"`
+	BinaryPath          string `toml:"binary_path"`
+	SocketsDir          string `toml:"sockets_dir"`
+	CPUTemplateFile     string `toml:"cpu_template_file"`
+	CPUTemplateDisabled bool   `toml:"cpu_template_disabled"`
 }
 
 type jailerFile struct {
@@ -148,14 +177,27 @@ type trafficFile struct {
 }
 
 type migrationFile struct {
-	FinalDeltaMiB *int `toml:"final_delta_mib"`
-	TransferPort  *int `toml:"transfer_port"`
+	FinalDeltaMiB   *int  `toml:"final_delta_mib"`
+	TransferPort    *int  `toml:"transfer_port"`
+	RequireGuestSSH *bool `toml:"require_guest_ssh"`
 }
 
 func load(path string) (options, error) {
 	resolvedOptions := defaultOptions()
 	if err := applyFile(&resolvedOptions, path); err != nil {
 		return options{}, err
+	}
+	// A host without the baseline boots its VMs without a template and reports why.
+	if len(resolvedOptions.cfg.CPUTemplate) == 0 {
+		template, err := firecracker.DefaultCPUTemplate()
+		switch {
+		case errors.Is(err, firecracker.ErrUnsupportedCPUTemplate):
+			resolvedOptions.cfg.DefaultCPUTemplateError = err.Error()
+		case err != nil:
+			return options{}, fmt.Errorf("select default CPU template: %w", err)
+		case !resolvedOptions.isCPUTemplateDisabled:
+			resolvedOptions.cfg.CPUTemplate = template
+		}
 	}
 	resolvedOptions.deriveDirs()
 	return resolvedOptions, nil
@@ -168,6 +210,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	if path == "" {
 		path = defaultConfigPath
 	}
+	resolvedOptions.configFile = path
 	var fc fileConfig
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !explicit {
@@ -180,6 +223,21 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.coordinationListen, fc.Metald.CoordinationListen)
 	overlay(&resolvedOptions.cfg.FirecrackerBin, fc.Firecracker.BinaryPath)
 	overlay(&resolvedOptions.cfg.SocketsDir, fc.Firecracker.SocketsDir)
+	if fc.Firecracker.CPUTemplateDisabled && fc.Firecracker.CPUTemplateFile != "" {
+		return errors.New("set firecracker.cpu_template_disabled or firecracker.cpu_template_file, not both")
+	}
+	resolvedOptions.isCPUTemplateDisabled = fc.Firecracker.CPUTemplateDisabled
+	if fc.Firecracker.CPUTemplateFile != "" {
+		template, err := os.ReadFile(fc.Firecracker.CPUTemplateFile)
+		if err != nil {
+			return fmt.Errorf("read CPU template: %w", err)
+		}
+		template = bytes.TrimSpace(template)
+		if len(template) == 0 || !json.Valid(template) || template[0] != '{' {
+			return fmt.Errorf("CPU template %s must be a JSON object", fc.Firecracker.CPUTemplateFile)
+		}
+		resolvedOptions.cfg.CPUTemplate = template
+	}
 	overlay(&resolvedOptions.cfg.JailerBin, fc.Jailer.BinaryPath)
 	overlay(&resolvedOptions.pool, fc.ZFS.Pool)
 	overlay(&resolvedOptions.wireGuardName, fc.WireGuard.Interface)
@@ -190,10 +248,20 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlayBool(&resolvedOptions.trafficMonitor.enabled, fc.Traffic.Enabled)
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)
+	overlayBool(&resolvedOptions.cfg.RequireMigratedGuestSSH, fc.Migration.RequireGuestSSH)
 	overlay(&resolvedOptions.tls.caFile, fc.TLS.CAFile)
 	overlay(&resolvedOptions.tls.certificateFile, fc.TLS.CertificateFile)
 	overlay(&resolvedOptions.tls.privateKeyFile, fc.TLS.PrivateKeyFile)
 	overlay(&resolvedOptions.tls.atlasCommonName, fc.TLS.AtlasCommonName)
+	if fc.Telemetry.Interval != nil {
+		if fc.Telemetry.Interval.Duration <= 0 {
+			return fmt.Errorf("config %s: telemetry.interval must be positive", path)
+		}
+		resolvedOptions.telemetry.interval = fc.Telemetry.Interval.Duration
+	}
+	if fc.Telemetry.RestartCountUnits != nil {
+		resolvedOptions.telemetry.restartCountUnits = fc.Telemetry.RestartCountUnits
+	}
 	return nil
 }
 

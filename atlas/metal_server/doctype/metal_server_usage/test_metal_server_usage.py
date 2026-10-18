@@ -30,6 +30,99 @@ CAPACITY = {
 
 
 class TestServerUsage(UnitTestCase):
+	def test_sync_persists_changed_compatibility_only(self) -> None:
+		report = {
+			"architecture": "amd64",
+			"cpu_profile": "custom:baseline",
+			"cpu_vendor": "GenuineIntel",
+			"cpu_model": "6/58",
+			"cpu_features": "fpu sse",
+			"snapshot_host": "build",
+			"tsc_khz": 2_500_000,
+			"tsc_scaling": True,
+		}
+		stored = frappe.as_json({**report, "default_cpu_template_error": ""})
+		for compatibility, previous, changed in (
+			(report, None, True),
+			(report, stored, False),
+			(None, stored, True),
+			(None, None, False),
+			(None, "", False),
+			({}, stored, True),
+		):
+			with self.subTest(compatibility=compatibility, previous=previous):
+				server = Mock(
+					private_network_mac_address=None,
+					host_compatibility_report=previous,
+					tsc_scaling_supported=bool(previous),
+				)
+				server.name = "server-1"
+				client = Mock()
+				client.sync.return_value = {"capacity": CAPACITY, "host_compatibility": compatibility}
+				with (
+					patch("atlas.metal_server.usage.frappe.get_doc", return_value=server),
+					patch("atlas.metal_server.usage.MetalClient", return_value=client),
+					patch("atlas.metal_server.usage.get_desired_images", return_value=[]),
+					patch("atlas.metal_server.usage.store_reported_states"),
+					patch("atlas.metal_server.usage.frappe.db.set_value") as set_value,
+					patch("atlas.metal_server.usage.frappe.log_error") as log_error,
+				):
+					sync_server("server-1", [], [], False)
+				server.insert.assert_called_once()
+				if changed:
+					set_value.assert_called_once_with(
+						"Metal Server",
+						"server-1",
+						{
+							"host_compatibility_report": stored if compatibility == report else None,
+							"tsc_scaling_supported": compatibility == report,
+						},
+						update_modified=False,
+					)
+				else:
+					set_value.assert_not_called()
+				if compatibility == {}:
+					log_error.assert_called_once()
+
+	def test_sync_disables_the_cpu_template_on_a_host_that_cannot_run_it(self) -> None:
+		report = {
+			"architecture": "amd64",
+			"cpu_profile": "native",
+			"cpu_vendor": "GenuineIntel",
+			"cpu_model": "6/58",
+			"cpu_features": "fpu sse",
+			"snapshot_host": "build",
+			"tsc_khz": 2_500_000,
+			"tsc_scaling": False,
+			"default_cpu_template_error": "host CPU does not support the built-in CPU template: missing avx2",
+		}
+		for is_disabled in (0, 1):
+			with self.subTest(is_disabled=is_disabled):
+				server = Mock(
+					private_network_mac_address=None,
+					host_compatibility_report=frappe.as_json(report),
+					tsc_scaling_supported=0,
+					is_cpu_template_disabled=is_disabled,
+				)
+				server.name = "server-1"
+				client = Mock()
+				client.sync.return_value = {"capacity": CAPACITY, "host_compatibility": report}
+				with (
+					patch("atlas.metal_server.usage.frappe.get_doc", return_value=server),
+					patch("atlas.metal_server.usage.MetalClient", return_value=client),
+					patch("atlas.metal_server.usage.get_desired_images", return_value=[]),
+					patch("atlas.metal_server.usage.store_reported_states"),
+					patch("atlas.metal_server.usage.frappe.db.set_value") as set_value,
+				):
+					sync_server("server-1", [], [], False)
+
+				if is_disabled:
+					set_value.assert_not_called()
+				else:
+					set_value.assert_called_once_with(
+						"Metal Server", "server-1", "is_cpu_template_disabled", 1, update_modified=False
+					)
+
 	def test_sync_logs_a_metal_connection_failure(self) -> None:
 		server = SimpleNamespace(name="server-1")
 		client = Mock()
@@ -206,7 +299,9 @@ class TestServerUsage(UnitTestCase):
 			self.assertEqual(get_wireguard_peers(), [])
 
 	def test_sync_stores_the_reported_private_network_mac_address(self) -> None:
-		server = Mock(private_network_mac_address=None)
+		server = Mock(
+			private_network_mac_address=None, host_compatibility_report=None, tsc_scaling_supported=0
+		)
 		server.name = "server-1"
 		client = Mock()
 		client.sync.return_value = {"capacity": CAPACITY, "private_network_mac_address": "aa:bb:cc:dd:ee:07"}

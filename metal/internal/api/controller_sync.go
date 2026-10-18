@@ -41,11 +41,25 @@ type wireGuardPeerRequest struct {
 // syncResponse returns host capacity and virtual machine state in the same
 // exchange as the sync.
 type syncResponse struct {
-	Capacity capacityResponse `json:"capacity"`
+	HostCompatibility *hostCompatibilityResponse `json:"host_compatibility,omitempty"`
+	Capacity          capacityResponse           `json:"capacity"`
 	// VirtualMachines maps a VM identifier to its last observed state.
 	VirtualMachines map[string]virtualMachineStateResponse `json:"virtual_machines"`
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string `json:"private_network_mac_address,omitempty"`
+}
+
+type hostCompatibilityResponse struct {
+	Architecture string `json:"architecture"`
+	CPUProfile   string `json:"cpu_profile"`
+	CPUVendor    string `json:"cpu_vendor"`
+	CPUModel     string `json:"cpu_model"`
+	CPUFeatures  string `json:"cpu_features"`
+	SnapshotHost string `json:"snapshot_host"`
+	TSCKHz       int    `json:"tsc_khz"`
+	TSCScaling   bool   `json:"tsc_scaling"`
+	// DefaultCPUTemplateError is empty when the host can run the built-in CPU template.
+	DefaultCPUTemplateError string `json:"default_cpu_template_error,omitempty"`
 }
 
 // virtualMachineStateResponse is the state of one virtual machine on this host.
@@ -115,8 +129,8 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	if err != nil {
 		return synchronizationFailure(err)
 	}
-
 	return c.JSON(http.StatusOK, syncResponse{
+		HostCompatibility: (*hostCompatibilityResponse)(result.Compatibility),
 		Capacity:          capacityResponseFromHost(result.Capacity),
 		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachineStates),
 		PrivateNetworkMAC: result.PrivateNetworkMAC,

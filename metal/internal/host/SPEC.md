@@ -20,6 +20,7 @@ The `host` package applies the controller-owned sets: WireGuard peers, image pol
 
 - `Service` holds no state. Each injected service owns the state it applies.
 - The mesh service is nil when Atlas WG Mesh is disabled.
+- `Dependencies.Compatibility` holds the immutable facts that metald captures at startup. Each `SyncResult` returns the same optional report. Atlas owns compatibility decisions. See [host sync](../../../docs/region/host-sync.md).
 
 ## Synchronize
 
