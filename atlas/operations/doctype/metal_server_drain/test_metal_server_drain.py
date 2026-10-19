@@ -87,13 +87,14 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		drain.submit()
 		return drain.name
 
-	def create_migration(self, virtual_machine, **_options) -> str:
+	def create_migration(self, virtual_machine, metal_server_drain: str, **_options) -> str:
 		migration = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Migration",
 				"name": str(uuid4()),
 				"virtual_machine": virtual_machine.name,
 				"source_metal_server": self.source,
+				"metal_server_drain": metal_server_drain,
 				"status": "scheduled",
 			}
 		)
@@ -107,7 +108,8 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 
 	def settle_last_migration(self, drain: MetalServerDrain, status: str) -> None:
 		row = drain.migrations[-1]
-		frappe.db.set_value("Virtual Machine Migration", row.virtual_machine_migration, "status", status)
+		migration = frappe.get_doc("Virtual Machine Migration", row.virtual_machine_migration)
+		migration.db_set("status", status)
 		if status == "completed":
 			frappe.db.set_value("Virtual Machine", row.virtual_machine, "server", self.destination)
 
@@ -159,6 +161,18 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 			[(virtual_machine, None, "failed")],
 		)
 		self.assertEqual(drain.status, "Failed")
+
+	def test_a_cancelled_drain_still_records_the_result_of_its_migration(self) -> None:
+		self.insert_virtual_machine()
+		name = self.submit_drain()
+		drain = self.step(name)
+		frappe.get_doc("Metal Server Drain", name).cancel()
+
+		self.settle_last_migration(drain, "failed")
+
+		drain = frappe.get_doc("Metal Server Drain", name)
+		self.assertEqual(drain.status, "Cancelled")
+		self.assertEqual(drain.migrations[-1].status, "failed")
 
 	def test_a_cancelled_drain_starts_no_migration(self) -> None:
 		self.insert_virtual_machine()

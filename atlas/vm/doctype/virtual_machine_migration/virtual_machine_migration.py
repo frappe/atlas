@@ -67,6 +67,20 @@ class VirtualMachineMigration(Document):
 		MigrationService.schedule(self)
 		reconcile_migration(self.name)
 
+	def on_change(self) -> None:
+		"""Copy the status, progress, and destination into the drain row of this migration."""
+		if self.metal_server_drain:
+			frappe.db.set_value(
+				"Metal Server Drain Migration",
+				{"virtual_machine_migration": self.name},
+				{
+					"status": self.status,
+					"progress_percent": self.progress_percent,
+					"destination_metal_server": self.destination_metal_server,
+				},
+				update_modified=False,
+			)
+
 	def before_save(self) -> None:
 		"""Allow only the migration worker to change an existing record."""
 		if not self.is_new() and not getattr(self.flags, "updated_by_vm_migration_worker", False):

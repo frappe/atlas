@@ -99,14 +99,12 @@ class MetalServerDrain(Document):
 		self.finish("Cancelled")
 
 	def run_next_step(self) -> None:
-		"""Copy the active migration into its row, then start the next migration or finish the drain."""
+		"""Start the next migration when the active one has finished, or finish the drain."""
 		active_row = self.migrations[-1] if self.migrations else None
 		is_ready = (not active_row or self.has_finished(active_row)) and not self.is_waiting
 
 		# Start before any write: create reads the VM state from Metal, so no drain row may be locked.
 		has_started = self.start_next_migration() if is_ready else False
-		if active_row:
-			self.copy_migration(active_row)
 		self.update_progress()
 
 		if is_ready and not has_started:
@@ -173,19 +171,6 @@ class MetalServerDrain(Document):
 			order_by="creation asc",
 			pluck="name",
 		)
-
-	def copy_migration(self, row: MetalServerDrainMigration) -> None:
-		"""Copy the status, progress, and destination of the migration into its row."""
-		if not row.virtual_machine_migration:
-			return
-		values = frappe.db.get_value(
-			"Virtual Machine Migration",
-			row.virtual_machine_migration,
-			["status", "progress_percent", "destination_metal_server"],
-			as_dict=True,
-		)
-		if any(row.get(field) != value for field, value in values.items()):
-			row.db_set(values, update_modified=False)
 
 	def update_progress(self) -> None:
 		"""Store the share of VMs that this drain moved off the source."""
