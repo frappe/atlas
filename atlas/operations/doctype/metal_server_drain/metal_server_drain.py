@@ -12,7 +12,7 @@ from frappe.model.document import Document
 from frappe.utils import now_datetime, time_diff_in_seconds
 
 from atlas.atlas.core.exceptions import AtlasUserError
-from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService
+from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService, get_active_migrations
 
 if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
@@ -184,9 +184,7 @@ class MetalServerDrain(Document):
 		if frappe.db.get_value(self.doctype, self.name, "status", for_update=True) != "Running":
 			return
 		# A migration that this drain did not start can still move a VM off the source.
-		if frappe.db.exists(
-			"Virtual Machine", {"server": self.source_metal_server, "active_migration": ("is", "set")}
-		):
+		if get_active_migrations(self.source_metal_server):
 			return
 
 		self.refresh_migration_rows()

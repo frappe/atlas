@@ -170,6 +170,17 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.assertEqual(drain.migrations[-1].status, "completed")
 		self.assertEqual(drain.progress_percent, 100)
 
+	def test_waits_while_another_migration_moves_a_virtual_machine_off_the_source(self) -> None:
+		virtual_machine = self.insert_virtual_machine()
+		migration = self.create_migration(frappe.get_doc("Virtual Machine", virtual_machine), None)
+		frappe.db.set_value("Virtual Machine", virtual_machine, "active_migration", migration)
+		name = self.submit_drain()
+
+		drain = self.step(name)
+
+		self.assertEqual(drain.status, "Running")
+		self.assertEqual(drain.migrations, [])
+
 	def test_retries_a_failed_virtual_machine_after_the_others(self) -> None:
 		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
 		name = self.submit_drain(retry_failed_migrations=1)
