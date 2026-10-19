@@ -60,6 +60,18 @@ class TestMetalServerDrain(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "at least 1"):
 			drain.insert()
 
+	def test_start_submits_a_drain_with_the_chosen_options(self) -> None:
+		drain = MetalServerDrain.start(
+			self.source, destinations=[self.destination], retry_failed_migrations=True, parallel_migrations=2
+		)
+
+		self.assertEqual((drain.docstatus, drain.status), (1, "Running"))
+		self.assertEqual([row.metal_server for row in drain.destinations], [self.destination])
+		self.assertEqual(
+			(drain.allow_any_destination, drain.retry_failed_migrations, drain.parallel_migrations), (0, 1, 2)
+		)
+		self.assertEqual(MetalServerDrain.start(self.destination).allow_any_destination, 1)
+
 	def test_requires_a_destination_unless_any_is_allowed(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "Add a destination"):
 			self.new_drain([]).insert()

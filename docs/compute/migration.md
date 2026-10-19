@@ -32,11 +32,11 @@ Use a **Metal Server Drain**. It migrates the VMs of one source Metal Server, ol
 
 | Step | Action |
 | --- | --- |
-| 1 | Create a Metal Server Drain and select the **Source Metal Server**. |
-| 2 | Keep **Allow Any Destination**, or clear it and add the destination Metal Servers. |
+| 1 | Open **Dangerous Actions → Drain Server** on the Metal Server form. Or create a Metal Server Drain and select the **Source Metal Server**. |
+| 2 | Keep **Allow Any Destination**, or clear it and add the destination Metal Servers. In the dialog, leave **Destination Metal Servers** empty for any destination. |
 | 3 | Set **Memory Snapshot** and **Allow Disk-Only Fallback**. They apply to each migration. |
 | 4 | Optionally select **Retry Failed Migrations**. Set **Parallel Migrations**. The default is 1. |
-| 5 | Submit the drain. Follow the **Migrations** table. |
+| 5 | Select **Drain** in the dialog, or submit the drain. Follow the **Migrations** table. |
 
 A source can have one running drain. Submit sets **In Maintenance** on the source, so placement puts no new VM there. The flag stays set after the drain. Clear it on the Metal Server when the host can take VMs again.
 
