@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe.utils import now_datetime
@@ -71,7 +71,7 @@ def sync_server(
 	unicast: bool,
 ) -> None:
 	"""Exchange state with one host, then store its capacity, VM states, and private network MAC."""
-	server = cast("MetalServer", frappe.get_doc("Metal Server", server_name))
+	server: MetalServer = frappe.get_doc("Metal Server", server_name)
 	try:
 		response = MetalClient(server).sync(
 			wireguard_peers,
@@ -133,10 +133,8 @@ def get_desired_images() -> list[dict[str, Any]]:
 		filters={"enabled": 1, "status": "Available", "cache_image": 1},
 		pluck="name",
 	)
-	return [
-		cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)).get_desired_image()
-		for name in names
-	]
+	images: list[VirtualMachineImage] = [frappe.get_doc("Virtual Machine Image", name) for name in names]
+	return [image.get_desired_image() for image in images]
 
 
 def get_privileged_vm_addresses() -> list[str]:

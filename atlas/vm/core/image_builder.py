@@ -5,7 +5,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import click
 import frappe
@@ -130,7 +130,7 @@ def get_available_ubuntu_images(title: str, architecture: str) -> list[VirtualMa
 		filters={"title": title, "architecture": architecture, "image_type": "system", "status": "Available"},
 		pluck="name",
 	)
-	return [cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names]
+	return [frappe.get_doc("Virtual Machine Image", name) for name in names]
 
 
 def upload_to_object_storage(image_name: str, image_path: Path, kernel_path: Path) -> dict[str, str]:

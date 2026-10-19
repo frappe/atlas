@@ -112,7 +112,7 @@ class VirtualMachineService:
 	@staticmethod
 	def get_image(image_name: str, tenant_id: int) -> VirtualMachineImage:
 		"""Return one enabled and available virtual machine image."""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		if not image.is_visible_to_tenant(tenant_id):
 			frappe.throw(
 				_("Virtual Machine Image {0} is not available.").format(image.title),
@@ -153,7 +153,7 @@ class VirtualMachineService:
 			}
 		)
 		virtual_machine.flags.created_by_virtual_machine_api = True
-		return cast("VirtualMachine", virtual_machine.insert())
+		return virtual_machine.insert()
 
 	def get_metal_request(
 		self,
@@ -503,7 +503,7 @@ class VirtualMachineService:
 	@property
 	def metal_client(self) -> MetalClient:
 		"""Return a Metal client for the assigned Server."""
-		server = cast("MetalServer", frappe.get_doc("Metal Server", self.virtual_machine.server))
+		server: MetalServer = frappe.get_doc("Metal Server", self.virtual_machine.server)
 		return MetalClient(server)
 
 	@staticmethod
