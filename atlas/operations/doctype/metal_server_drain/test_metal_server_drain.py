@@ -109,7 +109,10 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		return migration.name
 
 	def step(self, drain_name: str) -> MetalServerDrain:
-		with patch(f"{MODULE}.MigrationService.create", side_effect=self.create_migration):
+		with (
+			patch(f"{MODULE}.MigrationService.create", side_effect=self.create_migration),
+			patch.object(frappe.db, "commit"),
+		):
 			frappe.get_doc("Metal Server Drain", drain_name).run_next_step()
 		return frappe.get_doc("Metal Server Drain", drain_name)
 
@@ -140,13 +143,12 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.assertEqual(drain.progress_percent, 100)
 		self.assertEqual([row.status for row in drain.migrations], ["completed", "completed"])
 
-	def test_keeps_parallel_migrations_running_and_starts_one_per_step(self) -> None:
+	def test_fills_every_free_parallel_slot_in_one_step(self) -> None:
 		first, second, third = (self.insert_virtual_machine() for _ in range(3))
 		name = self.submit_drain(parallel_migrations=2)
 
 		drain = self.step(name)
-		self.assertEqual([row.virtual_machine for row in drain.migrations], [first])
-		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second])
 		drain = self.step(name)
 		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second])
 
@@ -187,6 +189,7 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		with (
 			patch(f"{MODULE}.MigrationService.create", side_effect=AtlasUserError("not ready")),
 			patch.object(frappe.db, "rollback"),
+			patch.object(frappe.db, "commit"),
 		):
 			frappe.get_doc("Metal Server Drain", name).run_next_step()
 		drain = self.step(name)
@@ -196,6 +199,19 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 			[(virtual_machine, None, "failed")],
 		)
 		self.assertEqual(drain.status, "Failed")
+
+	def test_a_failed_start_is_retried_in_a_later_step(self) -> None:
+		self.insert_virtual_machine()
+		name = self.submit_drain(retry_failed_migrations=1, parallel_migrations=2)
+
+		with (
+			patch(f"{MODULE}.MigrationService.create", side_effect=AtlasUserError("not ready")),
+			patch.object(frappe.db, "rollback"),
+			patch.object(frappe.db, "commit"),
+		):
+			frappe.get_doc("Metal Server Drain", name).run_next_step()
+
+		self.assertEqual(len(frappe.get_doc("Metal Server Drain", name).migrations), 1)
 
 	def test_a_cancelled_drain_still_records_the_result_of_its_migration(self) -> None:
 		self.insert_virtual_machine()
