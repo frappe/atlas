@@ -256,89 +256,16 @@ class PlacementContext:
 		frappe.db.after_rollback.add(release)
 
 	def _host_has_capacity(self, host_name: str) -> bool:
-		"""Check host capacity while holding its placement lock."""
+		"""Check committed memory and disk of one host while holding its placement lock."""
 		memory_mib = self.requirements.memory_mib
 		disk_mib = self.requirements.disk_mib
 		if self.current_placement and self.current_placement.host_name == host_name:
 			memory_mib -= self.current_placement.memory_mib
 			disk_mib -= self.current_placement.disk_mib
-		sleepy_host_filter = self._sleepy_host_filter()
-		# The interpolated filter is a literal fragment. No caller value reaches the query.
-		rows = frappe.db.sql(  # nosemgrep
-			f"""
-				SELECT server.name
-				FROM `tabMetal Server` AS server
-				WHERE server.name = %(host_name)s
-					AND server.status = 'Running'
-					AND server.is_provisioning_completed = 1
-					AND server.is_in_maintenance = 0
-					AND server.architecture = %(architecture)s
-					{sleepy_host_filter}
-					AND COALESCE((
-						SELECT
-							GREATEST(
-								sample.available_memory_mib
-									- COALESCE((
-										SELECT SUM(vm.memory_mib)
-										FROM `tabVirtual Machine` AS vm
-										WHERE vm.server = server.name
-											AND vm.creation >= %(reservation_cutoff)s
-											AND (vm.is_draft = 1 OR vm.creation > sample.creation)
-									), 0)
-									- COALESCE((
-										SELECT SUM(IF(migration.target_memory_mib > 0, migration.target_memory_mib, vm.memory_mib))
-										FROM `tabVirtual Machine Migration` AS migration
-										INNER JOIN `tabVirtual Machine` AS vm
-											ON vm.name = migration.virtual_machine
-										WHERE migration.destination_metal_server = server.name
-											AND migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-									), 0),
-								0
-							) >= %(memory_mib)s
-							AND GREATEST(
-								sample.available_storage_mib
-									- COALESCE((
-										SELECT SUM(vm.disk_mib)
-										FROM `tabVirtual Machine` AS vm
-										WHERE vm.server = server.name
-											AND vm.creation >= %(reservation_cutoff)s
-											AND (vm.is_draft = 1 OR vm.creation > sample.creation)
-									), 0)
-									- COALESCE((
-										SELECT SUM(IF(migration.target_memory_mib > 0, migration.target_disk_mib, vm.disk_mib))
-										FROM `tabVirtual Machine Migration` AS migration
-										INNER JOIN `tabVirtual Machine` AS vm
-											ON vm.name = migration.virtual_machine
-										WHERE migration.destination_metal_server = server.name
-											AND migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-									), 0),
-								0
-							) >= %(disk_mib)s
-						FROM `tabMetal Server Usage` AS sample
-						WHERE sample.server = server.name
-							AND sample.creation >= %(capacity_cutoff)s
-						ORDER BY sample.creation DESC, sample.name DESC
-						LIMIT 1
-					), 0) = 1
-				""",
-			{
-				"host_name": host_name,
-				"architecture": self.requirements.architecture,
-				"is_sleepy": int(self.requirements.is_sleepy),
-				"memory_mib": memory_mib,
-				"disk_mib": disk_mib,
-				"capacity_cutoff": self._created_at - CAPACITY_MAXIMUM_AGE,
-				"reservation_cutoff": self._created_at - RESERVATION_MAXIMUM_AGE,
-			},
-		)
-		return bool(rows)
 
-	def _sleepy_host_filter(self) -> str:
-		"""Keep the sleepy pool apart only while the site asks for dedicated hosts."""
-		if not self.use_dedicated_sleepy_vm_hosts:
-			return ""
-
-		return "AND server.is_sleepy_vm_host = %(is_sleepy)s"
+		# CPU can be oversubscribed, so only memory and disk decide.
+		rows = self._load_capacity_rows(host_name)
+		return bool(rows) and rows[0].free_memory_mib >= memory_mib and rows[0].free_storage_mib >= disk_mib
 
 	def _find_snapshot_host(self, host_name: str) -> HostUsage | None:
 		return next((host for host in self.usage.hosts if host.name == host_name), None)

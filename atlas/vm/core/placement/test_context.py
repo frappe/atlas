@@ -301,14 +301,9 @@ class TestPlacementContext(UnitTestCase):
 
 	def test_one_pool_drops_the_sleepy_host_filter(self) -> None:
 		with patch("atlas.vm.core.placement.context.frappe.get_all", return_value=[]) as get_all:
-			placement = PlacementContext(self.requirements(), 1.0, use_dedicated_sleepy_vm_hosts=False)
+			PlacementContext(self.requirements(), 1.0, use_dedicated_sleepy_vm_hosts=False)
 
 		self.assertNotIn("is_sleepy_vm_host", get_all.call_args.kwargs["filters"])
-
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[]) as capacity_sql:
-			placement._host_has_capacity("a")
-
-		self.assertNotIn("server.is_sleepy_vm_host = %(is_sleepy)s", capacity_sql.call_args.args[0])
 
 	def test_one_pool_uses_its_own_snapshot_cache_entry(self) -> None:
 		store: dict[str, object] = {}
@@ -550,11 +545,15 @@ class TestPlacementContext(UnitTestCase):
 		self.assertFalse(placement.has_contended_hosts)
 
 	def test_select_accepts_memory_and_storage_fit_with_oversubscribed_cpu(self) -> None:
-		placement = self.context([[host_row("a", free_cpu_millicores=0)]])
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[["a"]]) as sql:
+		placement = self.context([[host_row("a")]])
+		with patch.object(
+			placement, "_load_capacity_rows", return_value=[host_row("a", free_cpu_millicores=0)]
+		):
 			self.assertTrue(placement._host_has_capacity("a"))
-
-		self.assertNotIn("available_cpu_millicores", sql.call_args.args[0])
+		with patch.object(
+			placement, "_load_capacity_rows", return_value=[host_row("a", free_memory_mib=1023)]
+		):
+			self.assertFalse(placement._host_has_capacity("a"))
 
 	def test_a_current_placement_marks_the_operation_as_a_resize(self) -> None:
 		placement = self.context(
