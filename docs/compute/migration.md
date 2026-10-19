@@ -40,7 +40,7 @@ Use a **Metal Server Drain**. It migrates the VMs of one source Metal Server one
 
 Submit sets **In Maintenance** on the source, so placement puts no new VM there. The flag stays set after the drain. Clear it on the Metal Server when the host can take VMs again.
 
-Every 5 seconds, the drain copies the status and progress of its active migration into its row. When that migration has finished, the drain starts the next one. It waits while VM migrations are paused or while another migration moves a VM off the source.
+Each migration writes its status, progress, and destination into its row when they change, also after the drain is cancelled. Every 5 seconds, the drain checks its active migration. When that migration has finished, the drain starts the next one. It waits while VM migrations are paused or while another migration moves a VM off the source.
 
 A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The error log shows the reason.
 
