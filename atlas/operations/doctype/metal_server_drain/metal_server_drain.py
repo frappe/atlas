@@ -15,9 +15,6 @@ from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService
 
 if TYPE_CHECKING:
-	from atlas.operations.doctype.metal_server_drain_migration.metal_server_drain_migration import (
-		MetalServerDrainMigration,
-	)
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 MAXIMUM_MIGRATION_ATTEMPTS = 3
@@ -49,6 +46,7 @@ class MetalServerDrain(Document):
 		finished_at: DF.Datetime | None
 		has_memory_snapshot: DF.Check
 		migrations: DF.Table[MetalServerDrainMigration]
+		parallel_migrations: DF.Int
 		progress_percent: DF.Int
 		retry_failed_migrations: DF.Check
 		source_metal_server: DF.Link
@@ -64,13 +62,11 @@ class MetalServerDrain(Document):
 		return {row.metal_server for row in self.destinations}
 
 	@property
-	def is_waiting(self) -> bool:
-		"""Return whether migrations are paused, or another migration still moves a VM off the source."""
-		return bool(
-			frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused")
-			or frappe.db.exists(
-				"Virtual Machine", {"server": self.source_metal_server, "active_migration": ("is", "set")}
-			)
+	def active_migration_count(self) -> int:
+		"""Return the number of migrations of this drain that have not finished."""
+		return frappe.db.count(
+			"Virtual Machine Migration",
+			{"metal_server_drain": self.name, "status": ("not in", list(TERMINAL_STATUSES))},
 		)
 
 	@property
@@ -80,7 +76,7 @@ class MetalServerDrain(Document):
 		return {name for name, status in last_statuses.items() if status == "failed"}
 
 	def validate(self) -> None:
-		"""Check the destination choice."""
+		"""Check the destination choice and the number of parallel migrations."""
 		destinations = [row.metal_server for row in self.destinations]
 		if not self.allow_any_destination and not destinations:
 			frappe.throw(_("Add a destination or allow any destination."))
@@ -88,6 +84,8 @@ class MetalServerDrain(Document):
 			frappe.throw(_("The Source Metal Server cannot be a destination."))
 		if len(destinations) != len(set(destinations)):
 			frappe.throw(_("Each destination can be in the drain only once."))
+		if self.parallel_migrations < 1:
+			frappe.throw(_("Parallel Migrations must be at least 1."))
 
 	def on_submit(self) -> None:
 		"""Start the drain and keep new VMs off the source."""
@@ -99,22 +97,18 @@ class MetalServerDrain(Document):
 		self.finish("Cancelled")
 
 	def run_next_step(self) -> None:
-		"""Start the next migration when the active one has finished, or finish the drain."""
-		active_row = self.migrations[-1] if self.migrations else None
-		is_ready = (not active_row or self.has_finished(active_row)) and not self.is_waiting
+		"""Start one more migration while fewer than Parallel Migrations run, or finish the drain."""
+		active_migration_count = self.active_migration_count
+		is_paused = frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused")
 
-		# Start before any write: create reads the VM state from Metal, so no drain row may be locked.
-		has_started = self.start_next_migration() if is_ready else False
-		if is_ready and not has_started:
+		# Start at most one per step, before any write: create reads the VM state from Metal,
+		# so no drain row may be locked.
+		has_started = False
+		if not is_paused and active_migration_count < self.parallel_migrations:
+			has_started = self.start_next_migration()
+		if not (is_paused or active_migration_count or has_started):
 			self.finish_after_last_migration()
 		self.update_progress()
-
-	def has_finished(self, row: MetalServerDrainMigration) -> bool:
-		"""Return whether the migration of one row has finished. A row without a migration failed to start."""
-		if not row.virtual_machine_migration:
-			return True
-		status = frappe.db.get_value("Virtual Machine Migration", row.virtual_machine_migration, "status")
-		return status in TERMINAL_STATUSES
 
 	def start_next_migration(self) -> bool:
 		"""Start a migration for the next VM on the source. Return False when no VM is left to try."""
@@ -184,6 +178,11 @@ class MetalServerDrain(Document):
 		"""Complete the drain when the source is empty. A VM that stays on the source fails it."""
 		# A cancel from Desk can commit during this step. The row lock reads its result.
 		if frappe.db.get_value(self.doctype, self.name, "status", for_update=True) != "Running":
+			return
+		# A migration that this drain did not start can still move a VM off the source.
+		if frappe.db.exists(
+			"Virtual Machine", {"server": self.source_metal_server, "active_migration": ("is", "set")}
+		):
 			return
 
 		self.refresh_migration_rows()

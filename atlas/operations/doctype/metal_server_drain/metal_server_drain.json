@@ -10,6 +10,7 @@
   "has_memory_snapshot",
   "allow_disk_only_fallback",
   "retry_failed_migrations",
+  "parallel_migrations",
   "column_break_overview",
   "status",
   "progress_percent",
@@ -62,6 +63,16 @@
    "fieldname": "retry_failed_migrations",
    "fieldtype": "Check",
    "label": "Retry Failed Migrations",
+   "show_description_on_click": 1
+  },
+  {
+   "default": "1",
+   "description": "Migrations that run at the same time.",
+   "fieldname": "parallel_migrations",
+   "fieldtype": "Int",
+   "label": "Parallel Migrations",
+   "non_negative": 1,
+   "reqd": 1,
    "show_description_on_click": 1
   },
   {
@@ -169,7 +180,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-19 17:00:00.000000",
+ "modified": "2026-10-19 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",

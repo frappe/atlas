@@ -54,6 +54,12 @@ class TestMetalServerDrain(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "only once"):
 			self.new_drain([self.destination, self.destination]).insert()
 
+	def test_requires_at_least_one_parallel_migration(self) -> None:
+		drain = self.new_drain([self.destination])
+		drain.parallel_migrations = 0
+		with self.assertRaisesRegex(frappe.ValidationError, "at least 1"):
+			drain.insert()
+
 	def test_requires_a_destination_unless_any_is_allowed(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "Add a destination"):
 			self.new_drain([]).insert()
@@ -76,12 +82,13 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		virtual_machine.db_insert()
 		return virtual_machine.name
 
-	def submit_drain(self, retry_failed_migrations: int = 0) -> str:
+	def submit_drain(self, retry_failed_migrations: int = 0, parallel_migrations: int = 1) -> str:
 		drain = frappe.get_doc(
 			{
 				"doctype": "Metal Server Drain",
 				"source_metal_server": self.source,
 				"retry_failed_migrations": retry_failed_migrations,
+				"parallel_migrations": parallel_migrations,
 			}
 		).insert()
 		drain.submit()
@@ -132,6 +139,20 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.assertEqual(drain.status, "Completed")
 		self.assertEqual(drain.progress_percent, 100)
 		self.assertEqual([row.status for row in drain.migrations], ["completed", "completed"])
+
+	def test_keeps_parallel_migrations_running_and_starts_one_per_step(self) -> None:
+		first, second, third = (self.insert_virtual_machine() for _ in range(3))
+		name = self.submit_drain(parallel_migrations=2)
+
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first])
+		drain = self.step(name)
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second])
+
+		self.settle_last_migration(drain, "completed")
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second, third])
 
 	def test_completion_repairs_a_row_that_missed_its_migration_change(self) -> None:
 		self.insert_virtual_machine()
