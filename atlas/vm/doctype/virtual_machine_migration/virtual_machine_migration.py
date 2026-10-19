@@ -82,7 +82,7 @@ class VirtualMachineMigration(Document):
 		error_message = None
 		# A completed migration can keep a transient Metal client error, so only a failure shows its error.
 		if self.status in ("failed", "aborted"):
-			error_message = ": ".join(filter(None, (self.error_code, self.error_message))) or None
+			error_message = ": ".join(part for part in (self.error_code, self.error_message) if part) or None
 
 		return {
 			"status": self.status,
