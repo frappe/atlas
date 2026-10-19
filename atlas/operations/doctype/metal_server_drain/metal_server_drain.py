@@ -97,16 +97,20 @@ class MetalServerDrain(Document):
 		self.finish("Cancelled")
 
 	def run_next_step(self) -> None:
-		"""Start one more migration while fewer than Parallel Migrations run, or finish the drain."""
-		active_migration_count = self.active_migration_count
+		"""Start migrations until Parallel Migrations run, or finish the drain when none is left."""
 		is_paused = frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused")
-
-		# Start at most one per step, before any write: create reads the VM state from Metal,
-		# so no drain row may be locked.
 		has_started = False
-		if not is_paused and active_migration_count < self.parallel_migrations:
-			has_started = self.start_next_migration()
-		if not (is_paused or active_migration_count or has_started):
+		while not is_paused and self.active_migration_count < self.parallel_migrations:
+			if not self.start_next_migration():
+				break
+			has_started = True
+			# The next create reads the VM state from Metal, so this start must hold no lock then.
+			frappe.db.commit()  # nosemgrep
+			# A failed start ends the step, so a retry of that VM waits at least one step.
+			if not self.migrations[-1].virtual_machine_migration:
+				break
+
+		if not (is_paused or has_started or self.active_migration_count):
 			self.finish_after_last_migration()
 		self.update_progress()
 
