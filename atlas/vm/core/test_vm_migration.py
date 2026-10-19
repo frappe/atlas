@@ -32,6 +32,7 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"target_disk_mib": 0,
 		"has_memory_snapshot": 0,
 		"allow_disk_only_fallback": 1,
+		"metal_server_drain": None,
 		"error_code": None,
 		"transfers": [],
 	}
@@ -354,6 +355,40 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			(requirements.cpu_millicores, requirements.memory_mib, requirements.disk_mib), (4000, 8192, 40960)
 		)
 		self.assertEqual(find_server.call_args.kwargs["exclude_servers"], {"metal-1"})
+
+	def test_a_drain_migration_places_only_on_the_drain_destinations(self) -> None:
+		service = MigrationService(
+			migration_doc(
+				status="scheduled",
+				destination_metal_server=None,
+				metal_server_drain="metal-server-drain-00001",
+			)
+		)
+		service.update = Mock()
+		drain = frappe.get_doc(
+			{
+				"doctype": "Metal Server Drain",
+				"source_metal_server": "metal-1",
+				"allow_any_destination": 0,
+				"destinations": [{"metal_server": "metal-3"}, {"metal_server": "metal-4"}],
+			}
+		)
+		documents = {"Virtual Machine": source_vm(), "Metal Server Drain": drain}
+
+		with (
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				side_effect=lambda doctype, _name: documents[doctype],
+			),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch(
+				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-3"
+			) as find_server,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+
+		self.assertEqual(find_server.call_args.kwargs["exclude_servers"], {"metal-1"})
+		self.assertEqual(find_server.call_args.kwargs["allowed_servers"], {"metal-3", "metal-4"})
 
 	def test_a_resize_migration_sends_the_target_shape_to_the_destination(self) -> None:
 		service = MigrationService(

@@ -38,6 +38,13 @@ class MetalServerDrain(Document):
 		status: DF.Literal["Draft", "Running", "Completed", "Failed", "Cancelled"]
 	# end: auto-generated types
 
+	@property
+	def allowed_destinations(self) -> set[str] | None:
+		"""Return the Metal Servers that placement may choose, or None for any of them."""
+		if self.allow_any_destination:
+			return None
+		return {row.metal_server for row in self.destinations}
+
 	def validate(self) -> None:
 		destinations = [row.metal_server for row in self.destinations]
 		if not self.allow_any_destination and not destinations:

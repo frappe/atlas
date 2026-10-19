@@ -36,6 +36,7 @@ class VirtualMachineMigration(Document):
 		memory_snapshot_status: DF.Literal[
 			"not_started", "creating", "transferring", "restoring", "completed", "failed", "aborted"
 		]
+		metal_server_drain: DF.Link | None
 		progress_percent: DF.Int
 		scheduled_at: DF.Datetime | None
 		source_metal_server: DF.Link
