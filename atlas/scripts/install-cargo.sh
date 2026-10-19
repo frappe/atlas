@@ -147,3 +147,107 @@ as_bench_user "$enrolment pilot --yes -b $q_bench install-app $q_site cargo"
 
 # The workers started before Cargo existed, so they carry none of its scheduled jobs.
 as_bench_user "pilot --yes -b $q_bench restart"
+
+# Vector ships this host's own metrics to Datum, as Cargo's install does on every node it
+# rents. Datum does not exist yet: Cargo builds it after this script ends. So Vector waits
+# on an empty credential, which Cargo -- running as the bench user -- fills when Central
+# hands it a Datum token. Every write restarts Vector, so a rotated token takes over.
+VECTOR_VERSION=0.43.1
+VECTOR_BINARY=/usr/local/bin/vector
+VECTOR_CREDENTIAL=/etc/vector/datum.env
+
+if ! "$VECTOR_BINARY" --version 2>/dev/null | grep -q "vector $VECTOR_VERSION "; then
+	target="$(uname -m)-unknown-linux-musl"
+	workdir="$(mktemp -d)"
+	curl -fsSL "https://packages.timber.io/vector/$VECTOR_VERSION/vector-$VECTOR_VERSION-$target.tar.gz" \
+		| tar -xz -C "$workdir"
+	install -m 755 "$workdir/vector-$target/bin/vector" "$VECTOR_BINARY"
+	rm -rf "$workdir"
+fi
+
+install -d -m 755 /etc/vector
+# A rerun keeps the token Cargo already wrote.
+if [ ! -f "$VECTOR_CREDENTIAL" ]; then
+	install -m 600 -o "$BENCH_USER" -g "$BENCH_USER" /dev/null "$VECTOR_CREDENTIAL"
+fi
+
+cat > /etc/vector/vector.toml <<VECTOR_TOML
+data_dir = "/var/lib/vector"
+
+[sources.host]
+type = "host_metrics"
+collectors = ["cpu", "memory", "load", "network", "disk", "filesystem"]
+scrape_interval_secs = 15
+namespace = "host"
+network.devices.excludes = ["lo", "veth*", "docker*"]
+disk.devices.excludes = ["loop*", "ram*"]
+filesystem.filesystems.excludes = ["tmpfs", "devtmpfs", "overlay", "squashfs", "proc", "sysfs", "cgroup*", "fuse*"]
+
+[transforms.labelled]
+type = "remap"
+inputs = ["host"]
+source = '''
+.tags.region = "$REGION"
+.tags.role = "cargo"
+.tags.machine = "$(hostname)"
+'''
+
+[sinks.datum]
+type = "prometheus_remote_write"
+inputs = ["labelled"]
+endpoint = "\${DATUM_ENDPOINT}/v1/ingest/remote"
+auth.strategy = "bearer"
+auth.token = "\${DATUM_TOKEN}"
+batch.timeout_secs = 60
+batch.max_events = 5000
+healthcheck.enabled = false
+buffer.when_full = "drop_newest"
+VECTOR_TOML
+chmod 644 /etc/vector/vector.toml
+
+cat > /etc/systemd/system/vector.service <<VECTOR_UNIT
+[Unit]
+Description=Machine metrics to Datum
+After=network-online.target
+Wants=network-online.target
+# Empty until Cargo has a Datum token.
+ConditionFileNotEmpty=$VECTOR_CREDENTIAL
+
+[Service]
+EnvironmentFile=$VECTOR_CREDENTIAL
+ExecStart=$VECTOR_BINARY --config /etc/vector/vector.toml
+Restart=on-failure
+RestartSec=5
+DynamicUser=true
+StateDirectory=vector
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+VECTOR_UNIT
+
+cat > /etc/systemd/system/vector-credential.path <<VECTOR_PATH
+[Unit]
+Description=Restart Vector when Cargo writes a new Datum token
+
+[Path]
+PathChanged=$VECTOR_CREDENTIAL
+
+[Install]
+WantedBy=multi-user.target
+VECTOR_PATH
+
+cat > /etc/systemd/system/vector-credential.service <<VECTOR_RESTART
+[Unit]
+Description=Restart Vector with Cargo's Datum token
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart vector.service
+VECTOR_RESTART
+
+systemctl daemon-reload
+systemctl enable vector.service
+systemctl enable --now vector-credential.path
+# Picks up a token kept from an earlier run; skipped by its condition otherwise.
+systemctl restart vector.service
