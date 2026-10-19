@@ -56,6 +56,11 @@ Naming draws the most corrections. Review every new name.
 ## Python and Frappe
 
 - Framework first: `cbool`, `get_cached_value`, `get_value(..., for_update=True)`, `advisory_lock`, `filelock`, `make_autoname`, `on_doctype_update()` for indexes, `frappe.throw(..., exc=SpecificError)`. Check Frappe source before assuming (six-field cron is valid).
+- Queries: `frappe.get_all` first, then `frappe.qb`. Raw `frappe.db.sql` only for what neither can express (`GET_LOCK`). No f-string SQL.
+- Complex query logic: split it into small named loaders that each answer one question (eligible hosts, latest sample, reservations), and combine them in Python. One loader per rule, shared by every caller; never repeat a rule in two queries. See `_load_capacity_rows` in `atlas/vm/core/placement/context.py`.
+- Before replacing a query: run the old and new code side by side on varied data (stale, draft, edge statuses) and require equal results; break the new code once to prove the check catches it. Measure the latency it adds, mainly under a lock.
+- Unit tests patch the named loader, never `frappe.db.sql`; Frappe also loads DocType metadata through it.
+- A Link to a UUID-named doctype is a MariaDB `uuid` column. `["is", "set"]` and `("!=", None)` compare it with `''` and match nothing; use `frappe.qb` `.isnotnull()`.
 - `frappe.throw`, not `assert`. One error path.
 - Set fields and `save()`; `flags.ignore_validate` when needed. No `get_value` plus `reload`, `_save_x` wrappers or low-level password writes. Optional persistence: `save: bool = True` argument.
 - Few manual commits. Loops over records: per item try, work, commit; on error rollback, `log_error`, continue. Job boundaries commit already. `# nosemgrep` only where a commit is required.
