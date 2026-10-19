@@ -82,7 +82,7 @@ class VirtualMachineImageDeletionService:
 
 	def delete(self, image_name: str) -> None:
 		"""Remove artifacts after retention, then remove an unused record."""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		if is_retaining_artifacts(image):
 			return
 		if any(
@@ -93,7 +93,8 @@ class VirtualMachineImageDeletionService:
 				image.kernel_multipart_upload_id,
 			)
 		):
-			client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
+			settings: AtlasSettings = frappe.get_single("Atlas Settings")
+			client = settings.get_object_storage_client()
 			self.abort_uploads(image, client)
 			self.delete_objects(image, client)
 		self.delete_staged_snapshot(image)
@@ -144,7 +145,7 @@ class VirtualMachineImageDeletionService:
 		if not image.source_server or not frappe.db.exists("Metal Server", image.source_server):
 			return
 
-		server = cast("MetalServer", frappe.get_doc("Metal Server", image.source_server))
+		server: MetalServer = frappe.get_doc("Metal Server", image.source_server)
 		try:
 			MetalClient(server).delete_snapshot(cast(str, image.name))
 		except MetalClientError as error:

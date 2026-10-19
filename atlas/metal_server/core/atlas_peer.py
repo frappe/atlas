@@ -5,7 +5,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import frappe
 from cryptography.hazmat.primitives import serialization
@@ -32,7 +32,7 @@ class AtlasPeer:
 	interface = "atlas0"
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
-		self.settings = settings or cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
 
 	@property
 	def directory(self) -> Path:

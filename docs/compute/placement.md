@@ -13,6 +13,8 @@ A **strategy** ranks hosts. The **capacity check** decides whether a host can ta
 
 A resize or migration first tries to stay on the current host, which then needs room only for the increase.
 
+A migration never chooses its source host. A migration that a [Metal Server Drain](migration.md#drain-a-host) starts can choose only the destinations of the drain, unless the drain allows any destination. When no destination has room, the migration tries again later. A full destination list does not mark the pool as full and does not create a host.
+
 ## Strategies
 
 Choose the strategy in **Atlas Settings**. `balanced` is the default.

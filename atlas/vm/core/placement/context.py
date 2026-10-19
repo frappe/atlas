@@ -67,6 +67,7 @@ class PlacementContext:
 		sleepy_vm_overcommit_factor: float,
 		exclude_servers: set[str] | None = None,
 		*,
+		allowed_servers: set[str] | None = None,
 		cache_snapshot: bool = False,
 		deadline: float | None = None,
 		use_dedicated_sleepy_vm_hosts: bool = True,
@@ -91,6 +92,7 @@ class PlacementContext:
 		self.last_probe_was_contended = False
 		self._deadline = deadline
 		self._excluded_servers = frozenset(exclude_servers or ())
+		self._allowed_servers = frozenset(allowed_servers) if allowed_servers is not None else None
 		self._created_at = now_datetime()
 		self._selected_host: str | None = None
 		self.usage = self._load_fleet_usage(cache_snapshot)
@@ -117,12 +119,22 @@ class PlacementContext:
 
 		return count / (PLACEMENT_RATE_WINDOW.total_seconds() / 60)
 
+	def _is_candidate(self, host_name: str) -> bool:
+		"""Return whether this placement may choose the host. Without an allowed set, every host that is not excluded is a candidate."""
+		if host_name in self._excluded_servers:
+			return False
+
+		if self._allowed_servers is None:
+			return True
+
+		return host_name in self._allowed_servers
+
 	def try_select(self, host_name: str, *, wait: bool = False) -> bool:
 		"""Hold a host lock only if its current capacity fits the request."""
 		self.last_probe_was_contended = False
 		if self._selected_host is not None:
 			raise RuntimeError("A placement host is already selected.")
-		if host_name in self._excluded_servers or not self._find_snapshot_host(host_name):
+		if not self._is_candidate(host_name) or not self._find_snapshot_host(host_name):
 			return False
 
 		self.probe_count += 1
@@ -375,7 +387,7 @@ class PlacementContext:
 	def _has_room(self, row: frappe._dict) -> bool:
 		"""Return whether a snapshot row reports room for the request, as a strategy checks it."""
 		return (
-			row.name not in self._excluded_servers
+			self._is_candidate(row.name)
 			and row.free_memory_mib >= self.requirements.memory_mib
 			and row.free_storage_mib >= self.requirements.disk_mib
 		)
@@ -546,7 +558,7 @@ class PlacementContext:
 				placement_count=row.placement_count,
 			)
 			for row in rows
-			if row.name not in self._excluded_servers
+			if self._is_candidate(row.name)
 		)
 		return FleetUsage(
 			hosts=hosts,

@@ -31,7 +31,7 @@ def settle(
 	on_present: Callable[[VirtualMachine], None] | None,
 ) -> None:
 	"""Settle one Atlas record against Metal. Metal is the authority."""
-	virtual_machine = cast("VirtualMachine", frappe.get_doc("Virtual Machine", name))
+	virtual_machine: VirtualMachine = frappe.get_doc("Virtual Machine", name)
 
 	try:
 		VirtualMachineService(virtual_machine).metal_client.get_virtual_machine(name)

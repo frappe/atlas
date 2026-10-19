@@ -205,12 +205,14 @@ class PlacementStrategy(ABC):
 		requirements: PlacementRequirements,
 		*,
 		exclude_servers: set[str] | None = None,
+		allowed_servers: set[str] | None = None,
 		current_placement: CurrentPlacement | None = None,
 	) -> str:
 		"""Return a locked host name or report that the pool has no capacity.
 
 		A resize passes its current placement, so the strategy keeps the VM on its
-		host when the host has room for the increase.
+		host when the host has room for the increase. A full set of allowed servers
+		says nothing about the pool, so it neither marks the pool full nor expands it.
 		"""
 		# A full pool can still hold the increase on the current host.
 		if not current_placement and is_pool_known_full(requirements):
@@ -225,6 +227,7 @@ class PlacementStrategy(ABC):
 				requirements,
 				overcommit_factor,
 				exclude_servers,
+				allowed_servers=allowed_servers,
 				cache_snapshot=attempt == 0,
 				deadline=deadline,
 				use_dedicated_sleepy_vm_hosts=dedicated_sleepy_hosts,
@@ -246,13 +249,15 @@ class PlacementStrategy(ABC):
 
 			cls._wait_before_retry(attempt, remaining)
 
-		if is_pool_full:
+		if is_pool_full and allowed_servers is None:
 			remember_pool_is_full(requirements)
 
 		# Contention must not trigger capacity expansion.
 		if is_contended:
 			cls._report_placement_busy()
 
+		if allowed_servers is not None:
+			frappe.throw(_("No allowed Metal Server has capacity. Retry later."), exc=OutOfCapacity)
 		cls._report_out_of_capacity(requirements)
 
 	@classmethod
