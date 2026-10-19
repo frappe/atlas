@@ -262,6 +262,34 @@ class MetalServerDrain(Document):
 			update_modified=False,
 		)
 
+	@classmethod
+	def start(
+		cls,
+		source_metal_server: str,
+		*,
+		destinations: list[str] | None = None,
+		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
+		retry_failed_migrations: bool = False,
+		parallel_migrations: int = 1,
+	) -> MetalServerDrain:
+		"""Create and submit a drain of one Metal Server. No destinations means any destination."""
+		drain = frappe.get_doc(
+			{
+				"doctype": "Metal Server Drain",
+				"source_metal_server": source_metal_server,
+				"allow_any_destination": int(not destinations),
+				"destinations": [{"metal_server": destination} for destination in destinations or []],
+				"has_memory_snapshot": int(has_memory_snapshot),
+				"allow_disk_only_fallback": int(allow_disk_only_fallback),
+				"retry_failed_migrations": int(retry_failed_migrations),
+				"parallel_migrations": parallel_migrations,
+			}
+		)
+		drain.insert()
+		drain.submit()
+		return drain
+
 
 def run_metal_server_drain_steps() -> None:
 	"""Run one step of each running Metal Server Drain."""
