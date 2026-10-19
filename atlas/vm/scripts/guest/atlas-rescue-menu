@@ -1,0 +1,37 @@
+#!/bin/bash
+set -uo pipefail
+[[ -t 0 && -t 1 ]] || exit 0
+while true; do
+  if command -v whiptail >/dev/null && [[ ${TERM:-dumb} != dumb ]]; then
+    choice=$(whiptail --title 'Atlas Rescue' --menu 'Original disk: /dev/vdb. View status before repair. Core tools work offline.' 23 70 13 \
+      1 'Mount / unmount original disk' 2 'Check / repair filesystem' 3 'Chroot into installed system' \
+      4 'Reset installed Linux user password' 5 'Add VM SSH keys to installed user' 6 'Read installed-system logs' \
+      7 'Grow ext4 filesystem' 8 'Check disk and inode usage' 9 'Frappe inventory / copy-out help' \
+      10 'Expert shell' 11 'Exit rescue' 3>&1 1>&2 2>&3) || exit 0
+  else
+    printf '\nAtlas Rescue\n1 Mount / unmount\n2 Filesystem check / repair\n3 Chroot\n4 Reset Linux password\n5 Add SSH keys\n6 Logs\n7 Grow filesystem\n8 Disk usage\n9 Copy out\n10 Shell\n11 Exit\n'
+    read -r -p 'Choice (Enter returns to shell): ' choice || exit 0
+    [[ -n $choice ]] || exit 0
+  fi
+  args=()
+  case "$choice" in
+    1) read -r -p 'Mount [rw/ro] or unmount [u]: ' mode
+       case "$mode" in rw) args=(mount);; ro) args=(mount --read-only);; u) args=(umount);; *) continue;; esac ;;
+    2) read -r -p 'Check only [c] or repair [r]: ' mode
+       case "$mode" in c) args=(fsck);; r) args=(fsck --repair);; *) continue;; esac ;;
+    3) args=(chroot);;
+    4) read -r -p 'Installed Linux username: ' username; args=(passwd "$username");;
+    5) read -r -p 'Installed Linux username: ' username; args=(add-keys "$username");;
+    6) args=(logs);;
+    7) args=(resize);;
+    8) args=(usage);;
+    9) args=(copy-out);;
+    10) args=(shell);;
+    11) args=(exit);;
+    *) continue;;
+  esac
+  printf 'Command: atlas-rescue'; printf ' %q' "${args[@]}"; printf '\n'
+  sudo /usr/local/sbin/atlas-rescue "${args[@]}"
+  read -r -p 'Enter to view operation status and return to menu...' _ || exit 0
+  sudo /usr/local/sbin/atlas-rescue status
+ done

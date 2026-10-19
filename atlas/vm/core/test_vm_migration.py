@@ -62,28 +62,78 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 
 
 class TestMigrationValidation(UnitTestCase):
+	def test_preflight_precedes_lock_and_locked_state_is_revalidated(self) -> None:
+		from atlas.vm.core.metal_models import MetalVirtualMachine
+		from atlas.vm.core.test_metal_models import complete_response
+		from atlas.vm.core.vm_service import VirtualMachineService
+		from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
+
+		for changed in ({}, {"server": "metal-3"}, {"active_migration": "other-migration"}):
+			with self.subTest(changed=changed):
+				source = VirtualMachine.__new__(VirtualMachine)
+				source.__dict__.update(vars(source_vm(server="metal-1", check_permission=Mock())))
+				locked = VirtualMachine.__new__(VirtualMachine)
+				locked.__dict__.update(vars(source) | changed)
+				locked.db_set = Mock()
+				migration = Mock(name="migration", virtual_machine=source.name)
+				migration.name = "mig-00001"
+				row_locked = False
+
+				def read_document(doctype, *args, **kwargs):
+					nonlocal row_locked
+					if isinstance(doctype, dict):
+						return migration
+					if kwargs.get("for_update"):
+						row_locked = True
+						return locked
+					return source
+
+				def read_information():
+					self.assertFalse(row_locked, "Metal preflight must not hold the VM row lock")
+					return MetalVirtualMachine.from_dict(complete_response())
+
+				migration.insert.side_effect = lambda **kwargs: MigrationService.schedule(migration)
+				with (
+					patch("atlas.vm.core.placement.transaction.start_read_committed_transaction"),
+					patch("atlas.vm.core.vm_migration.is_vm_migration_paused_for_create", return_value=False),
+					patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-10-17 12:00:00"),
+					patch("atlas.vm.core.vm_migration.frappe.get_doc", side_effect=read_document),
+					patch("atlas.vm.core.vm_migration.frappe.db.exists", return_value=False),
+					patch.object(VirtualMachineService, "require_information", side_effect=read_information),
+					patch.object(
+						VirtualMachine,
+						"get_metal_vm_info",
+						side_effect=AssertionError("Use the unlocked preflight, not a live VM property"),
+					),
+				):
+					if changed:
+						with self.assertRaises(AtlasUserError):
+							MigrationService.create(source)
+						migration.insert.assert_not_called()
+					else:
+						self.assertEqual(MigrationService.create(source), migration.name)
+						locked.db_set.assert_called_once_with("active_migration", migration.name)
+
 	def test_rejects_an_already_migrating_vm(self) -> None:
 		with self.assertRaisesRegex(AtlasUserError, "already migrating"):
 			MigrationService.validate_source(source_vm(active_migration="mig-00001"))
 
 	def test_rejects_a_vm_without_a_live_state(self) -> None:
+		from atlas.vm.core.vm_service import VirtualMachineService
+
+		source = source_vm(check_permission=Mock())
 		for state in ("failed", "unknown"):
-			with self.assertRaises(AtlasUserError):
-				MigrationService.create(source_vm(current_state=state))
-
-	def test_reads_metal_state_before_locking_the_vm(self) -> None:
-		with patch("frappe.get_doc", side_effect=RuntimeError("Lock requested")) as lock:
-
-			class Source(SimpleNamespace):
-				@property
-				def current_state(self) -> str:
-					if lock.called:
-						raise AssertionError("Metal state read after the row lock")
-					return "running"
-
-			with self.assertRaisesRegex(RuntimeError, "Lock requested"):
-				MigrationService.create(Source(name="vm-00001"))
-			lock.assert_called_once_with("Virtual Machine", "vm-00001", for_update=True)
+			information = SimpleNamespace(observed=SimpleNamespace(state=state))
+			with (
+				patch("atlas.vm.core.placement.transaction.start_read_committed_transaction"),
+				patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source) as read,
+				patch("atlas.vm.core.vm_migration.frappe.db.exists", return_value=False),
+				patch.object(VirtualMachineService, "require_information", return_value=information),
+				patch.object(VirtualMachineService, "ensure_rescue_inactive"),
+				self.assertRaises(AtlasUserError),
+			):
+				MigrationService.create(source)
+			read.assert_called_once_with("Virtual Machine", source.name)
 
 
 class TestMigrationStatus(UnitTestCase):

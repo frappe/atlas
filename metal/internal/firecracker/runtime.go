@@ -164,6 +164,10 @@ func (runtime *Runtime) Stop(ctx context.Context, input vm.RuntimeMachine) error
 
 // SaveAndStop saves guest memory and stops Firecracker.
 func (runtime *Runtime) SaveAndStop(ctx context.Context, input vm.RuntimeMachine) error {
+	if input.Specification.Rescue.Enabled {
+		return vm.ErrConflict
+	}
+
 	return runtime.newMachine(input).saveAndStop(ctx)
 }
 
@@ -225,7 +229,11 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	if status.State != vm.StateRunning && status.State != vm.StatePaused {
 		return nil
 	}
-	limiter := driveRateLimiter(input.Specification.Disk)
+	paths := []string{rootDrivePath}
+	if input.Specification.Rescue.Enabled {
+		paths = append(paths, "/disk.img")
+	}
+	limiter := driveRateLimiter(input.Specification.Disk, len(paths))
 	if limiter == nil {
 		limiter = &api.RateLimiter{}
 	}
@@ -237,11 +245,17 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 		limiter.Ops = &api.TokenBucket{}
 	}
 
-	return api.New(runtime.configuration.socketPath(input.ID)).PatchDrive(ctx, api.PartialDrive{
-		DriveID:     rootDriveIdentifier,
-		PathOnHost:  rootDrivePath,
-		RateLimiter: limiter,
-	})
+	client := api.New(runtime.configuration.socketPath(input.ID))
+	for index, path := range paths {
+		if err := client.PatchDrive(ctx, api.PartialDrive{
+			DriveID:     fmt.Sprintf("drive%d", index),
+			PathOnHost:  path,
+			RateLimiter: limiter,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetUsage reads CPU and disk use from the unit cgroup and memory from the

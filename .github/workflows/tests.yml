@@ -50,6 +50,14 @@ jobs:
           node-version: 24
           check-latest: true
 
+      - name: Test rescue dialog and console
+        run: |
+          node realtime/test_rescue_dialog.cjs
+          node realtime/test_console.cjs
+
+      - name: Test Metal upgrade rollback
+        run: python atlas/scripts/test_upgrade_metald.py
+
       - name: Cache pip
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:

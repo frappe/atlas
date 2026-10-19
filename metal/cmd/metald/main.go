@@ -324,6 +324,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		registry,
 	)
 	virtualMachineRuntime.RecoverSSHSessions()
+
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,

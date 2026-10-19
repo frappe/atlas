@@ -19,7 +19,7 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		return err
 	}
 
-	bootConfiguration, err := runtime.virtualMachineStorage.PrepareBoot(ctx, storage.VirtualMachineStorageRequest{
+	request := storage.VirtualMachineStorageRequest{
 		VirtualMachineID: configuration.ID,
 		ImageReference:   configuration.Specification.Image.Name,
 		Image:            configuration.Specification.Image,
@@ -27,7 +27,15 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		UserID:           configuration.UserID,
 		GroupID:          configuration.GroupID,
 		DiskMiB:          configuration.Specification.DiskMiB,
-	})
+	}
+	if configuration.Specification.Rescue.Enabled {
+		request.VirtualMachineID = "rescue/" + configuration.ID
+		request.Image = configuration.Specification.Rescue.Image
+		request.ImageReference = request.Image.Name
+		request.DiskMiB = 0
+		request.AttachedVirtualMachineID = configuration.ID
+	}
+	bootConfiguration, err := runtime.virtualMachineStorage.PrepareBoot(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -224,7 +232,7 @@ func (runtime *Runtime) firecrackerCompatibility() string {
 // image shape exactly.
 func (runtime *Runtime) hasMatchingMemorySnapshot(specification vm.Specification) bool {
 	configuration := specification.Image.MemorySnapshotConfiguration
-	return specification.Image.CacheImage &&
+	return !specification.Rescue.Enabled && specification.Image.CacheImage &&
 		specification.Image.MemorySnapshot &&
 		configuration != nil &&
 		configuration.VirtualCPUCount == specification.VirtualCPUCount() &&

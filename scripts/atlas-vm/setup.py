@@ -421,9 +421,14 @@ class Setup:
 	def grant_image_builder_sudo(self) -> None:
 		# The image builder runs its root file system build through sudo on every build.
 		step("stage 14: sudo grant for the image builder")
+		builders = (
+			self.configuration.image_builder_path,
+			self.configuration.image_builder_path.with_name("build_ubuntu_rescue_image.sh"),
+		)
 		self.install_grant(
 			self.image_builder_grant,
-			f"{self.configuration.bench_user} ALL=(ALL) NOPASSWD: {self.configuration.image_builder_path} *",
+			f"{self.configuration.bench_user} ALL=(ALL) NOPASSWD: "
+			+ ", ".join(f"{path} *" for path in builders),
 		)
 
 	def build_images(self) -> None:
@@ -438,6 +443,10 @@ class Setup:
 			if minimal:
 				arguments += " --minimal"
 			self.pilot(f"frappe --site {configuration.site} build-ubuntu-base-image {arguments}")
+		self.pilot(
+			f"frappe --site {configuration.site} build-ubuntu-rescue-image"
+			" --storage site-file --skip-existing"
+		)
 
 	def run(self) -> None:
 		self.install_packages()

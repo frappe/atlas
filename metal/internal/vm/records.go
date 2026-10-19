@@ -37,16 +37,19 @@ type DesiredRecord struct {
 	RestartGeneration uint64 `json:"restart_generation"`
 	// SpecificationGeneration identifies the compute, disk, and network shape.
 	SpecificationGeneration uint64        `json:"specification_generation,omitempty"`
+	RescueGeneration        uint64        `json:"rescue_generation,omitempty"`
 	State                   State         `json:"state"`
 	Specification           Specification `json:"specification"`
 }
 
 // ObservedRecord stores reconciliation progress and observed state.
 type ObservedRecord struct {
+	RescueEnabled           bool             `json:"rescue_enabled"`
 	SchemaVersion           int              `json:"schema_version"`
 	Generation              uint64           `json:"generation"`
 	SpecificationGeneration uint64           `json:"specification_generation,omitempty"`
 	RestartGeneration       uint64           `json:"restart_generation"`
+	RescueGeneration        uint64           `json:"rescue_generation,omitempty"`
 	State                   State            `json:"state"`
 	Phase                   string           `json:"phase,omitempty"`
 	OperationID             string           `json:"operation_id,omitempty"`
@@ -105,7 +108,8 @@ func (store *recordStore) validateAll() error {
 		}
 		if observed.Generation > desired.Generation ||
 			observed.SpecificationGeneration > desired.SpecificationGeneration ||
-			observed.RestartGeneration > desired.RestartGeneration {
+			observed.RestartGeneration > desired.RestartGeneration ||
+			observed.RescueGeneration > desired.RescueGeneration {
 			return fmt.Errorf("validate %s: observed generation is ahead of desired generation", store.virtualMachineDirectory(identifier))
 		}
 	}

@@ -2,7 +2,7 @@
 
 For Go code, follow the [Go review guide](../../../llm/go-code-review-guide.md). The handbook owns [VM runtime behavior](../../../docs/compute/runtime.md) and [console access](../../../docs/compute/console.md).
 
-This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, guest metadata, and Firecracker API calls inside one `metal-vm@` systemd unit. It holds no VM records. systemd owns the process lifecycle.
+This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, guest metadata, and Firecracker API calls inside one `metal-vm@` systemd unit. It does not own desired or observed VM records. systemd owns the process lifecycle.
 
 ## Types and boundaries
 
@@ -41,6 +41,12 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - `RecoverSSHSessions` keeps adopted sessions and ends sessions without a console or record. See the [console guide](../../../docs/compute/console.md) for reconnect timing.
 - `end` stops the unit, closes the console, removes the MMDS key, and deletes session files. Each step tolerates missing parts.
 - A failed `sshSessionUnits.Wait` does not end a session, because metald shutdown closes the D-Bus connection.
+
+## Rescue runtime
+
+[Rescue mode](../../../docs/compute/rescue.md) always cold boots two drives. Initial configuration and `RefreshDisk` split rate limits evenly. Saved state is rejected.
+
+Reboots preserve the requested rescue mode. The runtime does not interpret guest reboot intent. Mode changes use the VM manager's normal reconciliation and restart path.
 
 ## Firecracker API client
 

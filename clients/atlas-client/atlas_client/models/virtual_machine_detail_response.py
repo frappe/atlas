@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..models.virtual_machine_detail_response_architecture import VirtualMachineDetailResponseArchitecture
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
   from ..models.virtual_machine_disk import VirtualMachineDisk
   from ..models.virtual_machine_guest import VirtualMachineGuest
   from ..models.virtual_machine_network import VirtualMachineNetwork
+  from ..models.virtual_machine_rescue import VirtualMachineRescue
 
 
 
@@ -48,6 +50,8 @@ class VirtualMachineDetailResponse:
             public_ipv6 (None | PublicIPResponse): Attached public IPv6 allocation, or null.
             tags (VirtualMachineDetailResponseTags): Resource tags as key-value pairs.
             tenant_id (int): Tenant that owns the virtual machine.
+            rescue (None | Unset | VirtualMachineRescue): Rescue selection and progress, or null when host state is
+                unavailable.
      """
 
     architecture: VirtualMachineDetailResponseArchitecture
@@ -66,6 +70,7 @@ class VirtualMachineDetailResponse:
     public_ipv6: None | PublicIPResponse
     tags: VirtualMachineDetailResponseTags
     tenant_id: int
+    rescue: None | Unset | VirtualMachineRescue = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -79,6 +84,7 @@ class VirtualMachineDetailResponse:
         from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
         from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
         from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
+        from ..models.virtual_machine_rescue import VirtualMachineRescue # noqa: PLC0415
         architecture = self.architecture.value
 
         compute = self.compute.to_dict()
@@ -121,6 +127,14 @@ class VirtualMachineDetailResponse:
 
         tenant_id = self.tenant_id
 
+        rescue: dict[str, Any] | None | Unset
+        if isinstance(self.rescue, Unset):
+            rescue = UNSET
+        elif isinstance(self.rescue, VirtualMachineRescue):
+            rescue = self.rescue.to_dict()
+        else:
+            rescue = self.rescue
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -142,6 +156,8 @@ class VirtualMachineDetailResponse:
             "tags": tags,
             "tenant_id": tenant_id,
         })
+        if rescue is not UNSET:
+            field_dict["rescue"] = rescue
 
         return field_dict
 
@@ -155,6 +171,7 @@ class VirtualMachineDetailResponse:
         from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
         from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
         from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
+        from ..models.virtual_machine_rescue import VirtualMachineRescue # noqa: PLC0415
         d = dict(src_dict)
         architecture = VirtualMachineDetailResponseArchitecture(d.pop("architecture"))
 
@@ -250,6 +267,26 @@ class VirtualMachineDetailResponse:
 
         tenant_id = d.pop("tenant_id")
 
+        def _parse_rescue(data: object) -> None | Unset | VirtualMachineRescue:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                rescue_type_0 = VirtualMachineRescue.from_dict(data)
+
+
+
+                return rescue_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | VirtualMachineRescue, data)
+
+        rescue = _parse_rescue(d.pop("rescue", UNSET))
+
+
         virtual_machine_detail_response = cls(
             architecture=architecture,
             compute=compute,
@@ -267,6 +304,7 @@ class VirtualMachineDetailResponse:
             public_ipv6=public_ipv6,
             tags=tags,
             tenant_id=tenant_id,
+            rescue=rescue,
         )
 
 

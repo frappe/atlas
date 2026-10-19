@@ -4,9 +4,11 @@ import "context"
 
 // Storage manages virtual machine disks.
 type Storage interface {
+	HasDisk(context.Context, string) (bool, error)
 	DiskUsage(context.Context, string) (DiskUsage, error)
 	ResizeDisk(context.Context, string, int) error
 	Release(context.Context, string) error
+	ReleaseRescueDisk(context.Context, string) error
 }
 
 // DiskUsage contains disk size and allocation values.

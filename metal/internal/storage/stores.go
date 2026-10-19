@@ -201,14 +201,15 @@ func notFoundAware(err error) error {
 
 // VirtualMachineStorageRequest identifies the files and disk for one virtual machine.
 type VirtualMachineStorageRequest struct {
-	VirtualMachineID string
-	ImageReference   string
-	Image            vm.Image
-	ChrootRoot       string
-	UserID           uint32
-	GroupID          uint32
-	DiskMiB          int
-	SourceSnapshot   string
+	AttachedVirtualMachineID string
+	VirtualMachineID         string
+	ImageReference           string
+	Image                    vm.Image
+	ChrootRoot               string
+	UserID                   uint32
+	GroupID                  uint32
+	DiskMiB                  int
+	SourceSnapshot           string
 }
 
 // BootConfiguration contains the files that Firecracker needs to boot.

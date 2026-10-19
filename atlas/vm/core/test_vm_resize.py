@@ -15,10 +15,12 @@ def build_information(state: str = "stopped") -> SimpleNamespace:
 	"""Return one Metal record with a 2 CPU, 2 GiB, 20 GiB shape."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
+			rescue=SimpleNamespace(enabled=False),
+			rescue_generation=0,
 			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),
-		observed=SimpleNamespace(state=state),
+		observed=SimpleNamespace(state=state, rescue_generation=0),
 	)
 
 
@@ -36,6 +38,13 @@ class TestVirtualMachineResize(UnitTestCase):
 			placement_rules=None,
 			db_set=Mock(),
 		)
+
+		def store(field, value=None):
+			values = field if isinstance(field, dict) else {field: value}
+			for name, stored_value in values.items():
+				setattr(self.virtual_machine, name, stored_value)
+
+		self.virtual_machine.db_set.side_effect = store
 		self.resize = VirtualMachineResize(self.virtual_machine)
 		self.metal_client = self.start_patch(patch.object(VirtualMachineService, "metal_client", Mock()))
 		self.find_server = self.start_patch(
@@ -62,6 +71,7 @@ class TestVirtualMachineResize(UnitTestCase):
 		)
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 		self.find_server.assert_not_called()
+		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 
 	def test_a_retry_repairs_stale_stored_resources(self) -> None:
 		self.virtual_machine.memory_mib = 2048

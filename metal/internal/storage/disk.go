@@ -41,11 +41,23 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 		return BootConfiguration{}, err
 	}
 
+	drives := []Drive{{Path: "/rootfs.img", Root: true}}
+	if request.AttachedVirtualMachineID != "" {
+		if err := createBlockDevice(store.pool.virtualMachineDevicePath(request.AttachedVirtualMachineID), filepath.Join(request.ChrootRoot, "disk.img"), request.UserID, request.GroupID); err != nil {
+			return BootConfiguration{}, err
+		}
+		drives = append(drives, Drive{Path: "/disk.img"})
+	}
 	return BootConfiguration{
 		Kernel:     "/vmlinux",
 		KernelArgs: kernelArguments(store.images.imageDirectory(request.ImageReference)),
-		Drives:     []Drive{{Path: "/rootfs.img", Root: true}},
+		Drives:     drives,
 	}, nil
+}
+
+// ReleaseRescueDisk removes the rescue boot disk after its guest stops.
+func (store *VirtualMachineStore) ReleaseRescueDisk(ctx context.Context, virtualMachineID string) error {
+	return store.releaseDisk(ctx, "rescue/"+virtualMachineID)
 }
 
 // PrepareRootFileSystem prepares a disk for snapshot restore.
@@ -94,6 +106,7 @@ func (store *VirtualMachineStore) provisionDisk(ctx context.Context, request Vir
 			ctx,
 			"zfs",
 			"clone",
+			"-p",
 			sourceSnapshot,
 			store.pool.virtualMachineDataset(request.VirtualMachineID),
 		); err != nil {
@@ -124,7 +137,7 @@ func (store *VirtualMachineStore) provisionDisk(ctx context.Context, request Vir
 // releaseCreatedDisk removes a disk only when this call created it.
 func (store *VirtualMachineStore) releaseCreatedDisk(ctx context.Context, virtualMachineID string, created bool) {
 	if created {
-		_ = store.Release(context.WithoutCancel(ctx), virtualMachineID)
+		_ = store.releaseDisk(context.WithoutCancel(ctx), virtualMachineID)
 	}
 }
 
@@ -158,10 +171,27 @@ func (store *VirtualMachineStore) ResizeDisk(ctx context.Context, virtualMachine
 	return store.growDisk(ctx, virtualMachineID, diskMiB)
 }
 
-// Release removes the VM disk and keeps dependent staging clones.
+// Release removes both VM disks and keeps dependent staging clones.
 func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID string) error {
-	dataset := store.pool.virtualMachineDataset(virtualMachineID)
+	if err := store.ReleaseRescueDisk(ctx, virtualMachineID); err != nil {
+		return err
+	}
+	return store.releaseDisk(ctx, virtualMachineID)
+}
 
+func (store *VirtualMachineStore) releaseDisk(ctx context.Context, virtualMachineID string) error {
+	dataset := store.pool.virtualMachineDataset(virtualMachineID)
+	kind, err := platform.Output(ctx, "zfs", "get", "-Hp", "-o", "value", "type", dataset)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return nil
+		}
+		return err
+	}
+	// A VM identifier must never release a directory of other boot disks.
+	if strings.TrimSpace(kind) != "volume" {
+		return fmt.Errorf("refuse to release non-volume dataset %s", dataset)
+	}
 	if err := store.promoteDependentClones(ctx, dataset); err != nil {
 		return err
 	}

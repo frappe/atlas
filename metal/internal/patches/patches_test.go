@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -77,6 +78,56 @@ func TestRunAppliesEachPatchOnce(t *testing.T) {
 
 	if runs != 1 {
 		t.Fatalf("the patch ran %d times, want once", runs)
+	}
+}
+
+func TestRescueMarkerPreservesRecordsAcrossRepeatedStartup(t *testing.T) {
+	baseDirectory := t.TempDir()
+	names := Names()
+	markerIndex := slices.Index(names, "recognize_rescue_state")
+	if markerIndex < 0 {
+		t.Fatal("rescue compatibility marker is not registered")
+	}
+	names = names[:markerIndex+1]
+	previous, err := json.Marshal(names[:markerIndex])
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(baseDirectory, "patches.json")
+	if err := os.WriteFile(markerPath, previous, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	records := map[string]string{
+		"config.json": `{"schema_version":1,"id":"vm-1","generation":7,"state":"running"}`,
+		"status.json": `{"schema_version":1,"generation":7,"state":"running"}`,
+	}
+	for name, contents := range records {
+		writeMigrationPatchRecord(t, filepath.Join(baseDirectory, "machines", "vm-1", name), contents)
+	}
+	for range 2 {
+		if err := run(all[:markerIndex+1], baseDirectory, slog.New(slog.DiscardHandler)); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(markerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var applied []string
+		if err := json.Unmarshal(data, &applied); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(applied, names) {
+			t.Fatalf("applied patches = %v, want %v", applied, names)
+		}
+		for name, contents := range records {
+			data, err := os.ReadFile(filepath.Join(baseDirectory, "machines", "vm-1", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != contents {
+				t.Fatalf("rescue marker changed %s: %s", name, data)
+			}
+		}
 	}
 }
 

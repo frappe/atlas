@@ -39,6 +39,8 @@ Gateway mode runs a development WireGuard gateway instead of Atlas. Deploy it wi
 
 In Atlas mode, setup creates the server provider network resources and the Route53 records. It also gets the provider catalogs and a wildcard certificate. Each `[[image]]` table creates one system image in site-file storage. Cargo configures object storage later.
 
+Setup also builds the Ubuntu 24.04 amd64 rescue image in site-file storage with the `purpose=rescue` tag. Atlas selects the newest compatible image when rescue starts. Both image builders have scoped sudo grants.
+
 The Atlas mode configuration contains provider secrets. `atlas-vm` stores its copy at `/var/lib/atlas-vm/atlas-vm.toml` with mode `0600`.
 
 ## Use the VM

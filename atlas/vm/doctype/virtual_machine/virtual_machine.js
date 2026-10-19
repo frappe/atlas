@@ -31,6 +31,12 @@ frappe.ui.form.on("Virtual Machine", {
 			[__("Start VM"), "start", is_stopped, ACTIONS, __("Starting...")],
 			[__("Stop VM"), "stop", is_running || is_paused, ACTIONS, __("Stopping...")],
 			[__("Reboot VM"), "reboot", is_running, ACTIONS, __("Rebooting...")],
+			[
+				__("Rescue Mode"),
+				() => showRescueDialog(frm),
+				(is_live || current_state === "failed") && !is_migrating,
+				ACTIONS,
+			],
 			[__("Pause VM"), "pause", is_running, ACTIONS, __("Pausing...")],
 			[__("Resume VM"), "resume", is_paused, ACTIONS, __("Resuming...")],
 			[__("Snapshot VM"), () => showCreateMachineImageDialog(frm), true, ACTIONS],
@@ -817,4 +823,182 @@ function setWireGuardGatewayAccess(frm) {
 			})
 			.then(() => frm.reload_doc())
 	);
+}
+
+function rescueRequest(operation) {
+	if (operation === "enter") return { enabled: true };
+	if (operation === "exit") return { enabled: false };
+	throw new Error("Invalid rescue operation");
+}
+
+function rescueWarning(request) {
+	return request.enabled
+		? __(
+				"A running VM restarts. A stopped VM stays stopped. The original disk starts unmounted. Repairs write directly to it and cannot be undone through rescue mode. Take a snapshot before making repairs."
+		  )
+		: __(
+				"Return to normal boot and discard the rescue disk? Copy its files out first and wait for repair jobs to finish. Changes to the original disk are kept."
+		  );
+}
+
+function rescueOperationOptions(state) {
+	return [
+		{ value: "", label: "" },
+		state.desired.rescue.enabled
+			? { value: "exit", label: __("Exit rescue") }
+			: { value: "enter", label: __("Enter rescue") },
+	];
+}
+
+function rescueChangePending(state) {
+	return state.desired.rescue_generation !== state.observed.rescue_generation;
+}
+
+function rescueHeading(state) {
+	if (state.observed.error) return __("Rescue needs attention");
+	if (rescueChangePending(state)) return __("Applying rescue change");
+	if (!state.desired.rescue.enabled) return __("Normal boot is selected");
+	return state.observed.state === "running" ? __("Rescue is running") : __("Rescue is selected");
+}
+
+function rescueStatusHTML(state) {
+	const escape = (value) => frappe.utils.escape_html(String(value || ""));
+	const error = state.observed.error;
+	return `<p><strong>${escape(rescueHeading(state))}</strong></p>
+		<p>${escape(__("Host state: {0}.", [state.observed.state]))}</p>
+		${error ? `<p class="text-danger">${escape(error.message)}</p>` : ""}
+		<p>${escape(
+			__("Reboot and Stop/Start keep rescue selected. Use Exit rescue to boot normally.")
+		)}</p>
+		<p>${escape(
+			__(
+				"Connect through the console or your existing VM SSH keys. Run atlas-rescue status to inspect mounts and repair jobs."
+			)
+		)}</p>`;
+}
+
+function showRescueDialog(frm) {
+	let state;
+	let refreshing = false;
+	let submitting = false;
+	let timer;
+	let closed = false;
+	const dialog = new frappe.ui.Dialog({
+		title: __("Rescue Mode"),
+		fields: [
+			{ fieldtype: "HTML", fieldname: "status" },
+			{
+				fieldtype: "Select",
+				fieldname: "operation",
+				label: __("Choose an action"),
+				options: "",
+				reqd: 1,
+			},
+			{
+				fieldtype: "Button",
+				fieldname: "console",
+				label: __("Open console"),
+				click: () => openConsole(frm, "tty"),
+			},
+			{
+				fieldtype: "Button",
+				fieldname: "retry",
+				label: __("Retry status"),
+				hidden: 1,
+				click: () => refresh().then(startPolling),
+			},
+		],
+		primary_action_label: __("Continue"),
+		primary_action: submit,
+	});
+	function updateSubmitButton() {
+		const pending = state && rescueChangePending(state) && !state.observed.error;
+		dialog.get_primary_btn().prop("disabled", Boolean(!state || pending || submitting));
+	}
+	function submit(values) {
+		if (!state || submitting || closed) return;
+		if (rescueChangePending(state) && !state.observed.error) return;
+		if (
+			!rescueOperationOptions(state).some(
+				(option) => option.value === values.operation && option.value
+			)
+		)
+			return;
+		const request = rescueRequest(values.operation);
+		submitting = true;
+		updateSubmitButton();
+		frappe.confirm(
+			rescueWarning(request),
+			() => {
+				if (closed) return;
+				return Promise.resolve(
+					frm.call({ method: "set_rescue", doc: frm.doc, args: request, freeze: true })
+				)
+					.then(() => {
+						frappe.show_alert({
+							message: __(
+								"Rescue request accepted. Check progress before proceeding."
+							),
+							indicator: "blue",
+						});
+						frm.reload_doc();
+					})
+					.finally(() => {
+						submitting = false;
+						return refresh();
+					});
+			},
+			() => {
+				submitting = false;
+				updateSubmitButton();
+			}
+		);
+	}
+	function startPolling() {
+		if (state && !closed && !timer) timer = setInterval(refresh, 3000);
+	}
+	function refresh() {
+		if (refreshing || closed) return Promise.resolve();
+		refreshing = true;
+		return Promise.resolve(frm.call({ method: "read_rescue", doc: frm.doc, type: "GET" }))
+			.then(({ message }) => {
+				if (!message) throw new Error("Missing rescue state");
+				state = message;
+				dialog.set_df_property("retry", "hidden", 1);
+				dialog.fields_dict.status.$wrapper.html(rescueStatusHTML(state));
+				const previous = dialog.get_value("operation");
+				const options = rescueOperationOptions(state);
+				dialog.set_df_property("operation", "options", options);
+				dialog.set_value(
+					"operation",
+					options.some((option) => option.value === previous) ? previous : ""
+				);
+				updateSubmitButton();
+			})
+			.catch(() => {
+				state = undefined;
+				clearInterval(timer);
+				timer = undefined;
+				dialog.set_df_property("retry", "hidden", 0);
+				updateSubmitButton();
+				dialog.fields_dict.status.$wrapper.html(
+					`<p class="text-danger">${frappe.utils.escape_html(
+						__(
+							"Rescue state is unavailable. Select Retry status to reconnect. Actions remain disabled until the read succeeds."
+						)
+					)}</p>`
+				);
+			})
+			.finally(() => {
+				refreshing = false;
+			});
+	}
+	refresh().then(() => {
+		dialog.show();
+		startPolling();
+		dialog.onhide = () => {
+			closed = true;
+			clearInterval(timer);
+		};
+	});
 }

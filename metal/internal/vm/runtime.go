@@ -66,6 +66,7 @@ type RuntimeMachine struct {
 	// checked before the snapshot loads.
 	SpecificationGeneration uint64
 	RestartGeneration       uint64
+	RescueGeneration        uint64
 }
 
 // RuntimeStatus contains the observed runtime state.

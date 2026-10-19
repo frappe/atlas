@@ -80,6 +80,10 @@ func (m *machine) state(ctx context.Context, status platform.Status) (vm.State, 
 // its own disk. A later start cold boots the existing disk. It never restores VM
 // saved state.
 func (m *machine) Start(ctx context.Context) error {
+	if m.input.Specification.Rescue.Enabled {
+		return m.coldBoot(ctx)
+	}
+
 	startedAt := time.Now()
 	hasDisk, err := m.runtime.virtualMachineStorage.HasDisk(ctx, m.input.ID)
 	if err != nil {
@@ -137,6 +141,7 @@ func (m *machine) savedStateRequirement() savedStateRequirement {
 		UserID:                   m.input.UserID,
 		SpecificationGeneration:  m.input.SpecificationGeneration,
 		RestartGeneration:        m.input.RestartGeneration,
+		RescueGeneration:         m.input.RescueGeneration,
 		FirecrackerCompatibility: m.runtime.firecrackerCompatibility(),
 	}
 }
@@ -177,6 +182,10 @@ func (m *machine) savedState() (savedState, bool) {
 
 // startFromSavedState restores required VM-local state without a cold boot.
 func (m *machine) startFromSavedState(ctx context.Context, resume bool) error {
+	if m.input.Specification.Rescue.Enabled {
+		return vm.ErrConflict
+	}
+
 	startedAt := time.Now()
 	restored, err := m.restoreSavedState(ctx, resume)
 	if err != nil {
@@ -313,10 +322,10 @@ func (m *machine) Resume(ctx context.Context) error {
 // kill stops a VM without giving the guest a chance to shut down.
 func (m *machine) kill(ctx context.Context) error {
 	if err := m.runtime.units.Kill(ctx, m.input.ID, syscall.SIGKILL); err != nil {
-		// systemd can fail its auxiliary-process signal after the main process died.
-		status, statusError := m.runtime.units.Status(ctx, m.input.ID)
-		if statusError != nil || status.ActiveState == "active" {
-			return err
+		// systemd can kill the main process and still fail to signal auxiliary processes.
+		// A completed stop job confirms the whole unit has stopped before we reset it.
+		if stopError := m.runtime.units.Stop(ctx, m.input.ID); stopError != nil {
+			return errors.Join(err, fmt.Errorf("stop VM unit after kill failure: %w", stopError))
 		}
 	}
 	if _, err := m.runtime.units.Wait(ctx, m.input.ID); err != nil {
@@ -341,7 +350,7 @@ func (m *machine) shutdownGuest(ctx context.Context) error {
 		}
 	}
 
-	return m.runtime.units.Kill(ctx, m.input.ID, syscall.SIGKILL)
+	return m.kill(ctx)
 }
 
 // cleanupSystemd stops the unit and clears its state, so the ID can be reused.
@@ -360,7 +369,11 @@ func (m *machine) cleanupSystemd(ctx context.Context) error {
 
 // recordImageUse marks the image as used without failing a started VM.
 func (m *machine) recordImageUse() {
-	if err := m.runtime.imageStore.RecordImageUse(m.input.Specification.Image.Name, time.Now()); err != nil {
+	image := m.input.Specification.Image
+	if m.input.Specification.Rescue.Enabled {
+		image = m.input.Specification.Rescue.Image
+	}
+	if err := m.runtime.imageStore.RecordImageUse(image.Name, time.Now()); err != nil {
 		m.runtime.logger.Error("record image use failed", "virtual_machine_id", m.input.ID, "error", err)
 	}
 }

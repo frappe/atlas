@@ -235,7 +235,12 @@ class TestVirtualMachineDisk(UnitTestCase):
 		virtual_machine = SimpleNamespace(name="VM-00001", sleep_after_idle_seconds=0, db_set=Mock())
 		service = VirtualMachineService(virtual_machine)
 		information = SimpleNamespace(
-			desired=SimpleNamespace(disk=SimpleNamespace(size_mib=size_mib, throughput_mibps=50, iops=2000))
+			desired=SimpleNamespace(
+				disk=SimpleNamespace(size_mib=size_mib, throughput_mibps=50, iops=2000),
+				rescue=SimpleNamespace(enabled=False),
+				rescue_generation=0,
+			),
+			observed=SimpleNamespace(rescue_generation=0),
 		)
 		return service, information
 
