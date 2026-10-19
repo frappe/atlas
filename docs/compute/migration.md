@@ -44,7 +44,7 @@ Each migration writes its status, progress, and destination into its row when th
 
 A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The **Error** column of a row shows why its migration failed or could not start. A completed row shows no error.
 
-When the last migration has finished, the drain copies each migration into its row again. The drain is then **Completed** when no VM is left on the source. Otherwise it is **Failed**, and its **Error** section lists each VM that is still on the source with the reason. **Progress (%)** shows the share of VMs that the drain moved. Cancel stops new migrations. The active migrations continue.
+When the last migration has finished, the drain copies each migration into its row again. The drain is then **Completed** when no VM is left on the source. Otherwise it is **Failed**, and its **Error** section lists each VM that is still on the source, with each failure reason and the number of attempts that failed with it. **Progress (%)** shows the share of VMs that the drain moved. Cancel stops new migrations. The active migrations continue.
 
 ## Which compatibility checks apply? {#compatibility-before-transfer}
 
