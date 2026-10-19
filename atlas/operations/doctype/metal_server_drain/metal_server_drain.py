@@ -26,6 +26,7 @@ class MetalServerDrain(Document):
 
 		allow_any_destination: DF.Check
 		allow_disk_only_fallback: DF.Check
+		amended_from: DF.Link | None
 		destinations: DF.Table[MetalServerDrainDestination]
 		duration_seconds: DF.Duration | None
 		finished_at: DF.Datetime | None
