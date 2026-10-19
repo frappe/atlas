@@ -37,7 +37,7 @@ WILDCARD_DOMAIN="${WILDCARD_DOMAIN:-}"
 # block of cpu, ram_gb and disk_gb.
 DEFAULT_STORAGE_CLUSTER_CONFIG="${DEFAULT_STORAGE_CLUSTER_CONFIG:-}"
 # Site config, not a Cargo Settings field: Cargo reads it to build its Datum host on first
-# boot. JSON with repository, version, and a telemetry block of cpu_millicores, ram_gb and disk_gb.
+# boot. JSON with repository, branch, and a telemetry block of cpu_millicores, ram_gb and disk_gb.
 DEFAULT_TELEMETRY_CONFIG="${DEFAULT_TELEMETRY_CONFIG:-}"
 BENCH_USER="${BENCH_USER:-frappe}" # pilot refuses to run as root, so the bench gets its own user
 BENCH_UID="${BENCH_UID:-1000}"
