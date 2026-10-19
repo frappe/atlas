@@ -148,6 +148,16 @@ class TestMigrationStatus(UnitTestCase):
 		self.assertTrue(service.advance({"status": "aborted"}))
 		service.settle.assert_called_once_with("failed")
 
+	def test_an_error_before_destination_selection_settles_as_failed(self) -> None:
+		for error_code, status in (("migration_worker_error", "failed"), (None, "aborted")):
+			with self.subTest(error_code=error_code):
+				service = MigrationService(
+					migration_doc(status="canceling", destination_metal_server=None, error_code=error_code)
+				)
+				service.settle = Mock()
+				service.run()
+				service.settle.assert_called_once_with(status)
+
 
 AFFINITY_RULES = '[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db"}}]'
 HOST_COMPATIBILITY = MetalHostCompatibility(
