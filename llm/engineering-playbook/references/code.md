@@ -61,6 +61,7 @@ Naming draws the most corrections. Review every new name.
 - Before replacing a query: run the old and new code side by side on varied data (stale, draft, edge statuses) and require equal results; break the new code once to prove the check catches it. Measure the latency it adds, mainly under a lock.
 - Unit tests patch the named loader, never `frappe.db.sql`; Frappe also loads DocType metadata through it.
 - A Link to a UUID-named doctype is a MariaDB `uuid` column. `["is", "set"]` and `("!=", None)` compare it with `''` and match nothing; use `frappe.qb` `.isnotnull()`.
+- Comprehensions and generators, not `map` or `filter`. The Frappe semgrep rule `frappe-no-functional-code` blocks them in CI. CI runs semgrep after pre-commit, so a clean local pre-commit does not prove the linter passes.
 - `frappe.throw`, not `assert`. One error path.
 - Set fields and `save()`; `flags.ignore_validate` when needed. No `get_value` plus `reload`, `_save_x` wrappers or low-level password writes. Optional persistence: `save: bool = True` argument.
 - Few manual commits. Loops over records: per item try, work, commit; on error rollback, `log_error`, continue. Job boundaries commit already. `# nosemgrep` only where a commit is required.
