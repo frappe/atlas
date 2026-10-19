@@ -7,6 +7,7 @@ from uuid import uuid7
 
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.utils import now_datetime
 
 from atlas.vm.core.placement.affinity import AffinityRules, AffinityUnsatisfied
 from atlas.vm.core.placement.context import (
@@ -769,3 +770,55 @@ class TestPlacementLockCommit(IntegrationTestCase):
 					frappe.db.sql("SELECT RELEASE_LOCK(%s)", lock_name)
 
 		self.assertNotEqual(primary_connection_id, secondary_connection_id)
+
+
+class TestPlacementTenantCount(IntegrationTestCase):
+	def setUp(self) -> None:
+		self.addCleanup(frappe.db.rollback)
+		self.host_name = str(uuid7())
+		frappe.get_doc(
+			{
+				"doctype": "Metal Server",
+				"name": self.host_name,
+				"status": "Running",
+				"is_provisioning_completed": 1,
+				"architecture": "amd64",
+			}
+		).db_insert()
+		frappe.get_doc(
+			{
+				"doctype": "Metal Server Usage",
+				"name": f"test-usage-{frappe.generate_hash(length=8)}",
+				"server": self.host_name,
+				"available_memory_mib": 4096,
+				"available_storage_mib": 20480,
+			}
+		).db_insert()
+
+	def tenant_vm_count(self) -> int:
+		placement = object.__new__(PlacementContext)
+		placement.requirements = TestPlacementContext.requirements()
+		placement.use_dedicated_sleepy_vm_hosts = True
+		placement._created_at = now_datetime()
+		rows = placement._load_snapshot_rows()
+		return next(row.tenant_vm_count for row in rows if row.name == self.host_name)
+
+	def test_a_migrating_virtual_machine_counts_on_its_destination(self) -> None:
+		virtual_machine = frappe.get_doc(
+			{"doctype": "Virtual Machine", "name": str(uuid7()), "server": str(uuid7()), "tenant_id": 7}
+		)
+		virtual_machine.db_insert()
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"name": str(uuid7()),
+				"virtual_machine": virtual_machine.name,
+				"destination_metal_server": self.host_name,
+				"status": "scheduled",
+			}
+		)
+		migration.db_insert()
+		self.assertEqual(self.tenant_vm_count(), 0)
+
+		migration.db_set("status", "copying")
+		self.assertEqual(self.tenant_vm_count(), 1)

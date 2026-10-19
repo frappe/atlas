@@ -451,11 +451,21 @@ class PlacementContext:
 				GROUP BY vm.server
 			),
 			tenant_usage AS (
-				SELECT vm.server, COUNT(*) AS tenant_vm_count
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN eligible_servers AS server ON server.name = vm.server
-				WHERE vm.tenant_id = %(tenant_id)s
-				GROUP BY vm.server
+				SELECT tenant_vm.server, COUNT(*) AS tenant_vm_count
+				FROM (
+					SELECT vm.server
+					FROM `tabVirtual Machine` AS vm
+					WHERE vm.tenant_id = %(tenant_id)s
+					UNION ALL
+					-- As in affinity rules, a migrating VM also counts on its destination.
+					SELECT migration.destination_metal_server
+					FROM `tabVirtual Machine Migration` AS migration
+					INNER JOIN `tabVirtual Machine` AS vm ON vm.name = migration.virtual_machine
+					WHERE vm.tenant_id = %(tenant_id)s
+						AND migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
+				) AS tenant_vm
+				INNER JOIN eligible_servers AS server ON server.name = tenant_vm.server
+				GROUP BY tenant_vm.server
 			),
 			sleepy_usage AS (
 				SELECT vm.server, SUM(vm.memory_mib) AS sleepy_reserved_memory_mib
