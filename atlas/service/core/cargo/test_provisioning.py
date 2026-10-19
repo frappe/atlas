@@ -34,7 +34,7 @@ STORAGE_CLUSTER_JSON = (
 
 
 TELEMETRY_JSON = (
-	'{"repository":"https://github.com/frappe/Datum.git","version":"main",'
+	'{"repository":"https://github.com/frappe/Datum.git","branch":"main",'
 	'"telemetry":{"cpu_millicores":2000,"ram_gb":4,"disk_gb":20}}'
 )
 
