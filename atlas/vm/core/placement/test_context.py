@@ -71,7 +71,7 @@ class TestPlacementContext(UnitTestCase):
 		return PlacementRequirements(**values)  # type: ignore[arg-type]
 
 	def context(self, rows: object, **kwargs: object) -> PlacementContext:
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", side_effect=rows):
+		with patch.object(PlacementContext, "_load_snapshot_rows", side_effect=rows):
 			return PlacementContext(self.requirements(), 1.0, **kwargs)  # type: ignore[arg-type]
 
 	def affinity_placement(self, current_host_name: str | None = None) -> PlacementContext:
@@ -219,13 +219,13 @@ class TestPlacementContext(UnitTestCase):
 			set_value=lambda key, value, expires_in_sec: store.__setitem__(key, value),
 		)
 		with (
-			patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=rows) as sql,
+			patch.object(PlacementContext, "_load_snapshot_rows", return_value=rows) as load,
 			patch("atlas.vm.core.placement.context.frappe.cache", return_value=cache),
 		):
 			first = PlacementContext(self.requirements(), 1.0, cache_snapshot=True)
 			second = PlacementContext(self.requirements(), 1.0, cache_snapshot=True)
 
-		sql.assert_called_once()
+		load.assert_called_once()
 		self.assertEqual(first.usage.hosts, second.usage.hosts)
 		self.assertEqual(list(store), ["atlas:placement-snapshot:amd64:0:7"])
 
@@ -236,7 +236,7 @@ class TestPlacementContext(UnitTestCase):
 			set_value=lambda key, value, expires_in_sec: store.__setitem__(key, value),
 		)
 		with (
-			patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[host_row("a")]),
+			patch.object(PlacementContext, "_load_snapshot_rows", return_value=[host_row("a")]),
 			patch("atlas.vm.core.placement.context.frappe.cache", return_value=cache),
 		):
 			PlacementContext(self.requirements(), 1.0, cache_snapshot=True)
@@ -254,13 +254,13 @@ class TestPlacementContext(UnitTestCase):
 
 	def test_a_snapshot_is_read_fresh_unless_caching_is_asked_for(self) -> None:
 		with (
-			patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[host_row("a")]) as sql,
+			patch.object(PlacementContext, "_load_snapshot_rows", return_value=[host_row("a")]) as load,
 			patch("atlas.vm.core.placement.context.frappe.cache") as cache,
 		):
 			PlacementContext(self.requirements(), 1.0)
 			PlacementContext(self.requirements(), 1.0)
 
-		self.assertEqual(sql.call_count, 2)
+		self.assertEqual(load.call_count, 2)
 		cache.assert_not_called()
 
 	def test_a_full_pool_is_remembered_for_an_equal_or_larger_shape(self) -> None:
@@ -294,18 +294,16 @@ class TestPlacementContext(UnitTestCase):
 			self.assertFalse(is_pool_known_full(self.requirements()))
 
 	def test_dedicated_sleepy_hosts_keep_the_pools_apart(self) -> None:
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[]) as sql:
+		with patch("atlas.vm.core.placement.context.frappe.get_all", return_value=[]) as get_all:
 			PlacementContext(self.requirements(), 1.0)
 
-		query, values = sql.call_args.args
-		self.assertIn("server.is_sleepy_vm_host = %(is_sleepy)s", query)
-		self.assertEqual(values["is_sleepy"], 0)
+		self.assertEqual(get_all.call_args.kwargs["filters"]["is_sleepy_vm_host"], 0)
 
 	def test_one_pool_drops_the_sleepy_host_filter(self) -> None:
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[]) as sql:
+		with patch("atlas.vm.core.placement.context.frappe.get_all", return_value=[]) as get_all:
 			placement = PlacementContext(self.requirements(), 1.0, use_dedicated_sleepy_vm_hosts=False)
 
-		self.assertNotIn("server.is_sleepy_vm_host = %(is_sleepy)s", sql.call_args.args[0])
+		self.assertNotIn("is_sleepy_vm_host", get_all.call_args.kwargs["filters"])
 
 		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[]) as capacity_sql:
 			placement._host_has_capacity("a")
@@ -319,7 +317,7 @@ class TestPlacementContext(UnitTestCase):
 			set_value=lambda key, value, expires_in_sec: store.__setitem__(key, value),
 		)
 		with (
-			patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[host_row("a")]),
+			patch.object(PlacementContext, "_load_snapshot_rows", return_value=[host_row("a")]),
 			patch("atlas.vm.core.placement.context.frappe.cache", return_value=cache),
 		):
 			PlacementContext(self.requirements(), 1.0, cache_snapshot=True)
@@ -348,17 +346,12 @@ class TestPlacementContext(UnitTestCase):
 		self.assertNotEqual(first_site_lock, second_site_lock)
 		self.assertLessEqual(len(first_site_lock), 64)
 
-	def test_snapshot_query_filters_the_required_pool_and_sample_age(self) -> None:
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[]) as sql:
+	def test_snapshot_reads_only_the_required_pool(self) -> None:
+		with patch("atlas.vm.core.placement.context.frappe.get_all", return_value=[]) as get_all:
 			placement = PlacementContext(self.requirements(is_sleepy=True), 1.0)
 
-		query, values = sql.call_args.args
-		self.assertNotIn("FOR UPDATE", query)
-		self.assertEqual(values["architecture"], "amd64")
-		self.assertEqual(values["is_sleepy"], 1)
-		self.assertEqual(values["tenant_id"], 7)
-		self.assertEqual(values["capacity_cutoff"], NOW - CAPACITY_MAXIMUM_AGE)
-		self.assertEqual(values["rate_cutoff"], NOW - PLACEMENT_RATE_WINDOW)
+		filters = get_all.call_args.kwargs["filters"]
+		self.assertEqual((filters["architecture"], filters["is_sleepy_vm_host"]), ("amd64", 1))
 		self.assertEqual(placement.usage.hosts, ())
 		self.assertEqual(placement.usage.total, Resources(0, 0, 0))
 
@@ -389,16 +382,15 @@ class TestPlacementContext(UnitTestCase):
 
 	def test_rate_comes_from_the_snapshot_without_another_query(self) -> None:
 		rows = [host_row("a", placement_count=2), host_row("b", placement_count=1)]
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=rows) as sql:
+		with patch.object(PlacementContext, "_load_snapshot_rows", return_value=rows) as load:
 			placement = PlacementContext(self.requirements(), 1.0)
 
-			self.assertEqual(sql.call_args.args[1]["rate_cutoff"], NOW - timedelta(minutes=5))
 			self.assertEqual(placement.get_placement_rate(), 0.6)
 			self.assertEqual(placement.get_placement_rate("a"), 0.4)
 			self.assertEqual(placement.get_placement_rate("b"), 0.2)
 			self.assertEqual(placement.get_placement_rate("missing"), 0.0)
 
-		sql.assert_called_once()
+		load.assert_called_once()
 
 	def test_select_holds_the_host_lock_after_the_capacity_check(self) -> None:
 		placement = self.context([[host_row("a")]])
@@ -523,7 +515,7 @@ class TestPlacementContext(UnitTestCase):
 		)
 
 	def test_an_exhausted_budget_never_queues_on_a_host(self) -> None:
-		with patch("atlas.vm.core.placement.context.frappe.db.sql", return_value=[host_row("a")]):
+		with patch.object(PlacementContext, "_load_snapshot_rows", return_value=[host_row("a")]):
 			placement = PlacementContext(self.requirements(), 1.0, deadline=time.monotonic() - 1)
 
 		with patch("atlas.vm.core.placement.context.frappe.db.sql") as sql:
@@ -772,53 +764,112 @@ class TestPlacementLockCommit(IntegrationTestCase):
 		self.assertNotEqual(primary_connection_id, secondary_connection_id)
 
 
-class TestPlacementTenantCount(IntegrationTestCase):
+class TestPlacementSnapshot(IntegrationTestCase):
 	def setUp(self) -> None:
 		self.addCleanup(frappe.db.rollback)
-		self.host_name = str(uuid7())
+		self.now = now_datetime()
+		self.host_name = self.insert_host()
+
+	def insert_host(self) -> str:
+		name = str(uuid7())
 		frappe.get_doc(
 			{
 				"doctype": "Metal Server",
-				"name": self.host_name,
+				"name": name,
 				"status": "Running",
 				"is_provisioning_completed": 1,
 				"architecture": "amd64",
 			}
 		).db_insert()
-		frappe.get_doc(
+		return name
+
+	def insert_sample(self, host_name: str, seconds_ago: int, available_memory_mib: int = 8192) -> None:
+		sample = frappe.get_doc(
 			{
 				"doctype": "Metal Server Usage",
 				"name": f"test-usage-{frappe.generate_hash(length=8)}",
-				"server": self.host_name,
-				"available_memory_mib": 4096,
+				"server": host_name,
+				"available_memory_mib": available_memory_mib,
 				"available_storage_mib": 20480,
 			}
-		).db_insert()
+		)
+		sample.db_insert()
+		sample.db_set("creation", self.now - timedelta(seconds=seconds_ago), update_modified=False)
 
-	def tenant_vm_count(self) -> int:
+	def insert_virtual_machine(self, seconds_ago: int, memory_mib: int = 1024, **values: object) -> str:
+		virtual_machine = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine",
+				"name": str(uuid7()),
+				"server": self.host_name,
+				"tenant_id": 7,
+				"memory_mib": memory_mib,
+				**values,
+			}
+		)
+		virtual_machine.db_insert()
+		virtual_machine.db_set("creation", self.now - timedelta(seconds=seconds_ago), update_modified=False)
+		return virtual_machine.name
+
+	def snapshot(self) -> dict[str, frappe._dict]:
 		placement = object.__new__(PlacementContext)
 		placement.requirements = TestPlacementContext.requirements()
 		placement.use_dedicated_sleepy_vm_hosts = True
-		placement._created_at = now_datetime()
-		rows = placement._load_snapshot_rows()
-		return next(row.tenant_vm_count for row in rows if row.name == self.host_name)
+		placement._created_at = self.now
+		return {row.name: row for row in placement._load_snapshot_rows()}
+
+	def test_only_a_host_with_a_fresh_sample_is_in_the_snapshot(self) -> None:
+		stale_host = self.insert_host()
+		self.insert_sample(self.host_name, seconds_ago=60, available_memory_mib=6000)
+		self.insert_sample(self.host_name, seconds_ago=30, available_memory_mib=7000)
+		self.insert_sample(stale_host, seconds_ago=180)
+
+		snapshot = self.snapshot()
+
+		self.assertNotIn(stale_host, snapshot)
+		self.assertEqual(snapshot[self.host_name].free_memory_mib, 7000)
+
+	def test_free_memory_subtracts_what_the_sample_cannot_include(self) -> None:
+		self.insert_sample(self.host_name, seconds_ago=30)
+		self.insert_virtual_machine(seconds_ago=10, memory_mib=1024)
+		self.insert_virtual_machine(seconds_ago=60, memory_mib=512, is_draft=1)
+		self.insert_virtual_machine(seconds_ago=60, memory_mib=256)
+		resized = self.insert_virtual_machine(seconds_ago=3600, server=str(uuid7()))
+		frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"name": str(uuid7()),
+				"virtual_machine": resized,
+				"destination_metal_server": self.host_name,
+				"status": "copying",
+				"target_memory_mib": 2048,
+			}
+		).db_insert()
+
+		# The VM made after the sample, the draft, and the resized migration target.
+		self.assertEqual(self.snapshot()[self.host_name].free_memory_mib, 8192 - 1024 - 512 - 2048)
+
+	def test_the_placement_rate_counts_virtual_machines_of_the_last_five_minutes(self) -> None:
+		self.insert_sample(self.host_name, seconds_ago=30)
+		self.insert_virtual_machine(seconds_ago=60)
+		self.insert_virtual_machine(seconds_ago=600)
+
+		self.assertEqual(self.snapshot()[self.host_name].placement_count, 1)
 
 	def test_a_migrating_virtual_machine_counts_on_its_destination(self) -> None:
-		virtual_machine = frappe.get_doc(
-			{"doctype": "Virtual Machine", "name": str(uuid7()), "server": str(uuid7()), "tenant_id": 7}
-		)
-		virtual_machine.db_insert()
+		self.insert_sample(self.host_name, seconds_ago=30)
+		virtual_machine = self.insert_virtual_machine(seconds_ago=3600, server=str(uuid7()))
 		migration = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Migration",
 				"name": str(uuid7()),
-				"virtual_machine": virtual_machine.name,
+				"virtual_machine": virtual_machine,
 				"destination_metal_server": self.host_name,
 				"status": "scheduled",
 			}
 		)
 		migration.db_insert()
-		self.assertEqual(self.tenant_vm_count(), 0)
+		self.assertEqual(self.snapshot()[self.host_name].tenant_vm_count, 0)
 
 		migration.db_set("status", "copying")
-		self.assertEqual(self.tenant_vm_count(), 1)
+		self.assertEqual(self.snapshot()[self.host_name].tenant_vm_count, 1)
