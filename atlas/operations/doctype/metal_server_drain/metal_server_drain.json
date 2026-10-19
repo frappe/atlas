@@ -4,10 +4,156 @@
  "creation": "2026-10-19 12:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
- "field_order": [],
- "fields": [],
+ "field_order": [
+  "section_break_overview",
+  "source_metal_server",
+  "has_memory_snapshot",
+  "allow_disk_only_fallback",
+  "column_break_overview",
+  "status",
+  "progress_percent",
+  "section_break_destinations",
+  "allow_any_destination",
+  "destinations",
+  "section_break_time",
+  "started_at",
+  "column_break_started_at",
+  "finished_at",
+  "column_break_finished_at",
+  "duration_seconds",
+  "section_break_migrations",
+  "migrations"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_overview",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "source_metal_server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Source Metal Server",
+   "options": "Metal Server",
+   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_memory_snapshot",
+   "fieldtype": "Check",
+   "label": "Memory Snapshot",
+   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.has_memory_snapshot",
+   "description": "Cold boots the guest if its memory cannot move.",
+   "fieldname": "allow_disk_only_fallback",
+   "fieldtype": "Check",
+   "label": "Allow Disk-Only Fallback",
+   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "column_break_overview",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nRunning\nCompleted\nFailed\nCancelled",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "progress_percent",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Progress (%)",
+   "no_copy": 1,
+   "non_negative": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_destinations",
+   "fieldtype": "Section Break",
+   "label": "Destinations"
+  },
+  {
+   "default": "1",
+   "description": "Placement picks a destination for each VM.",
+   "fieldname": "allow_any_destination",
+   "fieldtype": "Check",
+   "label": "Allow Any Destination",
+   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+  },
+  {
+   "depends_on": "eval:!doc.allow_any_destination",
+   "fieldname": "destinations",
+   "fieldtype": "Table",
+   "label": "Destinations",
+   "mandatory_depends_on": "eval:!doc.allow_any_destination",
+   "options": "Metal Server Drain Destination",
+   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+  },
+  {
+   "fieldname": "section_break_time",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_started_at",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_finished_at",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "duration_seconds",
+   "fieldtype": "Duration",
+   "label": "Duration",
+   "no_copy": 1,
+   "non_negative": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_migrations",
+   "fieldtype": "Section Break",
+   "label": "Migrations"
+  },
+  {
+   "fieldname": "migrations",
+   "fieldtype": "Table",
+   "label": "Migrations",
+   "no_copy": 1,
+   "options": "Metal Server Drain Migration",
+   "read_only": 1
+  }
+ ],
  "links": [],
- "modified": "2026-10-19 12:00:00.000000",
+ "modified": "2026-10-19 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",
@@ -25,6 +171,27 @@
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Draft"
+  },
+  {
+   "color": "Blue",
+   "title": "Running"
+  },
+  {
+   "color": "Green",
+   "title": "Completed"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  },
+  {
+   "color": "Gray",
+   "title": "Cancelled"
+  }
+ ],
  "track_changes": 1
 }
