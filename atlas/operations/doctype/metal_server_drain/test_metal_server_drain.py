@@ -60,6 +60,18 @@ class TestMetalServerDrain(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "at least 1"):
 			drain.insert()
 
+	def test_start_submits_a_drain_with_the_chosen_options(self) -> None:
+		drain = MetalServerDrain.start(
+			self.source, destinations=[self.destination], retry_failed_migrations=True, parallel_migrations=2
+		)
+
+		self.assertEqual((drain.docstatus, drain.status), (1, "Running"))
+		self.assertEqual([row.metal_server for row in drain.destinations], [self.destination])
+		self.assertEqual(
+			(drain.allow_any_destination, drain.retry_failed_migrations, drain.parallel_migrations), (0, 1, 2)
+		)
+		self.assertEqual(MetalServerDrain.start(self.destination).allow_any_destination, 1)
+
 	def test_requires_a_destination_unless_any_is_allowed(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "Add a destination"):
 			self.new_drain([]).insert()
@@ -117,11 +129,23 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		return frappe.get_doc("Metal Server Drain", drain_name)
 
 	def settle_last_migration(self, drain: MetalServerDrain, status: str) -> None:
-		row = drain.migrations[-1]
+		self.settle_migration(drain.migrations[-1], status)
+
+	def settle_migration(
+		self, row, status: str, error_code: str | None = None, error: str | None = None
+	) -> None:
 		migration = frappe.get_doc("Virtual Machine Migration", row.virtual_machine_migration)
-		migration.db_set("status", status)
+		migration.db_set({"status": status, "error_code": error_code, "error_message": error})
 		if status == "completed":
 			frappe.db.set_value("Virtual Machine", row.virtual_machine, "server", self.destination)
+
+	def test_a_source_has_one_running_drain_at_a_time(self) -> None:
+		first = self.submit_drain()
+		with self.assertRaisesRegex(frappe.ValidationError, "already has running drain"):
+			self.submit_drain()
+
+		frappe.get_doc("Metal Server Drain", first).cancel()
+		self.submit_drain()
 
 	def test_moves_one_virtual_machine_at_a_time_until_the_source_is_empty(self) -> None:
 		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
@@ -156,6 +180,27 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		drain = self.step(name)
 		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second, third])
 
+	def test_rows_and_the_drain_explain_why_a_virtual_machine_did_not_move(self) -> None:
+		failed, moved = self.insert_virtual_machine(), self.insert_virtual_machine()
+		name = self.submit_drain(parallel_migrations=2)
+		drain = self.step(name)
+
+		self.settle_migration(drain.migrations[0], "failed", "destination_unreachable", "No answer.")
+		# A completed migration can keep a transient client error. Its row shows no error.
+		self.settle_migration(drain.migrations[1], "completed", "metal_client_error", "Read timed out.")
+		drain = self.step(name)
+
+		self.assertEqual(
+			[row.error_message for row in drain.migrations], ["destination_unreachable: No answer.", None]
+		)
+		self.assertEqual(drain.status, "Failed")
+		self.assertEqual(
+			drain.error_message,
+			f"Virtual machines still on the source: 1.\n\n{failed}, 1 attempt:\n"
+			"- destination_unreachable: No answer. (x1)",
+		)
+		self.assertNotIn(moved, drain.error_message)
+
 	def test_completion_repairs_a_row_that_missed_its_migration_change(self) -> None:
 		self.insert_virtual_machine()
 		name = self.submit_drain()
@@ -170,17 +215,38 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.assertEqual(drain.migrations[-1].status, "completed")
 		self.assertEqual(drain.progress_percent, 100)
 
+	def test_waits_while_another_migration_moves_a_virtual_machine_off_the_source(self) -> None:
+		virtual_machine = self.insert_virtual_machine()
+		migration = self.create_migration(frappe.get_doc("Virtual Machine", virtual_machine), None)
+		frappe.db.set_value("Virtual Machine", virtual_machine, "active_migration", migration)
+		name = self.submit_drain()
+
+		drain = self.step(name)
+
+		self.assertEqual(drain.status, "Running")
+		self.assertEqual(drain.migrations, [])
+
 	def test_retries_a_failed_virtual_machine_after_the_others(self) -> None:
 		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
 		name = self.submit_drain(retry_failed_migrations=1)
 
 		drain = self.step(name)
-		for status in ("failed", "completed", "failed", "failed"):
-			self.settle_last_migration(drain, status)
+		for status, error_code in (
+			("failed", "copy_timeout"),
+			("completed", None),
+			("failed", "copy_timeout"),
+			("failed", "transfer_failed"),
+		):
+			self.settle_migration(drain.migrations[-1], status, error_code)
 			drain = self.step(name)
 
 		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second, first, first])
 		self.assertEqual(drain.status, "Failed")
+		self.assertEqual(
+			drain.error_message,
+			f"Virtual machines still on the source: 1.\n\n{first}, 3 attempts:\n"
+			"- copy_timeout (x2)\n- transfer_failed (x1)",
+		)
 
 	def test_a_virtual_machine_that_cannot_start_fails_the_drain_without_retries(self) -> None:
 		virtual_machine = self.insert_virtual_machine()
@@ -195,10 +261,14 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		drain = self.step(name)
 
 		self.assertEqual(
-			[(row.virtual_machine, row.virtual_machine_migration, row.status) for row in drain.migrations],
-			[(virtual_machine, None, "failed")],
+			[
+				(row.virtual_machine, row.virtual_machine_migration, row.status, row.error_message)
+				for row in drain.migrations
+			],
+			[(virtual_machine, None, "failed", "not ready")],
 		)
 		self.assertEqual(drain.status, "Failed")
+		self.assertIn(f"{virtual_machine}, 1 attempt:\n- not ready (x1)", drain.error_message)
 
 	def test_a_failed_start_is_retried_in_a_later_step(self) -> None:
 		self.insert_virtual_machine()

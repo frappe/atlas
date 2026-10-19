@@ -8,7 +8,8 @@
   "virtual_machine_migration",
   "destination_metal_server",
   "status",
-  "progress_percent"
+  "progress_percent",
+  "error_message"
  ],
  "fields": [
   {
@@ -21,7 +22,7 @@
    "read_only": 1
   },
   {
-   "columns": 2,
+   "columns": 1,
    "fieldname": "virtual_machine_migration",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -40,7 +41,7 @@
    "read_only": 1
   },
   {
-   "columns": 2,
+   "columns": 1,
    "default": "scheduled",
    "fieldname": "status",
    "fieldtype": "Select",
@@ -58,11 +59,19 @@
    "label": "Progress (%)",
    "non_negative": 1,
    "read_only": 1
+  },
+  {
+   "columns": 3,
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Error",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-10-19 18:00:00.000000",
+ "modified": "2026-10-19 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain Migration",

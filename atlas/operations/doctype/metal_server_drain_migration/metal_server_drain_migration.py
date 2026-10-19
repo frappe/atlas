@@ -16,6 +16,7 @@ class MetalServerDrainMigration(Document):
 		from frappe.types import DF
 
 		destination_metal_server: DF.Link | None
+		error_message: DF.SmallText | None
 		parent: DF.Data
 		parentfield: DF.Data
 		parenttype: DF.Data
