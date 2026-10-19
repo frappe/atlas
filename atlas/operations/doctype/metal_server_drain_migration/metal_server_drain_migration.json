@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "creation": "2026-10-19 13:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "virtual_machine",
+  "virtual_machine_migration",
+  "destination_metal_server",
+  "status",
+  "progress_percent"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "virtual_machine_migration",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Migration",
+   "options": "Virtual Machine Migration",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "destination_metal_server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Destination Metal Server",
+   "options": "Metal Server",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "default": "scheduled",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "scheduled\npreparing\ncopying\ncutting_over\nstarting\nfinalizing\ncanceling\ncompleted\nfailed\naborted",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "fieldname": "progress_percent",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Progress (%)",
+   "non_negative": 1,
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-19 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Operations",
+ "name": "Metal Server Drain Migration",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

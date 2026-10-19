@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import frappe
 from frappe import _
@@ -165,9 +165,7 @@ class VirtualMachineImage(Document):
 			pluck="name",
 			order_by="creation desc",
 		)
-		images = [
-			cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names
-		]
+		images: list[VirtualMachineImage] = [frappe.get_doc("Virtual Machine Image", name) for name in names]
 		base_images = [image for image in images if image.ubuntu_base_version]
 		if not base_images:
 			frappe.throw(
@@ -311,7 +309,7 @@ class VirtualMachineImage(Document):
 		"""Return a signed URL for one stored object."""
 		if not object_key:
 			frappe.throw(_("Virtual Machine Image {0} has no object key.").format(self.title))
-		settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		return settings.get_object_storage_client().object_url(object_key, expiry_seconds=expiry_seconds)
 
 	@frappe.whitelist(methods=["POST"])
