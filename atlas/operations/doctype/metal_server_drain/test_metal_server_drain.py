@@ -117,9 +117,13 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		return frappe.get_doc("Metal Server Drain", drain_name)
 
 	def settle_last_migration(self, drain: MetalServerDrain, status: str) -> None:
-		row = drain.migrations[-1]
+		self.settle_migration(drain.migrations[-1], status)
+
+	def settle_migration(
+		self, row, status: str, error_code: str | None = None, error: str | None = None
+	) -> None:
 		migration = frappe.get_doc("Virtual Machine Migration", row.virtual_machine_migration)
-		migration.db_set("status", status)
+		migration.db_set({"status": status, "error_code": error_code, "error_message": error})
 		if status == "completed":
 			frappe.db.set_value("Virtual Machine", row.virtual_machine, "server", self.destination)
 
@@ -155,6 +159,26 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.settle_last_migration(drain, "completed")
 		drain = self.step(name)
 		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second, third])
+
+	def test_rows_and_the_drain_explain_why_a_virtual_machine_did_not_move(self) -> None:
+		failed, moved = self.insert_virtual_machine(), self.insert_virtual_machine()
+		name = self.submit_drain(parallel_migrations=2)
+		drain = self.step(name)
+
+		self.settle_migration(drain.migrations[0], "failed", "destination_unreachable", "No answer.")
+		# A completed migration can keep a transient client error. Its row shows no error.
+		self.settle_migration(drain.migrations[1], "completed", "metal_client_error", "Read timed out.")
+		drain = self.step(name)
+
+		self.assertEqual(
+			[row.error_message for row in drain.migrations], ["destination_unreachable: No answer.", None]
+		)
+		self.assertEqual(drain.status, "Failed")
+		self.assertEqual(
+			drain.error_message,
+			f"Virtual machines still on the source: 1.\n{failed}: destination_unreachable: No answer.",
+		)
+		self.assertNotIn(moved, drain.error_message)
 
 	def test_completion_repairs_a_row_that_missed_its_migration_change(self) -> None:
 		self.insert_virtual_machine()
@@ -206,10 +230,14 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		drain = self.step(name)
 
 		self.assertEqual(
-			[(row.virtual_machine, row.virtual_machine_migration, row.status) for row in drain.migrations],
-			[(virtual_machine, None, "failed")],
+			[
+				(row.virtual_machine, row.virtual_machine_migration, row.status, row.error_message)
+				for row in drain.migrations
+			],
+			[(virtual_machine, None, "failed", "not ready")],
 		)
 		self.assertEqual(drain.status, "Failed")
+		self.assertIn(f"{virtual_machine}: not ready", drain.error_message)
 
 	def test_a_failed_start_is_retried_in_a_later_step(self) -> None:
 		self.insert_virtual_machine()

@@ -16,6 +16,9 @@ from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService, get_
 
 if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
+	from atlas.vm.doctype.virtual_machine_migration.virtual_machine_migration import (
+		VirtualMachineMigration,
+	)
 
 MAXIMUM_MIGRATION_ATTEMPTS = 3
 
@@ -43,6 +46,7 @@ class MetalServerDrain(Document):
 		amended_from: DF.Link | None
 		destinations: DF.Table[MetalServerDrainDestination]
 		duration_seconds: DF.Duration | None
+		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
 		has_memory_snapshot: DF.Check
 		migrations: DF.Table[MetalServerDrainMigration]
@@ -130,11 +134,12 @@ class MetalServerDrain(Document):
 				metal_server_drain=self.name,
 			)
 			row["status"] = "scheduled"
-		except AtlasUserError:
+		except AtlasUserError as error:
 			# Drop a partly created migration. The failed row keeps the drain from trying this VM again.
 			frappe.db.rollback()
 			frappe.log_error(f"Metal Server Drain {self.name} could not migrate {virtual_machine_name}")
 			row["status"] = "failed"
+			row["error_message"] = str(error)
 
 		self.append("migrations", row).db_insert()
 		return True
@@ -188,29 +193,50 @@ class MetalServerDrain(Document):
 			return
 
 		self.refresh_migration_rows()
-		has_virtual_machines = frappe.db.exists(
-			"Virtual Machine", {"server": self.source_metal_server, "is_terminating": 0}
+		remaining = frappe.get_all(
+			"Virtual Machine",
+			filters={"server": self.source_metal_server, "is_terminating": 0},
+			order_by="creation asc",
+			pluck="name",
 		)
-		self.finish("Failed" if has_virtual_machines else "Completed")
+		if remaining:
+			self.finish("Failed", self.get_failure_message(remaining))
+		else:
+			self.finish("Completed")
+
+	def get_failure_message(self, virtual_machines: list[str]) -> str:
+		"""Explain, for each VM still on the source, why the drain did not move it."""
+		last_rows = {row.virtual_machine: row for row in self.migrations}
+		lines = [_("Virtual machines still on the source: {0}.").format(len(virtual_machines))]
+		for name in virtual_machines:
+			row = last_rows.get(name)
+			if not row:
+				reason = _("No migration was started.")
+			else:
+				reason = row.error_message or _("The last migration is {0}.").format(row.status)
+			lines.append(f"{name}: {reason}")
+		return "\n".join(lines)
 
 	def refresh_migration_rows(self) -> None:
 		"""Copy each migration into its row again, in case a migration change missed its row."""
 		for row in self.migrations:
 			if row.virtual_machine_migration:
-				values = frappe.db.get_value(
-					"Virtual Machine Migration",
-					row.virtual_machine_migration,
-					["status", "progress_percent", "destination_metal_server"],
-					as_dict=True,
+				migration: VirtualMachineMigration = frappe.get_doc(
+					"Virtual Machine Migration", row.virtual_machine_migration
 				)
-				row.db_set(values, update_modified=False)
+				row.db_set(migration.get_drain_row_values(), update_modified=False)
 
-	def finish(self, status: str) -> None:
-		"""Record the final status and the run time."""
+	def finish(self, status: str, error_message: str | None = None) -> None:
+		"""Record the final status, the run time, and why the drain failed."""
 		finished_at = now_datetime()
 		duration_seconds = int(time_diff_in_seconds(finished_at, self.started_at)) if self.started_at else 0
 		self.db_set(
-			{"status": status, "finished_at": finished_at, "duration_seconds": duration_seconds},
+			{
+				"status": status,
+				"finished_at": finished_at,
+				"duration_seconds": duration_seconds,
+				"error_message": error_message,
+			},
 			update_modified=False,
 		)
 

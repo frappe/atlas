@@ -25,7 +25,9 @@
   "column_break_finished_at",
   "duration_seconds",
   "section_break_migrations",
-  "migrations"
+  "migrations",
+  "section_break_error",
+  "error_message"
  ],
  "fields": [
   {
@@ -176,11 +178,25 @@
    "no_copy": 1,
    "options": "Metal Server Drain Migration",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.error_message",
+   "fieldname": "section_break_error",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Error Message",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-19 19:00:00.000000",
+ "modified": "2026-10-19 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",
