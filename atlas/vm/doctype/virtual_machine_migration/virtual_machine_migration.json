@@ -13,6 +13,7 @@
   "column_break_overview",
   "source_metal_server",
   "destination_metal_server",
+  "metal_server_drain",
   "has_memory_snapshot",
   "allow_disk_only_fallback",
   "section_break_time",
@@ -115,6 +116,16 @@
    "options": "Metal Server",
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "depends_on": "eval:doc.metal_server_drain",
+   "fieldname": "metal_server_drain",
+   "fieldtype": "Link",
+   "label": "Metal Server Drain",
+   "options": "Metal Server Drain",
+   "read_only": 1,
+   "search_index": 1,
+   "set_only_once": 1
   },
   {
    "default": "0",
@@ -293,7 +304,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-17 14:53:17.786858",
+ "modified": "2026-10-19 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Migration",

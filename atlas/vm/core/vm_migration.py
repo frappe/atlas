@@ -21,6 +21,7 @@ from atlas.vm.core.vm_state import LIVE_STATES
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
+	from atlas.operations.doctype.metal_server_drain.metal_server_drain import MetalServerDrain
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_migration.virtual_machine_migration import (
 		VirtualMachineMigration,
@@ -56,6 +57,7 @@ class MigrationService:
 		resize: VirtualMachineShape | None = None,
 		has_memory_snapshot: bool = False,
 		allow_disk_only_fallback: bool = True,
+		metal_server_drain: str | None = None,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		if is_vm_migration_paused_for_create():
@@ -81,6 +83,7 @@ class MigrationService:
 				"destination_metal_server": destination_metal_server,
 				"has_memory_snapshot": has_memory_snapshot,
 				"allow_disk_only_fallback": allow_disk_only_fallback,
+				"metal_server_drain": metal_server_drain,
 			}
 		)
 		if resize:
@@ -229,7 +232,11 @@ class MigrationService:
 					requirements, requested_destination, exclude_servers=exclude_servers
 				)
 			else:
-				destination = PlacementStrategy.find_server(requirements, exclude_servers=exclude_servers)
+				destination = PlacementStrategy.find_server(
+					requirements,
+					exclude_servers=exclude_servers,
+					allowed_servers=self._load_allowed_destinations(),
+				)
 		except AtlasUserError as error:
 			self.record_destination_metal_server_selection_failure(error)
 			if requested_destination:
@@ -271,6 +278,15 @@ class MigrationService:
 
 		self.update(values)
 		return self.migration.status not in TERMINAL_STATUSES and not self.is_canceling
+
+	def _load_allowed_destinations(self) -> set[str] | None:
+		"""Return the destinations of the drain that owns this migration, or None for any."""
+		if not self.migration.metal_server_drain:
+			return None
+		drain = cast(
+			"MetalServerDrain", frappe.get_doc("Metal Server Drain", self.migration.metal_server_drain)
+		)
+		return drain.allowed_destinations
 
 	def validate_compatibility(self, destination: str, architecture: str) -> None:
 		"""Check synced host facts before a memory snapshot migration."""
