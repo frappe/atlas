@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from datetime import timedelta
 from hashlib import sha256
@@ -10,7 +11,11 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
-from atlas.vm.core.placement.affinity import AffinityUnsatisfied, load_affinity_matching
+from atlas.vm.core.placement.affinity import (
+	RESERVED_MIGRATION_STATUSES,
+	AffinityUnsatisfied,
+	load_affinity_matching,
+)
 from atlas.vm.core.placement.models import (
 	CurrentPlacement,
 	FleetUsage,
@@ -410,140 +415,203 @@ class PlacementContext:
 		)
 
 	def _load_snapshot_rows(self) -> list[frappe._dict]:
-		"""Load current capacity and rank data for the required host pool."""
-		sleepy_host_filter = self._sleepy_host_filter()
-		# The interpolated filter is a literal fragment. No caller value reaches the query.
-		rows = frappe.db.sql(  # nosemgrep
-			f"""
-			WITH eligible_servers AS (
-				SELECT server.name, server.architecture, server.is_sleepy_vm_host
-				FROM `tabMetal Server` AS server
-				WHERE server.status = 'Running'
-					AND server.is_provisioning_completed = 1
-					AND server.is_in_maintenance = 0
-					AND server.architecture = %(architecture)s
-					{sleepy_host_filter}
-			),
-			ranked_sample AS (
-				SELECT
-					sample.*,
-					ROW_NUMBER() OVER (
-						PARTITION BY sample.server
-						ORDER BY sample.creation DESC, sample.name DESC
-					) AS sample_rank
-				FROM `tabMetal Server Usage` AS sample
-				INNER JOIN eligible_servers AS server ON server.name = sample.server
-				WHERE sample.creation >= %(capacity_cutoff)s
-			),
-			latest_sample AS (
-				SELECT * FROM ranked_sample WHERE sample_rank = 1
-			),
-			reserved_usage AS (
-				SELECT
-					vm.server,
-					SUM(vm.cpu_millicores) AS cpu_millicores,
-					SUM(vm.memory_mib) AS memory_mib,
-					SUM(vm.disk_mib) AS storage_mib
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN latest_sample AS sample ON sample.server = vm.server
-				WHERE vm.creation >= %(reservation_cutoff)s
-					AND (vm.is_draft = 1 OR vm.creation > sample.creation)
-				GROUP BY vm.server
-			),
-			tenant_usage AS (
-				SELECT tenant_vm.server, COUNT(*) AS tenant_vm_count
-				FROM (
-					SELECT vm.server
-					FROM `tabVirtual Machine` AS vm
-					WHERE vm.tenant_id = %(tenant_id)s
-					UNION ALL
-					-- As in affinity rules, a migrating VM also counts on its destination.
-					SELECT migration.destination_metal_server
-					FROM `tabVirtual Machine Migration` AS migration
-					INNER JOIN `tabVirtual Machine` AS vm ON vm.name = migration.virtual_machine
-					WHERE vm.tenant_id = %(tenant_id)s
-						AND migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-				) AS tenant_vm
-				INNER JOIN eligible_servers AS server ON server.name = tenant_vm.server
-				GROUP BY tenant_vm.server
-			),
-			sleepy_usage AS (
-				SELECT vm.server, SUM(vm.memory_mib) AS sleepy_reserved_memory_mib
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN eligible_servers AS server ON server.name = vm.server
-				WHERE %(is_sleepy)s = 1 AND vm.sleep_after_idle_seconds > 0
-				GROUP BY vm.server
-			),
-			rate_usage AS (
-				SELECT vm.server, COUNT(*) AS placement_count
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN eligible_servers AS server ON server.name = vm.server
-				WHERE vm.creation >= %(rate_cutoff)s
-				GROUP BY vm.server
-			),
-			migration_usage AS (
-				SELECT
-					migration.destination_metal_server AS server,
-					SUM(IF(migration.target_memory_mib > 0, migration.target_cpu_millicores, vm.cpu_millicores))
-						AS cpu_millicores,
-					SUM(IF(migration.target_memory_mib > 0, migration.target_memory_mib, vm.memory_mib))
-						AS memory_mib,
-					SUM(IF(migration.target_memory_mib > 0, migration.target_disk_mib, vm.disk_mib))
-						AS storage_mib
-				FROM `tabVirtual Machine Migration` AS migration
-				INNER JOIN `tabVirtual Machine` AS vm ON vm.name = migration.virtual_machine
-				WHERE migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-				GROUP BY migration.destination_metal_server
+		"""Load the capacity rows of the host pool with the counts that strategies rank by."""
+		rows = self._load_capacity_rows()
+		if not rows:
+			return rows
+
+		host_names = [row.name for row in rows]
+		tenant_vm_counts = self._count_tenant_virtual_machines(host_names)
+		placement_counts = Counter(
+			frappe.get_all(
+				"Virtual Machine",
+				filters={
+					"server": ("in", host_names),
+					"creation": (">=", self._created_at - PLACEMENT_RATE_WINDOW),
+				},
+				pluck="server",
 			)
-			SELECT
-				server.name,
-				server.architecture,
-				server.is_sleepy_vm_host,
-				sample.creation AS sample_created_at,
-				sample.total_cpu_millicores,
-				sample.total_memory_mib,
-				sample.total_storage_mib,
-				GREATEST(
-					sample.available_cpu_millicores
-						- COALESCE(reserved_usage.cpu_millicores, 0)
-						- COALESCE(migration_usage.cpu_millicores, 0),
-					0
-				) AS free_cpu_millicores,
-				GREATEST(
-					sample.available_memory_mib
-						- COALESCE(reserved_usage.memory_mib, 0)
-						- COALESCE(migration_usage.memory_mib, 0),
-					0
-				) AS free_memory_mib,
-				GREATEST(
-					sample.available_storage_mib
-						- COALESCE(reserved_usage.storage_mib, 0)
-						- COALESCE(migration_usage.storage_mib, 0),
-					0
-				) AS free_storage_mib,
-				COALESCE(tenant_usage.tenant_vm_count, 0) AS tenant_vm_count,
-				COALESCE(sleepy_usage.sleepy_reserved_memory_mib, 0) AS sleepy_reserved_memory_mib,
-				COALESCE(rate_usage.placement_count, 0) AS placement_count
-			FROM eligible_servers AS server
-			INNER JOIN latest_sample AS sample ON sample.server = server.name
-			LEFT JOIN reserved_usage ON reserved_usage.server = server.name
-			LEFT JOIN tenant_usage ON tenant_usage.server = server.name
-			LEFT JOIN sleepy_usage ON sleepy_usage.server = server.name
-			LEFT JOIN rate_usage ON rate_usage.server = server.name
-			LEFT JOIN migration_usage ON migration_usage.server = server.name
-			ORDER BY server.name
-			""",
-			{
-				"architecture": self.requirements.architecture,
-				"is_sleepy": int(self.requirements.is_sleepy),
-				"tenant_id": self.requirements.tenant_id,
-				"capacity_cutoff": self._created_at - CAPACITY_MAXIMUM_AGE,
-				"reservation_cutoff": self._created_at - RESERVATION_MAXIMUM_AGE,
-				"rate_cutoff": self._created_at - PLACEMENT_RATE_WINDOW,
-			},
-			as_dict=True,
 		)
+		sleepy_memory = self._sum_sleepy_memory(host_names)
+		for row in rows:
+			row.tenant_vm_count = tenant_vm_counts[row.name]
+			row.placement_count = placement_counts[row.name]
+			row.sleepy_reserved_memory_mib = sleepy_memory[row.name]
 		return rows
+
+	def _load_capacity_rows(self, host_name: str | None = None) -> list[frappe._dict]:
+		"""Return each eligible host with a fresh sample and the capacity it has left, by host name.
+
+		A sample can be 2 minutes old. Free capacity subtracts what it cannot include yet: drafts,
+		VMs created after it, and the shapes of migrations into the host.
+		"""
+		hosts = self._load_eligible_hosts(host_name)
+		samples = self._load_latest_samples(list(hosts))
+		reservations = self._load_reservations(samples)
+
+		rows = []
+		for name in sorted(samples):
+			sample = samples[name]
+			reserved = self._sum_resources(reservations[name])
+			free = Resources(
+				sample.available_cpu_millicores, sample.available_memory_mib, sample.available_storage_mib
+			).reserve(reserved.cpu_millicores, reserved.memory_mib, reserved.storage_mib)
+			rows.append(
+				frappe._dict(
+					name=name,
+					architecture=hosts[name].architecture,
+					is_sleepy_vm_host=hosts[name].is_sleepy_vm_host,
+					sample_created_at=sample.creation,
+					total_cpu_millicores=sample.total_cpu_millicores,
+					total_memory_mib=sample.total_memory_mib,
+					total_storage_mib=sample.total_storage_mib,
+					free_cpu_millicores=free.cpu_millicores,
+					free_memory_mib=free.memory_mib,
+					free_storage_mib=free.storage_mib,
+				)
+			)
+		return rows
+
+	def _load_eligible_hosts(self, host_name: str | None = None) -> dict[str, frappe._dict]:
+		"""Return the running, set-up hosts of the required architecture and pool, by name."""
+		filters = {
+			"status": "Running",
+			"is_provisioning_completed": 1,
+			"is_in_maintenance": 0,
+			"architecture": self.requirements.architecture,
+		}
+		if self.use_dedicated_sleepy_vm_hosts:
+			filters["is_sleepy_vm_host"] = int(self.requirements.is_sleepy)
+		if host_name:
+			filters["name"] = host_name
+
+		hosts = frappe.get_all(
+			"Metal Server", filters=filters, fields=["name", "architecture", "is_sleepy_vm_host"]
+		)
+		return {host.name: host for host in hosts}
+
+	def _load_latest_samples(self, host_names: list[str]) -> dict[str, frappe._dict]:
+		"""Return the newest capacity sample of each host, when it is at most 2 minutes old."""
+		if not host_names:
+			return {}
+
+		samples = frappe.get_all(
+			"Metal Server Usage",
+			filters={
+				"server": ("in", host_names),
+				"creation": (">=", self._created_at - CAPACITY_MAXIMUM_AGE),
+			},
+			fields=[
+				"server",
+				"creation",
+				"total_cpu_millicores",
+				"total_memory_mib",
+				"total_storage_mib",
+				"available_cpu_millicores",
+				"available_memory_mib",
+				"available_storage_mib",
+			],
+			order_by="creation desc, name desc",
+		)
+		latest: dict[str, frappe._dict] = {}
+		for sample in samples:
+			latest.setdefault(sample.server, sample)
+		return latest
+
+	def _load_reservations(self, samples: dict[str, frappe._dict]) -> defaultdict[str, list[Resources]]:
+		"""Return what the sample of each host cannot include yet, as one shape per VM."""
+		reservations: defaultdict[str, list[Resources]] = defaultdict(list)
+		if not samples:
+			return reservations
+
+		new_virtual_machines = frappe.get_all(
+			"Virtual Machine",
+			filters={
+				"server": ("in", list(samples)),
+				"creation": (">=", self._created_at - RESERVATION_MAXIMUM_AGE),
+			},
+			fields=["server", "creation", "is_draft", "cpu_millicores", "memory_mib", "disk_mib"],
+		)
+		for virtual_machine in new_virtual_machines:
+			if (
+				virtual_machine.is_draft
+				or virtual_machine.creation > samples[virtual_machine.server].creation
+			):
+				reservations[virtual_machine.server].append(
+					Resources(
+						virtual_machine.cpu_millicores, virtual_machine.memory_mib, virtual_machine.disk_mib
+					)
+				)
+
+		for migration in self._load_incoming_migrations(list(samples)):
+			reservations[migration.server].append(self._get_migration_shape(migration))
+		return reservations
+
+	@staticmethod
+	def _load_incoming_migrations(host_names: list[str]) -> list[frappe._dict]:
+		"""Return each migration that reserves capacity on one of the hosts, with its VM shape."""
+		migration = frappe.qb.DocType("Virtual Machine Migration")
+		virtual_machine = frappe.qb.DocType("Virtual Machine")
+		query = (
+			frappe.qb.from_(migration)
+			.join(virtual_machine)
+			.on(virtual_machine.name == migration.virtual_machine)
+			.select(
+				migration.destination_metal_server.as_("server"),
+				migration.target_cpu_millicores,
+				migration.target_memory_mib,
+				migration.target_disk_mib,
+				virtual_machine.tenant_id,
+				virtual_machine.cpu_millicores,
+				virtual_machine.memory_mib,
+				virtual_machine.disk_mib,
+			)
+			.where(
+				migration.destination_metal_server.isin(host_names)
+				& migration.status.isin(RESERVED_MIGRATION_STATUSES)
+			)
+		)
+		return query.run(as_dict=True)
+
+	@staticmethod
+	def _get_migration_shape(migration: frappe._dict) -> Resources:
+		"""Return the target shape of a migration that resizes the VM, else the current VM shape."""
+		if migration.target_memory_mib > 0:
+			return Resources(
+				migration.target_cpu_millicores, migration.target_memory_mib, migration.target_disk_mib
+			)
+		return Resources(migration.cpu_millicores, migration.memory_mib, migration.disk_mib)
+
+	def _count_tenant_virtual_machines(self, host_names: list[str]) -> Counter[str]:
+		"""Count the VMs of the tenant on each host, and again on the destination of an active migration."""
+		tenant_id = self.requirements.tenant_id
+		counts = Counter(
+			frappe.get_all(
+				"Virtual Machine",
+				filters={"server": ("in", host_names), "tenant_id": tenant_id},
+				pluck="server",
+			)
+		)
+		counts.update(
+			migration.server
+			for migration in self._load_incoming_migrations(host_names)
+			if migration.tenant_id == tenant_id
+		)
+		return counts
+
+	def _sum_sleepy_memory(self, host_names: list[str]) -> Counter[str]:
+		"""Sum the memory of sleepy VMs on each host, which only a sleepy placement ranks by."""
+		memory: Counter[str] = Counter()
+		if not self.requirements.is_sleepy:
+			return memory
+
+		for virtual_machine in frappe.get_all(
+			"Virtual Machine",
+			filters={"server": ("in", host_names), "sleep_after_idle_seconds": (">", 0)},
+			fields=["server", "memory_mib"],
+		):
+			memory[virtual_machine.server] += virtual_machine.memory_mib
+		return memory
 
 	def _build_fleet_usage(self, rows: list[frappe._dict]) -> FleetUsage:
 		"""Build the immutable view a strategy reads, dropping excluded hosts."""
