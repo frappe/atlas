@@ -156,7 +156,7 @@ class MigrationService:
 			frappe.db.commit()  # nosemgrep
 			return
 		if self.is_canceling and not self.migration.destination_metal_server:
-			self.settle("aborted")
+			self.settle("failed" if self.has_failed else "aborted")
 			return
 		if self.migration.status == "scheduled":
 			if not self.select_destination_metal_server():
@@ -309,8 +309,7 @@ class MigrationService:
 			self.settle("completed")
 			return True
 		if state == "aborted":
-			failed = self.migration.error_code not in (None, "", "metal_client_error")
-			self.settle("failed" if failed else "aborted")
+			self.settle("failed" if self.has_failed else "aborted")
 			return True
 		if state == "failed":
 			error = status.get("error") or {}
@@ -634,6 +633,11 @@ class MigrationService:
 	def is_canceling(self) -> bool:
 		"""Return whether an operator or error requested cleanup."""
 		return self.migration.status == "canceling"
+
+	@property
+	def has_failed(self) -> bool:
+		"""Return whether an error, not an operator, ended this migration."""
+		return self.migration.error_code not in (None, "", "metal_client_error")
 
 	@property
 	def is_expired(self) -> bool:
