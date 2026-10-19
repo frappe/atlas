@@ -14,7 +14,7 @@ from atlas.service.core.cargo.storage_cluster import get_node_size
 
 CONFIG_FILE_PATH = ("private", "files", "cargo-telemetry.json")
 DATUM_REPOSITORY = "https://github.com/frappe/Datum.git"
-DATUM_VERSION = "main"
+DATUM_BRANCH = "main"
 
 
 def config_file() -> Path:
@@ -51,6 +51,6 @@ def _validated_config(values: Any) -> dict[str, Any]:
 
 	return {
 		"repository": DATUM_REPOSITORY,
-		"version": DATUM_VERSION,
+		"branch": DATUM_BRANCH,
 		"telemetry": get_node_size(values.get("telemetry"), "telemetry"),
 	}
