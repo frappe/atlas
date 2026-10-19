@@ -42,9 +42,9 @@ Submit sets **In Maintenance** on the source, so placement puts no new VM there.
 
 Each migration writes its status, progress, and destination into its row when they change, also after the drain is cancelled. Every 5 seconds, the drain starts migrations until **Parallel Migrations** run. A VM that cannot start ends that run, so its retry waits for the next one. It starts no migration while VM migrations are paused. It does not finish while another migration moves a VM off the source.
 
-A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The error log shows the reason.
+A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The **Error** column of a row shows why its migration failed or could not start. A completed row shows no error.
 
-When the last migration has finished, the drain copies each migration into its row again. The drain is then **Completed** when no VM is left on the source. Otherwise it is **Failed**. **Progress (%)** shows the share of VMs that the drain moved. Cancel stops new migrations. The active migrations continue.
+When the last migration has finished, the drain copies each migration into its row again. The drain is then **Completed** when no VM is left on the source. Otherwise it is **Failed**, and its **Error** section lists each VM that is still on the source with the reason. **Progress (%)** shows the share of VMs that the drain moved. Cancel stops new migrations. The active migrations continue.
 
 ## Which compatibility checks apply? {#compatibility-before-transfer}
 

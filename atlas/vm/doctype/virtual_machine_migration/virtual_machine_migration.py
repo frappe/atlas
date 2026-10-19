@@ -68,18 +68,28 @@ class VirtualMachineMigration(Document):
 		reconcile_migration(self.name)
 
 	def on_change(self) -> None:
-		"""Copy the status, progress, and destination into the drain row of this migration."""
+		"""Copy the drain row values into the drain row of this migration."""
 		if self.metal_server_drain:
 			frappe.db.set_value(
 				"Metal Server Drain Migration",
 				{"virtual_machine_migration": self.name},
-				{
-					"status": self.status,
-					"progress_percent": self.progress_percent,
-					"destination_metal_server": self.destination_metal_server,
-				},
+				self.get_drain_row_values(),
 				update_modified=False,
 			)
+
+	def get_drain_row_values(self) -> dict[str, object]:
+		"""Return the status, progress, destination, and failure reason that a drain row shows."""
+		error_message = None
+		# A completed migration can keep a transient Metal client error, so only a failure shows its error.
+		if self.status in ("failed", "aborted"):
+			error_message = ": ".join(filter(None, (self.error_code, self.error_message))) or None
+
+		return {
+			"status": self.status,
+			"progress_percent": self.progress_percent,
+			"destination_metal_server": self.destination_metal_server,
+			"error_message": error_message,
+		}
 
 	def before_save(self) -> None:
 		"""Allow only the migration worker to change an existing record."""
