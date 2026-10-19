@@ -38,7 +38,7 @@ Use a **Metal Server Drain**. It migrates the VMs of one source Metal Server, ol
 | 4 | Optionally select **Retry Failed Migrations**. Set **Parallel Migrations**. The default is 1. |
 | 5 | Submit the drain. Follow the **Migrations** table. |
 
-Submit sets **In Maintenance** on the source, so placement puts no new VM there. The flag stays set after the drain. Clear it on the Metal Server when the host can take VMs again.
+A source can have one running drain. Submit sets **In Maintenance** on the source, so placement puts no new VM there. The flag stays set after the drain. Clear it on the Metal Server when the host can take VMs again.
 
 Each migration writes its status, progress, and destination into its row when they change, also after the drain is cancelled. Every 5 seconds, the drain starts migrations until **Parallel Migrations** run. A VM that cannot start ends that run, so its retry waits for the next one. It starts no migration while VM migrations are paused. It does not finish while another migration moves a VM off the source.
 
