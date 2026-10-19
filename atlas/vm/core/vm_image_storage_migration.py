@@ -54,11 +54,12 @@ class VirtualMachineImageStorageMigration:
 		The site files stay for SITE_FILE_RETENTION, so a host that is still
 		downloading one keeps a working URL. delete_expired_site_files removes them.
 		"""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		if not image.is_stored_in_site_file:
 			return
 
-		client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
+		client = settings.get_object_storage_client()
 		image.image_object_key = self.upload(client, image, "rootfs")
 		image.kernel_object_key = self.upload(client, image, "kernel")
 		image.artifact_storage = "Object Storage"
@@ -77,7 +78,7 @@ class VirtualMachineImageStorageMigration:
 		artifacts already serve from object storage, so a stale reference reaches
 		nothing, and deleting a file that is gone does nothing.
 		"""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		if image.is_stored_in_site_file:
 			return
 
@@ -119,7 +120,7 @@ class VirtualMachineImageStorageMigration:
 
 def enqueue_site_file_image_migrations() -> None:
 	"""Queue migrations for Available images stored as site files."""
-	settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+	settings: AtlasSettings = frappe.get_single("Atlas Settings")
 	if not settings.is_object_storage_configured:
 		return
 

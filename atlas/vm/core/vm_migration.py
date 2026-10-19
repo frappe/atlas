@@ -70,9 +70,7 @@ class MigrationService:
 				),
 				exc=AtlasUserError,
 			)
-		locked = cast(
-			"VirtualMachine", frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
-		)
+		locked: VirtualMachine = frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
 		locked.check_permission("write")
 		cls.validate_source(locked)
 		migration = frappe.get_doc(
@@ -98,9 +96,8 @@ class MigrationService:
 	@use_read_committed
 	def schedule(cls, migration: VirtualMachineMigration) -> None:
 		"""Claim a VM and initialize a newly inserted scheduled migration."""
-		virtual_machine = cast(
-			"VirtualMachine",
-			frappe.get_doc("Virtual Machine", migration.virtual_machine, for_update=True),
+		virtual_machine: VirtualMachine = frappe.get_doc(
+			"Virtual Machine", migration.virtual_machine, for_update=True
 		)
 		virtual_machine.check_permission("write")
 		cls.validate_source(virtual_machine)
@@ -199,9 +196,7 @@ class MigrationService:
 
 	def select_destination_metal_server(self) -> bool:
 		"""Reserve the requested or an eligible destination. Return False to retry later."""
-		virtual_machine = cast(
-			"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
-		)
+		virtual_machine: VirtualMachine = frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
 		shape = self.destination_shape(virtual_machine)
 		requested_destination = self.migration.destination_metal_server
 		# A destination that the operator names is not limited by the affinity rules.
@@ -279,15 +274,6 @@ class MigrationService:
 		self.update(values)
 		return self.migration.status not in TERMINAL_STATUSES and not self.is_canceling
 
-	def _load_allowed_destinations(self) -> set[str] | None:
-		"""Return the destinations of the drain that owns this migration, or None for any."""
-		if not self.migration.metal_server_drain:
-			return None
-		drain = cast(
-			"MetalServerDrain", frappe.get_doc("Metal Server Drain", self.migration.metal_server_drain)
-		)
-		return drain.allowed_destinations
-
 	def validate_compatibility(self, destination: str, architecture: str) -> None:
 		"""Check synced host facts before a memory snapshot migration."""
 		if not self.migration.has_memory_snapshot:
@@ -364,8 +350,8 @@ class MigrationService:
 		source_coordination_url = MetalClient.get_coordination_url(self.source_metal_server)
 		resize = None
 		if self.has_target_shape:
-			virtual_machine = cast(
-				"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
+			virtual_machine: VirtualMachine = frappe.get_doc(
+				"Virtual Machine", self.migration.virtual_machine
 			)
 			resize = self.destination_shape(virtual_machine).migration_resize
 		self.destination_client.put_migration(
@@ -613,13 +599,11 @@ class MigrationService:
 
 	def _lock_records(self) -> tuple[VirtualMachine, VirtualMachineMigration]:
 		"""Lock the VM before its migration for every controller write."""
-		virtual_machine = cast(
-			"VirtualMachine",
-			frappe.get_doc("Virtual Machine", self.migration.virtual_machine, for_update=True),
+		virtual_machine: VirtualMachine = frappe.get_doc(
+			"Virtual Machine", self.migration.virtual_machine, for_update=True
 		)
-		migration = cast(
-			"VirtualMachineMigration",
-			frappe.get_doc("Virtual Machine Migration", self.migration.name, for_update=True),
+		migration: VirtualMachineMigration = frappe.get_doc(
+			"Virtual Machine Migration", self.migration.name, for_update=True
 		)
 		return virtual_machine, migration
 
@@ -682,14 +666,20 @@ class MigrationService:
 	@property
 	def destination_client(self) -> MetalClient:
 		"""Return a Metal client for the selected destination."""
-		return MetalClient(
-			cast("MetalServer", frappe.get_doc("Metal Server", self.migration.destination_metal_server))
-		)
+		server: MetalServer = frappe.get_doc("Metal Server", self.migration.destination_metal_server)
+		return MetalClient(server)
 
 	@property
 	def source_metal_server(self) -> MetalServer:
 		"""Return the source Metal Server record."""
-		return cast("MetalServer", frappe.get_doc("Metal Server", self.migration.source_metal_server))
+		return frappe.get_doc("Metal Server", self.migration.source_metal_server)
+
+	def _load_allowed_destinations(self) -> set[str] | None:
+		"""Return the destinations of the drain that owns this migration, or None for any."""
+		if not self.migration.metal_server_drain:
+			return None
+		drain: MetalServerDrain = frappe.get_doc("Metal Server Drain", self.migration.metal_server_drain)
+		return drain.allowed_destinations
 
 	@staticmethod
 	def _load_compatibility_report(server: str) -> MetalHostCompatibility:
@@ -756,7 +746,7 @@ def reconcile_migration(migration_name: str) -> None:
 def run_migration(migration_name: str) -> None:
 	"""Advance one migration until it completes or waits for destination capacity."""
 	frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-	migration = cast("VirtualMachineMigration", frappe.get_doc("Virtual Machine Migration", migration_name))
+	migration: VirtualMachineMigration = frappe.get_doc("Virtual Machine Migration", migration_name)
 	service = MigrationService(migration)
 	try:
 		service.run()

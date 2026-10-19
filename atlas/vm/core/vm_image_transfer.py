@@ -51,7 +51,7 @@ class VirtualMachineImageTransferService:
 				"disk_mib": virtual_machine.disk_mib,
 			} | (memory_snapshot_configuration or {})
 
-		server = cast("MetalServer", frappe.get_doc("Metal Server", virtual_machine.server))
+		server: MetalServer = frappe.get_doc("Metal Server", virtual_machine.server)
 		metal_client = MetalClient(server)
 		try:
 			snapshot = metal_client.create_snapshot(cast(str, virtual_machine.name))
@@ -113,7 +113,7 @@ class VirtualMachineImageTransferService:
 
 	def transfer(self, image_name: str) -> None:
 		"""Advance one transfer and record a visible failure."""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		try:
 			self.advance(image)
 		except (
@@ -130,14 +130,12 @@ class VirtualMachineImageTransferService:
 
 	def advance(self, image: VirtualMachineImage) -> None:
 		"""Move one Machine image transfer forward by one step."""
-		server = cast(
-			"MetalServer",
-			frappe.get_doc("Metal Server", self.require_value(image.source_server, "source server")),
+		server: MetalServer = frappe.get_doc(
+			"Metal Server", self.require_value(image.source_server, "source server")
 		)
 		metal_client = MetalClient(server)
-		object_storage_client = cast(
-			"AtlasSettings", frappe.get_single("Atlas Settings")
-		).get_object_storage_client()
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
+		object_storage_client = settings.get_object_storage_client()
 		multipart_upload = MultipartUploadService(image, object_storage_client)
 
 		if image.image_sha256 and image.kernel_sha256:

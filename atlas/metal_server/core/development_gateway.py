@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
@@ -48,7 +48,7 @@ fi"""
 
 	def __init__(self, server: "MetalServer", settings: "AtlasSettings | None" = None) -> None:
 		self.server = server
-		self.settings = settings or cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
 		self.atlas_peer = AtlasPeer(self.settings)
 
 	@property
