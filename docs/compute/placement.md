@@ -33,7 +33,7 @@ Choose the strategy in **Atlas Settings**. `balanced` is the default.
 4. Lowest projected memory or disk use, whichever is higher.
 5. Host name, as a tie-breaker.
 
-For example, if host A already runs 2 of the tenant's VMs and host B runs 1, host B wins even if A is quieter. For a sleepy VM, `balanced` divides sleepy memory by `sleepy_vm_overcommit_factor` when it ranks, because sleepy VMs are often stopped. The capacity check still uses real memory.
+For example, if host A already runs 2 of the tenant's VMs and host B runs 1, host B wins even if A is quieter. A VM also counts on the destination host of its active migration, so parallel migrations of one tenant spread across hosts. For a sleepy VM, `balanced` divides sleepy memory by `sleepy_vm_overcommit_factor` when it ranks, because sleepy VMs are often stopped. The capacity check still uses real memory.
 
 **`spread-3`** ranks regular hosts by projected use, lowest first. A VM that would bring host A to 80% and host B to 60% goes to host B. It packs sleepy VMs onto the host with the most subscribed sleepy memory, so sleepy hosts fill one at a time.
 
