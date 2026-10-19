@@ -133,6 +133,20 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.assertEqual(drain.progress_percent, 100)
 		self.assertEqual([row.status for row in drain.migrations], ["completed", "completed"])
 
+	def test_completion_repairs_a_row_that_missed_its_migration_change(self) -> None:
+		self.insert_virtual_machine()
+		name = self.submit_drain()
+		row = self.step(name).migrations[-1]
+
+		# A direct write skips on_change, as a worker with older code would.
+		frappe.db.set_value("Virtual Machine Migration", row.virtual_machine_migration, "status", "completed")
+		frappe.db.set_value("Virtual Machine", row.virtual_machine, "server", self.destination)
+		drain = self.step(name)
+
+		self.assertEqual(drain.status, "Completed")
+		self.assertEqual(drain.migrations[-1].status, "completed")
+		self.assertEqual(drain.progress_percent, 100)
+
 	def test_retries_a_failed_virtual_machine_after_the_others(self) -> None:
 		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
 		name = self.submit_drain(retry_failed_migrations=1)

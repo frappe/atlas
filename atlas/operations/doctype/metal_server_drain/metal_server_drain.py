@@ -105,10 +105,9 @@ class MetalServerDrain(Document):
 
 		# Start before any write: create reads the VM state from Metal, so no drain row may be locked.
 		has_started = self.start_next_migration() if is_ready else False
-		self.update_progress()
-
 		if is_ready and not has_started:
 			self.finish_after_last_migration()
+		self.update_progress()
 
 	def has_finished(self, row: MetalServerDrainMigration) -> bool:
 		"""Return whether the migration of one row has finished. A row without a migration failed to start."""
@@ -187,10 +186,23 @@ class MetalServerDrain(Document):
 		if frappe.db.get_value(self.doctype, self.name, "status", for_update=True) != "Running":
 			return
 
+		self.refresh_migration_rows()
 		has_virtual_machines = frappe.db.exists(
 			"Virtual Machine", {"server": self.source_metal_server, "is_terminating": 0}
 		)
 		self.finish("Failed" if has_virtual_machines else "Completed")
+
+	def refresh_migration_rows(self) -> None:
+		"""Copy each migration into its row again, in case a migration change missed its row."""
+		for row in self.migrations:
+			if row.virtual_machine_migration:
+				values = frappe.db.get_value(
+					"Virtual Machine Migration",
+					row.virtual_machine_migration,
+					["status", "progress_percent", "destination_metal_server"],
+					as_dict=True,
+				)
+				row.db_set(values, update_modified=False)
 
 	def finish(self, status: str) -> None:
 		"""Record the final status and the run time."""
