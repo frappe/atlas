@@ -176,7 +176,8 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		self.assertEqual(drain.status, "Failed")
 		self.assertEqual(
 			drain.error_message,
-			f"Virtual machines still on the source: 1.\n{failed}: destination_unreachable: No answer.",
+			f"Virtual machines still on the source: 1.\n\n{failed}, 1 attempt:\n"
+			"- destination_unreachable: No answer. (x1)",
 		)
 		self.assertNotIn(moved, drain.error_message)
 
@@ -210,12 +211,22 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		name = self.submit_drain(retry_failed_migrations=1)
 
 		drain = self.step(name)
-		for status in ("failed", "completed", "failed", "failed"):
-			self.settle_last_migration(drain, status)
+		for status, error_code in (
+			("failed", "copy_timeout"),
+			("completed", None),
+			("failed", "copy_timeout"),
+			("failed", "transfer_failed"),
+		):
+			self.settle_migration(drain.migrations[-1], status, error_code)
 			drain = self.step(name)
 
 		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second, first, first])
 		self.assertEqual(drain.status, "Failed")
+		self.assertEqual(
+			drain.error_message,
+			f"Virtual machines still on the source: 1.\n\n{first}, 3 attempts:\n"
+			"- copy_timeout (x2)\n- transfer_failed (x1)",
+		)
 
 	def test_a_virtual_machine_that_cannot_start_fails_the_drain_without_retries(self) -> None:
 		virtual_machine = self.insert_virtual_machine()
@@ -237,7 +248,7 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 			[(virtual_machine, None, "failed", "not ready")],
 		)
 		self.assertEqual(drain.status, "Failed")
-		self.assertIn(f"{virtual_machine}: not ready", drain.error_message)
+		self.assertIn(f"{virtual_machine}, 1 attempt:\n- not ready (x1)", drain.error_message)
 
 	def test_a_failed_start_is_retried_in_a_later_step(self) -> None:
 		self.insert_virtual_machine()

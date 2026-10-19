@@ -205,16 +205,22 @@ class MetalServerDrain(Document):
 			self.finish("Completed")
 
 	def get_failure_message(self, virtual_machines: list[str]) -> str:
-		"""Explain, for each VM still on the source, why the drain did not move it."""
-		last_rows = {row.virtual_machine: row for row in self.migrations}
+		"""Explain, for each VM still on the source, why its attempts failed and how often."""
+		reasons: dict[str, list[str]] = {}
+		for row in self.migrations:
+			reason = row.error_message or _("The migration ended as {0} without an error.").format(row.status)
+			reasons.setdefault(row.virtual_machine, []).append(reason)
+
 		lines = [_("Virtual machines still on the source: {0}.").format(len(virtual_machines))]
 		for name in virtual_machines:
-			row = last_rows.get(name)
-			if not row:
-				reason = _("No migration was started.")
-			else:
-				reason = row.error_message or _("The last migration is {0}.").format(row.status)
-			lines.append(f"{name}: {reason}")
+			attempts = reasons.get(name)
+			if not attempts:
+				lines += ["", f"{name}: " + _("No migration was started.")]
+				continue
+
+			count = _("1 attempt") if len(attempts) == 1 else _("{0} attempts").format(len(attempts))
+			lines += ["", f"{name}, {count}:"]
+			lines += [f"- {reason} (x{count})" for reason, count in Counter(attempts).items()]
 		return "\n".join(lines)
 
 	def refresh_migration_rows(self) -> None:
