@@ -127,6 +127,14 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		if status == "completed":
 			frappe.db.set_value("Virtual Machine", row.virtual_machine, "server", self.destination)
 
+	def test_a_source_has_one_running_drain_at_a_time(self) -> None:
+		first = self.submit_drain()
+		with self.assertRaisesRegex(frappe.ValidationError, "already has running drain"):
+			self.submit_drain()
+
+		frappe.get_doc("Metal Server Drain", first).cancel()
+		self.submit_drain()
+
 	def test_moves_one_virtual_machine_at_a_time_until_the_source_is_empty(self) -> None:
 		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
 		name = self.submit_drain()

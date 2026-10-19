@@ -91,6 +91,22 @@ class MetalServerDrain(Document):
 		if self.parallel_migrations < 1:
 			frappe.throw(_("Parallel Migrations must be at least 1."))
 
+	def before_submit(self) -> None:
+		"""Allow one running drain per source server."""
+		# The source row lock orders two submits for one server. The locking read sees the
+		# drain that the first submit committed, which a plain read could miss.
+		source_title = frappe.db.get_value("Metal Server", self.source_metal_server, "title", for_update=True)
+		running_drain = frappe.db.get_value(
+			"Metal Server Drain",
+			{"source_metal_server": self.source_metal_server, "status": "Running", "name": ("!=", self.name)},
+			"name",
+			for_update=True,
+		)
+		if running_drain:
+			frappe.throw(
+				_("Metal Server {0} already has running drain {1}.").format(source_title, running_drain)
+			)
+
 	def on_submit(self) -> None:
 		"""Start the drain and keep new VMs off the source."""
 		self.db_set({"status": "Running", "started_at": now_datetime()})
