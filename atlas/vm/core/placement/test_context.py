@@ -83,6 +83,7 @@ class TestPlacementContext(UnitTestCase):
 		placement.current_host_name = current_host_name
 		placement.apply_affinity = False
 		placement._excluded_servers = frozenset()
+		placement._allowed_servers = None
 		return placement
 
 	@staticmethod
@@ -138,6 +139,7 @@ class TestPlacementContext(UnitTestCase):
 			placement = object.__new__(PlacementContext)
 			placement._selected_host = None
 			placement._excluded_servers = frozenset()
+			placement._allowed_servers = None
 			placement.probe_count = 0
 			placement.has_contended_hosts = False
 			placement.last_probe_was_contended = False
@@ -176,6 +178,7 @@ class TestPlacementContext(UnitTestCase):
 		placement = object.__new__(PlacementContext)
 		placement._selected_host = None
 		placement._excluded_servers = frozenset()
+		placement._allowed_servers = None
 		placement.probe_count = 0
 		placement.has_contended_hosts = False
 		placement.last_probe_was_contended = False
@@ -371,6 +374,17 @@ class TestPlacementContext(UnitTestCase):
 		self.assertEqual(placement.usage.free, Resources(2000, 9000, 35480))
 		self.assertEqual(placement.usage.tenant_vm_count, 2)
 		self.assertEqual(placement.action, "migration")
+
+	def test_allowed_servers_limit_the_snapshot_and_selection(self) -> None:
+		rows = [host_row("a"), host_row("b"), host_row("excluded")]
+		placement = self.context([rows], exclude_servers={"excluded"}, allowed_servers={"b", "excluded"})
+
+		self.assertEqual([host.name for host in placement.usage.hosts], ["b"])
+		with patch.object(placement, "_acquire_host_lock") as acquire:
+			self.assertFalse(placement.try_select("a"))
+			self.assertFalse(placement.try_select("excluded"))
+
+		acquire.assert_not_called()
 
 	def test_rate_comes_from_the_snapshot_without_another_query(self) -> None:
 		rows = [host_row("a", placement_count=2), host_row("b", placement_count=1)]
@@ -615,6 +629,7 @@ class TestPlacementLockQuery(IntegrationTestCase):
 		placement._created_at = NOW
 		placement._deadline = None
 		placement._excluded_servers = frozenset()
+		placement._allowed_servers = None
 		placement.apply_affinity = False
 		placement._selected_host = None
 		placement.has_contended_hosts = False

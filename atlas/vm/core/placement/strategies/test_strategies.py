@@ -305,6 +305,16 @@ class TestPlacementRetry(TestCase):
 		expansion.assert_called_once()
 		full.assert_called_once()
 
+	def test_a_full_allowed_set_neither_marks_the_pool_full_nor_expands_it(self) -> None:
+		placements = [self._placement_result(probe_count=0)]
+		with self._patched(placements) as (context, _wait, expansion, full):
+			with self.assertRaises(OutOfCapacity):
+				PlacementStrategy.find_server(self._requirements(), allowed_servers={"a"})
+
+		self.assertEqual(context.call_args.kwargs["allowed_servers"], {"a"})
+		expansion.assert_not_called()
+		full.assert_not_called()
+
 	def test_a_pool_known_full_answers_without_any_placement_work(self) -> None:
 		with (
 			patch("atlas.vm.core.placement.strategies.base.is_pool_known_full", return_value=True),
