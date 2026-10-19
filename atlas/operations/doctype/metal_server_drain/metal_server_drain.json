@@ -12,6 +12,7 @@
   "column_break_overview",
   "status",
   "progress_percent",
+  "amended_from",
   "section_break_destinations",
   "allow_any_destination",
   "destinations",
@@ -36,7 +37,6 @@
    "in_standard_filter": 1,
    "label": "Source Metal Server",
    "options": "Metal Server",
-   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
    "reqd": 1,
    "search_index": 1
   },
@@ -44,8 +44,7 @@
    "default": "0",
    "fieldname": "has_memory_snapshot",
    "fieldtype": "Check",
-   "label": "Memory Snapshot",
-   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+   "label": "Memory Snapshot"
   },
   {
    "default": "1",
@@ -54,7 +53,6 @@
    "fieldname": "allow_disk_only_fallback",
    "fieldtype": "Check",
    "label": "Allow Disk-Only Fallback",
-   "read_only_depends_on": "eval:doc.status !== \"Draft\"",
    "show_description_on_click": 1
   },
   {
@@ -83,6 +81,16 @@
    "read_only": 1
   },
   {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Metal Server Drain",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
    "fieldname": "section_break_destinations",
    "fieldtype": "Section Break",
    "label": "Destinations"
@@ -92,8 +100,7 @@
    "description": "Placement picks a destination for each VM.",
    "fieldname": "allow_any_destination",
    "fieldtype": "Check",
-   "label": "Allow Any Destination",
-   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+   "label": "Allow Any Destination"
   },
   {
    "depends_on": "eval:!doc.allow_any_destination",
@@ -101,8 +108,7 @@
    "fieldtype": "Table",
    "label": "Destinations",
    "mandatory_depends_on": "eval:!doc.allow_any_destination",
-   "options": "Metal Server Drain Destination",
-   "read_only_depends_on": "eval:doc.status !== \"Draft\""
+   "options": "Metal Server Drain Destination"
   },
   {
    "fieldname": "section_break_time",
@@ -152,8 +158,9 @@
    "read_only": 1
   }
  ],
+ "is_submittable": 1,
  "links": [],
- "modified": "2026-10-19 13:00:00.000000",
+ "modified": "2026-10-19 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",
@@ -161,10 +168,13 @@
  "owner": "Administrator",
  "permissions": [
   {
+   "amend": 1,
+   "cancel": 1,
    "create": 1,
    "delete": 1,
    "read": 1,
    "role": "System Manager",
+   "submit": 1,
    "write": 1
   }
  ],
