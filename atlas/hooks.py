@@ -209,6 +209,7 @@ scheduler_events = {
 		],
 		"* * * * * */5": [
 			"atlas.operations.doctype.metald_update.metald_update.run_metald_update_steps",
+			"atlas.operations.doctype.metal_server_drain.metal_server_drain.run_metal_server_drain_steps",
 		],
 		"* * * * * */10": [
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_terminating_virtual_machines",

@@ -26,6 +26,26 @@ A stopped VM also moves when a resize cannot fit on its host. Atlas stores `targ
 
 The option does not recover every memory transfer failure. The scenario table identifies the failures that require rollback.
 
+## How do I move every VM off a host? {#drain-a-host}
+
+Use a **Metal Server Drain**. It migrates the VMs of one source Metal Server one at a time, oldest VM first.
+
+| Step | Action |
+| --- | --- |
+| 1 | Create a Metal Server Drain and select the **Source Metal Server**. |
+| 2 | Keep **Allow Any Destination**, or clear it and add the destination Metal Servers. |
+| 3 | Set **Memory Snapshot** and **Allow Disk-Only Fallback**. They apply to each migration. |
+| 4 | Optionally select **Retry Failed Migrations**. |
+| 5 | Submit the drain. Follow the **Migrations** table. |
+
+Submit sets **In Maintenance** on the source, so placement puts no new VM there. The flag stays set after the drain. Clear it on the Metal Server when the host can take VMs again.
+
+Every 5 seconds, the drain copies the status and progress of its active migration into its row. When that migration has finished, the drain starts the next one. It waits while VM migrations are paused or while another migration moves a VM off the source.
+
+A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The error log shows the reason.
+
+The drain is **Completed** when no VM is left on the source. Otherwise it is **Failed**. **Progress (%)** shows the share of VMs that the drain moved. Cancel stops new migrations. The active migration continues.
+
 ## Which compatibility checks apply? {#compatibility-before-transfer}
 
 Atlas checks memory compatibility after destination selection, before its first Metal request. It uses reports from [host sync](../region/host-sync.md). Missing reports, a desired state of `stopped`, and a resize each fail this check. Disk-only migrations skip the memory compatibility check.
