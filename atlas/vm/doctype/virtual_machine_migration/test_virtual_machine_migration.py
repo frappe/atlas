@@ -11,7 +11,7 @@ from frappe.utils import now_datetime
 
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.vm_migration import MigrationService
+from atlas.vm.core.vm_migration import MigrationService, reconcile_migrations
 
 # On IntegrationTestCase, the doctype test records and all
 # link-field test record dependencies are recursively loaded
@@ -201,6 +201,14 @@ class IntegrationTestVirtualMachineMigration(IntegrationTestCase):
 			service.store_progress({"memory_snapshot_status": "transferring"})
 			service.settle("completed")
 			self.assertEqual(service.migration.memory_snapshot_status, "not_started")
+
+	def test_reconcile_requeues_the_active_migration_of_a_virtual_machine(self) -> None:
+		service = self.create_migration()
+
+		with patch("atlas.vm.core.vm_migration.reconcile_migration") as reconcile_migration:
+			reconcile_migrations()
+
+		reconcile_migration.assert_any_call(service.migration.name)
 
 	def test_migration_uses_explicit_metal_server_field_names(self) -> None:
 		meta = frappe.get_meta("Virtual Machine Migration")
