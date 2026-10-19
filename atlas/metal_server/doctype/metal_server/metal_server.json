@@ -364,9 +364,14 @@
    "group": "Resources",
    "link_doctype": "Virtual Machine",
    "link_fieldname": "server"
+  },
+  {
+   "group": "Operations",
+   "link_doctype": "Metal Server Drain",
+   "link_fieldname": "source_metal_server"
   }
  ],
- "modified": "2026-10-17 12:57:52.605466",
+ "modified": "2026-10-19 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Metal Server",

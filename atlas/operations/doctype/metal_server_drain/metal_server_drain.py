@@ -12,10 +12,13 @@ from frappe.model.document import Document
 from frappe.utils import now_datetime, time_diff_in_seconds
 
 from atlas.atlas.core.exceptions import AtlasUserError
-from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService
+from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService, get_active_migrations
 
 if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
+	from atlas.vm.doctype.virtual_machine_migration.virtual_machine_migration import (
+		VirtualMachineMigration,
+	)
 
 MAXIMUM_MIGRATION_ATTEMPTS = 3
 
@@ -43,6 +46,7 @@ class MetalServerDrain(Document):
 		amended_from: DF.Link | None
 		destinations: DF.Table[MetalServerDrainDestination]
 		duration_seconds: DF.Duration | None
+		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
 		has_memory_snapshot: DF.Check
 		migrations: DF.Table[MetalServerDrainMigration]
@@ -87,6 +91,22 @@ class MetalServerDrain(Document):
 		if self.parallel_migrations < 1:
 			frappe.throw(_("Parallel Migrations must be at least 1."))
 
+	def before_submit(self) -> None:
+		"""Allow one running drain per source server."""
+		# The source row lock orders two submits for one server. The locking read sees the
+		# drain that the first submit committed, which a plain read could miss.
+		source_title = frappe.db.get_value("Metal Server", self.source_metal_server, "title", for_update=True)
+		running_drain = frappe.db.get_value(
+			"Metal Server Drain",
+			{"source_metal_server": self.source_metal_server, "status": "Running", "name": ("!=", self.name)},
+			"name",
+			for_update=True,
+		)
+		if running_drain:
+			frappe.throw(
+				_("Metal Server {0} already has running drain {1}.").format(source_title, running_drain)
+			)
+
 	def on_submit(self) -> None:
 		"""Start the drain and keep new VMs off the source."""
 		self.db_set({"status": "Running", "started_at": now_datetime()})
@@ -130,11 +150,12 @@ class MetalServerDrain(Document):
 				metal_server_drain=self.name,
 			)
 			row["status"] = "scheduled"
-		except AtlasUserError:
+		except AtlasUserError as error:
 			# Drop a partly created migration. The failed row keeps the drain from trying this VM again.
 			frappe.db.rollback()
 			frappe.log_error(f"Metal Server Drain {self.name} could not migrate {virtual_machine_name}")
 			row["status"] = "failed"
+			row["error_message"] = str(error)
 
 		self.append("migrations", row).db_insert()
 		return True
@@ -184,37 +205,90 @@ class MetalServerDrain(Document):
 		if frappe.db.get_value(self.doctype, self.name, "status", for_update=True) != "Running":
 			return
 		# A migration that this drain did not start can still move a VM off the source.
-		if frappe.db.exists(
-			"Virtual Machine", {"server": self.source_metal_server, "active_migration": ("is", "set")}
-		):
+		if get_active_migrations(self.source_metal_server):
 			return
 
 		self.refresh_migration_rows()
-		has_virtual_machines = frappe.db.exists(
-			"Virtual Machine", {"server": self.source_metal_server, "is_terminating": 0}
+		remaining = frappe.get_all(
+			"Virtual Machine",
+			filters={"server": self.source_metal_server, "is_terminating": 0},
+			order_by="creation asc",
+			pluck="name",
 		)
-		self.finish("Failed" if has_virtual_machines else "Completed")
+		if remaining:
+			self.finish("Failed", self.get_failure_message(remaining))
+		else:
+			self.finish("Completed")
+
+	def get_failure_message(self, virtual_machines: list[str]) -> str:
+		"""Explain, for each VM still on the source, why its attempts failed and how often."""
+		reasons: dict[str, list[str]] = {}
+		for row in self.migrations:
+			reason = row.error_message or _("The migration ended as {0} without an error.").format(row.status)
+			reasons.setdefault(row.virtual_machine, []).append(reason)
+
+		lines = [_("Virtual machines still on the source: {0}.").format(len(virtual_machines))]
+		for name in virtual_machines:
+			attempts = reasons.get(name)
+			if not attempts:
+				lines += ["", f"{name}: " + _("No migration was started.")]
+				continue
+
+			count = _("1 attempt") if len(attempts) == 1 else _("{0} attempts").format(len(attempts))
+			lines += ["", f"{name}, {count}:"]
+			lines += [f"- {reason} (x{count})" for reason, count in Counter(attempts).items()]
+		return "\n".join(lines)
 
 	def refresh_migration_rows(self) -> None:
 		"""Copy each migration into its row again, in case a migration change missed its row."""
 		for row in self.migrations:
 			if row.virtual_machine_migration:
-				values = frappe.db.get_value(
-					"Virtual Machine Migration",
-					row.virtual_machine_migration,
-					["status", "progress_percent", "destination_metal_server"],
-					as_dict=True,
+				migration: VirtualMachineMigration = frappe.get_doc(
+					"Virtual Machine Migration", row.virtual_machine_migration
 				)
-				row.db_set(values, update_modified=False)
+				row.db_set(migration.get_drain_row_values(), update_modified=False)
 
-	def finish(self, status: str) -> None:
-		"""Record the final status and the run time."""
+	def finish(self, status: str, error_message: str | None = None) -> None:
+		"""Record the final status, the run time, and why the drain failed."""
 		finished_at = now_datetime()
 		duration_seconds = int(time_diff_in_seconds(finished_at, self.started_at)) if self.started_at else 0
 		self.db_set(
-			{"status": status, "finished_at": finished_at, "duration_seconds": duration_seconds},
+			{
+				"status": status,
+				"finished_at": finished_at,
+				"duration_seconds": duration_seconds,
+				"error_message": error_message,
+			},
 			update_modified=False,
 		)
+
+	@classmethod
+	def start(
+		cls,
+		source_metal_server: str,
+		*,
+		destinations: list[str] | None = None,
+		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
+		retry_failed_migrations: bool = False,
+		parallel_migrations: int = 1,
+	) -> MetalServerDrain:
+		"""Create and submit a drain of one Metal Server. No destinations means any destination."""
+		drain = frappe.get_doc(
+			{
+				"doctype": "Metal Server Drain",
+				"source_metal_server": source_metal_server,
+				"allow_any_destination": int(not destinations),
+				"destinations": [{"metal_server": destination} for destination in destinations or []],
+				"has_memory_snapshot": int(has_memory_snapshot),
+				"allow_disk_only_fallback": int(allow_disk_only_fallback),
+				"retry_failed_migrations": int(retry_failed_migrations),
+				"parallel_migrations": parallel_migrations,
+			}
+		)
+		drain.insert()
+		drain.submit()
+		return drain
 
 
 def run_metal_server_drain_steps() -> None:

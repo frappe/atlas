@@ -774,11 +774,22 @@ def is_transient_error(error: Exception) -> bool:
 @run_as_admin
 def reconcile_migrations() -> None:
 	"""Requeue every migration that still owns a VM action lock."""
-	names = frappe.get_all(
-		"Virtual Machine", filters={"active_migration": ["is", "set"]}, pluck="active_migration"
-	)
-	for name in names:
+	for name in get_active_migrations():
 		reconcile_migration(name)
+
+
+def get_active_migrations(server: str | None = None) -> list[str]:
+	"""Return the migrations that hold a VM action lock, optionally only for VMs on one server."""
+	# Active Migration is a uuid column. The "is set" filter compares it with '', which matches no row.
+	virtual_machine = frappe.qb.DocType("Virtual Machine")
+	query = (
+		frappe.qb.from_(virtual_machine)
+		.select(virtual_machine.active_migration)
+		.where(virtual_machine.active_migration.isnotnull())
+	)
+	if server:
+		query = query.where(virtual_machine.server == server)
+	return query.run(pluck=True)
 
 
 def has_running_migration() -> bool:
