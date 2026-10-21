@@ -169,6 +169,13 @@ class TestVirtualMachineViews(UnitTestCase):
 		self.assertEqual(detail.guest.metadata, {"role": "worker"})
 		self.assertEqual(detail.error, "boot failed")
 
+	def test_detail_says_whether_termination_is_blocked(self) -> None:
+		detail = VirtualMachineDetailResponse.from_document_and_metal(
+			build_virtual_machine(is_termination_protected=1), build_metal_information()
+		)
+
+		self.assertTrue(detail.is_termination_protected)
+
 	def test_detail_requires_the_default_route_for_ipv4_internet_access(self) -> None:
 		information = build_metal_information()
 		information.desired.network.routes = (Route("10.0.0.0/8", "host"),)
