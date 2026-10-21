@@ -1936,6 +1936,7 @@
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
             "is_privileged": false,
+            "is_termination_protected": false,
             "network": {
               "firewall": {
                 "enabled": false,
@@ -2031,6 +2032,11 @@
             "title": "Is Privileged",
             "type": "boolean"
           },
+          "is_termination_protected": {
+            "description": "Whether deletion is blocked.",
+            "title": "Is Termination Protected",
+            "type": "boolean"
+          },
           "network": {
             "$ref": "#/components/schemas/VirtualMachineNetwork",
             "description": "Network configuration and addresses."
@@ -2079,6 +2085,7 @@
           "tags",
           "created_at",
           "is_privileged",
+          "is_termination_protected",
           "public_ipv4",
           "public_ipv6",
           "desired_state",
