@@ -78,6 +78,7 @@ type MigrationManager interface {
 	StartSourceStream(ctx context.Context, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
 	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (migration.SourceSnapshot, error)
 	OpenSourceMemorySnapshotFile(ctx context.Context, migrationID, virtualMachineID string, sequence int, name string) (*os.File, error)
+	OpenSourceKernel(ctx context.Context, migrationID, virtualMachineID string) (*os.File, error)
 	StartSourceRollback(ctx context.Context, migrationID, virtualMachineID string) error
 	DestroySource(ctx context.Context, migrationID, virtualMachineID string) error
 	UnlockSource(ctx context.Context, migrationID, virtualMachineID string) error

@@ -149,7 +149,7 @@ func TestAdvanceDestinationChecksCapacityForTheResize(t *testing.T) {
 	sourceShapeOnly := func(context.Context) (AvailableCapacity, error) {
 		return AvailableCapacity{MemoryMiB: 2048, StorageMiB: 4096}, nil
 	}
-	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, sourceShapeOnly, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, &fakeKernelStore{}, sourceShapeOnly, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestAdvanceDestinationRejectsInsufficientCapacity(t *testing.T) {
 	machines := newFakeMigrationHost(t)
 	source := &fakeSourceOperations{prepareDefinition: virtualMachineDefinition("vm-1"), prepareState: vm.StateRunning}
 	noCapacity := func(context.Context) (AvailableCapacity, error) { return AvailableCapacity{}, nil }
-	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, noCapacity, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, &fakeKernelStore{}, noCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestDestinationCapacityCheckAndReservationAreSerialized(t *testing.T) {
 		return AvailableCapacity{MemoryMiB: availableMemoryMiB, StorageMiB: 1 << 20}, nil
 	}
 	var err error
-	migrationManager, err = newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, capacity, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err = newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, &fakeKernelStore{}, capacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

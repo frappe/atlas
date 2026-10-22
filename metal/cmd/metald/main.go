@@ -425,6 +425,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 			ListenAddress:   transferAddress,
 			TransferPort:    options.migration.transferPort,
 		}),
+		stores.Images,
 		migrationCapacity,
 		options.migration.finalDeltaMiB,
 		logger,

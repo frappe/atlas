@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/url"
@@ -28,6 +29,8 @@ type sourceOperations interface {
 	// returns its final snapshot.
 	StopSource(ctx context.Context, address, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (SourceSnapshot, error)
 	ReceiveMemorySnapshot(ctx context.Context, address, migrationID, virtualMachineID string, sequence int, directory string, memoryMiB int) error
+	// ReceiveKernel downloads the source kernel and passes it to store.
+	ReceiveKernel(ctx context.Context, address, migrationID, virtualMachineID string, store func(io.Reader) error) error
 	// StartSource restores the source during rollback.
 	StartSource(ctx context.Context, address, migrationID, virtualMachineID string) error
 	// FinishSource destroys the stopped source and migration state.
@@ -114,6 +117,7 @@ type Manager struct {
 	store         *migrationStore
 	source        sourceOperations
 	disks         migrationStorage
+	kernels       kernelStore
 	capacity      CapacitySource
 	finalDeltaMiB int
 	locks         vm.KeyedLocks
@@ -142,15 +146,15 @@ type Manager struct {
 }
 
 // NewManager validates records and returns a host migration manager.
-func NewManager(host *vm.MigrationHost, source *SourceClient, disks *storage.MigrationTransfer, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
-	if host == nil || source == nil || disks == nil {
+func NewManager(host *vm.MigrationHost, source *SourceClient, disks *storage.MigrationTransfer, kernels *storage.ImageStore, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
+	if host == nil || source == nil || disks == nil || kernels == nil {
 		return nil, fmt.Errorf("migration manager dependencies are required")
 	}
-	return newManager(host, source, disks, capacity, finalDeltaMiB, logger, registry)
+	return newManager(host, source, disks, kernels, capacity, finalDeltaMiB, logger, registry)
 }
 
-func newManager(host migrationHost, source sourceOperations, disks migrationStorage, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
-	if host == nil || source == nil || disks == nil || capacity == nil || registry == nil {
+func newManager(host migrationHost, source sourceOperations, disks migrationStorage, kernels kernelStore, capacity CapacitySource, finalDeltaMiB int, logger *slog.Logger, registry *telemetry.Registry) (*Manager, error) {
+	if host == nil || source == nil || disks == nil || kernels == nil || capacity == nil || registry == nil {
 		return nil, fmt.Errorf("migration manager dependencies are required")
 	}
 	if logger == nil {
@@ -169,6 +173,7 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 		store:          store,
 		source:         source,
 		disks:          disks,
+		kernels:        kernels,
 		capacity:       capacity,
 		finalDeltaMiB:  finalDeltaMiB,
 		logger:         logger,
