@@ -227,6 +227,7 @@ scheduler_events = {
 			"atlas.atlas.core.artifacts.delete_unlinked_files",
 			"atlas.vm.core.vm_image_storage_migration.enqueue_site_file_image_migrations",
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
+			"atlas.vm.core.vm_image_deletion.delete_unused_kernels",
 		],
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",

@@ -34,12 +34,10 @@ class TestVirtualMachineImage(UnitTestCase):
 	def make_image(self, **values):
 		defaults = {
 			"image_sha256": "a" * 64,
-			"kernel_sha256": "b" * 64,
+			"kernel": "b" * 64,
 			"artifact_storage": "Object Storage",
 			"image_object_key": "images/image/rootfs.img",
-			"kernel_object_key": "images/image/kernel",
 			"image_file": None,
-			"kernel_file": None,
 			"image_size_mib": 10,
 			"kernel_size_mib": 5,
 			"architecture": "amd64",
@@ -93,9 +91,7 @@ class TestVirtualMachineImage(UnitTestCase):
 			name="image-1",
 			status="Deleting",
 			image_object_key=None,
-			kernel_object_key=None,
 			rootfs_multipart_upload_id=None,
-			kernel_multipart_upload_id=None,
 			source_server=None,
 		)
 		with (
@@ -112,9 +108,7 @@ class TestVirtualMachineImage(UnitTestCase):
 			name="image-1",
 			status="Deleting",
 			image_object_key=None,
-			kernel_object_key=None,
 			rootfs_multipart_upload_id=None,
-			kernel_multipart_upload_id=None,
 			source_server=None,
 		)
 		with patch(
@@ -183,19 +177,14 @@ class TestVirtualMachineImage(UnitTestCase):
 		image = self.make_image(
 			artifact_storage="Site File",
 			image_object_key=None,
-			kernel_object_key=None,
 			image_file="file-rootfs",
-			kernel_file="file-kernel",
 		)
 
 		with patch(
 			"atlas.vm.doctype.virtual_machine_image.virtual_machine_image.get_download_url",
 			side_effect=lambda name: f"https://atlas.test/files/{name}",
-		) as get_download_url:
+		):
 			self.assertEqual(image.get_artifact_url("rootfs"), "https://atlas.test/files/file-rootfs")
-			self.assertEqual(image.get_artifact_url("kernel"), "https://atlas.test/files/file-kernel")
-
-		self.assertEqual(get_download_url.call_count, 2)
 
 	def test_an_unknown_artifact_is_refused(self) -> None:
 		image = self.make_image()
@@ -203,9 +192,7 @@ class TestVirtualMachineImage(UnitTestCase):
 			image.get_presigned_download_url("memory")
 
 	def test_a_site_file_image_has_no_signed_download(self) -> None:
-		image = self.make_image(
-			artifact_storage="Site File", image_file="file-rootfs", kernel_file="file-kernel"
-		)
+		image = self.make_image(artifact_storage="Site File", image_file="file-rootfs")
 
 		with self.assertRaises(frappe.ValidationError):
 			image.get_presigned_download_url("rootfs")
@@ -215,16 +202,13 @@ class TestVirtualMachineImage(UnitTestCase):
 			artifact_storage="Site File",
 			image_type="machine",
 			image_file="file-rootfs",
-			kernel_file="file-kernel",
 		)
 
 		with self.assertRaises(frappe.ValidationError):
 			image.validate_artifacts()
 
-	def test_a_site_file_image_requires_both_files(self) -> None:
-		image = self.make_image(
-			artifact_storage="Site File", image_type="system", image_file="file-rootfs", kernel_file=None
-		)
+	def test_a_site_file_image_requires_a_rootfs_file(self) -> None:
+		image = self.make_image(artifact_storage="Site File", image_type="system", image_file=None)
 
 		with self.assertRaises(frappe.ValidationError):
 			image.validate_artifacts()
@@ -358,6 +342,11 @@ class TestVirtualMachineImage(UnitTestCase):
 
 
 class TestVirtualMachineImageTransfer(UnitTestCase):
+	def setUp(self) -> None:
+		source_kernel = patch("atlas.vm.core.vm_image_transfer.frappe.db.get_value", return_value="b" * 64)
+		source_kernel.start()
+		self.addCleanup(source_kernel.stop)
+
 	def test_snapshot_uses_the_rounded_up_guest_cpu_count(self) -> None:
 		virtual_machine = SimpleNamespace(
 			name="VM-00001",
@@ -379,7 +368,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.create_snapshot.return_value = {
 			"id": "01900000-0000-7000-8000-000000000001",
 			"rootfs": {"size_bytes": 1024 * 1024},
-			"kernel": {"size_bytes": 1024 * 1024},
 		}
 		service = VirtualMachineImageTransferService()
 
@@ -404,6 +392,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		image.insert.assert_called_once_with(
 			set_name="01900000-0000-7000-8000-000000000001",
 		)
+		self.assertEqual(image_values["kernel"], "b" * 64)
 		self.assertEqual(image_values["memory_snapshot_virtual_cpu_count"], 2)
 		self.assertEqual(image_values["memory_snapshot_memory_mib"], 2048)
 		enqueue_transfer.assert_called_once_with("01900000-0000-7000-8000-000000000001")
@@ -424,7 +413,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.create_snapshot.return_value = {
 			"id": "01900000-0000-7000-8000-000000000004",
 			"rootfs": {"size_bytes": 1024 * 1024},
-			"kernel": {"size_bytes": 1024 * 1024},
 		}
 		service = VirtualMachineImageTransferService()
 
@@ -466,7 +454,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.create_snapshot.return_value = {
 			"id": "01900000-0000-7000-8000-000000000005",
 			"rootfs": {"size_bytes": 1088 * 1024 * 1024},
-			"kernel": {"size_bytes": 1024 * 1024},
 		}
 		service = VirtualMachineImageTransferService()
 
@@ -499,7 +486,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.create_snapshot.return_value = {
 			"id": "01900000-0000-7000-8000-000000000002",
 			"rootfs": {"size_bytes": 1024 * 1024},
-			"kernel": {"size_bytes": 1024 * 1024},
 		}
 		service = VirtualMachineImageTransferService()
 
@@ -539,7 +525,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.create_snapshot.return_value = {
 			"id": "01900000-0000-7000-8000-000000000003",
 			"rootfs": {"size_bytes": 1024 * 1024},
-			"kernel": {"size_bytes": 1024 * 1024},
 		}
 		service = VirtualMachineImageTransferService()
 
@@ -583,11 +568,8 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 	def test_upload_request_signs_each_part_for_one_day(self) -> None:
 		image = SimpleNamespace(
 			image_object_key="images/image/rootfs.img",
-			kernel_object_key="images/image/kernel",
 			rootfs_multipart_upload_id="rootfs-upload",
-			kernel_multipart_upload_id="kernel-upload",
 			image_size_mib=get_multipart_part_size_mib(1) + 1,
-			kernel_size_mib=1,
 		)
 		object_storage_client = Mock()
 		object_storage_client.sign_upload_part.side_effect = lambda key, upload_id, part, **kwargs: (
@@ -599,9 +581,8 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		# The count is an upper bound with one spare part, because the stored
 		# artifact is compressed and its part count is not known in advance.
 		self.assertEqual([part["part_number"] for part in request["rootfs"]["parts"]], [1, 2, 3])
-		self.assertEqual([part["part_number"] for part in request["kernel"]["parts"]], [1, 2])
 		self.assertEqual(request["rootfs"]["upload_id"], "rootfs-upload")
-		self.assertEqual(request["kernel"]["upload_id"], "kernel-upload")
+		self.assertNotIn("kernel", request)
 		self.assertEqual(
 			request["rootfs"]["part_size_mib"], get_multipart_part_size_mib(image.image_size_mib)
 		)
@@ -617,7 +598,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			name="image-1",
 			creation=datetime(2026, 10, 14),
 			image_sha256="a" * 64,
-			kernel_sha256="b" * 64,
 			source_server="server-1",
 			status="Failed",
 			transfer_error="old error",
@@ -645,7 +625,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			name="image-1",
 			creation=datetime(2026, 10, 14),
 			image_sha256=None,
-			kernel_sha256=None,
 			source_server="server-1",
 			status="Uploading",
 			transfer_error=None,
@@ -655,7 +634,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		metal_client.get_snapshot.return_value = {
 			"state": "completed",
 			"rootfs": {"sha256": "a" * 64, "stored_size_bytes": 3 * 1024 * 1024},
-			"kernel": {"sha256": "b" * 64, "stored_size_bytes": 1024 * 1024},
 		}
 		settings = SimpleNamespace(get_object_storage_client=Mock(return_value=Mock()))
 		service = VirtualMachineImageTransferService()
@@ -672,9 +650,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			# First poll records the checksums; finalize runs on the next poll.
 			service.advance(image)
 			self.assertEqual(image.image_sha256, "a" * 64)
-			self.assertEqual(image.kernel_sha256, "b" * 64)
 			self.assertEqual(image.image_stored_size_mib, 3)
-			self.assertEqual(image.kernel_stored_size_mib, 1)
 			self.assertEqual(image.status, "Completing")
 			metal_client.delete_snapshot.assert_not_called()
 
@@ -688,7 +664,6 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		image = SimpleNamespace(
 			name="image-1",
 			image_sha256=None,
-			kernel_sha256=None,
 			source_server="server-1",
 		)
 		metal_client = Mock()
@@ -738,11 +713,8 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			transfer_progress=0,
 			transfer_error=None,
 			rootfs_multipart_upload_id=None,
-			kernel_multipart_upload_id=None,
 			image_object_key="images/image/rootfs.img",
-			kernel_object_key="images/image/kernel",
 			image_size_mib=1,
-			kernel_size_mib=1,
 			save=Mock(),
 		)
 		metal_client = Mock()
@@ -750,7 +722,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			"upload failed", status=500, code="upload_failed", retryable=True
 		)
 		object_storage_client = Mock()
-		object_storage_client.create_multipart_upload.side_effect = ["rootfs-upload", "kernel-upload"]
+		object_storage_client.create_multipart_upload.return_value = "rootfs-upload"
 		service = VirtualMachineImageTransferService()
 
 		with self.assertRaises(MetalClientError):
@@ -761,5 +733,4 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			)
 
 		self.assertEqual(image.rootfs_multipart_upload_id, "rootfs-upload")
-		self.assertEqual(image.kernel_multipart_upload_id, "kernel-upload")
 		image.save.assert_called_once_with()

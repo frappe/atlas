@@ -7,11 +7,15 @@ Atlas owns image records and artifacts. Metal caches the artifacts on hosts and 
 | System | Shared with every tenant. |
 | Machine | Owned by the source VM's tenant. |
 
-An image records its kernel, root filesystem, architecture, sizes, and SHA-256 digests. **Only an enabled, Available image can create a VM.**
+An image records its root filesystem, architecture, sizes, and SHA-256 digests, and links one kernel record. **Only an enabled, Available image can create a VM.**
+
+## Kernels
+
+A `Virtual Machine Kernel` record stores one kernel under its SHA-256 value. Every image with that kernel links the same record, so Atlas stores and uploads each kernel once. Atlas deletes a kernel record and its stored file when no image links to it.
 
 ## System images
 
-The Ubuntu builder publishes a kernel and root filesystem as a new Available System image. Each build gets a new record and its own artifact paths.
+The Ubuntu builder publishes a kernel and root filesystem as a new Available System image. Each build gets a new record and its own rootfs path. A build with an unchanged kernel reuses its kernel record.
 
 Each build uses the latest Ubuntu cloud image release and the newest kernel that Ubuntu supports for that release. For an LTS release, this is the HWE (hardware enablement) kernel. The build log shows the download URLs.
 
@@ -33,7 +37,7 @@ The `artifact_storage` field selects the artifact location:
 
 | Value | Location | Download URL |
 | --- | --- | --- |
-| `Object Storage` | Atlas Settings bucket, under `images/<image ID>/` | Signed. Valid for 24 hours. |
+| `Object Storage` | Atlas Settings bucket: the rootfs under `images/<image ID>/`, the kernel under `kernels/<SHA-256>` | Signed. Valid for 24 hours. |
 | `Site File` | Public site File under `/files/` | Public. No expiry. |
 
 ### Bootstrap without object storage
@@ -50,7 +54,7 @@ Use **Migrate to Object Storage** to start one migration immediately.
 
 For each image, the job:
 
-1. Uploads both artifacts under keys owned by the image and compares sizes.
+1. Uploads the rootfs under a key owned by the image, and the kernel under `kernels/<SHA-256>` when it is not in object storage yet. It compares sizes.
 2. Saves the keys and changes `artifact_storage`.
 3. Keeps the site Files for six hours so hosts can finish earlier downloads, then deletes them.
 
@@ -58,7 +62,7 @@ Hosts have a downloadable copy at each step. The `immutable_reference` uses arch
 
 ## Machine images
 
-Select **Create Machine Image** to stage the VM disk and kernel on Metal. Metal's UUIDv7 snapshot ID becomes the image record name.
+Select **Create Machine Image** to stage the VM disk on Metal. Metal's UUIDv7 snapshot ID becomes the image record name. The image links the kernel of its source VM, so Metal uploads only the disk.
 
 Atlas saves multipart upload IDs before it starts the transfer. It checks hashes and sizes before publication.
 
@@ -95,7 +99,7 @@ Atlas keeps a retired image's objects or public site files for six hours. This g
 
 A migrated image also keeps its old site files until the separate migration deadline ends.
 
-After the deadline, Atlas deletes the remote artifacts and Metal staging, even if VMs still use the image. Those VMs normally boot from local host storage. The remote recovery copy is no longer available.
+After the deadline, Atlas deletes the remote rootfs and Metal staging, even if VMs still use the image. Those VMs boot from their own disk and kernel. The kernel record stays while the image links it, so a host can still download the kernel.
 
 The image record stays `Archived` while any VM record names it. After the last VM record is deleted, Atlas changes the image to `Deleting` and removes its record.
 

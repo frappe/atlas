@@ -18,6 +18,7 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/vm_image_transfer.py`, `core/vm_image_deletion.py`, and `core/multipart_upload.py` | Image publication and removal. |
 | `core/vm_state.py` and `core/state_webhook.py` | Last host reports and messages to Central. |
 | `doctype/virtual_machine_image/` | Durable image records and visibility. |
+| `doctype/virtual_machine_kernel/` | One stored kernel per SHA-256 value, shared by images. |
 
 ## Rules to preserve
 
