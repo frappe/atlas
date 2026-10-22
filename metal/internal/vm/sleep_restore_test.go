@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -62,5 +63,69 @@ func TestSleepRestoreKeepsAGuestThatResumedDespiteAnError(t *testing.T) {
 	}
 	if runtime.coldStarts != 0 || runtime.removes != 0 || runtime.state != StateRunning {
 		t.Fatalf("fallback replaced a resumed guest: %+v", runtime)
+	}
+}
+
+func TestSleepRestoreFallbackStopsOnCancellationOrAMissingDisk(t *testing.T) {
+	for _, failure := range []string{"canceled", "deadline", "disk", "download"} {
+		t.Run(failure, func(t *testing.T) {
+			manager, runtime, storage, snapshots := sleepRestoreManager(t, SleepStateComatose)
+			runtime.restoreError = errors.New("snapshot load failed")
+			switch failure {
+			case "canceled":
+				runtime.restoreError = context.Canceled
+			case "deadline":
+				runtime.restoreError = context.DeadlineExceeded
+			case "disk":
+				storage.hasDisk = false
+			case "download":
+				snapshots.downloadError = errors.New("expired URL")
+			}
+			if err := wakeTestSleep(t.Context(), manager); err == nil {
+				t.Fatal("wake failure was hidden")
+			}
+			information, err := manager.Information(t.Context(), "vm-1")
+			if err != nil || information.Error == nil || information.SleepState != SleepStateComatose || runtime.coldStarts != 0 || runtime.removes != 0 {
+				t.Fatalf("failed wake discarded memory or booted: %+v, %v; runtime=%+v", information, err, runtime)
+			}
+		})
+	}
+}
+
+func TestSleepRestoreFallbackRetryDoesNotReloadRemoteMemory(t *testing.T) {
+	for _, failure := range []string{"cleanup", "boot"} {
+		t.Run(failure, func(t *testing.T) {
+			manager, runtime, storage, snapshots := sleepRestoreManager(t, SleepStateComatose)
+			runtime.restoreError = errors.New("snapshot load failed")
+			if failure == "cleanup" {
+				runtime.deleteError = errors.New("saved state cleanup failed")
+			} else {
+				runtime.coldStartError = errors.New("cold boot failed")
+			}
+			if err := wakeTestSleep(t.Context(), manager); err == nil {
+				t.Fatal("fallback failure was hidden")
+			}
+			information, err := manager.Information(t.Context(), "vm-1")
+			if err != nil || information.Error == nil || information.SleepState != SleepStateAwake {
+				t.Fatalf("failed fallback kept remote memory eligible: %+v, %v", information, err)
+			}
+			downloads := len(snapshots.downloads)
+			runtime.deleteError, runtime.coldStartError = nil, nil
+			restarted, err := NewManager(manager.configuration, ManagerDependencies{Runtime: runtime, Network: manager.network,
+				Storage: storage, Snapshots: snapshots, Telemetry: manager.telemetry})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.Reconcile(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			wantRestores := 1
+			if failure == "cleanup" {
+				wantRestores++
+			}
+			if runtime.state != StateRunning || runtime.restores != wantRestores || len(snapshots.downloads) != downloads {
+				t.Fatalf("retry restored stale memory: runtime=%+v downloads=%v", runtime, snapshots.downloads)
+			}
+		})
 	}
 }
