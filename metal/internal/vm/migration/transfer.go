@@ -178,7 +178,8 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 	if err != nil {
 		return err
 	}
-	if final.Sequence < 1 || (record.HasMemorySnapshot && final.GUID == "") {
+	comatose := record.hasSleepCheckpoint() && record.Definition.Sleep.State == vm.SleepStateComatose
+	if !comatose && (final.Sequence < 1 || (record.usesMemorySnapshot() && final.GUID == "")) {
 		return m.failTransfer(ctx, record, "source returned an invalid final sequence")
 	}
 
@@ -192,8 +193,10 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 	if record.State != destinationStopping {
 		return nil
 	}
-	if err := m.receiveFinalSnapshots(ctx, record, final); err != nil {
-		return err
+	if !comatose {
+		if err := m.receiveFinalSnapshots(ctx, record, final); err != nil {
+			return err
+		}
 	}
 
 	_, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
@@ -425,6 +428,9 @@ func hasInterval(intervals []TransferProgress, sequence int) bool {
 // applyDestinationState restores the memory snapshot paused, or cold-boots the received disk for
 // a disk-only migration or an allowed fallback.
 func (m *Manager) applyDestinationState(ctx context.Context, record destinationRecord) error {
+	if record.hasSleepCheckpoint() {
+		return m.failApply(ctx, record, m.host.ApplySleepMigration(record.VirtualMachineID, record.Definition.Sleep))
+	}
 	if record.usesMemorySnapshot() {
 		err := m.restoreMemorySnapshot(ctx, record)
 		if err == nil || !record.AllowDiskOnlyFallback || isWorkerCancelled(ctx, err) {
