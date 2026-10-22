@@ -15,7 +15,7 @@ from atlas.vm.core.vm_sleep import VirtualMachineSleepService
 
 
 class TestVirtualMachineSleepPolicy(UnitTestCase):
-	def test_disabling_offload_keeps_remote_recovery_urls_fresh(self) -> None:
+	def test_each_vm_controls_offload_without_disabling_recovery_url_refresh(self) -> None:
 		storage = ObjectStorageClient(
 			bucket="snapshots",
 			access_key_id="test-access",
@@ -24,8 +24,6 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			region="test-region",
 		)
 		settings = SimpleNamespace(
-			deep_sleep_after_idle_seconds=0,
-			coma_after_idle_seconds=0,
 			get_object_storage_client=lambda: storage,
 		)
 		virtual_machine = SimpleNamespace(
@@ -37,18 +35,25 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			deep_sleep_after_idle_seconds=0,
 			coma_after_idle_seconds=0,
 		)
-		for state, artifacts in (
-			("deep-sleeping", {"memory": {"uploaded": True}}),
-			("comatose", {"memory": {"uploaded": True}, "disk": {"uploaded": True}}),
+		for state, artifacts, deep_sleep in (
+			("deep-sleeping", {"memory": {"uploaded": True}}, 0),
+			("comatose", {"memory": {"uploaded": True}, "disk": {"uploaded": True}}, 0),
+			("sleeping", None, 3600),
+			("sleeping", None, 0),
 		):
+			virtual_machine.deep_sleep_after_idle_seconds = deep_sleep
 			response = complete_response()
 			response["observed"].update(
-				state="stopped", sleep_state=state, sleep_snapshot={"id": "checkpoint-1", **artifacts}
+				state="stopped",
+				sleep_state=state,
+				sleep_snapshot={"id": "checkpoint-1", **artifacts} if artifacts else None,
 			)
 			client = Mock(spec=MetalClient)
 			client.get_virtual_machine.return_value = MetalVirtualMachine.from_dict(response)
 			with (
-				self.subTest(state=state),
+				self.subTest(state=state, deep_sleep=deep_sleep),
+				patch("atlas.vm.core.vm_sleep.now_datetime", return_value=datetime(2026, 9, 7, 10)),
+				patch("frappe.utils.data.get_system_timezone", return_value="UTC"),
 				patch.object(
 					VirtualMachineService, "metal_client", new_callable=PropertyMock, return_value=client
 				),
@@ -56,8 +61,15 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			):
 				VirtualMachineSleepService(virtual_machine).reconcile()
 
-			client.offload_sleep_state.assert_not_called()
 			client.set_virtual_machine_power_state.assert_not_called()
+			if deep_sleep:
+				self.assertEqual(set(client.offload_sleep_state.call_args.args[1]), {"memory"})
+				client.refresh_sleep_state.assert_not_called()
+				continue
+			client.offload_sleep_state.assert_not_called()
+			if artifacts is None:
+				client.refresh_sleep_state.assert_not_called()
+				continue
 			request = client.refresh_sleep_state.call_args.args[1]
 			self.assertEqual(request.pop("snapshot_id"), "checkpoint-1")
 			self.assertEqual(set(request), set(artifacts))
