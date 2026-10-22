@@ -46,12 +46,16 @@ class VirtualMachineSleepService:
 		storage = settings.get_object_storage_client()
 		prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
 		if snapshot is not None:
-			refresh = {
-				name: {"download_url": storage.object_url(f"{prefix}/{name}")}
-				for name in ("memory", "disk")
-				if getattr(snapshot, name) is not None
-			}
-			client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
+			cache = frappe.cache()
+			refresh_key = f"atlas:vm-sleep-urls:{machine.name}:{snapshot.id}"
+			if not cache.get_value(refresh_key, use_local_cache=False):
+				refresh = {
+					name: {"download_url": storage.object_url(f"{prefix}/{name}")}
+					for name in ("memory", "disk")
+					if getattr(snapshot, name) is not None
+				}
+				client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
+				cache.set_value(refresh_key, True, expires_in_sec=3600)
 		if artifacts:
 			request = {
 				name: {

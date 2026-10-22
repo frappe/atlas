@@ -30,6 +30,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - Metal is the authority for current host state. `Virtual Machine State` is a cache for lists and image checks. A failed Metal read must not appear as a guest state.
 - `snapshot_upload_percent` is a read-only virtual field that uses the request-cached Metal response. It is absent outside an active HTTP upload. See [upload progress in Desk](../../docs/compute/sleepy-vms.md#upload-saved-snapshots).
 - `VirtualMachineSleepService` reads the VM's stored offload thresholds and Metal's request time. `VirtualMachineResize` stores offload-only changes without a Metal call and merges partial changes under a VM row lock after host work. These thresholds are not part of `VirtualMachineShape`. See [automatic offload](../../docs/compute/sleepy-vms.md#configure-automatic-offload).
+- The URL-refresh cache is site-scoped and keyed by VM and checkpoint. Populate it only after Metal accepts the refresh. It must not suppress offload requests or retries after a failed refresh.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
 - The draft commits its tags and affinity rules in the same transaction as its host reservation.

@@ -64,7 +64,9 @@ At the deep-sleep threshold, Atlas supplies signed memory upload and download UR
 
 Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk` as object keys. A later sleep checkpoint on the same host replaces these objects. The host prefix separates uploads across migration. Keep these objects available while the VM depends on them.
 
-The same job refreshes GET URLs for stored checkpoints, even when offload thresholds are disabled. Set the signed URL lifetime longer than the one-minute schedule and allow time for queue delays and downloads. A failed check appears in Error Log and retries on the next schedule. Atlas does not store signed URLs or a second copy of Metal's sleep state.
+The same job refreshes GET URLs for stored checkpoints once an hour, even when offload thresholds are disabled. The interval is fixed and does not depend on URL expiry. Set the signed URL lifetime longer than one hour and allow time for queue delays and downloads.
+
+Atlas caches each successful refresh per VM and checkpoint for one hour. A cache miss refreshes URLs immediately. A failed check appears in Error Log and retries on the next minute's schedule. Atlas does not store signed URLs or a second copy of Metal's sleep state.
 
 ## Upload saved snapshots
 
