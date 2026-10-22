@@ -786,12 +786,27 @@ func TestStartWakesASleepingVirtualMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.hasSavedState = true
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.SleepState = SleepStateSleeping
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := manager.SetPowerState(context.Background(), "machine-1", StateRunning); err != nil {
 		t.Fatal(err)
 	}
 	if runtime.restores != 1 || runtime.state != StateRunning {
 		t.Fatalf("restores = %d, state = %s, want one restore to running", runtime.restores, runtime.state)
+	}
+	information, err := manager.Information(context.Background(), "machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if information.SleepState != SleepStateAwake {
+		t.Fatalf("sleep state = %q, want awake", information.SleepState)
 	}
 }
 
