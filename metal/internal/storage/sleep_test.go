@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,49 @@ import (
 	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
+
+type sleepUploadTransport func(*http.Request) (*http.Response, error)
+
+func (transport sleepUploadTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestSleepUploadCountsCompressedHTTPAttempts(t *testing.T) {
+	contents := bytes.Repeat([]byte("compressible snapshot"), 1<<16)
+	store, _, path := uploadFixture(t, contents)
+	progress := &vm.SleepUploadProgress{}
+	attempts := 0
+	store.httpClient = &http.Client{Transport: sleepUploadTransport(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		total := progress.TotalBytes.Load()
+		if total <= 0 || total >= int64(len(contents)) || request.ContentLength != total || progress.UploadedBytes.Load() != 0 {
+			return nil, fmt.Errorf("attempt %d: size=%d, length=%d, read=%d", attempts, total, request.ContentLength, progress.UploadedBytes.Load())
+		}
+		defer request.Body.Close()
+		if _, err := io.CopyN(io.Discard, request.Body, total/2); err != nil {
+			return nil, err
+		}
+		if read := progress.UploadedBytes.Load(); read != total/2 {
+			return nil, fmt.Errorf("counted %d compressed bytes, want %d", read, total/2)
+		}
+		if _, err := io.Copy(io.Discard, request.Body); err != nil {
+			return nil, err
+		}
+		if read := progress.UploadedBytes.Load(); read != total {
+			return nil, fmt.Errorf("counted %d compressed bytes, want %d", read, total)
+		}
+		response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}
+		response.Header.Set("ETag", "stored")
+		if attempts == 1 {
+			response.StatusCode = http.StatusServiceUnavailable
+		}
+		return response, nil
+	})}
+	artifact, err := store.uploadSleepArtifact(t.Context(), path, int64(len(contents)), "https://objects.example/upload", t.TempDir(), progress)
+	if err != nil || attempts != 2 || artifact.StoredSizeBytes != progress.TotalBytes.Load() {
+		t.Fatalf("upload after retry: %+v, attempts=%d, error=%v", artifact, attempts, err)
+	}
+}
 
 func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	source := t.TempDir()
