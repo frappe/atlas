@@ -8,13 +8,35 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/frappe/atlas/metal/internal/network/traffic"
 )
 
 type sleepSnapshots struct {
 	fakeSnapshots
-	uploads      int
-	uploadError  error
-	duringUpload func()
+	uploads       int
+	uploadError   error
+	duringUpload  func()
+	downloads     []string
+	downloadError error
+	diskPresent   bool
+}
+
+func (snapshots *sleepSnapshots) DownloadSleepMemory(_ context.Context, _, source string, _ SleepArtifact) error {
+	snapshots.downloads = append(snapshots.downloads, "memory:"+source)
+	return snapshots.downloadError
+}
+
+func (snapshots *sleepSnapshots) RestoreSleepDisk(_ context.Context, _, source string, _ SleepArtifact) error {
+	if snapshots.diskPresent {
+		return nil
+	}
+	snapshots.downloads = append(snapshots.downloads, "disk:"+source)
+	if snapshots.downloadError != nil {
+		return snapshots.downloadError
+	}
+	snapshots.diskPresent = true
+	return nil
 }
 
 func (snapshots *sleepSnapshots) UploadSleepMemory(context.Context, string, string) (SleepArtifact, error) {
@@ -161,22 +183,29 @@ func TestSleepDiskFollowsMemoryUpload(t *testing.T) {
 }
 
 func TestWakeDuringUploadDoesNotEvictLiveState(t *testing.T) {
-	manager, runtime, storage, snapshots := sleepyManager(t)
-	started, finish := make(chan struct{}), make(chan struct{})
-	snapshots.duringUpload = func() { close(started); <-finish }
-	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
-		t.Fatal(err)
-	}
-	result := make(chan error, 1)
-	go func() { result <- manager.offloadSleepArtifacts(t.Context(), "vm-1") }()
-	<-started
-	wakeError := wakeTestSleep(t.Context(), manager)
-	close(finish)
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
-	if wakeError != nil || runtime.restores != 1 || runtime.deletes != 0 || storage.releases != 0 || snapshots.uploads != 1 {
-		t.Fatalf("wake raced with eviction: %v, runtime=%+v storage=%+v uploads=%d", wakeError, runtime, storage, snapshots.uploads)
+	for _, upload := range []int{1, 2} {
+		manager, runtime, storage, snapshots := sleepyManager(t)
+		started, finish := make(chan struct{}), make(chan struct{})
+		snapshots.duringUpload = func() {
+			if snapshots.uploads == upload {
+				close(started)
+				<-finish
+			}
+		}
+		if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+			t.Fatal(err)
+		}
+		result := make(chan error, 1)
+		go func() { result <- manager.offloadSleepArtifacts(t.Context(), "vm-1") }()
+		<-started
+		wakeError := wakeTestSleep(t.Context(), manager)
+		close(finish)
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+		if wakeError != nil || runtime.restores != 1 || runtime.deletes != upload-1 || storage.releases != 0 || snapshots.uploads != upload {
+			t.Fatalf("wake raced with eviction: %v, runtime=%+v storage=%+v uploads=%d", wakeError, runtime, storage, snapshots.uploads)
+		}
 	}
 }
 
@@ -233,5 +262,179 @@ func TestSleepStateRequestRejectsInvalidTransport(t *testing.T) {
 	}
 	if err := (SleepStateRequest{SnapshotID: "checkpoint", Memory: sleepTarget()}).Validate(true); err == nil {
 		t.Fatal("refresh accepted an upload destination")
+	}
+}
+
+func TestSleepRequestsShareOneWakePath(t *testing.T) {
+	for _, sleepState := range []SleepState{SleepStateSleeping, SleepStateDeepSleeping, SleepStateComatose} {
+		for _, request := range []string{"traffic", "start", "reconcile"} {
+			t.Run(string(sleepState)+"/"+request, func(t *testing.T) {
+				manager, runtime, _, snapshots := sleepyManager(t)
+				if sleepState != SleepStateSleeping {
+					upload := SleepStateRequest{Memory: sleepTarget()}
+					if sleepState == SleepStateComatose {
+						upload.Disk = sleepTarget()
+					}
+					if err := manager.OffloadSleepState(t.Context(), "vm-1", upload); err != nil {
+						t.Fatal(err)
+					}
+					if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				desired, _, err := manager.newVirtualMachine("vm-1").records()
+				if err != nil {
+					t.Fatal(err)
+				}
+				snapshots.diskPresent = sleepState != SleepStateComatose
+				if request == "reconcile" {
+					err = manager.Reconcile(t.Context(), "vm-1")
+				} else {
+					manager.traffic = &traffic.Monitor{}
+					if request == "traffic" {
+						err = manager.RestoreAfterTraffic(t.Context(), traffic.Event{Target: traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}})
+					} else {
+						err = manager.SetPowerState(t.Context(), "vm-1", StateRunning)
+					}
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				information, err := manager.Information(t.Context(), "vm-1")
+				if err != nil || information.SleepState != SleepStateAwake || information.State != StateRunning || runtime.restores != 1 || runtime.starts != 0 {
+					t.Fatalf("wake failed: %+v, %v; runtime=%+v", information, err, runtime)
+				}
+				wantDownloads := 0
+				if sleepState == SleepStateDeepSleeping {
+					wantDownloads = 1
+				} else if sleepState == SleepStateComatose {
+					wantDownloads = 2
+					if !strings.HasPrefix(snapshots.downloads[0], "disk:") {
+						t.Fatal("memory was restored before the disk")
+					}
+				}
+				if len(snapshots.downloads) != wantDownloads {
+					t.Fatalf("downloads = %v", snapshots.downloads)
+				}
+				if request != "reconcile" {
+					if err := manager.SetPowerState(t.Context(), "vm-1", StateRunning); err != nil || runtime.restores != 1 {
+						t.Fatalf("duplicate request restored again: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRemoteSleepDownloadFailureCanRetryWithRefreshedURL(t *testing.T) {
+	for _, sleepState := range []SleepState{SleepStateDeepSleeping, SleepStateComatose} {
+		t.Run(string(sleepState), func(t *testing.T) {
+			manager, runtime, _, snapshots := sleepyManager(t)
+			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			desired, observed, err := manager.newVirtualMachine("vm-1").records()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.writeAppliedState(desired, &observed, StateStopped, sleepState); err != nil {
+				t.Fatal(err)
+			}
+			runtime.hasSavedState = false
+			snapshots.downloadError = errors.New("expired URL")
+			if err := wakeTestSleep(t.Context(), manager); err == nil {
+				t.Fatal("failed download was hidden")
+			}
+			information, err := manager.Information(t.Context(), "vm-1")
+			if err != nil || information.Error == nil || information.SleepState != sleepState || runtime.starts != 0 || runtime.restores != 0 {
+				t.Fatalf("failed download changed VM state: %+v, %v", information, err)
+			}
+			fresh := "https://objects.example/snapshot?get=fresh"
+			if err := manager.RefreshSleepState(t.Context(), "vm-1", SleepStateRequest{SnapshotID: information.SleepSnapshot.ID,
+				Memory: &SleepArtifactTarget{DownloadURL: fresh}, Disk: &SleepArtifactTarget{DownloadURL: fresh}}); err != nil {
+				t.Fatal(err)
+			}
+			snapshots.downloadError = nil
+			if err := wakeTestSleep(t.Context(), manager); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.restores != 1 || !strings.HasSuffix(snapshots.downloads[len(snapshots.downloads)-1], "get=fresh") {
+				t.Fatalf("retry did not use refreshed URL: %v", snapshots.downloads)
+			}
+		})
+	}
+}
+
+func TestSleepEvictionRetriesWithoutReupload(t *testing.T) {
+	for _, artifact := range []string{"memory", "disk"} {
+		t.Run(artifact, func(t *testing.T) {
+			manager, runtime, storage, snapshots := sleepyManager(t)
+			if artifact == "memory" {
+				runtime.deleteError = errors.New("delete failed")
+			} else {
+				storage.releaseError = errors.New("release failed")
+			}
+			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err == nil {
+				t.Fatal("eviction failure was hidden")
+			}
+			information, err := manager.Information(t.Context(), "vm-1")
+			wantState := SleepStateDeepSleeping
+			if artifact == "disk" {
+				wantState = SleepStateComatose
+			}
+			if err != nil || information.Error == nil || information.SleepState != wantState || !information.SleepSnapshot.Memory.Uploaded {
+				t.Fatalf("recoverable state was not recorded before eviction: %+v, %v", information, err)
+			}
+			runtime.deleteError, storage.releaseError = nil, nil
+			restarted, err := NewManager(manager.configuration, ManagerDependencies{Runtime: runtime, Network: manager.network,
+				Storage: storage, Snapshots: snapshots, Telemetry: manager.telemetry})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.hasSavedState || storage.hasDisk || snapshots.uploads != 2 {
+				t.Fatalf("retry did not free resources without reupload: runtime=%+v storage=%+v uploads=%d", runtime, storage, snapshots.uploads)
+			}
+		})
+	}
+}
+
+func TestComatosePowerChangesPreserveDisk(t *testing.T) {
+	for _, change := range []string{"stop", "restart", "shape"} {
+		t.Run(change, func(t *testing.T) {
+			manager, runtime, _, snapshots := sleepyManager(t)
+			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch change {
+			case "stop":
+				err = manager.SetPowerState(t.Context(), "vm-1", StateStopped)
+			case "restart":
+				err = manager.RequestRestart(t.Context(), "vm-1")
+			case "shape":
+				err = manager.Resize(t.Context(), "vm-1", Compute{CPUMillicores: 3000, MemoryMiB: 4096}, 4096)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.Reconcile(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshots.downloads) != 1 || !strings.HasPrefix(snapshots.downloads[0], "disk:") || runtime.restores != 0 {
+				t.Fatalf("power change did not preserve disk independently of memory: %v, restores=%d", snapshots.downloads, runtime.restores)
+			}
+		})
 	}
 }
