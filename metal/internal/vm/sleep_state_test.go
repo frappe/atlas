@@ -99,6 +99,79 @@ func sleepTarget() *SleepArtifactTarget {
 	return &SleepArtifactTarget{UploadURL: "https://objects.example/snapshot?put=secret", DownloadURL: "https://objects.example/snapshot?get=secret"}
 }
 
+func TestSleepMigrationDefersDownloadsUntilDestinationWake(t *testing.T) {
+	for _, state := range []SleepState{SleepStateDeepSleeping, SleepStateComatose} {
+		t.Run(string(state), func(t *testing.T) {
+			source, sourceRuntime, _, _ := sleepyManager(t)
+			sourceRuntime.savedIdentity = strings.Repeat("c", 64)
+			memory := sleepTarget()
+			memory.ObjectKey = "sleep/source/vm-1/memory"
+			request := SleepStateRequest{Memory: memory}
+			if state == SleepStateComatose {
+				request.Disk = sleepTarget()
+				request.Disk.ObjectKey = "sleep/source/vm-1/disk"
+			}
+			if err := source.OffloadSleepState(t.Context(), "vm-1", request); err != nil {
+				t.Fatal(err)
+			}
+			if err := source.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if state == SleepStateDeepSleeping {
+				record, err := source.readSleepRecord("vm-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				record.Disk = &sleepArtifactRecord{SleepArtifactTarget: *sleepTarget()}
+				if err := source.writeSleepRecord("vm-1", record); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sleep, err := NewMigrationHost(source).ReadSleepMigration("vm-1")
+			if err != nil || sleep == nil || sleep.State != state || sleep.Checkpoint.Memory.UploadURL != "" {
+				t.Fatalf("capture = %+v, %v", sleep, err)
+			}
+			if state == SleepStateDeepSleeping && sleep.Checkpoint.Disk != nil {
+				t.Fatal("handoff carried an unfinished source disk upload")
+			}
+			destination, runtime, _, snapshots := sleepyManager(t)
+			runtime.hasSavedState = false
+			desired, _ := destination.store.readDesired("vm-1")
+			desired.UserID += 100
+			if err := destination.store.writeDesired(desired); err != nil {
+				t.Fatal(err)
+			}
+			if err := NewMigrationHost(destination).ApplySleepMigration("vm-1", sleep); err != nil {
+				t.Fatal(err)
+			}
+			guard := lockSource(t, destination, "vm-1")
+			if err := destination.SetPowerState(t.Context(), "vm-1", StateRunning); !errors.Is(err, ErrConflict) {
+				t.Fatalf("migration accepted a wake request: %v", err)
+			}
+			if err := destination.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := destination.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshots.downloads) != 0 || runtime.restores != 0 || runtime.coldStarts != 0 {
+				t.Fatal("handoff downloaded snapshots or started the destination")
+			}
+			guard.sourceLocked["vm-1"] = false
+			if err := wakeTestSleep(t.Context(), destination); err != nil {
+				t.Fatal(err)
+			}
+			wantDownloads := 1
+			if state == SleepStateComatose {
+				wantDownloads = 2
+			}
+			if len(snapshots.downloads) != wantDownloads || runtime.restores != 1 || runtime.coldStarts != 0 {
+				t.Fatalf("wake did not use imported checkpoint: downloads=%v restores=%d", snapshots.downloads, runtime.restores)
+			}
+		})
+	}
+}
+
 func wakeTestSleep(ctx context.Context, manager *Manager) error {
 	if err := manager.SetPowerState(ctx, "vm-1", StateRunning); err != nil {
 		return err
