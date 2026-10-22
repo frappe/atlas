@@ -54,6 +54,42 @@ Metal sets only `sleeping` today. A host with an older `metald` does not send th
 
 The saved state belongs to one VM and stays on its host. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
 
+## Upload saved snapshots
+
+Atlas can upload snapshot copies with `POST /v1/vms/{id}/sleep-state`. The VM must already be sleeping. Supply presigned PUT and GET URLs for memory, disk, or both. Upload memory before disk. Atlas can request both together or add disk in a later request. Local memory and disk stay on the host. Wake uses the VM-local saved state.
+
+```json
+{
+  "memory": {
+    "upload_url": "https://objects.example/sleep/checkpoint/memory?signature=...",
+    "download_url": "https://objects.example/sleep/checkpoint/memory?signature=..."
+  },
+  "disk": {
+    "upload_url": "https://objects.example/sleep/checkpoint/disk?signature=...",
+    "download_url": "https://objects.example/sleep/checkpoint/disk?signature=..."
+  }
+}
+```
+
+Each upload URL must accept a complete object with HTTP PUT. Memory is a zstd-compressed tar archive of `state`, `memory`, and `metadata.json`. Disk uses the zstd-compressed raw image format. Metal records each artifact's SHA-256 digest and size. The digest covers the uncompressed content, including the tar headers for memory.
+
+The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again.
+
+Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
+
+```json
+{
+  "snapshot_id": "<observed.sleep_snapshot.id>",
+  "memory": {
+    "download_url": "https://objects.example/sleep/checkpoint/memory?signature=..."
+  }
+}
+```
+
+An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint and keep each URL's scheme, host, and object path. It cannot supply an upload URL. This request stores URLs only. It does not download artifacts or wake the VM.
+
+Uploads use stable staging data, so a wake can proceed during upload. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
+
 ## Placement
 
 Sleepy VMs can live on their own hosts. With **Use Dedicated Sleepy VM Hosts** on in Atlas Settings, sleepy VMs go only to sleepy hosts, and regular VMs only to regular hosts. Auto-spawn creates a host for the right pool.
