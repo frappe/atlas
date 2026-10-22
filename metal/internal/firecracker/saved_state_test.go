@@ -42,6 +42,69 @@ func TestInstallSavedStateChecksIdentityBeforePublishing(t *testing.T) {
 	}
 }
 
+func TestInstallMigratedSleepStatePreservesIdentityAndLocalValidation(t *testing.T) {
+	for _, invalid := range []string{"", "identity", "user", "shape", "network", "generation"} {
+		t.Run(invalid, func(t *testing.T) {
+			runtime := &Runtime{configuration: Config{MachinesDir: t.TempDir(), FirecrackerBin: "/destination/firecracker"}}
+			shape := vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 512, DiskMiB: 1024}
+			source := savedStateRequirement{VirtualMachineID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3, FirecrackerCompatibility: "source-build", MigratedShape: &shape}
+			metadata := savedStateFixture(t, runtime.configuration, source)
+			if invalid == "network" {
+				metadata.TapMACAddress = ""
+				data, _ := json.Marshal(metadata)
+				if err := os.WriteFile(filepath.Join(runtime.configuration.savedStateDirectory("vm-1"), savedStateMetadataFileName), data, 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			published := runtime.configuration.savedStateDirectory("vm-1")
+			directory := published + "-downloaded"
+			if err := os.Rename(published, directory); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(data)
+			identity := hex.EncodeToString(digest[:])
+			machine := vm.RuntimeMachine{ID: "vm-1", UserID: 2001, SavedStateSourceUserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3,
+				Specification: vm.Specification{CPUMillicores: 1000, MemoryMiB: 512, DiskMiB: 1024}}
+			switch invalid {
+			case "identity":
+				identity = "wrong"
+			case "user":
+				machine.SavedStateSourceUserID++
+			case "shape":
+				machine.Specification.MemoryMiB++
+			case "generation":
+				machine.RestartGeneration++
+			}
+			err = runtime.InstallSavedState(t.Context(), machine, directory, identity)
+			if invalid != "" {
+				if err == nil {
+					t.Fatal("invalid imported checkpoint was installed")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			machine.SavedStateSourceUserID = 0
+			if has, err := runtime.hasSavedState(machine); err != nil || !has {
+				t.Fatalf("normal inspection discarded imported state: %v, %v", has, err)
+			}
+			saved, err := runtime.SavedState(t.Context(), machine)
+			if err != nil || saved.Identity != identity {
+				t.Fatalf("retry identity = %+v, %v", saved, err)
+			}
+			runtime.configuration.FirecrackerBin = "/incompatible/firecracker"
+			if _, err := runtime.SavedState(t.Context(), machine); !errors.Is(err, errSavedStateIncompatible) {
+				t.Fatalf("local compatibility check was weakened: %v", err)
+			}
+		})
+	}
+}
+
 func savedStateFixture(t *testing.T, configuration Config, requirement savedStateRequirement) savedStateMetadata {
 	t.Helper()
 	directory := configuration.savedStateDirectory(requirement.VirtualMachineID)
