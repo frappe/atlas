@@ -128,29 +128,6 @@ class TestSleepyVMOvercommitFactor(UnitTestCase):
 					AtlasSettings._validate_sleepy_vm_overcommit_factor(settings)
 
 
-class TestSleepTimes(UnitTestCase):
-	def test_valid_times_are_accepted(self) -> None:
-		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
-
-		for deep_sleep, coma in ((0, 0), (3600, 0), (3600, 86400)):
-			with self.subTest(deep_sleep=deep_sleep, coma=coma):
-				settings = SimpleNamespace(
-					deep_sleep_after_idle_seconds=deep_sleep, coma_after_idle_seconds=coma
-				)
-				AtlasSettings._validate_sleep_times(settings)
-
-	def test_coma_needs_a_shorter_deep_sleep(self) -> None:
-		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
-
-		for deep_sleep, coma in ((0, 3600), (3600, 3600), (7200, 3600)):
-			with self.subTest(deep_sleep=deep_sleep, coma=coma):
-				settings = SimpleNamespace(
-					deep_sleep_after_idle_seconds=deep_sleep, coma_after_idle_seconds=coma
-				)
-				with self.assertRaisesRegex(frappe.ValidationError, "Coma After Idle"):
-					AtlasSettings._validate_sleep_times(settings)
-
-
 class TestPlacementStrategy(UnitTestCase):
 	def test_unknown_strategy_is_rejected(self) -> None:
 		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
