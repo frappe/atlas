@@ -68,6 +68,8 @@ class AtlasSettings(Document):
 		bmc_driver: DF.Literal["None", "Redfish"]
 		central_jwks: DF.JSON | None
 		central_jwks_url: DF.Data | None
+		coma_after_idle_seconds: DF.Int
+		deep_sleep_after_idle_seconds: DF.Int
 		default_metal_machine_image: DF.Autocomplete | None
 		default_metal_machine_size: DF.Autocomplete | None
 		dns_provider: DF.Literal["Route53"]

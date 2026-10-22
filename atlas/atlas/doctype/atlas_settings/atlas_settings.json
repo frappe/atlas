@@ -142,6 +142,10 @@
   "column_break_dxsw",
   "use_dedicated_sleepy_vm_hosts",
   "sleepy_vm_overcommit_factor",
+  "sleep_section",
+  "deep_sleep_after_idle_seconds",
+  "sleep_column_break",
+  "coma_after_idle_seconds",
   "migration_section",
   "is_vm_migration_paused",
   "section_break_azkc",
@@ -852,6 +856,33 @@
    "show_description_on_click": 1
   },
   {
+   "fieldname": "sleep_section",
+   "fieldtype": "Section Break",
+   "label": "Sleep"
+  },
+  {
+   "default": "0",
+   "description": "Idle time before Metal moves the saved memory of a sleepy VM to object storage. Metal counts it from the last request, like the sleep timeout. 0 turns deep sleep off.",
+   "fieldname": "deep_sleep_after_idle_seconds",
+   "fieldtype": "Int",
+   "label": "Deep Sleep After Idle (seconds)",
+   "non_negative": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "sleep_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Idle time before Metal also moves the disk to object storage. It must be greater than Deep Sleep After Idle. 0 turns coma off.",
+   "fieldname": "coma_after_idle_seconds",
+   "fieldtype": "Int",
+   "label": "Coma After Idle (seconds)",
+   "non_negative": 1,
+   "show_description_on_click": 1
+  },
+  {
    "default": "0",
    "description": "Keep sleepy VMs on sleepy hosts and other VMs off them. Disable to allow any VM on any host.",
    "fieldname": "use_dedicated_sleepy_vm_hosts",
@@ -999,7 +1030,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-15 19:27:05.702712",
+ "modified": "2026-10-22 19:30:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",
