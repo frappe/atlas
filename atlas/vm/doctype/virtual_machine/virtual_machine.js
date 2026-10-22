@@ -7,6 +7,12 @@ frappe.ui.form.on("Virtual Machine", {
 
 		// VM fields are edited through actions, never a direct save.
 		frm.disable_save();
+		frm.set_df_property("snapshot_upload_percent", "formatter", (value) => {
+			const percent = Number(value);
+			return `<progress value="${percent}" max="100" aria-label="${__(
+				"Snapshot Upload"
+			)}"></progress> ${percent}%`;
+		});
 
 		const current_state = frm.doc.current_state;
 		const is_running = current_state === "running";

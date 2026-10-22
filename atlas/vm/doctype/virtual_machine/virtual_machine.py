@@ -166,6 +166,30 @@ class VirtualMachine(Document):
 		return (information.observed.sleep_state or None) if information else None
 
 	@property
+	def snapshot_upload_percent(self) -> str | None:
+		"""Return progress only while Metal uploads an artifact over HTTP."""
+		information = self.get_metal_vm_info()
+		if not information or information.observed.error:
+			return None
+
+		observed = information.observed
+		if not observed.sleep_snapshot:
+			return None
+
+		if observed.phase == "upload-sleep-memory":
+			artifact = observed.sleep_snapshot.memory
+		elif observed.phase == "upload-sleep-disk":
+			artifact = observed.sleep_snapshot.disk
+		else:
+			return None
+
+		if not artifact or artifact.uploaded or artifact.upload_percent is None:
+			return None
+
+		# A Data field preserves None; Frappe converts an empty Percent field to zero.
+		return str(artifact.upload_percent)
+
+	@property
 	def last_request_at(self) -> datetime | None:
 		"""Return when the VM last received a request, in the site timezone."""
 		information = self.get_metal_vm_info()

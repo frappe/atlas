@@ -9,6 +9,7 @@
   "current_state",
   "desired_state",
   "sleep_state",
+  "snapshot_upload_percent",
   "last_request_at",
   "active_migration",
   "tenant_id",
@@ -94,6 +95,14 @@
    "is_virtual": 1,
    "label": "Sleep State",
    "options": "\nsleeping\ndeep-sleeping\ncomatose",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.snapshot_upload_percent != null",
+   "fieldname": "snapshot_upload_percent",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Snapshot Upload",
    "read_only": 1
   },
   {
