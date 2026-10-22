@@ -29,6 +29,7 @@ type Runtime interface {
 	// RestorePausedFrom loads a transferred memory snapshot with the guest paused.
 	RestorePausedFrom(ctx context.Context, machine RuntimeMachine, directory string) error
 	DeleteSavedState(context.Context, RuntimeMachine) error
+	SavedState(context.Context, RuntimeMachine) (SavedState, error)
 	Pause(context.Context, RuntimeMachine) error
 	Resume(context.Context, RuntimeMachine) error
 	Remove(context.Context, RuntimeMachine) error

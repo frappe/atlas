@@ -271,6 +271,13 @@ func (manager *Manager) information(identifier string) (Information, error) {
 		return Information{}, err
 	}
 	information := informationFromRecords(desired, observed, observed.Disk)
+	sleep, err := manager.readSleepRecord(identifier)
+	if err != nil {
+		return Information{}, err
+	}
+	if sleep != nil {
+		information.SleepSnapshot = sleep.status()
+	}
 	if manager.traffic != nil {
 		// A VM without attached traffic hooks reports no request time.
 		information.LastRequestAt, _ = manager.traffic.LastRequestAt(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
