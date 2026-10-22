@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -54,6 +55,8 @@ type migrationStorage interface {
 
 // migrationHost changes VM state during migration.
 type migrationHost interface {
+	ReadSleepMigration(virtualMachineID string) (*vm.SleepMigration, error)
+	ApplySleepMigration(virtualMachineID string, sleep *vm.SleepMigration) error
 	ReadDesired(virtualMachineID string) (vm.DesiredRecord, error)
 	ReadObserved(virtualMachineID string) (vm.ObservedRecord, error)
 	WriteDesired(record vm.DesiredRecord) error
@@ -428,7 +431,11 @@ func (m *Manager) assertVirtualMachineIDFree(virtualMachineID string) error {
 }
 
 func (m *Manager) removeDestinationStaging(virtualMachineID string) error {
-	for _, path := range []string{m.host.DesiredPath(virtualMachineID), m.host.ObservedPath(virtualMachineID)} {
+	for _, path := range []string{
+		m.host.DesiredPath(virtualMachineID),
+		m.host.ObservedPath(virtualMachineID),
+		filepath.Join(m.host.VirtualMachineRecordsDirectory(), virtualMachineID, "sleep-state.json"),
+	} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove destination staging: %w", err)
 		}
