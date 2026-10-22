@@ -68,8 +68,6 @@ class AtlasSettings(Document):
 		bmc_driver: DF.Literal["None", "Redfish"]
 		central_jwks: DF.JSON | None
 		central_jwks_url: DF.Data | None
-		coma_after_idle_seconds: DF.Int
-		deep_sleep_after_idle_seconds: DF.Int
 		default_metal_machine_image: DF.Autocomplete | None
 		default_metal_machine_size: DF.Autocomplete | None
 		dns_provider: DF.Literal["Route53"]
@@ -251,7 +249,6 @@ class AtlasSettings(Document):
 			frappe.throw(_("Unknown placement strategy: {0}.").format(self.placement_strategy))
 
 		self._validate_sleepy_vm_overcommit_factor()
-		self._validate_sleep_times()
 		self._validate_vm_migration_network_change()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
@@ -320,14 +317,6 @@ class AtlasSettings(Document):
 			frappe.throw(_("Sleepy VM overcommit factor must be a finite number of at least 1."))
 
 		self.sleepy_vm_overcommit_factor = factor
-
-	def _validate_sleep_times(self) -> None:
-		coma_after_idle_seconds = cint(self.coma_after_idle_seconds)
-		if (
-			coma_after_idle_seconds
-			and not 0 < cint(self.deep_sleep_after_idle_seconds) < coma_after_idle_seconds
-		):
-			frappe.throw(_("Coma After Idle needs a Deep Sleep After Idle that is set and shorter."))
 
 	def on_update(self) -> None:
 		"""Skip provider checks when the empty settings document is created."""
