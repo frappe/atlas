@@ -267,7 +267,7 @@ func (manager *Manager) CreateSnapshot(ctx context.Context, identifier string) (
 		}
 		snapshot, operationError = manager.snapshots.Stage(ctx, SnapshotRequest{
 			VirtualMachineID: identifier,
-			ImageReference:   desired.Specification.Image.Name,
+			KernelSHA256:     desired.Specification.Image.KernelSHA256,
 		})
 		return operationError
 	})
