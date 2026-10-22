@@ -235,6 +235,7 @@ type Information struct {
 	ID                              string
 	State                           State
 	DesiredState                    State
+	SleepState                      SleepState
 	Error                           *PublicOperationError
 	CPUMillicores                   int
 	MemoryMiB                       int
