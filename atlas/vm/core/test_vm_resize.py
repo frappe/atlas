@@ -34,8 +34,8 @@ class TestVirtualMachineResize(UnitTestCase):
 			disk_mib=20480,
 			sleep_after_idle_seconds=0,
 			placement_rules=None,
-			db_set=Mock(),
 		)
+		self.virtual_machine.db_set = Mock(side_effect=self.db_set)
 		self.resize = VirtualMachineResize(self.virtual_machine)
 		self.metal_client = self.start_patch(patch.object(VirtualMachineService, "metal_client", Mock()))
 		self.find_server = self.start_patch(
@@ -44,6 +44,12 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.create_migration = self.start_patch(
 			patch("atlas.vm.core.vm_resize.MigrationService.create", return_value="mig-00001")
 		)
+
+	def db_set(self, field: str | dict, value: int | None = None) -> None:
+		"""Mirror Document.db_set, which also updates the document."""
+		values = field if isinstance(field, dict) else {field: value}
+		for name, new_value in values.items():
+			setattr(self.virtual_machine, name, new_value)
 
 	def start_patch(self, active_patch) -> Mock:
 		mock = active_patch.start()
@@ -61,6 +67,7 @@ class TestVirtualMachineResize(UnitTestCase):
 			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
 		)
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
+		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 		self.find_server.assert_not_called()
 
 	def test_a_retry_repairs_stale_stored_resources(self) -> None:
