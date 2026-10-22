@@ -1,6 +1,9 @@
 package vm
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Storage manages virtual machine disks.
 type Storage interface {
@@ -22,10 +25,16 @@ type Snapshots interface {
 	StageSleepMemory(context.Context, string, string) error
 	StageSleepDisk(context.Context, SnapshotRequest, string) error
 	DeleteSnapshot(context.Context, string) error
-	UploadSleepMemory(context.Context, string, string) (SleepArtifact, error)
-	UploadSleepDisk(context.Context, string, string) (SleepArtifact, error)
+	UploadSleepMemory(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error)
+	UploadSleepDisk(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error)
 	DownloadSleepMemory(ctx context.Context, directory, source string, artifact SleepArtifact) error
 	RestoreSleepDisk(ctx context.Context, identifier, source string, artifact SleepArtifact) error
+}
+
+// SleepUploadProgress counts compressed bytes read by the current HTTP attempt.
+type SleepUploadProgress struct {
+	UploadedBytes atomic.Int64
+	TotalBytes    atomic.Int64
 }
 
 // SleepArtifact binds a remote object to its uncompressed content.

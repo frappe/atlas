@@ -49,7 +49,7 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "state"), []byte("changed after wake"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := store.UploadSleepMemory(t.Context(), staged, server.URL+"?put=secret")
+	artifact, err := store.UploadSleepMemory(t.Context(), staged, server.URL+"?put=secret", &vm.SleepUploadProgress{})
 	if err != nil {
 		t.Fatal(err)
 	}

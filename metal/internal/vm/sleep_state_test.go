@@ -39,7 +39,7 @@ func (snapshots *sleepSnapshots) RestoreSleepDisk(_ context.Context, _, source s
 	return nil
 }
 
-func (snapshots *sleepSnapshots) UploadSleepMemory(context.Context, string, string) (SleepArtifact, error) {
+func (snapshots *sleepSnapshots) UploadSleepMemory(_ context.Context, _, _ string, progress *SleepUploadProgress) (SleepArtifact, error) {
 	snapshots.uploads++
 	if snapshots.duringUpload != nil {
 		snapshots.duringUpload()
@@ -47,8 +47,8 @@ func (snapshots *sleepSnapshots) UploadSleepMemory(context.Context, string, stri
 	return SleepArtifact{SizeBytes: 512, StoredSizeBytes: 128, SHA256: strings.Repeat("a", 64)}, snapshots.uploadError
 }
 
-func (snapshots *sleepSnapshots) UploadSleepDisk(ctx context.Context, identifier, url string) (SleepArtifact, error) {
-	return snapshots.UploadSleepMemory(ctx, identifier, url)
+func (snapshots *sleepSnapshots) UploadSleepDisk(ctx context.Context, identifier, url string, progress *SleepUploadProgress) (SleepArtifact, error) {
+	return snapshots.UploadSleepMemory(ctx, identifier, url, progress)
 }
 
 func sleepyManager(t *testing.T) (*Manager, *fakeRuntime, *fakeStorage, *sleepSnapshots) {

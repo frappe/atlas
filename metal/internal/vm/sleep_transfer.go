@@ -8,6 +8,46 @@ import (
 	"time"
 )
 
+type sleepUpload struct {
+	memory   bool
+	progress SleepUploadProgress
+}
+
+func (upload *sleepUpload) phase() string {
+	phase := "compress-sleep-"
+	if upload.progress.TotalBytes.Load() > 0 {
+		phase = "upload-sleep-"
+	}
+	if upload.memory {
+		return phase + "memory"
+	}
+	return phase + "disk"
+}
+
+func (manager *Manager) applySleepUpload(snapshotID string, information *Information) {
+	manager.sleepUploadsMutex.Lock()
+	upload := manager.sleepUploads[snapshotID]
+	manager.sleepUploadsMutex.Unlock()
+	if upload == nil {
+		return
+	}
+	status := information.SleepSnapshot.Disk
+	if upload.memory {
+		status = information.SleepSnapshot.Memory
+	}
+	if !status.Uploaded {
+		if total := upload.progress.TotalBytes.Load(); total > 0 {
+			// Reading the complete body is not an object-store acknowledgment.
+			percent := int(min(99, upload.progress.UploadedBytes.Load()*100/total))
+			status.UploadPercent = &percent
+		}
+	}
+	if information.OperationID == snapshotID &&
+		(information.Phase == "compress-sleep-memory" || information.Phase == "compress-sleep-disk") {
+		information.Phase = upload.phase()
+	}
+}
+
 func (manager *Manager) offloadSleepArtifacts(ctx context.Context, identifier string) error {
 	for _, memory := range []bool{true, false} {
 		if err := manager.offloadSleepArtifact(ctx, identifier, memory); err != nil {
@@ -85,11 +125,11 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 			}
 		}()
 	}
-	phase := "upload-sleep-disk"
+	artifactName := "disk"
 	if memory {
-		phase = "upload-sleep-memory"
+		artifactName = "memory"
 	}
-	if err := manager.runOperation(ctx, identifier, &observed, record.ID, phase, func() error {
+	if err := manager.runOperation(ctx, identifier, &observed, record.ID, "prepare-sleep-"+artifactName, func() error {
 		if memory {
 			return manager.snapshots.StageSleepMemory(ctx, saved.Directory, directory)
 		}
@@ -98,20 +138,34 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return err
 	}
+	observed.Phase = "compress-sleep-" + artifactName
+	if err := manager.store.writeObserved(identifier, observed); err != nil {
+		unlock()
+		return err
+	}
+	upload := &sleepUpload{memory: memory}
+	manager.sleepUploadsMutex.Lock()
+	manager.sleepUploads[record.ID] = upload
+	manager.sleepUploadsMutex.Unlock()
+	defer func() {
+		manager.sleepUploadsMutex.Lock()
+		delete(manager.sleepUploads, record.ID)
+		manager.sleepUploadsMutex.Unlock()
+	}()
 	destination := target.UploadURL
 	unlock()
 
 	// The upload reads only staging, so wake does not wait for its network transfer.
 	var artifact SleepArtifact
 	if memory {
-		artifact, err = manager.snapshots.UploadSleepMemory(ctx, directory, destination)
+		artifact, err = manager.snapshots.UploadSleepMemory(ctx, directory, destination, &upload.progress)
 	} else {
-		artifact, err = manager.snapshots.UploadSleepDisk(ctx, record.ID, destination)
+		artifact, err = manager.snapshots.UploadSleepDisk(ctx, record.ID, destination, &upload.progress)
 	}
-	return manager.finishSleepUpload(ctx, identifier, record.ID, memory, artifact, err)
+	return manager.finishSleepUpload(ctx, identifier, record.ID, memory, artifact, upload.phase(), err)
 }
 
-func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snapshotID string, memory bool, artifact SleepArtifact, uploadError error) error {
+func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snapshotID string, memory bool, artifact SleepArtifact, phase string, uploadError error) error {
 	completion, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	unlock, err := manager.operationLocks.Lock(completion, identifier)
@@ -128,10 +182,6 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 		return err
 	}
 	if uploadError != nil {
-		phase := "upload-sleep-disk"
-		if memory {
-			phase = "upload-sleep-memory"
-		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })
 	}
 	current.target(memory).Artifact = &artifact

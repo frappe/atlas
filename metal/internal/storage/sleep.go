@@ -36,7 +36,7 @@ func (store *SnapshotStore) StageSleepDisk(ctx context.Context, request vm.Snaps
 }
 
 // UploadSleepMemory uploads the three saved-state files as one compressed tar.
-func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory, destination string) (vm.SleepArtifact, error) {
+func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory, destination string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
 	archive, err := os.CreateTemp(directory, "memory-*.tar")
 	if err != nil {
 		return vm.SleepArtifact{}, err
@@ -56,7 +56,7 @@ func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory, de
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	return store.uploadSleepArtifact(ctx, archive.Name(), information.Size(), destination, directory)
+	return store.uploadSleepArtifact(ctx, archive.Name(), information.Size(), destination, directory, progress)
 }
 
 func appendSleepFile(ctx context.Context, writer *tar.Writer, directory, name string) error {
@@ -83,7 +83,7 @@ func appendSleepFile(ctx context.Context, writer *tar.Writer, directory, name st
 }
 
 // UploadSleepDisk uploads the stable staging clone with the existing image encoding.
-func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, destination string) (vm.SleepArtifact, error) {
+func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, destination string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
 	lock := store.snapshotLock(snapshotID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -95,10 +95,10 @@ func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, des
 		return vm.SleepArtifact{}, ErrNotFound
 	}
 	return store.uploadSleepArtifact(ctx, store.pool.stagingDevicePath(snapshotID), metadata.RootfsSizeBytes,
-		destination, store.snapshotDirectory(snapshotID))
+		destination, store.snapshotDirectory(snapshotID), progress)
 }
 
-func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string, sizeBytes int64, destination, directory string) (vm.SleepArtifact, error) {
+func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string, sizeBytes int64, destination, directory string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
 	source, err := os.Open(path)
 	if err != nil {
 		return vm.SleepArtifact{}, err
@@ -125,7 +125,8 @@ func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	if _, err := store.uploadPartWithRetry(ctx, SnapshotUploadPart{PartNumber: 1, URL: destination}, compressed, 0, information.Size(), nil); err != nil {
+	progress.TotalBytes.Store(information.Size())
+	if _, err := store.uploadPartWithRetry(ctx, SnapshotUploadPart{PartNumber: 1, URL: destination}, compressed, 0, information.Size(), &progress.UploadedBytes); err != nil {
 		return vm.SleepArtifact{}, err
 	}
 	return vm.SleepArtifact{SizeBytes: sizeBytes, StoredSizeBytes: information.Size(), SHA256: hex.EncodeToString(digest)}, nil

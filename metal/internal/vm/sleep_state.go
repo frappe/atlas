@@ -33,10 +33,11 @@ type SleepSnapshotStatus struct {
 	Disk   *SleepArtifactStatus `json:"disk,omitempty"`
 }
 
-// SleepArtifactStatus reports an uploaded artifact's verified content.
+// SleepArtifactStatus reports upload progress and verified content.
 type SleepArtifactStatus struct {
-	Uploaded bool           `json:"uploaded"`
-	Artifact *SleepArtifact `json:"artifact,omitempty"`
+	Uploaded      bool           `json:"uploaded"`
+	Artifact      *SleepArtifact `json:"artifact,omitempty"`
+	UploadPercent *int           `json:"upload_percent,omitempty"`
 }
 
 type sleepArtifactRecord struct {
@@ -231,6 +232,12 @@ func (record *sleepRecord) status() *SleepSnapshotStatus {
 	}
 	if record.Disk != nil {
 		status.Disk = &SleepArtifactStatus{Uploaded: record.Disk.Artifact != nil, Artifact: record.Disk.Artifact}
+	}
+	for _, artifact := range []*SleepArtifactStatus{status.Memory, status.Disk} {
+		if artifact != nil && artifact.Uploaded {
+			percent := 100
+			artifact.UploadPercent = &percent
+		}
 	}
 	return status
 }
