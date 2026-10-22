@@ -14,12 +14,14 @@ import (
 
 type sleepSnapshots struct {
 	fakeSnapshots
-	uploads       int
-	uploadError   error
-	duringUpload  func()
-	downloads     []string
-	downloadError error
-	diskPresent   bool
+	uploads        int
+	uploadError    error
+	duringUpload   func()
+	duringStage    func()
+	duringProgress func(*SleepUploadProgress)
+	downloads      []string
+	downloadError  error
+	diskPresent    bool
 }
 
 func (snapshots *sleepSnapshots) DownloadSleepMemory(_ context.Context, _, source string, _ SleepArtifact) error {
@@ -39,8 +41,22 @@ func (snapshots *sleepSnapshots) RestoreSleepDisk(_ context.Context, _, source s
 	return nil
 }
 
+func (snapshots *sleepSnapshots) StageSleepMemory(context.Context, string, string) error {
+	if snapshots.duringStage != nil {
+		snapshots.duringStage()
+	}
+	return nil
+}
+
+func (snapshots *sleepSnapshots) StageSleepDisk(ctx context.Context, _ SnapshotRequest, directory string) error {
+	return snapshots.StageSleepMemory(ctx, directory, directory)
+}
+
 func (snapshots *sleepSnapshots) UploadSleepMemory(_ context.Context, _, _ string, progress *SleepUploadProgress) (SleepArtifact, error) {
 	snapshots.uploads++
+	if snapshots.duringProgress != nil {
+		snapshots.duringProgress(progress)
+	}
 	if snapshots.duringUpload != nil {
 		snapshots.duringUpload()
 	}
@@ -144,6 +160,24 @@ func TestSleepUploadsEvictUploadedArtifacts(t *testing.T) {
 func TestSleepUploadFailureRetainsLocalState(t *testing.T) {
 	manager, runtime, storage, snapshots := sleepyManager(t)
 	snapshots.uploadError = errors.New("upload failed")
+	snapshots.duringProgress = func(progress *SleepUploadProgress) {
+		if progress.TotalBytes.Load() != 0 || progress.UploadedBytes.Load() != 0 {
+			t.Fatal("new transfer retained counters from a failed transfer")
+		}
+		progress.TotalBytes.Store(128)
+		progress.UploadedBytes.Store(128)
+		information, err := manager.Information(t.Context(), "vm-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		status := information.SleepSnapshot.Memory
+		if snapshots.uploads == 3 {
+			status = information.SleepSnapshot.Disk
+		}
+		if status.UploadPercent == nil || *status.UploadPercent != 99 {
+			t.Fatalf("unacknowledged body: %+v", status)
+		}
+	}
 	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +190,13 @@ func TestSleepUploadFailureRetainsLocalState(t *testing.T) {
 	}
 	if !runtime.hasSavedState || storage.releases != 0 || information.Error == nil || information.SleepSnapshot.Memory.Uploaded {
 		t.Fatal("upload failure lost local state or was not reported")
+	}
+	if information.Phase != "upload-sleep-memory" || information.SleepSnapshot.Memory.UploadPercent != nil || len(manager.sleepUploads) != 0 {
+		t.Fatal("failed upload retained live progress or lost its phase")
+	}
+	snapshots.uploadError = nil
+	if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -186,6 +227,10 @@ func TestWakeDuringUploadDoesNotEvictLiveState(t *testing.T) {
 	for _, upload := range []int{1, 2} {
 		manager, runtime, storage, snapshots := sleepyManager(t)
 		started, finish := make(chan struct{}), make(chan struct{})
+		snapshots.duringProgress = func(progress *SleepUploadProgress) {
+			progress.TotalBytes.Store(128)
+			progress.UploadedBytes.Store(64)
+		}
 		snapshots.duringUpload = func() {
 			if snapshots.uploads == upload {
 				close(started)
@@ -199,12 +244,16 @@ func TestWakeDuringUploadDoesNotEvictLiveState(t *testing.T) {
 		go func() { result <- manager.offloadSleepArtifacts(t.Context(), "vm-1") }()
 		<-started
 		wakeError := wakeTestSleep(t.Context(), manager)
+		information, informationError := manager.Information(t.Context(), "vm-1")
 		close(finish)
 		if err := <-result; err != nil {
 			t.Fatal(err)
 		}
 		if wakeError != nil || runtime.restores != 1 || runtime.deletes != upload-1 || storage.releases != 0 || snapshots.uploads != upload {
 			t.Fatalf("wake raced with eviction: %v, runtime=%+v storage=%+v uploads=%d", wakeError, runtime, storage, snapshots.uploads)
+		}
+		if informationError != nil || information.Phase != "" {
+			t.Fatalf("live upload replaced the completed wake phase: %q, %v", information.Phase, informationError)
 		}
 	}
 }
