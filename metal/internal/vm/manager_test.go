@@ -843,6 +843,9 @@ func TestStartWakesASleepingVirtualMachine(t *testing.T) {
 	if err := manager.SetPowerState(context.Background(), "machine-1", StateRunning); err != nil {
 		t.Fatal(err)
 	}
+	if runtime.restores != 0 {
+		t.Fatal("start restored synchronously")
+	}
 	if err := manager.RestoreSleepState(t.Context(), "machine-1"); err != nil {
 		t.Fatal(err)
 	}

@@ -1,12 +1,77 @@
 package vm
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestBlockedSleepUploadsDoNotBlockStopOrReplaceItsResult(t *testing.T) {
+	for _, selected := range []int{1, 2} {
+		t.Run(fmt.Sprint(selected), func(t *testing.T) {
+			manager, _, _, snapshots := sleepyManager(t)
+			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+				t.Fatal(err)
+			}
+			started, release := make(chan struct{}), make(chan struct{})
+			defer close(release)
+			uploadError := errors.New("object store refused upload")
+			snapshots.duringProgress = func(progress *SleepUploadProgress) {
+				progress.TotalBytes.Store(128)
+				progress.UploadedBytes.Store(64)
+			}
+			snapshots.duringUpload = func() {
+				if snapshots.uploads == selected {
+					snapshots.uploadError = uploadError
+					close(started)
+					<-release
+				}
+			}
+			finished := make(chan error, 1)
+			go func() { finished <- manager.OffloadSleepArtifacts(t.Context(), "vm-1") }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("upload did not start")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if err := manager.RestoreSleepState(ctx, "vm-1"); err != nil {
+				t.Fatalf("ordinary reconciliation waited for upload: %v", err)
+			}
+			information, err := manager.Information(ctx, "vm-1")
+			if err != nil || !strings.HasPrefix(information.Phase, "upload-sleep-") {
+				t.Fatalf("normal reconciliation lost upload progress: %+v, %v", information, err)
+			}
+			if err := manager.SetPowerState(ctx, "vm-1", StateStopped); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RestoreSleepState(ctx, "vm-1"); err != nil {
+				t.Fatalf("stop waited for upload: %v", err)
+			}
+			// The deferred close also releases the upload when an assertion fails.
+			release <- struct{}{}
+			select {
+			case err := <-finished:
+				if !errors.Is(err, uploadError) {
+					t.Fatalf("upload failure was hidden: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("upload did not finish")
+			}
+			information, err = manager.Information(t.Context(), "vm-1")
+			if err != nil || information.SleepState != SleepStateAwake || information.Phase != "" || information.Error != nil {
+				t.Fatalf("late upload replaced the stop result: %+v, %v", information, err)
+			}
+		})
+	}
+}
 
 func TestSleepUploadProgressIsPerArtifactAndTransient(t *testing.T) {
 	manager, _, _, snapshots := sleepyManager(t)
@@ -81,6 +146,40 @@ func TestSleepUploadProgressIsPerArtifactAndTransient(t *testing.T) {
 	}
 	if len(manager.sleepUploads) != 0 {
 		t.Fatal("completed transfer retained live counters")
+	}
+}
+
+func TestQueuedWakePreventsSleepEviction(t *testing.T) {
+	for _, selected := range []int{1, 2} {
+		t.Run(fmt.Sprint(selected), func(t *testing.T) {
+			manager, runtime, storage, snapshots := sleepyManager(t)
+			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+				t.Fatal(err)
+			}
+			snapshots.duringUpload = func() {
+				if snapshots.uploads == selected {
+					if err := manager.SetPowerState(t.Context(), "vm-1", StateRunning); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := manager.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if storage.releases != 0 || runtime.restores != 0 || snapshots.uploads != selected {
+				t.Fatalf("queued wake did not stop offload: disk releases=%d, restores=%d, uploads=%d", storage.releases, runtime.restores, snapshots.uploads)
+			}
+			if selected == 1 && !runtime.hasSavedState {
+				t.Fatal("memory was evicted after wake was accepted")
+			}
+			if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			information, err := manager.Information(t.Context(), "vm-1")
+			if err != nil || information.SleepState != SleepStateAwake || runtime.restores != 1 {
+				t.Fatalf("queued wake did not finish: %+v, %v", information, err)
+			}
+		})
 	}
 }
 

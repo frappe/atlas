@@ -310,7 +310,7 @@ func TestSleepStateRequestRejectsInvalidTransport(t *testing.T) {
 
 func TestSleepRequestsShareOneWakePath(t *testing.T) {
 	for _, sleepState := range []SleepState{SleepStateSleeping, SleepStateDeepSleeping, SleepStateComatose} {
-		for _, request := range []string{"traffic", "start", "reconcile"} {
+		for _, request := range []string{"traffic", "start", "reconcile", "waiting"} {
 			t.Run(string(sleepState)+"/"+request, func(t *testing.T) {
 				manager, runtime, _, snapshots := sleepyManager(t)
 				if sleepState != SleepStateSleeping {
@@ -330,6 +330,18 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 					t.Fatal(err)
 				}
 				snapshots.diskPresent = sleepState != SleepStateComatose
+				if request == "waiting" {
+					manager.traffic = &traffic.Monitor{}
+					// The fixture has no TAP hook. Rearming, not downloading, must fail.
+					if err := manager.RestoreSleepState(t.Context(), "vm-1"); !errors.Is(err, traffic.ErrNotFound) {
+						t.Fatalf("expected a missing traffic hook, got %v", err)
+					}
+					information, err := manager.Information(t.Context(), "vm-1")
+					if err != nil || information.SleepState != sleepState || runtime.restores != 0 || len(snapshots.downloads) != 0 {
+						t.Fatalf("idle VM woke without a request: %+v, %v", information, err)
+					}
+					return
+				}
 				if request == "reconcile" {
 					err = manager.RestoreSleepState(t.Context(), "vm-1")
 				} else {
@@ -344,6 +356,9 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 					t.Fatal(err)
 				}
 				if request != "reconcile" {
+					if runtime.restores != 0 {
+						t.Fatal("wake request restored synchronously")
+					}
 					if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
 						t.Fatal(err)
 					}
