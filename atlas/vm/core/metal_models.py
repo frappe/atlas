@@ -184,6 +184,7 @@ class MetalObservedState:
 	generation: int
 	restart_generation: int
 	state: str
+	sleep_state: str
 	phase: str
 	operation_id: str
 	operation_started_at: str
@@ -413,6 +414,7 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
+		sleep_state=string_field(value, "sleep_state", default=""),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),
 		operation_started_at=string_field(value, "operation_started_at", default=""),
