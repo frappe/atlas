@@ -76,6 +76,25 @@ func (runtime *Runtime) SavedState(_ context.Context, machine vm.RuntimeMachine)
 	return vm.SavedState{Directory: directory, Identity: hex.EncodeToString(digest[:])}, nil
 }
 
+// InstallSavedState validates a downloaded checkpoint before publishing it atomically.
+func (runtime *Runtime) InstallSavedState(ctx context.Context, machine vm.RuntimeMachine, directory, identity string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := loadSavedState(directory, runtime.newMachine(machine).savedStateRequirement()); err != nil {
+		return err
+	}
+	metadata, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(metadata)
+	if hex.EncodeToString(digest[:]) != identity {
+		return errors.New("downloaded sleep checkpoint identity mismatch")
+	}
+	return os.Rename(directory, runtime.configuration.savedStateDirectory(machine.ID))
+}
+
 func (snapshot savedState) restoreNetwork(ctx context.Context, networkInterface vm.NetworkInterface) error {
 	if snapshot.Metadata.TapMACAddress == "" {
 		return nil
