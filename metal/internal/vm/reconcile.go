@@ -37,14 +37,6 @@ func isRoutinePhase(phase string) bool {
 
 // Reconcile moves observed VM state toward the latest desired record.
 func (manager *Manager) Reconcile(ctx context.Context, identifier string) error {
-	finishTransfer, err := manager.sleepTransferLocks.Lock(ctx, identifier)
-	if err != nil {
-		return err
-	}
-	defer finishTransfer()
-	if err := manager.offloadSleepArtifacts(ctx, identifier); err != nil {
-		return err
-	}
 	virtualMachine := manager.newVirtualMachine(identifier)
 	unlock, err := virtualMachine.lock(ctx)
 	if err != nil {
@@ -60,6 +52,11 @@ func (manager *Manager) Reconcile(ctx context.Context, identifier string) error 
 	desired, observed, err := virtualMachine.records()
 	if err != nil {
 		return err
+	}
+	if pending, err := manager.hasPendingSleepTransfer(desired, observed); err != nil {
+		return err
+	} else if pending {
+		return manager.maintainSleepTransfer(ctx, desired, observed)
 	}
 	operationID := newOperationID()
 	acceptedAt := manager.desiredWrittenAt(identifier)

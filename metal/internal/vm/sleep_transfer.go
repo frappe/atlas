@@ -3,14 +3,52 @@ package vm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/network/traffic"
 )
 
 type sleepUpload struct {
 	memory   bool
 	progress SleepUploadProgress
+}
+
+// OffloadSleepArtifacts serializes transfers for one VM without occupying its reconciler.
+func (manager *Manager) OffloadSleepArtifacts(ctx context.Context, identifier string) error {
+	unlock, err := manager.sleepTransferLocks.Lock(ctx, identifier)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return manager.offloadSleepArtifacts(ctx, identifier)
+}
+
+func (manager *Manager) hasPendingSleepTransfer(desired DesiredRecord, observed ObservedRecord) (bool, error) {
+	record, err := manager.readSleepRecord(desired.ID)
+	if err != nil || record == nil {
+		return false, err
+	}
+	return record.canUpload(desired, observed) && (record.Memory.Artifact == nil ||
+		(record.Disk != nil && record.Disk.Artifact == nil) || observed.OperationID == record.ID), nil
+}
+
+func (manager *Manager) maintainSleepTransfer(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
+	// Reattach traffic hooks after restart without replacing the upload's phase or error.
+	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
+	if err != nil {
+		return err
+	}
+	observed.NetworkInterface = networkInterface
+	if manager.traffic != nil {
+		target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
+		if err := manager.traffic.StartWatching(target); err != nil {
+			return fmt.Errorf("watch traffic for VM %s: %w", desired.ID, err)
+		}
+	}
+	return manager.store.writeObserved(desired.ID, observed)
 }
 
 func (upload *sleepUpload) phase() string {

@@ -352,6 +352,11 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		reconcileInterval,
 		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
+	sleepTransferReconciler := reconciler.NewSleepTransferReconciler(
+		virtualMachineManager,
+		reconcileInterval,
+		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
+	)
 	guestChecker := reconciler.NewGuestChecker(virtualMachineManager, guestCheckInterval, registry, logger)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
@@ -365,6 +370,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	var migrationManager *migration.Manager
 	notifyReconcilers := func() {
 		virtualMachineReconciler.Wake()
+		sleepTransferReconciler.Wake()
 		imageReconciler.Wake()
 		if migrationReconciler != nil {
 			migrationReconciler.Wake()
@@ -474,6 +480,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
 	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	daemon.StartWorker(virtualMachineReconciler.Run)
+	daemon.StartWorker(sleepTransferReconciler.Run)
 	daemon.StartWorker(guestChecker.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
