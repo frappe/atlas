@@ -27,6 +27,8 @@ This page shows every file and dataset that Metal keeps on a host. After a resta
 └── machines/<vm-id>/
     ├── config.json                desired state and reservation
     ├── status.json                observed state and cleanup progress
+    ├── sleep-state.json           upload checkpoint and presigned URLs (mode 0600)
+    ├── sleep-transfer/            stable memory upload files
     ├── metrics/                  seven days of daily VM usage files
     ├── jailer.env                 arguments for metal-vm@<id>
     ├── migration/                 migration records and transfer staging
@@ -54,7 +56,7 @@ These are dataset names in the configured pool, not directories:
 <pool>/images/<image-ref>          base volume
 <pool>/images/<image-ref>@ready    source snapshot for VM disks
 <pool>/vms/<vm-id>                 one VM disk clone
-<pool>/staging/<snapshot-id>       read-only Machine image upload source
+<pool>/staging/<snapshot-id>       read-only image or sleep disk upload source
 <pool>/warm/<key>@ready            warm boot disk for one image and VM shape
 <pool>/state                       file system mounted at /var/lib/metal
 ```

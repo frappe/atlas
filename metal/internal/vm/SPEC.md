@@ -47,6 +47,8 @@ machines/<id>/metrics/     seven days of daily VM usage files
 
 Idle behavior is in [Sleepy VMs](../../../docs/compute/sleepy-vms.md).
 
+`sleep_state.go` owns `machines/<id>/sleep-state.json`, a mode `0600` record for one upload checkpoint and its artifact URLs. `sleep_transfer.go` uploads copies through the existing reconciler and keeps local data. A per-VM transfer lock serializes uploads. The operation lock protects staging and status updates, and is released while upload bytes move. [Sleep-state tests](sleep_state_test.go) check partial selection, retries, a wake during upload, and URL refresh after restart.
+
 - A valid saved state is authoritative when Firecracker is stopped.
 - A saved state beside a running Firecracker process is stale and is deleted.
 - A restore failure keeps the saved state.
