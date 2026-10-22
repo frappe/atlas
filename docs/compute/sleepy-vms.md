@@ -38,7 +38,19 @@ Only real traffic counts: unicast IPv4 or IPv6 packets from the host to the VM, 
 | --- | --- |
 | Desired state | `running`. Nobody asked the VM to stop. |
 | Observed state | `stopped`. Firecracker is not running. |
+| Sleep state | `sleeping`. See the values below. |
 | Atlas list | Shows the last reported state, `stopped`. |
+
+Metal reports the sleep state as `observed.sleep_state`. Atlas shows it as **Sleep State** on the VM. The sleep state tells where Metal keeps the saved state:
+
+| Sleep state | Saved memory | Disk |
+| --- | --- | --- |
+| Empty | None. The VM is awake. | On the host |
+| `sleeping` | On the host | On the host |
+| `deep-sleeping` | In object storage | On the host |
+| `comatose` | In object storage | In object storage |
+
+Metal sets only `sleeping` today. A host with an older `metald` does not send the field, so Atlas shows the VM as awake.
 
 The saved state belongs to one VM and stays on its host. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
 
