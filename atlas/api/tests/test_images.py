@@ -8,6 +8,7 @@ from atlas.api.models import ImageResponse
 from atlas.api.routes.images import delete_image, download_image, get_image, list_images
 from atlas.api.tests.test_support import OTHER_TENANT_ID, TENANT_ID, api_request, call_route
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
+from atlas.vm.doctype.virtual_machine_kernel.test_virtual_machine_kernel import insert_kernel
 
 DOWNLOAD = {
 	"artifact": "rootfs",
@@ -32,9 +33,7 @@ def insert_image(tenant_id: int, image_type: str = "machine", **overrides) -> st
 		"image_object_key": "images/test/rootfs.img",
 		"image_sha256": "a" * 64,
 		"image_size_mib": 1024,
-		"kernel_object_key": "images/test/kernel",
-		"kernel_sha256": "b" * 64,
-		"kernel_size_mib": 8,
+		"kernel": insert_kernel(),
 	}
 	values.update(overrides)
 	return frappe.get_doc(values).insert().name

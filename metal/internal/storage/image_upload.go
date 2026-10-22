@@ -47,10 +47,11 @@ type SnapshotArtifactUpload struct {
 	Parts         []SnapshotUploadPart
 }
 
-// SnapshotUploadRequest contains upload URLs for both image artifacts.
+// SnapshotUploadRequest contains upload URLs for each image artifact. A nil
+// Kernel skips the kernel, which the controller already stores.
 type SnapshotUploadRequest struct {
 	Rootfs SnapshotArtifactUpload
-	Kernel SnapshotArtifactUpload
+	Kernel *SnapshotArtifactUpload
 }
 
 // UploadedPart contains the ETag returned for one part.
@@ -68,10 +69,10 @@ type UploadedArtifact struct {
 	Parts           []UploadedPart `json:"parts"`
 }
 
-// SnapshotUploadResult describes both uploaded image artifacts.
+// SnapshotUploadResult describes the uploaded image artifacts.
 type SnapshotUploadResult struct {
-	Rootfs UploadedArtifact `json:"rootfs"`
-	Kernel UploadedArtifact `json:"kernel"`
+	Rootfs UploadedArtifact  `json:"rootfs"`
+	Kernel *UploadedArtifact `json:"kernel,omitempty"`
 }
 
 // Snapshot upload states recorded in the staging metadata.
@@ -136,8 +137,10 @@ func (store *SnapshotStore) StartUpload(_ context.Context, snapshotID string, re
 	if err := validateUploadParts(request.Rootfs, metadata.RootfsSizeBytes); err != nil {
 		return fmt.Errorf("rootfs parts: %w", err)
 	}
-	if err := validateUploadParts(request.Kernel, metadata.KernelSizeBytes); err != nil {
-		return fmt.Errorf("kernel parts: %w", err)
+	if request.Kernel != nil {
+		if err := validateUploadParts(*request.Kernel, metadata.KernelSizeBytes); err != nil {
+			return fmt.Errorf("kernel parts: %w", err)
+		}
 	}
 
 	uploadContext, cancel := context.WithCancel(rootContext)
@@ -191,13 +194,17 @@ func (store *SnapshotStore) runUpload(ctx context.Context, snapshotID string, up
 		store.failUpload(ctx, snapshotID, fmt.Errorf("upload rootfs: %w", err))
 		return
 	}
-	kernel, err := store.uploadArtifact(ctx, snapshotID, kernelArtifact,
-		filepath.Join(store.snapshotDirectory(snapshotID), "vmlinux"), kernelSize, request.Kernel, &upload.uploaded)
-	if err != nil {
-		store.failUpload(ctx, snapshotID, fmt.Errorf("upload kernel: %w", err))
-		return
+	uploaded := SnapshotUploadResult{Rootfs: rootfs}
+	if request.Kernel != nil {
+		kernel, err := store.uploadArtifact(ctx, snapshotID, kernelArtifact,
+			filepath.Join(store.snapshotDirectory(snapshotID), "vmlinux"), kernelSize, *request.Kernel, &upload.uploaded)
+		if err != nil {
+			store.failUpload(ctx, snapshotID, fmt.Errorf("upload kernel: %w", err))
+			return
+		}
+		uploaded.Kernel = &kernel
 	}
-	store.finishUpload(snapshotID, SnapshotUploadResult{Rootfs: rootfs, Kernel: kernel})
+	store.finishUpload(snapshotID, uploaded)
 	result = "ok"
 }
 

@@ -17,7 +17,7 @@ A reference is immutable on a host: different content under the same reference c
 ```mermaid
 flowchart LR
     A[Metal stages a VM snapshot] --> B[Atlas saves upload IDs]
-    B --> C[Metal uploads disk and kernel]
+    B --> C[Metal uploads the disk]
     C --> D[Atlas verifies and completes objects]
     D --> E[Metal removes staging]
     E --> F[Atlas marks image Available]

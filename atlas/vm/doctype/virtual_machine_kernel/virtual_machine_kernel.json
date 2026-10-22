@@ -1,0 +1,82 @@
+{
+ "actions": [],
+ "autoname": "field:sha256",
+ "creation": "2026-10-22 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sha256",
+  "architecture",
+  "size_mib",
+  "column_break_storage",
+  "object_key",
+  "file"
+ ],
+ "fields": [
+  {
+   "fieldname": "sha256",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "SHA-256",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "architecture",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Architecture",
+   "options": "amd64\narm64",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "size_mib",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Size (MiB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_storage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "object_key",
+   "fieldtype": "Data",
+   "label": "Object Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "file",
+   "fieldtype": "Link",
+   "label": "File",
+   "options": "File",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-22 12:00:00",
+ "modified_by": "Administrator",
+ "module": "VM",
+ "name": "Virtual Machine Kernel",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "Atlas Admin"
+  },
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

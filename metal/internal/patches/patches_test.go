@@ -200,6 +200,28 @@ func TestMemoryMigrationPatchRunsWithoutRecords(t *testing.T) {
 	}
 }
 
+func TestMoveImageKernelsToKernelStoreSharesOneKernel(t *testing.T) {
+	baseDirectory := t.TempDir()
+	kernel := strings.Repeat("a", 64)
+	for _, image := range []string{"sha256:first", "sha256:second"} {
+		writeMigrationPatchRecord(t, filepath.Join(baseDirectory, "images", image, "manifest.json"), `{"kernel_sha256":"`+kernel+`"}`)
+		writeMigrationPatchRecord(t, filepath.Join(baseDirectory, "images", image, "vmlinux"), "kernel")
+	}
+
+	for range 2 {
+		if err := moveImageKernelsToKernelStore(baseDirectory); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if data, err := os.ReadFile(filepath.Join(baseDirectory, "kernels", kernel)); err != nil || string(data) != "kernel" {
+		t.Fatalf("kernel = %q, error %v", data, err)
+	}
+	if kernels, _ := filepath.Glob(filepath.Join(baseDirectory, "images", "*", "vmlinux")); len(kernels) != 0 {
+		t.Fatalf("image kernels remain: %v", kernels)
+	}
+}
+
 func writeMigrationPatchRecord(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
