@@ -73,7 +73,7 @@ func (m *stubMigrationManager) AbortDestination(_ context.Context, migrationID s
 	return m.abortErr
 }
 
-func (m *stubMigrationManager) LockSource(_ context.Context, migrationID, virtualMachineID string) (migration.SourceDescription, error) {
+func (m *stubMigrationManager) LockSource(_ context.Context, migrationID, virtualMachineID string, _ bool) (migration.SourceDescription, error) {
 	m.lockArgs = []string{migrationID, virtualMachineID}
 	return m.sourceDescription, m.lockErr
 }

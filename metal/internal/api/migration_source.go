@@ -18,7 +18,7 @@ func (s *Server) prepareMigrationSource(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	sourceDescription, err := s.migrationManager.LockSource(c.Request().Context(), identifier, virtualMachineID)
+	sourceDescription, err := s.migrationManager.LockSource(c.Request().Context(), identifier, virtualMachineID, c.QueryParam("sleep_state") == "true")
 	if err != nil {
 		return err
 	}
