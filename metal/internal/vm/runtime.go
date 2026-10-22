@@ -30,6 +30,7 @@ type Runtime interface {
 	RestorePausedFrom(ctx context.Context, machine RuntimeMachine, directory string) error
 	DeleteSavedState(context.Context, RuntimeMachine) error
 	SavedState(context.Context, RuntimeMachine) (SavedState, error)
+	InstallSavedState(ctx context.Context, machine RuntimeMachine, directory, identity string) error
 	Pause(context.Context, RuntimeMachine) error
 	Resume(context.Context, RuntimeMachine) error
 	Remove(context.Context, RuntimeMachine) error

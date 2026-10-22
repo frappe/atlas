@@ -94,6 +94,19 @@ func (manager *Manager) reconcileActive(
 
 	observed.NetworkInterface = networkInterface
 	machine := runtimeMachine(desired, networkInterface)
+	discardSavedState := desired.State == StateStopped || desired.SpecificationGeneration > observed.SpecificationGeneration ||
+		desired.RestartGeneration > observed.RestartGeneration
+	if discardSavedState && observed.SleepState == SleepStateComatose {
+		if err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseStorage, func() error {
+			record, err := manager.readSleepRecord(desired.ID)
+			if err != nil {
+				return err
+			}
+			return manager.restoreSleepDisk(ctx, desired.ID, record)
+		}); err != nil {
+			return err
+		}
+	}
 
 	if desired.State == StateStopped {
 		return manager.reconcileHardStop(ctx, desired, machine, &observed, operationID)
@@ -169,7 +182,9 @@ func (manager *Manager) reconcileSavedState(
 	operationID string,
 	status RuntimeStatus,
 ) (RuntimeStatus, bool, error) {
-	if !status.HasSavedState {
+	hasRemoteState := observed.hasRemoteSleepState() &&
+		desired.SpecificationGeneration == observed.SpecificationGeneration && desired.RestartGeneration == observed.RestartGeneration
+	if !status.HasSavedState && !hasRemoteState {
 		return status, false, nil
 	}
 
@@ -202,7 +217,11 @@ func (manager *Manager) reconcileSavedState(
 			if err := manager.traffic.StartWatching(target); err != nil {
 				return status, false, fmt.Errorf("watch traffic for VM %s: %w", desired.ID, err)
 			}
-			return status, true, manager.writeAppliedState(desired, observed, StateStopped, SleepStateSleeping)
+			sleepState := observed.SleepState
+			if !hasRemoteState {
+				sleepState = SleepStateSleeping
+			}
+			return status, true, manager.writeAppliedState(desired, observed, StateStopped, sleepState)
 		}
 		if err := manager.restoreSavedState(ctx, desired, machine, observed, operationID, StateRunning); err != nil {
 			return status, false, err
@@ -232,9 +251,15 @@ func (manager *Manager) restoreSavedState(
 		restore = manager.runtime.RestorePaused
 	}
 	if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseRestoreState, func() error {
+		if err := manager.restoreSleepArtifacts(ctx, desired, machine, *observed); err != nil {
+			return err
+		}
 		return restore(ctx, machine)
 	}); err != nil {
 		return err
+	}
+	if resultState == StateRunning {
+		manager.resetIdle(desired)
 	}
 	manager.stopTrafficWatch(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
 	return manager.writeAppliedState(desired, observed, resultState, SleepStateAwake)

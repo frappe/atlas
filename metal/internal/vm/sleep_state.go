@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	"github.com/frappe/atlas/metal/internal/platform"
@@ -113,7 +114,7 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 	if err != nil {
 		return err
 	}
-	if !refresh {
+	if !refresh && !observed.hasRemoteSleepState() {
 		saved, err := manager.runtime.SavedState(ctx, runtimeMachine(desired, observed.NetworkInterface))
 		if err != nil {
 			return err
@@ -232,4 +233,63 @@ func (record *sleepRecord) status() *SleepSnapshotStatus {
 		status.Disk = &SleepArtifactStatus{Uploaded: record.Disk.Artifact != nil, Artifact: record.Disk.Artifact}
 	}
 	return status
+}
+
+func (observed ObservedRecord) hasRemoteSleepState() bool {
+	return observed.SleepState == SleepStateDeepSleeping || observed.SleepState == SleepStateComatose
+}
+
+func (manager *Manager) restoreSleepArtifacts(ctx context.Context, desired DesiredRecord, machine RuntimeMachine, observed ObservedRecord) error {
+	if !observed.hasRemoteSleepState() {
+		return nil
+	}
+	record, err := manager.readSleepRecord(desired.ID)
+	if err != nil {
+		return err
+	}
+	if record == nil || record.SpecificationGeneration != desired.SpecificationGeneration || record.RestartGeneration != desired.RestartGeneration ||
+		record.Memory.Artifact == nil || (observed.SleepState == SleepStateComatose && (record.Disk == nil || record.Disk.Artifact == nil)) {
+		return fmt.Errorf("sleep checkpoint is missing or does not match the VM")
+	}
+	if observed.SleepState == SleepStateComatose {
+		if err := manager.restoreSleepDisk(ctx, desired.ID, record); err != nil {
+			return err
+		}
+	}
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return err
+	}
+	if status.HasSavedState {
+		saved, err := manager.runtime.SavedState(ctx, machine)
+		if err != nil {
+			return err
+		}
+		if saved.Identity != record.Identity {
+			return fmt.Errorf("local sleep checkpoint identity mismatch")
+		}
+		return nil
+	}
+	directory := filepath.Join(manager.store.virtualMachineDirectory(desired.ID), "sleep-restore")
+	if err := os.RemoveAll(directory); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	defer os.RemoveAll(directory)
+	if err := manager.snapshots.DownloadSleepMemory(ctx, directory, record.Memory.DownloadURL, *record.Memory.Artifact); err != nil {
+		return fmt.Errorf("restore sleep memory: %w", err)
+	}
+	return manager.runtime.InstallSavedState(ctx, machine, directory, record.Identity)
+}
+
+func (manager *Manager) restoreSleepDisk(ctx context.Context, identifier string, record *sleepRecord) error {
+	if record == nil || record.Disk == nil || record.Disk.Artifact == nil {
+		return fmt.Errorf("sleep disk checkpoint is missing")
+	}
+	if err := manager.snapshots.RestoreSleepDisk(ctx, identifier, record.Disk.DownloadURL, *record.Disk.Artifact); err != nil {
+		return fmt.Errorf("restore sleep disk: %w", err)
+	}
+	return nil
 }

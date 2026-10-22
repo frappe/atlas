@@ -4,6 +4,7 @@ import "context"
 
 // Storage manages virtual machine disks.
 type Storage interface {
+	HasDisk(context.Context, string) (bool, error)
 	DiskUsage(context.Context, string) (DiskUsage, error)
 	ResizeDisk(context.Context, string, int) error
 	Release(context.Context, string) error
@@ -23,6 +24,8 @@ type Snapshots interface {
 	DeleteSnapshot(context.Context, string) error
 	UploadSleepMemory(context.Context, string, string) (SleepArtifact, error)
 	UploadSleepDisk(context.Context, string, string) (SleepArtifact, error)
+	DownloadSleepMemory(ctx context.Context, directory, source string, artifact SleepArtifact) error
+	RestoreSleepDisk(ctx context.Context, identifier, source string, artifact SleepArtifact) error
 }
 
 // SleepArtifact binds a remote object to its uncompressed content.
