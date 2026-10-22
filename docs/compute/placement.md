@@ -21,19 +21,20 @@ Choose the strategy in **Atlas Settings**. `balanced` is the default.
 
 | Strategy | Goal | Regular VMs | Sleepy VMs |
 | --- | --- | --- | --- |
-| `balanced` | Spread risk and load | Rank by the keys below | Same keys, with sleepy memory discounted |
+| `balanced` | Spread load | Rank by the keys below | Same keys, with sleepy memory discounted |
 | `spread-3` | Keep hosts evenly used | Least used host first | Pack: most subscribed host first |
 | `best-fit` | Keep whole hosts free for large VMs | Most used host first | Pack: most subscribed host first |
 
 **`balanced`** sorts hosts by these keys, in order:
 
-1. Fewest VMs from the same tenant, so one host failure hits fewer of a tenant's VMs.
-2. Lowest placement rate in the last 5 minutes, so a burst spreads out.
-3. Smallest CPU shortfall: requested CPU above the host's free CPU.
-4. Lowest projected memory or disk use, whichever is higher.
-5. Host name, as a tie-breaker.
+1. Lowest projected memory use, in 5% bands.
+2. Lowest projected disk use.
+3. Lowest projected CPU use.
+4. Host name, as a tie-breaker.
 
-For example, if host A already runs 2 of the tenant's VMs and host B runs 1, host B wins even if A is quieter. A VM also counts on the destination host of its active migration, so parallel migrations of one tenant spread across hosts. For a sleepy VM, `balanced` divides sleepy memory by `sleepy_vm_overcommit_factor` when it ranks, because sleepy VMs are often stopped. The capacity check still uses real memory.
+Hosts in the same memory band tie on the first key. For example, a VM would bring host A to 41% memory and 60% disk, and host B to 43% memory and 10% disk. Both hosts are in the 40% band, so host B wins on disk.
+
+For a sleepy VM, `balanced` divides sleepy memory by `sleepy_vm_overcommit_factor` when it ranks, because sleepy VMs are often stopped. The capacity check still uses real memory.
 
 **`spread-3`** ranks regular hosts by projected use, lowest first. A VM that would bring host A to 80% and host B to 60% goes to host B. It packs sleepy VMs onto the host with the most subscribed sleepy memory, so sleepy hosts fill one at a time.
 
