@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
 
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetricsSample, timestamp_field
+from atlas.vm.core.metal_models import (
+	MetalSleepArtifact,
+	MetalVirtualMachine,
+	MetalVirtualMachineMetricsSample,
+	timestamp_field,
+)
 
 SWAGGER_PATH = pathlib.Path(__file__).parents[3] / "metal" / "internal" / "api" / "swagger.json"
 
@@ -189,6 +194,16 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		response["observed"]["sleep_snapshot"]["disk"]["uploaded"] = "false"
 		with self.assertRaises(ValueError):
 			MetalVirtualMachine.from_dict(response)
+
+	def test_sleep_upload_progress_is_optional_and_bounded(self) -> None:
+		self.assertIsNone(MetalSleepArtifact.from_dict({"uploaded": False}).upload_percent)
+		for percent in (None, 0, 50, 99, 100):
+			with self.subTest(percent=percent):
+				artifact = MetalSleepArtifact.from_dict({"uploaded": False, "upload_percent": percent})
+				self.assertEqual(artifact.upload_percent, percent)
+		for percent in (-1, 101, True, 1.5, "50"):
+			with self.subTest(percent=percent), self.assertRaises(ValueError):
+				MetalSleepArtifact.from_dict({"uploaded": False, "upload_percent": percent})
 
 	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
 		"""A truncated response must fail loudly, not read as an empty VM."""
