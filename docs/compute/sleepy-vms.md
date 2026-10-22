@@ -104,11 +104,15 @@ An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint
 
 Uploads use stable staging data, so a wake can proceed during upload. Upload completion does not evict data if the VM has already woken. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
 
+Staging, compression, and uploads run in a separate pool of two background workers. Slow object storage does not consume normal VM reconciliation workers. The daemon cancels and waits for upload workers during shutdown. A later pass retries incomplete transfers after restart.
+
 ## Wake an offloaded VM
 
 Traffic and an explicit start use one restore path for all sleep states. For a comatose VM, Metal first recovers a missing disk. For either remote sleep state, it then recovers missing memory and calls the normal saved-state restore. It verifies artifact checksums and checkpoint metadata before use. A completed local download can be reused on retry.
 
-A download or restore failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed traffic wake. If a GET URL expires, Atlas refreshes it with PATCH and sends another request to the VM. PATCH itself does not start a restore. Metal does not fall back to a cold boot after a wake failure.
+Start returns `202` after it saves the wake request. Restores run in a separate pool of two background workers, independent of uploads and normal VM reconciliation. Poll the VM response for `observed.phase`, `observed.error`, and completion. A repeated pending start returns without waiting for the download. The daemon cancels and waits for restore workers at shutdown, and a saved wake request resumes after restart.
+
+A download or restore failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed wake and retries pending requests. If a GET URL expires, Atlas refreshes it with PATCH. PATCH stores URLs only. It does not create a wake request, but a pending wake uses the new URLs on retry. Metal does not fall back to a cold boot after a wake failure.
 
 An explicit stop, restart, or shape change recovers an offloaded disk before it discards saved memory. Wake an offloaded VM before migration. A migration request for a deep-sleeping or comatose VM returns `409`.
 
