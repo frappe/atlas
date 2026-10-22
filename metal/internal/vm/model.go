@@ -195,6 +195,21 @@ const (
 	StateDestroyed State = "destroyed"
 )
 
+// SleepState says where Metal keeps the saved state of a Sleepy VM. It is
+// separate from State, which stays stopped while the VM sleeps.
+type SleepState string
+
+const (
+	// SleepStateAwake means the VM has no saved state to restore.
+	SleepStateAwake SleepState = ""
+	// SleepStateSleeping means the saved memory stays on the host.
+	SleepStateSleeping SleepState = "sleeping"
+	// SleepStateDeepSleeping means the saved memory is in object storage.
+	SleepStateDeepSleeping SleepState = "deep-sleeping"
+	// SleepStateComatose means the saved memory and the disk are in object storage.
+	SleepStateComatose SleepState = "comatose"
+)
+
 // IsDesiredState reports whether state is a valid requested state.
 func IsDesiredState(state State) bool {
 	switch state {
