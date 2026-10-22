@@ -238,6 +238,27 @@ func (manager *Manager) List(ctx context.Context) ([]Information, error) {
 	return information, nil
 }
 
+// KernelSHA256s returns the kernel of every VM record on this host. Unlike
+// List, it includes incoming migration destinations.
+func (manager *Manager) KernelSHA256s(_ context.Context) ([]string, error) {
+	identifiers, err := manager.store.listIDs()
+	if err != nil {
+		return nil, err
+	}
+	kernels := make([]string, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		desired, err := manager.store.readDesired(identifier)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		kernels = append(kernels, desired.Specification.Image.KernelSHA256)
+	}
+	return kernels, nil
+}
+
 // ListIDs returns all reserved virtual machine identifiers.
 func (manager *Manager) ListIDs(_ context.Context) ([]string, error) {
 	return manager.store.listIDs()

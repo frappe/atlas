@@ -93,6 +93,12 @@ Metal checks file sizes and the zstd content size and checksum before it publish
 | Runtime metadata | VM ID, specification generation, restart generation, virtual CPU count, memory size, and disk size match. |
 | Firecracker load | Firecracker and KVM validate the saved guest state. |
 
+## How does the destination get the kernel?
+
+During copy, the destination looks for the VM kernel in its kernel store. When the kernel is missing, the destination downloads it from the source through the mutual-TLS API with zstd compression. Metal stores the kernel only when its SHA-256 value matches.
+
+A later cold boot then does not need the kernel URL that Atlas sent when it created the VM. When the source does not send the kernel, the migration continues and a cold boot downloads the kernel from that URL.
+
 Atlas owns the [host compatibility checks](migration.md#compatibility-before-transfer). Snapshot capture records the VM shape without another host compatibility check.
 
 The saved metadata includes the source TAP gateway MAC address. TAP is the host's virtual network interface. MAC means media access control. Metal applies this address when it recreates the network for destination restore or source rollback. This preserves the gateway address in the guest's saved neighbor caches.

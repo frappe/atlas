@@ -458,6 +458,10 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
+func (m *stubMigrationManager) OpenSourceKernel(context.Context, string, string) (*os.File, error) {
+	return nil, vm.ErrNotFound
+}
+
 func (m *stubMigrationManager) OpenSourceMemorySnapshotFile(context.Context, string, string, int, string) (*os.File, error) {
 	if m.memoryPath != "" {
 		return os.Open(m.memoryPath)

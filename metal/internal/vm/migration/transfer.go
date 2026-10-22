@@ -137,6 +137,10 @@ func (m *Manager) runTransfer(ctx context.Context, virtualMachineID string) {
 // advanceCopying copies an interval or enters stopping. Running sources send a
 // full first interval; other sources cut over first.
 func (m *Manager) advanceCopying(ctx context.Context, record destinationRecord) error {
+	if err := m.receiveKernel(ctx, record); err != nil {
+		return err
+	}
+
 	last := lastCompletedSequence(record)
 	if last == 0 && record.SourceObservedState != vm.StateRunning {
 		return m.enterStopping(ctx, record)

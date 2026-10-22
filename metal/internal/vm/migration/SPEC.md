@@ -30,7 +30,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 
 ## Extension points
 
-`CreateDestination` persists the optional `has_memory_snapshot` request flag and rejects changes to it on an active retry. The `initialize_memory_migration_flags` startup patch handles existing records. [Record tests](records_test.go) check the upgrade path. `memory.go` owns memory snapshot transfer and its checkpoint. [Memory transfer tests](memory_test.go) check parallel completion, cancellation, source fencing, and checksum verification. See the [migration engine guide](../../../../docs/compute/migration-engine.md) for upgrade defaults.
+`CreateDestination` persists the optional `has_memory_snapshot` request flag and rejects changes to it on an active retry. The `initialize_memory_migration_flags` startup patch handles existing records. [Record tests](records_test.go) check the upgrade path. `memory.go` owns memory snapshot transfer and its checkpoint. [Memory transfer tests](memory_test.go) check parallel completion, cancellation, source fencing, and checksum verification. `kernel.go` copies a missing kernel during copy. [Kernel tests](kernel_test.go) check the skip, the copy, and the 404 fallback. See the [migration engine guide](../../../../docs/compute/migration-engine.md) for upgrade defaults.
 
 The daemon supplies concrete `vm.MigrationHost` and `storage.MigrationTransfer` values. Private interfaces are test seams within this package. The `vm` package does not import `migration`. The daemon injects `migration.Manager` as `vm.MigrationGuard` with `(*vm.Manager).SetMigrationGuard`.
 

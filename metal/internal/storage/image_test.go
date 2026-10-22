@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"runtime"
@@ -98,5 +101,27 @@ func TestPruneKernelsKeepsKernelsInUse(t *testing.T) {
 	}
 	if _, err := os.Stat(imageStore.kernelFile(idleKernel)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("idle kernel remains: %v", err)
+	}
+}
+
+func TestStoreKernelKeepsOnlyAMatchingKernel(t *testing.T) {
+	imageStore := NewStores(t.Context(), "metal", t.TempDir(), nil, telemetry.NewRegistry(nil)).Images
+	kernel := []byte("vmlinux")
+	digest := sha256.Sum256(kernel)
+	kernelSHA256 := hex.EncodeToString(digest[:])
+
+	if err := imageStore.StoreKernel(kernelSHA256, bytes.NewReader([]byte("other"))); !errors.Is(err, ErrImageIntegrity) {
+		t.Fatalf("mismatched kernel error = %v", err)
+	}
+	if hasKernel, err := imageStore.HasKernel(kernelSHA256); err != nil || hasKernel {
+		t.Fatalf("mismatched kernel stored: %v %v", hasKernel, err)
+	}
+
+	if err := imageStore.StoreKernel(kernelSHA256, bytes.NewReader(kernel)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(imageStore.kernelFile(kernelSHA256))
+	if err != nil || !bytes.Equal(stored, kernel) {
+		t.Fatalf("stored kernel = %q, %v", stored, err)
 	}
 }
