@@ -179,9 +179,21 @@ class MetalOperationError:
 
 @dataclass(frozen=True, slots=True)
 class MetalSleepArtifact:
-	"""Store completion of one sleep artifact upload."""
+	"""Store progress and completion of one sleep artifact upload."""
 
 	uploaded: bool
+	upload_percent: int | None = None
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepArtifact:
+		"""Validate optional upload progress from Metal."""
+		artifact = object_value(value, "sleep artifact")
+		percent = None
+		if artifact.get("upload_percent") is not None:
+			percent = integer_field(artifact, "upload_percent")
+			if percent > 100:
+				raise ValueError("upload_percent must be between 0 and 100")
+		return cls(uploaded=boolean_field(artifact, "uploaded"), upload_percent=percent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,11 +211,7 @@ class MetalSleepSnapshot:
 		artifacts = {}
 		for name in ("memory", "disk"):
 			artifact = snapshot.get(name)
-			artifacts[name] = (
-				MetalSleepArtifact(uploaded=boolean_field(object_value(artifact, name), "uploaded"))
-				if artifact is not None
-				else None
-			)
+			artifacts[name] = MetalSleepArtifact.from_dict(artifact) if artifact is not None else None
 		return cls(id=string_field(snapshot, "id"), **artifacts)
 
 
