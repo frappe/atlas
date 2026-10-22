@@ -78,7 +78,7 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			self.assertEqual(request.pop("snapshot_id"), "checkpoint-1")
 			self.assertEqual(set(request), set(artifacts))
 			for name, target in request.items():
-				self.assertEqual(set(target), {"download_url"})
+				self.assertEqual(set(target), {"download_url", "object_key"})
 				self.assertTrue(urlsplit(target["download_url"]).path.endswith(f"/host-1/vm-1/{name}"))
 
 	def test_hourly_refresh_does_not_delay_offload_or_failed_refresh_retries(self) -> None:
