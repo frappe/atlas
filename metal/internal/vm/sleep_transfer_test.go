@@ -83,3 +83,18 @@ func TestSleepUploadProgressIsPerArtifactAndTransient(t *testing.T) {
 		t.Fatal("completed transfer retained live counters")
 	}
 }
+
+func TestUploadCompletionDoesNotEvictAMigrationSource(t *testing.T) {
+	manager, runtime, storage, snapshots := sleepyManager(t)
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+		t.Fatal(err)
+	}
+	snapshots.duringUpload = func() { lockSource(t, manager, "vm-1") }
+	if err := manager.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	information, err := manager.Information(t.Context(), "vm-1")
+	if err != nil || information.SleepState != SleepStateSleeping || !runtime.hasSavedState || storage.releases != 0 || snapshots.uploads != 1 {
+		t.Fatalf("upload changed a migration source: %+v, %v", information, err)
+	}
+}
