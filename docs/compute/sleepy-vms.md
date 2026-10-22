@@ -64,7 +64,7 @@ At the deep-sleep threshold, Atlas supplies signed memory upload and download UR
 
 Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk` as object keys. A later sleep checkpoint on the same host replaces these objects. The host prefix separates uploads across migration. Keep these objects available while the VM depends on them.
 
-The same job refreshes GET URLs for stored checkpoints once an hour, even when offload thresholds are disabled. The interval is fixed and does not depend on URL expiry. Set the signed URL lifetime longer than one hour and allow time for queue delays and downloads.
+The same job refreshes GET URLs for stored checkpoints once an hour, even when offload thresholds are disabled. Each artifact keeps its original object key after migration. Memory and disk can use different host prefixes. Set the signed URL lifetime longer than one hour and allow time for queue delays and downloads.
 
 Atlas caches each successful refresh per VM and checkpoint for one hour. A cache miss refreshes URLs immediately. A failed check appears in Error Log and retries on the next minute's schedule. Atlas does not store signed URLs or a second copy of Metal's sleep state.
 
@@ -106,6 +106,8 @@ Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
 
 An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint and keep each URL's scheme, host, and object path. It cannot supply an upload URL. This request stores URLs only. It does not download artifacts or wake the VM.
 
+Artifact status includes `object_key` when stored. Set it with the optional `object_key` field in an upload or URL refresh request. A nonempty key cannot change within a checkpoint. Atlas fills missing keys before migration. Older hosts ignore this optional request field.
+
 Uploads use stable staging data, so a wake can proceed during upload. Upload completion does not evict data if the VM has already woken. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
 
 Staging, compression, and uploads run in a separate pool of two background workers. Slow object storage does not consume normal VM reconciliation workers. The daemon cancels and waits for upload workers during shutdown. A later pass retries incomplete transfers after restart.
@@ -116,9 +118,13 @@ Traffic and an explicit start use one restore path for all sleep states. For a c
 
 Start returns `202` after it saves the wake request. Restores run in a separate pool of two background workers, independent of uploads and normal VM reconciliation. Poll the VM response for `observed.phase`, `observed.error`, and completion. A repeated pending start returns without waiting for the download. The daemon cancels and waits for restore workers at shutdown, and a saved wake request resumes after restart.
 
-A download or restore failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed wake and retries pending requests. If a GET URL expires, Atlas refreshes it with PATCH. PATCH stores URLs only. It does not create a wake request, but a pending wake uses the new URLs on retry. Metal does not fall back to a cold boot after a wake failure.
+A download or artifact validation failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed wake and retries pending requests. If a GET URL expires, Atlas refreshes it with PATCH. PATCH stores URLs only. It does not create a wake request, but a pending wake uses the new URLs on retry.
 
-An explicit stop, restart, or shape change recovers an offloaded disk before it discards saved memory. Wake an offloaded VM before migration. A migration request for a deep-sleeping or comatose VM returns `409`.
+If runtime restore fails after artifact preparation, Metal checks whether the guest already reached the requested state. If not, it removes the failed runtime and saved memory, then cold-boots the existing disk. This keeps the disk but loses processes and unsaved memory. A comatose VM must recover its disk first.
+
+Cancellation and timeout errors retry without a cold boot. Metal logs the fallback and prevents later retries from loading the old remote memory. Cleanup and cold-boot failures report `observed.error`.
+
+An explicit stop, restart, or shape change recovers an offloaded disk before it discards saved memory. [Migration](migration.md#move-an-offloaded-vm) moves an offloaded VM without waking it or downloading its snapshots.
 
 ## Placement
 
@@ -131,7 +137,7 @@ Because most sleepy VMs are asleep at any time, the `balanced` strategy divides 
 - **The first packet can be lost** while the VM wakes. Clients must retry, as they would on any network.
 - **Migration keeps the memory only with a memory snapshot.** A memory snapshot migration sends the saved state, and the VM resumes awake on the new host. A disk-only migration wakes the VM, shuts it down, and cold-boots it on the new host.
 - **Some actions throw the saved state away:** an explicit stop, a restart, a shape change, or deleting the VM. The next start is a normal boot.
-- **A failed restore keeps the saved state** for another try. Metal never cold-boots instead, because that would lose the VM's memory without warning. The exception is a migration rollback: Metal cold-boots the source so the migration cannot stay stuck.
+- **A failed runtime restore can lose memory.** See [wake recovery](#wake-an-offloaded-vm) for cold-boot fallback and retry behavior.
 - A `metald` restart resets the idle clock, so a VM can sleep later than expected, never earlier.
 - A start resets the idle clock, so a VM is never put to sleep before the guest has booted.
 

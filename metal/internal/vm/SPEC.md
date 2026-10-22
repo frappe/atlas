@@ -65,7 +65,7 @@ The existing VM response adds optional `upload_percent` to each artifact under `
 
 - A valid saved state is authoritative when Firecracker is stopped.
 - A saved state beside a running Firecracker process is stale and is deleted.
-- A restore failure keeps the saved state.
+- Wake restore failures reuse `recoverFailedRestore` in `migration_state.go`. `sleep_restore_test.go` checks fallback, cancellation, missing disks, and retries after daemon restart. See [wake recovery](../../../docs/compute/sleepy-vms.md#wake-an-offloaded-vm).
 - A restart or machine shape change deletes the saved state.
 - Traffic restore takes the per-VM lock. A stale or duplicate event has no effect.
 - The phase and operation ID are written before each host call.
@@ -77,6 +77,7 @@ The migration lifecycle lives in [internal/vm/migration/SPEC.md](migration/SPEC.
 
 - The daemon injects a `MigrationGuard` with `SetMigrationGuard`.
 - Without a guard, no VM is migrating.
+- `migration_sleep.go` exposes `SleepMigration` and captures and applies an acknowledged checkpoint without runtime calls. `SleepCheckpoint.SourceUserID` supplies the original identity for installation on a later wake.
 
 ## Boundaries
 
