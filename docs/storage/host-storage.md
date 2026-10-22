@@ -62,6 +62,8 @@ When a cached image no longer requests a memory snapshot, Metal removes its unus
 
 A VM disk clone keeps its source image and warm disk until the VM is removed. Metal can build a new warm artifact while an old warm disk stays in use.
 
+Images with the same kernel share one kernel file. Metal keeps a kernel while a stored image or a VM on the host uses it, and removes an unused kernel one hour after its download. A VM with an existing disk boots from its kernel alone, so it still starts after its image is removed.
+
 An existing VM clone can keep an image dataset in use after policy stops requesting it.
 
 ## Limits and recovery

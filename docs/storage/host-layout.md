@@ -13,9 +13,9 @@ This page shows every file and dataset that Metal keeps on a host. After a resta
 ├── metald.toml                    metald configuration
 ├── image-policies.json            cached images requested by host sync
 ├── wireguard-peers.json           managed WireGuard peer set
+├── kernels/<kernel-sha256>        guest kernel, shared by images, hard-linked into each jail
 ├── images/<image-ref>/
 │   ├── manifest.json              digests and architecture. Never changes
-│   ├── vmlinux                    guest kernel, hard-linked into each jail
 │   ├── boot-args                  kernel command line (optional)
 │   ├── last-used                  time of the last VM start
 │   └── warm/<key>/                warm boot artifact for one exact VM shape

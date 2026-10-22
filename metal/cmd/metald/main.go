@@ -357,6 +357,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		stores.Images,
 		stores.Snapshots,
 		memorySnapshotBuilder,
+		virtualMachineManager,
 		imageReconcileInterval,
 		reconciler.ImageConfig{Logger: logger, Telemetry: registry},
 	)
