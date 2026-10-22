@@ -63,6 +63,29 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 
 
 class TestMigrationValidation(UnitTestCase):
+	def test_offloaded_selection_requires_memory_and_disables_fallback(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled"))
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch.object(service, "_prepare_sleep_migration", return_value=True),
+			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
+			patch.object(service, "_load_compatibility_report", return_value=HOST_COMPATIBILITY),
+			patch.object(service, "update") as update,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+		values = update.call_args.args[0]
+		self.assertEqual(values["has_memory_snapshot"], 1)
+		self.assertEqual(values["allow_disk_only_fallback"], 0)
+
+	def test_offloaded_checkpoint_never_skips_memory_compatibility(self) -> None:
+		service = MigrationService(migration_doc(has_memory_snapshot=False))
+		with patch.object(service, "_load_compatibility_report", return_value=HOST_COMPATIBILITY) as reports:
+			service.validate_compatibility("metal-2", "amd64", has_sleep_checkpoint=True)
+		self.assertEqual(reports.call_count, 2)
+		with patch.object(service, "_load_compatibility_report", side_effect=AtlasUserError("incompatible")):
+			with self.assertRaisesRegex(AtlasUserError, "incompatible"):
+				service.validate_compatibility("metal-2", "amd64", has_sleep_checkpoint=True)
+
 	def test_rejects_an_already_migrating_vm(self) -> None:
 		with self.assertRaisesRegex(AtlasUserError, "already migrating"):
 			MigrationService.validate_source(source_vm(active_migration="mig-00001"))
