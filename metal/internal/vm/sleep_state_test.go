@@ -74,7 +74,7 @@ func wakeTestSleep(ctx context.Context, manager *Manager) error {
 	return manager.restoreSleeping(ctx, desired, observed)
 }
 
-func TestSleepUploadsRetainLocalArtifacts(t *testing.T) {
+func TestSleepUploadsEvictUploadedArtifacts(t *testing.T) {
 	for _, selected := range []string{"memory", "both"} {
 		t.Run(selected, func(t *testing.T) {
 			manager, runtime, storage, snapshots := sleepyManager(t)
@@ -93,11 +93,12 @@ func TestSleepUploadsRetainLocalArtifacts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if information.SleepState != SleepStateSleeping || information.State != StateStopped {
-				t.Fatalf("upload changed VM sleep state: %s/%s", information.State, information.SleepState)
+			wantState, wantReleases := SleepStateDeepSleeping, 0
+			if selected == "both" {
+				wantState, wantReleases = SleepStateComatose, 1
 			}
-			if !runtime.hasSavedState || storage.releases != 0 || !information.SleepSnapshot.Memory.Uploaded {
-				t.Fatal("upload removed local data or did not report completion")
+			if information.SleepState != wantState || information.State != StateStopped || runtime.hasSavedState || storage.releases != wantReleases || !information.SleepSnapshot.Memory.Uploaded {
+				t.Fatalf("uploaded resources were not evicted: %+v; runtime=%+v storage=%+v", information, runtime, storage)
 			}
 			data, err := json.Marshal(information.SleepSnapshot)
 			if err != nil || strings.Contains(string(data), "secret") || strings.Contains(string(data), "objects.example") {
@@ -154,7 +155,7 @@ func TestSleepDiskFollowsMemoryUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	information, err := manager.Information(t.Context(), "vm-1")
-	if err != nil || information.SleepState != SleepStateSleeping || snapshots.uploads != 2 {
+	if err != nil || information.SleepState != SleepStateComatose || snapshots.uploads != 2 {
 		t.Fatalf("disk did not follow memory without reuploading: %+v, %v", information.SleepSnapshot, err)
 	}
 }

@@ -37,9 +37,20 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		return err
 	}
 	target := record.target(memory)
-	if !record.canUpload(desired, observed) || target == nil || target.Artifact != nil {
+	if !record.canUpload(desired, observed) || target == nil {
 		unlock()
 		return nil
+	}
+	directory := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer", record.ID)
+	if target.Artifact != nil {
+		defer unlock()
+		if memory {
+			if err := os.RemoveAll(directory); err != nil {
+				return err
+			}
+			return manager.evictSleepArtifacts(ctx, desired, &observed, record)
+		}
+		return manager.snapshots.DeleteSnapshot(ctx, record.ID)
 	}
 	if !memory && record.Memory.Artifact == nil {
 		unlock()
@@ -47,16 +58,23 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 	}
 	machine := runtimeMachine(desired, observed.NetworkInterface)
 	status, err := manager.runtime.Inspect(ctx, machine)
-	if err != nil || status.State != StateStopped || !status.HasSavedState {
+	if err != nil || status.State != StateStopped {
 		unlock()
 		return err
 	}
-	saved, err := manager.runtime.SavedState(ctx, machine)
-	if err != nil || saved.Identity != record.Identity {
+	var saved SavedState
+	if status.HasSavedState {
+		saved, err = manager.runtime.SavedState(ctx, machine)
+		if err == nil && saved.Identity != record.Identity {
+			err = ErrConflict
+		}
+	} else if memory || !observed.hasRemoteSleepState() {
+		err = ErrConflict
+	}
+	if err != nil {
 		unlock()
 		return err
 	}
-	directory := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer", record.ID)
 	defer os.RemoveAll(directory)
 	if !memory {
 		defer func() {
@@ -83,7 +101,7 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 	destination := target.UploadURL
 	unlock()
 
-	// The upload reads only staging, so the existing wake path can use local state.
+	// The upload reads only staging, so wake does not wait for its network transfer.
 	var artifact SleepArtifact
 	if memory {
 		artifact, err = manager.snapshots.UploadSleepMemory(ctx, directory, destination)
@@ -105,7 +123,7 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 	if err != nil || current == nil || current.ID != snapshotID {
 		return err
 	}
-	_, observed, err := manager.newVirtualMachine(identifier).records()
+	desired, observed, err := manager.newVirtualMachine(identifier).records()
 	if err != nil {
 		return err
 	}
@@ -120,9 +138,56 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 	if err := manager.writeSleepRecord(identifier, current); err != nil {
 		return err
 	}
+	if err := manager.evictSleepArtifacts(completion, desired, &observed, current); err != nil {
+		return err
+	}
 	if observed.OperationID == snapshotID {
 		observed.completeOperation()
 		return manager.store.writeObserved(identifier, observed)
 	}
 	return nil
+}
+
+func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired DesiredRecord, observed *ObservedRecord, record *sleepRecord) error {
+	if !record.canUpload(desired, *observed) || record.Memory.Artifact == nil {
+		return nil
+	}
+	machine := runtimeMachine(desired, observed.NetworkInterface)
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil || status.State != StateStopped {
+		return err
+	}
+	if observed.SleepState == SleepStateSleeping {
+		observed.SleepState = SleepStateDeepSleeping
+	}
+	if status.HasSavedState {
+		saved, err := manager.runtime.SavedState(ctx, machine)
+		if err != nil {
+			return err
+		}
+		if saved.Identity != record.Identity {
+			return ErrConflict
+		}
+		if err := manager.runOperation(ctx, desired.ID, observed, record.ID, "evict-sleep-memory", func() error {
+			return manager.runtime.DeleteSavedState(ctx, machine)
+		}); err != nil {
+			return err
+		}
+	}
+	if record.Disk != nil && record.Disk.Artifact != nil {
+		hasDisk, err := manager.storage.HasDisk(ctx, desired.ID)
+		if err != nil {
+			return err
+		}
+		observed.SleepState = SleepStateComatose
+		if hasDisk {
+			if err := manager.runOperation(ctx, desired.ID, observed, record.ID, "evict-sleep-disk", func() error {
+				return manager.storage.Release(ctx, desired.ID)
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	observed.completeOperation()
+	return manager.store.writeObserved(desired.ID, *observed)
 }
