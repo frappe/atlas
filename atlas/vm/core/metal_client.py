@@ -139,6 +139,28 @@ class MetalClient:
 			budget_seconds=self.status_budget_seconds,
 		)
 
+	def offload_sleep_state(self, virtual_machine_id: str, request: dict[str, Any]) -> MetalVirtualMachine:
+		"""Request upload and eviction of selected sleep artifacts."""
+		response = self._request(
+			"POST",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/sleep-state",
+			json=request,
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
+	def refresh_sleep_state(self, virtual_machine_id: str, request: dict[str, Any]) -> MetalVirtualMachine:
+		"""Refresh GET URLs without waking the VM."""
+		response = self._request(
+			"PATCH",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/sleep-state",
+			json=request,
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
 	def get_virtual_machine_metrics(
 		self,
 		virtual_machine_id: str,
