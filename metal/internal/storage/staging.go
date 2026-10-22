@@ -78,7 +78,7 @@ func (store *SnapshotStore) Stage(ctx context.Context, request vm.SnapshotReques
 	if err != nil {
 		return vm.StagedSnapshot{}, fmt.Errorf("generate snapshot identifier: %w", err)
 	}
-	staged, err := store.StageSnapshot(ctx, request.VirtualMachineID, snapshotID.String(), request.ImageReference)
+	staged, err := store.StageSnapshot(ctx, request.VirtualMachineID, snapshotID.String(), request.KernelSHA256)
 	if err != nil {
 		return vm.StagedSnapshot{}, err
 	}
@@ -91,7 +91,7 @@ func (store *SnapshotStore) Stage(ctx context.Context, request vm.SnapshotReques
 }
 
 // StageSnapshot creates a stable root file system clone and kernel link.
-func (store *SnapshotStore) StageSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string) (StagedSnapshot, error) {
+func (store *SnapshotStore) StageSnapshot(ctx context.Context, virtualMachineID, snapshotID, kernelSHA256 string) (StagedSnapshot, error) {
 	lock := store.snapshotLock(snapshotID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -107,13 +107,13 @@ func (store *SnapshotStore) StageSnapshot(ctx context.Context, virtualMachineID,
 		return metadata.snapshot(), nil
 	}
 
-	return store.createStagedSnapshot(ctx, virtualMachineID, snapshotID, imageReference)
+	return store.createStagedSnapshot(ctx, virtualMachineID, snapshotID, kernelSHA256)
 }
 
 // createStagedSnapshot snapshots the live disk, clones it read-only, and stages
 // the kernel beside it. A failure attempts to destroy the clone and snapshot, so
 // a retry normally starts clean.
-func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string) (_ StagedSnapshot, resultError error) {
+func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMachineID, snapshotID, kernelSHA256 string) (_ StagedSnapshot, resultError error) {
 	sourceSnapshot := store.pool.snapshot(virtualMachineID, snapshotID)
 	stagingDataset := store.pool.stagingDataset(snapshotID)
 	directory := store.snapshotDirectory(snapshotID)
@@ -140,7 +140,7 @@ func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMac
 	if err != nil {
 		return StagedSnapshot{}, fmt.Errorf("read staging disk size: %w", err)
 	}
-	kernelSize, err := store.stageKernel(ctx, imageReference, filepath.Join(directory, "vmlinux"))
+	kernelSize, err := store.stageKernel(ctx, kernelSHA256, filepath.Join(directory, "vmlinux"))
 	if err != nil {
 		return StagedSnapshot{}, err
 	}
@@ -162,10 +162,10 @@ func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMac
 	return metadata.snapshot(), nil
 }
 
-// stageKernel places the image kernel beside the staged disk and returns its
+// stageKernel places the VM kernel beside the staged disk and returns its
 // size. A hard link is used when the staging directory shares a file system.
-func (store *SnapshotStore) stageKernel(ctx context.Context, imageReference, destination string) (int64, error) {
-	source := store.images.kernelFile(imageReference)
+func (store *SnapshotStore) stageKernel(ctx context.Context, kernelSHA256, destination string) (int64, error) {
+	source := store.images.kernelFile(kernelSHA256)
 	if err := os.Link(source, destination); err != nil {
 		if err := copyReflink(ctx, source, destination); err != nil {
 			return 0, fmt.Errorf("stage kernel: %w", err)

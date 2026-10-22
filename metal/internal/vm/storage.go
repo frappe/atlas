@@ -20,10 +20,10 @@ type Snapshots interface {
 	Stage(context.Context, SnapshotRequest) (StagedSnapshot, error)
 }
 
-// SnapshotRequest identifies the virtual machine and image to stage.
+// SnapshotRequest identifies the virtual machine and kernel to stage.
 type SnapshotRequest struct {
 	VirtualMachineID string
-	ImageReference   string
+	KernelSHA256     string
 }
 
 // StagedSnapshot describes a staged machine image.

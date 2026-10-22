@@ -134,14 +134,12 @@ class AtlasGauges:
 		)
 
 	def add_images(self) -> None:
-		"""Count images and the bytes their image and kernel files hold in storage, by status."""
-		images = frappe.get_all(
-			"Virtual Machine Image", fields=["status", "image_stored_size_mib", "kernel_stored_size_mib"]
-		)
+		"""Count images and the bytes their rootfs files hold in storage, by status. Kernels are shared."""
+		images = frappe.get_all("Virtual Machine Image", fields=["status", "image_stored_size_mib"])
 		self.add_counts("atlas_virtual_machine_images", Counter(row.status for row in images), "status")
 		stored_mib = Counter()
 		for row in images:
-			stored_mib[row.status] += (row.image_stored_size_mib or 0) + (row.kernel_stored_size_mib or 0)
+			stored_mib[row.status] += row.image_stored_size_mib or 0
 		for status, mib in stored_mib.items():
 			self.add(
 				"atlas_virtual_machine_image_stored_bytes", mib * MEBIBYTE, status=str(status or "unknown")

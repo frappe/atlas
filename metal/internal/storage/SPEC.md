@@ -18,7 +18,8 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 ## Invariants
 
 - `EnsureImage` validates architecture, URLs, and SHA-256 values. One image reference cannot identify different content. A dependent VM clone keeps its source image from deletion.
-- `PrepareBoot` ensures the image, kernel link, disk clone and growth, and block node in the jail. `PrepareRootFileSystem` does disk work without the kernel. `Release` promotes dependent staging clones before removing a VM disk.
+- Kernels are stored once per SHA-256 value. `PruneKernels` keeps a kernel that a stored image or a listed VM uses.
+- `PrepareBoot` ensures the kernel, kernel link, disk clone and growth, and block node in the jail. It imports the image only for a new disk. `PrepareRootFileSystem` does disk work without the kernel. `Release` promotes dependent staging clones before removing a VM disk.
 - `SetImagePolicies` atomically replaces the policy file. The [image reconciler](../reconciler/SPEC.md) downloads and prunes.
 - `Stage` creates a UUIDv7 snapshot ID. `StartUpload` checks signed parts, removes leftover part buffers, and starts asynchronous upload.
 - The controller chooses the multipart part size, because it signs each part. Part count is an upper bound until compressed size is known. The digest covers uncompressed bytes. `UploadedArtifact` reports both raw and stored sizes.

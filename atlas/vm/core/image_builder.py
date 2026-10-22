@@ -79,18 +79,25 @@ def publish_ubuntu_image(
 	kernel_sha256 = get_sha256(kernel_path)
 	previous_images = get_available_ubuntu_images(title, architecture)
 	for image in previous_images:
-		if image.image_sha256 == image_sha256 and image.kernel_sha256 == kernel_sha256:
+		if image.image_sha256 == image_sha256 and image.kernel == kernel_sha256:
 			return
 
+	kernel_release = kernel_path.with_name(f"{kernel_path.name}.release").read_text().strip()
+	store_kernel(
+		f"ubuntu-{version} - kernel {kernel_release}", kernel_path, kernel_sha256, architecture, storage
+	)
 	# The digest and size describe the raw file system. Hosts download the zstd copy and verify the decoded bytes.
 	compressed_image_path = image_path.with_name(f"{image_path.name}.zst")
 	image_name = frappe.generate_hash(length=16)
 	if storage == "Site File":
-		location = publish_to_site_files(
-			image_name, compressed_image_path, image_sha256, kernel_path, kernel_sha256
-		)
+		location = {"image_file": publish_public_file_path(compressed_image_path, image_sha256, image_name)}
 	else:
-		location = upload_to_object_storage(image_name, compressed_image_path, kernel_path)
+		location = {"image_object_key": f"images/{image_name}/rootfs.img"}
+		upload_with_progress(
+			frappe.get_single("Atlas Settings").get_object_storage_client(),
+			compressed_image_path,
+			location["image_object_key"],
+		)
 
 	frappe.get_doc(
 		{
@@ -104,8 +111,7 @@ def publish_ubuntu_image(
 			"image_sha256": image_sha256,
 			"image_size_mib": bytes_to_mib(image_path.stat().st_size),
 			"image_stored_size_mib": bytes_to_mib(compressed_image_path.stat().st_size),
-			"kernel_sha256": kernel_sha256,
-			"kernel_size_mib": bytes_to_mib(kernel_path.stat().st_size),
+			"kernel": kernel_sha256,
 			"tags": [
 				{"key": "purpose", "value": "base"},
 				{"key": "os", "value": "Ubuntu"},
@@ -133,26 +139,32 @@ def get_available_ubuntu_images(title: str, architecture: str) -> list[VirtualMa
 	return [frappe.get_doc("Virtual Machine Image", name) for name in names]
 
 
-def upload_to_object_storage(image_name: str, image_path: Path, kernel_path: Path) -> dict[str, str]:
-	"""Upload both artifacts under keys owned by this image."""
-	image_key = f"images/{image_name}/rootfs.img"
-	kernel_key = f"images/{image_name}/kernel"
-	settings = frappe.get_single("Atlas Settings")
-	object_storage_client = settings.get_object_storage_client()
-	upload_with_progress(object_storage_client, image_path, image_key)
-	upload_with_progress(object_storage_client, kernel_path, kernel_key)
-	return {"image_object_key": image_key, "kernel_object_key": kernel_key}
+def store_kernel(
+	title: str, kernel_path: Path, kernel_sha256: str, architecture: str, storage: ArtifactStorage
+) -> None:
+	"""Store a kernel once. A later build with the same kernel reuses it."""
+	if frappe.db.exists("Virtual Machine Kernel", kernel_sha256):
+		return
 
-
-def publish_to_site_files(
-	image_name: str, image_path: Path, image_sha256: str, kernel_path: Path, kernel_sha256: str
-) -> dict[str, str]:
-	"""Attach both artifacts as public site files for a host to download."""
-	click.echo(f"Publishing {image_path.name} and {kernel_path.name} as public site files")
-	return {
-		"image_file": publish_public_file_path(image_path, image_sha256, image_name),
-		"kernel_file": publish_public_file_path(kernel_path, kernel_sha256, image_name),
-	}
+	if storage == "Site File":
+		location = {"file": publish_public_file_path(kernel_path, kernel_sha256, "kernel")}
+	else:
+		location = {"object_key": f"kernels/{kernel_sha256}"}
+		upload_with_progress(
+			frappe.get_single("Atlas Settings").get_object_storage_client(),
+			kernel_path,
+			location["object_key"],
+		)
+	frappe.get_doc(
+		{
+			"doctype": "Virtual Machine Kernel",
+			"title": title,
+			"sha256": kernel_sha256,
+			"architecture": architecture,
+			"size_mib": bytes_to_mib(kernel_path.stat().st_size),
+			**location,
+		}
+	).insert()
 
 
 def get_sha256(path: Path) -> str:

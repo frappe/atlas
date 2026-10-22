@@ -36,10 +36,11 @@ type snapshotArtifactUploadRequest struct {
 	Parts       []snapshotUploadPartRequest `json:"parts"`
 }
 
-// snapshotUploadRequest carries the parts of both artifacts.
+// snapshotUploadRequest carries the parts of each artifact. The controller
+// omits the kernel when it already stores it.
 type snapshotUploadRequest struct {
-	Rootfs snapshotArtifactUploadRequest `json:"rootfs"`
-	Kernel snapshotArtifactUploadRequest `json:"kernel"`
+	Rootfs snapshotArtifactUploadRequest  `json:"rootfs"`
+	Kernel *snapshotArtifactUploadRequest `json:"kernel,omitempty"`
 }
 
 // uploadedPartResponse is the ETag the destination returned for one part.
@@ -165,9 +166,11 @@ func (s *Server) getSnapshot(c echo.Context) error {
 	}
 	if status.State == storage.UploadStateCompleted {
 		rootfs := uploadedArtifact(status.Result.Rootfs)
-		kernel := uploadedArtifact(status.Result.Kernel)
 		response.Rootfs = &rootfs
-		response.Kernel = &kernel
+		if status.Result.Kernel != nil {
+			kernel := uploadedArtifact(*status.Result.Kernel)
+			response.Kernel = &kernel
+		}
 	}
 	return c.JSON(http.StatusOK, response)
 }
@@ -207,10 +210,12 @@ func (s *Server) deleteSnapshot(c echo.Context) error {
 
 // storageRequest converts the request into the storage form.
 func (request snapshotUploadRequest) storageRequest() storage.SnapshotUploadRequest {
-	return storage.SnapshotUploadRequest{
-		Rootfs: request.Rootfs.storageUpload(),
-		Kernel: request.Kernel.storageUpload(),
+	upload := storage.SnapshotUploadRequest{Rootfs: request.Rootfs.storageUpload()}
+	if request.Kernel != nil {
+		kernel := request.Kernel.storageUpload()
+		upload.Kernel = &kernel
 	}
+	return upload
 }
 
 // storageUpload converts one artifact into the storage form.

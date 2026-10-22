@@ -32,11 +32,9 @@ def build_image(**overrides) -> SimpleNamespace:
 		"artifact_storage": "Site File",
 		"is_stored_in_site_file": True,
 		"image_file": "file-rootfs",
-		"kernel_file": "file-kernel",
 		"image_object_key": None,
-		"kernel_object_key": None,
 		"image_sha256": "a" * 64,
-		"kernel_sha256": "b" * 64,
+		"kernel": "b" * 64,
 		"site_file_retention_until": None,
 		"save": Mock(),
 	}
@@ -67,6 +65,7 @@ class TestVirtualMachineImageStorageMigrationRequest(UnitTestCase):
 class TestVirtualMachineImageStorageMigration(UnitTestCase):
 	def test_migration_uploads_and_keeps_the_files_for_their_retention_time(self) -> None:
 		image = build_image()
+		kernel = SimpleNamespace(name="b" * 64, object_key=None, file="file-kernel", db_set=Mock())
 		client = Mock()
 
 		with (
@@ -74,8 +73,9 @@ class TestVirtualMachineImageStorageMigration(UnitTestCase):
 				"atlas.vm.core.vm_image_storage_migration.frappe.get_doc",
 				side_effect=[
 					image,
-					SimpleNamespace(get_full_path=lambda: "/site/files/aaaaaaaaaaaa-rootfs.ext4"),
+					kernel,
 					SimpleNamespace(get_full_path=lambda: "/site/files/bbbbbbbbbbbb-kernel"),
+					SimpleNamespace(get_full_path=lambda: "/site/files/aaaaaaaaaaaa-rootfs.ext4"),
 				],
 			),
 			patch(
@@ -91,10 +91,10 @@ class TestVirtualMachineImageStorageMigration(UnitTestCase):
 			VirtualMachineImageStorageMigration().migrate("image-1")
 
 		self.assertEqual(image.image_object_key, "images/image-1/rootfs.img")
-		self.assertEqual(image.kernel_object_key, "images/image-1/kernel")
+		kernel.db_set.assert_called_once_with("object_key", f"kernels/{'b' * 64}")
 		self.assertEqual(image.artifact_storage, "Object Storage")
 		self.assertEqual(image.image_file, "file-rootfs")
-		self.assertEqual(image.kernel_file, "file-kernel")
+		self.assertEqual(kernel.file, "file-kernel")
 		self.assertEqual(image.site_file_retention_until, NOW + SITE_FILE_RETENTION)
 		image.save.assert_called_once()
 		self.assertEqual(validate_stored_size.call_count, 2)
@@ -158,10 +158,10 @@ class TestSiteFileImageMigrationTrigger(UnitTestCase):
 
 
 class TestExpiredSiteFileRemoval(UnitTestCase):
-	def delete(self, image: SimpleNamespace) -> Mock:
+	def delete(self, image: SimpleNamespace, kernel: SimpleNamespace | None = None) -> Mock:
 		"""Run one site file cleanup against a stubbed database."""
 		with (
-			patch("atlas.vm.core.vm_image_storage_migration.frappe.get_doc", return_value=image),
+			patch("atlas.vm.core.vm_image_storage_migration.frappe.get_doc", side_effect=[image, kernel]),
 			patch("atlas.vm.core.vm_image_storage_migration.frappe.db", Mock()),
 			patch("atlas.vm.core.vm_image_storage_migration.frappe.delete_doc") as delete_doc,
 		):
@@ -175,11 +175,12 @@ class TestExpiredSiteFileRemoval(UnitTestCase):
 			is_stored_in_site_file=False,
 			site_file_retention_until="2026-09-16 10:00:00",
 		)
+		kernel = SimpleNamespace(object_key=f"kernels/{'b' * 64}", file="file-kernel", db_set=Mock())
 
-		delete_doc = self.delete(image)
+		delete_doc = self.delete(image, kernel)
 
 		self.assertIsNone(image.image_file)
-		self.assertIsNone(image.kernel_file)
+		kernel.db_set.assert_called_once_with("file", None)
 		self.assertIsNone(image.site_file_retention_until)
 		image.save.assert_called_once()
 		self.assertEqual([call.args[1] for call in delete_doc.call_args_list], ["file-rootfs", "file-kernel"])

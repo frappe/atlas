@@ -22,11 +22,9 @@ def build_image(**overrides) -> SimpleNamespace:
 		"artifact_retention_until": None,
 		"site_file_retention_until": None,
 		"image_object_key": "images/image-1/rootfs.img",
-		"kernel_object_key": "images/image-1/kernel",
+		"kernel": "b" * 64,
 		"image_file": None,
-		"kernel_file": None,
 		"rootfs_multipart_upload_id": "upload-1",
-		"kernel_multipart_upload_id": None,
 		"source_server": "node-1",
 		"save": Mock(),
 		"ensure_not_termination_protected": Mock(),
@@ -102,7 +100,6 @@ class TestArchivedImageReclamation(UnitTestCase):
 		image = build_image(
 			artifact_retention_until=NOW - timedelta(minutes=1),
 			image_object_key=None,
-			kernel_object_key=None,
 			rootfs_multipart_upload_id=None,
 			source_server=None,
 		)
@@ -140,7 +137,10 @@ class TestImageCleanup(UnitTestCase):
 		with (
 			patch("atlas.vm.core.vm_image_deletion.frappe.get_doc", return_value=image),
 			patch("atlas.vm.core.vm_image_deletion.now_datetime", return_value=NOW),
-			patch("atlas.vm.core.vm_image_deletion.frappe.db", Mock(exists=Mock(return_value=True))),
+			patch(
+				"atlas.vm.core.vm_image_deletion.frappe.db",
+				Mock(exists=Mock(return_value=True), get_value=Mock(return_value=f"kernels/{'b' * 64}")),
+			),
 			patch(
 				"atlas.vm.core.vm_image_deletion.frappe.get_single",
 				return_value=SimpleNamespace(get_object_storage_client=Mock(return_value=client)),
@@ -151,7 +151,11 @@ class TestImageCleanup(UnitTestCase):
 		):
 			VirtualMachineImageDeletionService().delete("image-1")
 		client.abort_multipart_upload.assert_called_once_with("images/image-1/rootfs.img", "upload-1")
-		self.assertEqual(client.delete_object.call_count, 2)
+		# The image's own kernel copy from before kernels were shared goes too.
+		self.assertEqual(
+			[entry.args[0] for entry in client.delete_object.call_args_list],
+			["images/image-1/rootfs.img", "images/image-1/kernel"],
+		)
 		metal_client.delete_snapshot.assert_called_once_with("image-1")
 		self.assertEqual(image.status, "Archived")
 		self.assertIsNone(image.image_object_key)
@@ -163,11 +167,9 @@ class TestImageCleanup(UnitTestCase):
 		image = build_image(
 			artifact_storage="Site File",
 			image_object_key=None,
-			kernel_object_key=None,
 			rootfs_multipart_upload_id=None,
 			source_server=None,
 			image_file="rootfs-file",
-			kernel_file="kernel-file",
 		)
 		with (
 			patch("atlas.vm.core.vm_image_deletion.frappe.get_doc", return_value=image),
@@ -179,7 +181,7 @@ class TestImageCleanup(UnitTestCase):
 		get_single.assert_not_called()
 		self.assertEqual(
 			[entry.args[:2] for entry in delete_doc.call_args_list],
-			[("File", "rootfs-file"), ("File", "kernel-file")],
+			[("File", "rootfs-file")],
 		)
 		self.assertTrue(all(entry.kwargs["force"] for entry in delete_doc.call_args_list))
 		self.assertIsNone(image.image_file)
@@ -189,7 +191,6 @@ class TestImageCleanup(UnitTestCase):
 		image = build_image(
 			status="Deleting",
 			image_object_key=None,
-			kernel_object_key=None,
 			rootfs_multipart_upload_id=None,
 			source_server=None,
 		)

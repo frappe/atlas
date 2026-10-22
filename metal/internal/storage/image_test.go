@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/vm"
 
@@ -42,7 +43,7 @@ func TestEnsureImageRemovesAnIncompleteImport(t *testing.T) {
 	if err := os.MkdirAll(imageStore.imageDirectory("ubuntu"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(imageStore.kernelFile("ubuntu"), []byte("partial"), 0o644); err != nil {
+	if err := os.WriteFile(imageStore.manifestFile("ubuntu")+".tmp", []byte("partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +60,43 @@ func TestEnsureImageRemovesAnIncompleteImport(t *testing.T) {
 	if !slices.Contains(commandLog(t, logFile), "destroy -r metal/images/ubuntu") {
 		t.Fatal("incomplete base dataset was not destroyed")
 	}
-	if _, err := os.Stat(imageStore.kernelFile("ubuntu")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("incomplete kernel remains: %v", err)
+	if _, err := os.Stat(imageStore.imageDirectory("ubuntu")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("incomplete image directory remains: %v", err)
+	}
+}
+
+func TestPruneKernelsKeepsKernelsInUse(t *testing.T) {
+	imageStore := NewStores(t.Context(), "metal", t.TempDir(), nil, telemetry.NewRegistry(nil)).Images
+	imageKernel, virtualMachineKernel, recentKernel, idleKernel := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	manifest := imageManifest{RootfsSHA256: strings.Repeat("e", 64), KernelSHA256: imageKernel, Architecture: runtime.GOARCH}
+	if err := imageStore.saveImageManifest("ubuntu", manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(imageStore.kernelsDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, kernel := range []string{imageKernel, virtualMachineKernel, recentKernel, idleKernel} {
+		if err := os.WriteFile(imageStore.kernelFile(kernel), []byte(kernel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if kernel != recentKernel {
+			if err := os.Chtimes(imageStore.kernelFile(kernel), now, now.Add(-2*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	if err := imageStore.PruneKernels([]string{strings.ToUpper(virtualMachineKernel)}, now, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kernel := range []string{imageKernel, virtualMachineKernel, recentKernel} {
+		if _, err := os.Stat(imageStore.kernelFile(kernel)); err != nil {
+			t.Fatalf("kernel %s was removed: %v", kernel[:1], err)
+		}
+	}
+	if _, err := os.Stat(imageStore.kernelFile(idleKernel)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("idle kernel remains: %v", err)
 	}
 }

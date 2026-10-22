@@ -876,6 +876,7 @@ class VirtualMachineDetailResponse(BaseModel):
 					"tags": {"env": "prod"},
 					"created_at": 1788834165,
 					"is_privileged": False,
+					"is_termination_protected": False,
 					"public_ipv4": None,
 					"public_ipv6": None,
 					"desired_state": "running",
@@ -911,6 +912,7 @@ class VirtualMachineDetailResponse(BaseModel):
 	tags: dict[str, str] = Field(description="Resource tags as key-value pairs.")
 	created_at: int = Field(ge=0, description="Creation time as Unix seconds.")
 	is_privileged: bool = Field(description="Whether the guest can reach every tenant through the mesh.")
+	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
 	desired_state: str | None = Field(description="State requested from the host, or null when unavailable.")
@@ -937,6 +939,7 @@ class VirtualMachineDetailResponse(BaseModel):
 			tags=read_tags(virtual_machine),
 			created_at=to_unix_timestamp(virtual_machine.creation),
 			is_privileged=bool(virtual_machine.is_privileged),
+			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
 			desired_state=desired.state if desired else None,

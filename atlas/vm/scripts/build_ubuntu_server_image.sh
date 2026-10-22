@@ -235,6 +235,7 @@ extract_vmlinux "$work_path/kernel/boot/vmlinuz-$kernel_version" "$kernel_path.p
 	exit 1
 }
 mv "$kernel_path.part" "$kernel_path"
+echo "$kernel_version" > "$kernel_path.release"
 step "extracted $(basename "$kernel_path")"
 
 # Docker and BPF need modules that match the kernel, whatever the root file system ships.
