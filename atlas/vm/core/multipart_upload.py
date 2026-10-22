@@ -23,23 +23,17 @@ class MultipartUploadError(Exception):
 
 
 class MultipartUploadService:
-	"""Own multipart upload state and object storage validation for one image."""
+	"""Own the rootfs multipart upload state and object storage validation for one image."""
 
 	def __init__(self, image: VirtualMachineImage, object_storage_client: ObjectStorageClient) -> None:
 		self.image = image
 		self.object_storage_client = object_storage_client
 
 	def ensure_uploads(self, *, save: bool = True) -> None:
-		"""Create missing multipart uploads and optionally save the image."""
+		"""Create a missing multipart upload and optionally save the image."""
 		if not self.image.rootfs_multipart_upload_id:
 			object_key = self.require_value(self.image.image_object_key, "rootfs object key")
 			self.image.rootfs_multipart_upload_id = self.object_storage_client.create_multipart_upload(
-				object_key
-			)
-
-		if not self.image.kernel_multipart_upload_id:
-			object_key = self.require_value(self.image.kernel_object_key, "kernel object key")
-			self.image.kernel_multipart_upload_id = self.object_storage_client.create_multipart_upload(
 				object_key
 			)
 
@@ -47,9 +41,8 @@ class MultipartUploadService:
 			self.image.save()
 
 	def get_upload_request(self) -> dict[str, Any]:
-		"""Return signed parts and multipart upload IDs for each artifact."""
+		"""Return signed rootfs parts. Metal skips the kernel, which a kernel record already stores."""
 		rootfs_upload_id = self.require_value(self.image.rootfs_multipart_upload_id, "rootfs upload ID")
-		kernel_upload_id = self.require_value(self.image.kernel_multipart_upload_id, "kernel upload ID")
 		return {
 			"rootfs": {
 				"upload_id": rootfs_upload_id,
@@ -58,15 +51,6 @@ class MultipartUploadService:
 					self.require_value(self.image.image_object_key, "rootfs object key"),
 					rootfs_upload_id,
 					self.image.image_size_mib,
-				),
-			},
-			"kernel": {
-				"upload_id": kernel_upload_id,
-				"part_size_mib": get_multipart_part_size_mib(self.image.kernel_size_mib),
-				"parts": self.get_signed_parts(
-					self.require_value(self.image.kernel_object_key, "kernel object key"),
-					kernel_upload_id,
-					self.image.kernel_size_mib,
 				),
 			},
 		}
@@ -84,53 +68,24 @@ class MultipartUploadService:
 		]
 
 	def complete_stored_uploads(self) -> None:
-		"""Validate and complete both stored image artifact uploads."""
-		parts_by_artifact = {
-			"rootfs": self.get_stored_parts(
-				self.require_value(self.image.image_object_key, "rootfs object key"),
-				self.require_value(self.image.rootfs_multipart_upload_id, "rootfs upload ID"),
-				self.stored_size_mib("rootfs"),
-			),
-			"kernel": self.get_stored_parts(
-				self.require_value(self.image.kernel_object_key, "kernel object key"),
-				self.require_value(self.image.kernel_multipart_upload_id, "kernel upload ID"),
-				self.stored_size_mib("kernel"),
-			),
-		}
-		self.complete_uploads(parts_by_artifact)
-
-	def stored_size_mib(self, artifact: str) -> int:
-		"""Return the compressed size that the object store holds."""
-		value = (
-			self.image.image_stored_size_mib if artifact == "rootfs" else self.image.kernel_stored_size_mib
+		"""Validate and complete the stored rootfs upload."""
+		object_key = self.require_value(self.image.image_object_key, "rootfs object key")
+		upload_id = self.require_value(self.image.rootfs_multipart_upload_id, "rootfs upload ID")
+		size_mib = self.image.image_stored_size_mib
+		if not size_mib or size_mib <= 0:
+			raise MultipartUploadError("Machine image has no stored rootfs size")
+		self.complete_upload(
+			object_key, upload_id, size_mib, self.get_stored_parts(object_key, upload_id, size_mib)
 		)
-		if not value or value <= 0:
-			raise MultipartUploadError(f"Machine image has no stored {artifact} size")
-		return value
 
 	def get_stored_parts(self, object_key: str, upload_id: str, size_mib: int) -> list[dict[str, Any]]:
-		"""Return and validate the parts stored for one artifact."""
+		"""Return and validate the stored parts."""
 		head = self.object_storage_client.head_object(object_key)
 		if head and self.has_expected_size(head, size_mib):
 			return []
 		parts = self.object_storage_client.list_multipart_parts(object_key, upload_id)
 		self.validate_parts("stored", parts)
 		return parts
-
-	def complete_uploads(self, parts_by_artifact: dict[str, list[dict[str, Any]]]) -> None:
-		"""Complete both multipart uploads."""
-		self.complete_upload(
-			self.require_value(self.image.image_object_key, "rootfs object key"),
-			self.require_value(self.image.rootfs_multipart_upload_id, "rootfs upload ID"),
-			self.stored_size_mib("rootfs"),
-			parts_by_artifact["rootfs"],
-		)
-		self.complete_upload(
-			self.require_value(self.image.kernel_object_key, "kernel object key"),
-			self.require_value(self.image.kernel_multipart_upload_id, "kernel upload ID"),
-			self.stored_size_mib("kernel"),
-			parts_by_artifact["kernel"],
-		)
 
 	def complete_upload(
 		self, object_key: str, upload_id: str, size_mib: int, parts: list[dict[str, Any]]
