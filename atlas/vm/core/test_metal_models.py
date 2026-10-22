@@ -171,6 +171,24 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		machine = MetalVirtualMachine.from_dict(new_virtual_machine_response())
 
 		self.assertEqual(machine.observed.sleep_state, "")
+		self.assertIsNone(machine.observed.sleep_snapshot)
+
+	def test_sleep_snapshot_status_preserves_partial_uploads(self) -> None:
+		response = complete_response()
+		response["observed"]["sleep_snapshot"] = {
+			"id": "checkpoint-1",
+			"memory": {"uploaded": True},
+			"disk": {"uploaded": False},
+		}
+		machine = MetalVirtualMachine.from_dict(response)
+
+		self.assertEqual(machine.observed.sleep_snapshot.id, "checkpoint-1")
+		self.assertTrue(machine.observed.sleep_snapshot.memory.uploaded)
+		self.assertFalse(machine.observed.sleep_snapshot.disk.uploaded)
+		self.assertEqual(MetalVirtualMachine.from_dict(json.loads(json.dumps(machine.as_dict()))), machine)
+		response["observed"]["sleep_snapshot"]["disk"]["uploaded"] = "false"
+		with self.assertRaises(ValueError):
+			MetalVirtualMachine.from_dict(response)
 
 	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
 		"""A truncated response must fail loudly, not read as an empty VM."""
@@ -251,6 +269,7 @@ class TestMetalContract(UnitTestCase):
 				"restart_generation",
 				"state",
 				"sleep_state",
+				"sleep_snapshot",
 				"last_request_at",
 				"updated_at",
 				"disk",
@@ -283,6 +302,7 @@ class TestMetalContract(UnitTestCase):
 			"/v1/vms/{id}/ssh-keys",
 			"/v1/vms/{id}/metadata",
 			"/v1/vms/{id}/snapshots",
+			"/v1/vms/{id}/sleep-state",
 			"/v1/snapshots/{id}",
 			"/v1/snapshots/{id}/upload",
 		}
