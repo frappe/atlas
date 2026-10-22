@@ -220,6 +220,9 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 		return err
 	}
 	if uploadError != nil {
+		if !current.canUpload(desired, observed) {
+			return uploadError
+		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })
 	}
 	current.target(memory).Artifact = &artifact
@@ -237,7 +240,7 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 }
 
 func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired DesiredRecord, observed *ObservedRecord, record *sleepRecord) error {
-	if !record.canUpload(desired, *observed) || record.Memory.Artifact == nil {
+	if manager.isMigrating(desired.ID) || !record.canUpload(desired, *observed) || record.Memory.Artifact == nil {
 		return nil
 	}
 	machine := runtimeMachine(desired, observed.NetworkInterface)
