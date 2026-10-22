@@ -37,10 +37,22 @@ func isRoutinePhase(phase string) bool {
 
 // Reconcile moves observed VM state toward the latest desired record.
 func (manager *Manager) Reconcile(ctx context.Context, identifier string) error {
-	virtualMachine := manager.newVirtualMachine(identifier)
-	unlock, err := virtualMachine.lock(ctx)
-	if err != nil {
+	return manager.reconcile(ctx, identifier, false)
+}
+
+// RestoreSleepState reconciles sleeping VMs outside the normal VM worker pool.
+func (manager *Manager) RestoreSleepState(ctx context.Context, identifier string) error {
+	return manager.reconcile(ctx, identifier, true)
+}
+
+func (manager *Manager) reconcile(ctx context.Context, identifier string, sleeping bool) error {
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	virtualMachine := manager.newVirtualMachine(identifier)
+	unlock, acquired := manager.operationLocks.TryLock(identifier)
+	if !acquired {
+		return nil
 	}
 	defer unlock()
 
@@ -53,14 +65,22 @@ func (manager *Manager) Reconcile(ctx context.Context, identifier string) error 
 	if err != nil {
 		return err
 	}
+	if (observed.SleepState != SleepStateAwake) != sleeping {
+		return nil
+	}
+	return manager.reconcileRecords(ctx, desired, observed)
+}
+
+func (manager *Manager) reconcileRecords(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
 	if pending, err := manager.hasPendingSleepTransfer(desired, observed); err != nil {
 		return err
 	} else if pending {
 		return manager.maintainSleepTransfer(ctx, desired, observed)
 	}
 	operationID := newOperationID()
-	acceptedAt := manager.desiredWrittenAt(identifier)
+	acceptedAt := manager.desiredWrittenAt(desired.ID)
 
+	var err error
 	if desired.State == StateDestroyed {
 		err = manager.reconcileDestroyed(ctx, desired, observed, operationID)
 	} else {
@@ -209,7 +229,7 @@ func (manager *Manager) reconcileSavedState(
 
 	switch desired.State {
 	case StateRunning:
-		if desired.Specification.SleepAfterIdleSeconds > 0 && manager.traffic != nil {
+		if desired.Specification.SleepAfterIdleSeconds > 0 && manager.traffic != nil && desired.Generation == observed.Generation {
 			target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
 			if err := manager.traffic.StartWatching(target); err != nil {
 				return status, false, fmt.Errorf("watch traffic for VM %s: %w", desired.ID, err)
@@ -253,6 +273,9 @@ func (manager *Manager) restoreSavedState(
 		}
 		return restore(ctx, machine)
 	}); err != nil {
+		if resultState == StateRunning && manager.traffic != nil && desired.Specification.SleepAfterIdleSeconds > 0 {
+			err = errors.Join(err, manager.traffic.StartWatching(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}))
+		}
 		return err
 	}
 	if resultState == StateRunning {

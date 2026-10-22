@@ -100,16 +100,10 @@ func sleepTarget() *SleepArtifactTarget {
 }
 
 func wakeTestSleep(ctx context.Context, manager *Manager) error {
-	unlock, err := manager.operationLocks.Lock(ctx, "vm-1")
-	if err != nil {
+	if err := manager.SetPowerState(ctx, "vm-1", StateRunning); err != nil {
 		return err
 	}
-	defer unlock()
-	desired, observed, err := manager.newVirtualMachine("vm-1").records()
-	if err != nil {
-		return err
-	}
-	return manager.restoreSleeping(ctx, desired, observed)
+	return manager.RestoreSleepState(ctx, "vm-1")
 }
 
 func TestSleepUploadsEvictUploadedArtifacts(t *testing.T) {
@@ -337,7 +331,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 				}
 				snapshots.diskPresent = sleepState != SleepStateComatose
 				if request == "reconcile" {
-					err = manager.Reconcile(t.Context(), "vm-1")
+					err = manager.RestoreSleepState(t.Context(), "vm-1")
 				} else {
 					manager.traffic = &traffic.Monitor{}
 					if request == "traffic" {
@@ -348,6 +342,11 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 				}
 				if err != nil {
 					t.Fatal(err)
+				}
+				if request != "reconcile" {
+					if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+						t.Fatal(err)
+					}
 				}
 				information, err := manager.Information(t.Context(), "vm-1")
 				if err != nil || information.SleepState != SleepStateAwake || information.State != StateRunning || runtime.restores != 1 || runtime.starts != 0 {
@@ -478,7 +477,7 @@ func TestComatosePowerChangesPreserveDisk(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Reconcile(t.Context(), "vm-1"); err != nil {
+			if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
 				t.Fatal(err)
 			}
 			if len(snapshots.downloads) != 1 || !strings.HasPrefix(snapshots.downloads[0], "disk:") || runtime.restores != 0 {

@@ -202,7 +202,7 @@ func (manager *Manager) readSleepRecord(identifier string) (*sleepRecord, error)
 
 func (record *sleepRecord) canUpload(desired DesiredRecord, observed ObservedRecord) bool {
 	return record.matchesDesired(desired) && desired.Specification.SleepAfterIdleSeconds > 0 &&
-		observed.State == StateStopped && observed.SleepState != SleepStateAwake
+		desired.Generation == observed.Generation && observed.State == StateStopped && observed.SleepState != SleepStateAwake
 }
 
 func (record *sleepRecord) matchesDesired(desired DesiredRecord) bool {

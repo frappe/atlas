@@ -8,7 +8,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 )
 
-// RestoreAfterTraffic restores a stopped Sleepy VM after new traffic.
+// RestoreAfterTraffic records a wake request after new traffic.
 func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.Event) (restoreError error) {
 	if manager.traffic == nil {
 		return nil
@@ -37,52 +37,11 @@ func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.E
 		}
 	}()
 
-	return manager.restoreSleeping(ctx, desired, observed)
-}
-
-// wakeSleepingVirtualMachine restores a Sleepy VM that sleeps with saved state.
-// It does nothing for any other VM.
-func (manager *Manager) wakeSleepingVirtualMachine(ctx context.Context, identifier string) error {
-	if manager.traffic == nil {
+	if observed.SleepState == SleepStateAwake || desired.Generation > observed.Generation || manager.isMigrating(desired.ID) {
 		return nil
 	}
-	virtualMachine := manager.newVirtualMachine(identifier)
-	unlock, err := virtualMachine.lock(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	desired, observed, err := virtualMachine.records()
-	if err != nil {
-		return err
-	}
-	if desired.State != StateRunning || desired.Specification.SleepAfterIdleSeconds <= 0 {
-		return nil
-	}
-	return manager.restoreSleeping(ctx, desired, observed)
-}
-
-// restoreSleeping restores the saved state of a stopped Sleepy VM.
-func (manager *Manager) restoreSleeping(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
-	if manager.isMigrating(desired.ID) {
-		return nil
-	}
-	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
-	if err != nil {
-		return err
-	}
-	machine := runtimeMachine(desired, networkInterface)
-	status, err := manager.runtime.Inspect(ctx, machine)
-	if err != nil {
-		return err
-	}
-	if status.State != StateStopped || (!status.HasSavedState && !observed.hasRemoteSleepState()) {
-		return nil
-	}
-	observed.NetworkInterface = networkInterface
-
-	return manager.restoreSavedState(ctx, desired, machine, &observed, newOperationID(), StateRunning)
+	desired.Generation++
+	return manager.store.writeDesired(desired)
 }
 
 // stopAfterIdle saves and stops a Sleepy VM when network traffic remains idle.

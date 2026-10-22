@@ -31,6 +31,12 @@ type SleepTransferManager interface {
 	OffloadSleepArtifacts(ctx context.Context, id string) error
 }
 
+// SleepRestoreManager reconciles sleeping VMs independently of ordinary VM work.
+type SleepRestoreManager interface {
+	VirtualMachineManager
+	RestoreSleepState(ctx context.Context, id string) error
+}
+
 // VirtualMachineConfig controls reconciliation work within one pass.
 type VirtualMachineConfig struct {
 	// Telemetry counts passes and failures. It is required.
@@ -90,6 +96,18 @@ func NewSleepTransferReconciler(manager SleepTransferManager, interval time.Dura
 	reconciler := NewVirtualMachineReconciler(manager, interval, configuration)
 	reconciler.loop = "sleep_transfer"
 	reconciler.operation = manager.OffloadSleepArtifacts
+	return reconciler
+}
+
+// NewSleepRestoreReconciler gives wake downloads their own bounded worker pool.
+func NewSleepRestoreReconciler(manager SleepRestoreManager, interval time.Duration, configuration VirtualMachineConfig) *VirtualMachineReconciler {
+	if configuration.MaxConcurrentOperations <= 0 {
+		configuration.MaxConcurrentOperations = 2
+	}
+
+	reconciler := NewVirtualMachineReconciler(manager, interval, configuration)
+	reconciler.loop = "sleep_restore"
+	reconciler.operation = manager.RestoreSleepState
 	return reconciler
 }
 
