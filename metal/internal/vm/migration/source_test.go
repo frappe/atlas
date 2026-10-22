@@ -479,6 +479,22 @@ func TestLockSourceRejectsAMissingVirtualMachine(t *testing.T) {
 	}
 }
 
+func TestLockSourceRequiresOffloadedVMToWakeFirst(t *testing.T) {
+	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+		manager, machines, _ := newMigrationManager(t)
+		machines.create("vm-1", testSpecification())
+		if err := machines.WriteObserved("vm-1", vm.ObservedRecord{State: vm.StateStopped, SleepState: state}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+			t.Fatalf("offloaded VM migration = %v", err)
+		}
+		if manager.IsSourceLocked("vm-1") {
+			t.Fatal("offloaded VM was locked before waking")
+		}
+	}
+}
+
 func TestLockSourceRejectsFailedOrUnknownStates(t *testing.T) {
 	migrationManager, machines, _ := newMigrationManager(t)
 	ctx := context.Background()
