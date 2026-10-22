@@ -9,7 +9,7 @@ import (
 )
 
 // @Summary Upload virtual machine sleep snapshots
-// @Description Upload selected artifacts of an already sleeping VM and retain local copies. Read observed.sleep_snapshot and observed.error for completion.
+// @Description Upload selected artifacts of an already sleeping VM and evict their local copies. Read observed.sleep_snapshot, observed.sleep_state, and observed.error for completion.
 // @ID offloadVirtualMachineSleepState
 // @Tags Virtual machines
 // @Accept json

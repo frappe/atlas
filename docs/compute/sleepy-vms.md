@@ -50,13 +50,15 @@ Metal reports the sleep state as `observed.sleep_state`. Atlas shows it as **Sle
 | `deep-sleeping` | In object storage | On the host |
 | `comatose` | In object storage | In object storage |
 
-Metal sets only `sleeping` today. A host with an older `metald` does not send the field, so Atlas shows the VM as awake.
+Metal sets `deep-sleeping` after it uploads and removes local saved memory. It sets `comatose` after it also uploads and removes the local disk. A host with an older `metald` does not send the field, so Atlas shows the VM as awake.
 
-The saved state belongs to one VM and stays on its host. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
+The saved state belongs to one VM. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
 
 ## Upload saved snapshots
 
-Atlas can upload snapshot copies with `POST /v1/vms/{id}/sleep-state`. The VM must already be sleeping. Supply presigned PUT and GET URLs for memory, disk, or both. Upload memory before disk. Atlas can request both together or add disk in a later request. Local memory and disk stay on the host. Wake uses the VM-local saved state.
+Atlas can offload snapshots with `POST /v1/vms/{id}/sleep-state`. The VM must already be sleeping. Supply presigned PUT and GET URLs for memory, disk, or both. Upload memory before disk. Atlas can request both together or add disk in a later request.
+
+After each successful upload, Metal removes the matching local artifact to free host storage. An upload failure keeps the artifact needed for recovery. Metal records the remote checkpoint before it removes local data, so reconciliation can finish an interrupted eviction.
 
 ```json
 {
@@ -88,7 +90,15 @@ Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
 
 An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint and keep each URL's scheme, host, and object path. It cannot supply an upload URL. This request stores URLs only. It does not download artifacts or wake the VM.
 
-Uploads use stable staging data, so a wake can proceed during upload. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
+Uploads use stable staging data, so a wake can proceed during upload. Upload completion does not evict data if the VM has already woken. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
+
+## Wake an offloaded VM
+
+Traffic and an explicit start use one restore path for all sleep states. For a comatose VM, Metal first recovers a missing disk. For either remote sleep state, it then recovers missing memory and calls the normal saved-state restore. It verifies artifact checksums and checkpoint metadata before use. A completed local download can be reused on retry.
+
+A download or restore failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed traffic wake. If a GET URL expires, Atlas refreshes it with PATCH and sends another request to the VM. PATCH itself does not start a restore. Metal does not fall back to a cold boot after a wake failure.
+
+An explicit stop, restart, or shape change recovers an offloaded disk before it discards saved memory. Wake an offloaded VM before migration. A migration request for a deep-sleeping or comatose VM returns `409`.
 
 ## Placement
 
