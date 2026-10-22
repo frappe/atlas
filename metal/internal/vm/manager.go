@@ -57,6 +57,7 @@ type Manager struct {
 	logger               *slog.Logger
 	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
+	sleepTransferLocks   KeyedLocks
 	allocationMutex      sync.Mutex
 	temporaryUserIDs     map[uint32]bool
 	temporaryIdentifiers map[string]bool

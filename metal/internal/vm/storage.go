@@ -15,9 +15,14 @@ type DiskUsage struct {
 	UsedMiB int `json:"used_mib"`
 }
 
-// Snapshots stages machine image snapshots.
+// Snapshots stages and transfers virtual machine snapshots.
 type Snapshots interface {
 	Stage(context.Context, SnapshotRequest) (StagedSnapshot, error)
+	StageSleepMemory(context.Context, string, string) error
+	StageSleepDisk(context.Context, SnapshotRequest, string) error
+	DeleteSnapshot(context.Context, string) error
+	UploadSleepMemory(context.Context, string, string) (SleepArtifact, error)
+	UploadSleepDisk(context.Context, string, string) (SleepArtifact, error)
 }
 
 // SleepArtifact binds a remote object to its uncompressed content.
