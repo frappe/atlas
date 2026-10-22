@@ -58,6 +58,8 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"memory_mib": 2048,
 		"disk_mib": 20480,
 		"sleep_after_idle_seconds": 0,
+		"deep_sleep_after_idle_seconds": 0,
+		"coma_after_idle_seconds": 0,
 		"is_privileged": 0,
 		"is_termination_protected": 0,
 		"is_draft": 0,
