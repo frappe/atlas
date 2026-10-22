@@ -23,7 +23,7 @@ This file identifies code owners and rules that a code change must preserve. The
 
 ## Rules to preserve
 
-- `MigrationService` compares the Metal Server compatibility reports before the first destination request for a memory snapshot migration. Disk-only migrations do not require compatibility reports. See [migration checks](../../docs/compute/migration.md#compatibility-before-transfer).
+- `MigrationService` compares Metal Server compatibility reports for memory and offloaded migrations. Offloaded checkpoints cannot use disk-only fallback or resize. URL refresh runs before placement locks. See [migration checks](../../docs/compute/migration.md#compatibility-before-transfer).
 - Migration writes lock the VM before the migration record. Cancellation survives progress polling and prevents ownership commit. After ownership commit, failures retry finish. Failed rollback retains the VM action lock until Metal confirms recovery.
 - The VM record name is the Metal VM ID from the `vm-<tenant ID>-.####` series, one counter for each tenant. The number after the last dash is the VM number in the mesh address, from 1 to 65,535 within the tenant. See [address formats](../../docs/networking/address-formats.md). A deleted name is never reused.
 - `VirtualMachineService.create` commits a draft and any public address request before it calls Metal. An uncertain response keeps the draft. Only confirmed Metal absence removes it.
@@ -31,6 +31,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - `snapshot_upload_percent` is a read-only virtual field that uses the request-cached Metal response. It is absent outside an active HTTP upload. See [upload progress in Desk](../../docs/compute/sleepy-vms.md#upload-saved-snapshots).
 - `VirtualMachineSleepService` reads the VM's stored offload thresholds and Metal's request time. `VirtualMachineResize` stores offload-only changes without a Metal call and merges partial changes under a VM row lock after host work. These thresholds are not part of `VirtualMachineShape`. See [automatic offload](../../docs/compute/sleepy-vms.md#configure-automatic-offload).
 - The URL-refresh cache is site-scoped and keyed by VM and checkpoint. Populate it only after Metal accepts the refresh. It must not suppress offload requests or retries after a failed refresh.
+- Each sleep artifact retains its original `object_key` across host moves. `refresh_urls` signs that key and fills missing keys on the source before migration.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
 - The draft commits its tags and affinity rules in the same transaction as its host reservation.
