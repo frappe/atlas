@@ -76,6 +76,7 @@ def complete_response() -> dict:
 			"generation": 3,
 			"restart_generation": 1,
 			"state": "running",
+			"last_request_at": "2026-09-06T09:59:30Z",
 			"updated_at": "2026-09-06T10:00:00Z",
 			"disk": {"used_mib": 1024},
 			"network": {"mac": "06:00:ac:10:00:02"},
@@ -143,6 +144,7 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertTrue(machine.desired.network.firewall.enabled)
 		self.assertEqual(machine.desired.network.firewall.inbound[0].ports, "22")
 		self.assertEqual(machine.observed.network.mac, "06:00:ac:10:00:02")
+		self.assertEqual(machine.observed.last_request_at, "2026-09-06T09:59:30Z")
 		self.assertEqual(machine.observed.error.message, "network failed")
 
 	def test_a_new_virtual_machine_parses_with_empty_values(self) -> None:
@@ -249,6 +251,7 @@ class TestMetalContract(UnitTestCase):
 				"restart_generation",
 				"state",
 				"sleep_state",
+				"last_request_at",
 				"updated_at",
 				"disk",
 				"network",
