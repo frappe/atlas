@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
@@ -75,5 +77,64 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 		if err != nil || !bytes.Equal(actual, contents[name]) {
 			t.Fatalf("uploaded %s differs from the staged checkpoint: %v", name, err)
 		}
+	}
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Errorf("unexpected method %s", request.Method)
+		}
+		writer.Write(stored)
+	}))
+	defer downloadServer.Close()
+	restored := t.TempDir()
+	if err := store.DownloadSleepMemory(t.Context(), restored, downloadServer.URL+"?get=secret", artifact); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range contents {
+		actual, err := os.ReadFile(filepath.Join(restored, name))
+		if err != nil || !bytes.Equal(actual, content) {
+			t.Fatalf("restored %s differs: %v", name, err)
+		}
+	}
+	artifact.SHA256 = strings.Repeat("0", 64)
+	corrupt := t.TempDir()
+	if err := store.DownloadSleepMemory(t.Context(), corrupt, downloadServer.URL, artifact); err == nil {
+		t.Fatal("corrupt checkpoint accepted")
+	}
+	entries, err := os.ReadDir(corrupt)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed download left files: %v, %v", entries, err)
+	}
+}
+
+func TestSleepMemoryArchiveRejectsPathsAndLinks(t *testing.T) {
+	for _, header := range []*tar.Header{
+		{Name: "../outside", Mode: 0o600, Size: 1},
+		{Name: "state", Typeflag: tar.TypeSymlink, Linkname: "../outside"},
+	} {
+		var data bytes.Buffer
+		writer := tar.NewWriter(&data)
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Size > 0 {
+			writer.Write([]byte("x"))
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := extractSleepMemory(t.Context(), &data, t.TempDir()); err == nil {
+			t.Fatalf("unsafe archive entry accepted: %+v", header)
+		}
+	}
+}
+
+func TestSleepDiskRestoreDoesNotReplaceExistingDisk(t *testing.T) {
+	logFile := fakeZFS(t, "", "none")
+	store := &SnapshotStore{pool: &ZFSPool{name: "metal"}}
+	if err := store.RestoreSleepDisk(t.Context(), "vm-1", "https://unused.example", vm.SleepArtifact{}); err != nil {
+		t.Fatal(err)
+	}
+	if commands := commandLog(t, logFile); len(commands) != 1 || commands[0] != "list metal/vms/vm-1" {
+		t.Fatalf("existing disk was changed: %v", commands)
 	}
 }
