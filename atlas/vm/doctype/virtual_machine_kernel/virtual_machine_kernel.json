@@ -5,10 +5,11 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "title",
   "sha256",
   "architecture",
-  "size_mib",
   "column_break_storage",
+  "size_mib",
   "object_key",
   "file"
  ],
@@ -55,10 +56,15 @@
    "label": "File",
    "options": "File",
    "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title"
   }
  ],
  "links": [],
- "modified": "2026-10-22 12:00:00",
+ "modified": "2026-10-22 14:53:51.102469",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Kernel",
@@ -76,7 +82,9 @@
   }
  ],
  "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "title"
 }

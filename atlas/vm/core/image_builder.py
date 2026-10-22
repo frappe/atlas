@@ -82,7 +82,10 @@ def publish_ubuntu_image(
 		if image.image_sha256 == image_sha256 and image.kernel == kernel_sha256:
 			return
 
-	store_kernel(kernel_path, kernel_sha256, architecture, storage)
+	kernel_release = kernel_path.with_name(f"{kernel_path.name}.release").read_text().strip()
+	store_kernel(
+		f"ubuntu-{version} - kernel {kernel_release}", kernel_path, kernel_sha256, architecture, storage
+	)
 	# The digest and size describe the raw file system. Hosts download the zstd copy and verify the decoded bytes.
 	compressed_image_path = image_path.with_name(f"{image_path.name}.zst")
 	image_name = frappe.generate_hash(length=16)
@@ -136,7 +139,9 @@ def get_available_ubuntu_images(title: str, architecture: str) -> list[VirtualMa
 	return [frappe.get_doc("Virtual Machine Image", name) for name in names]
 
 
-def store_kernel(kernel_path: Path, kernel_sha256: str, architecture: str, storage: ArtifactStorage) -> None:
+def store_kernel(
+	title: str, kernel_path: Path, kernel_sha256: str, architecture: str, storage: ArtifactStorage
+) -> None:
 	"""Store a kernel once. A later build with the same kernel reuses it."""
 	if frappe.db.exists("Virtual Machine Kernel", kernel_sha256):
 		return
@@ -153,6 +158,7 @@ def store_kernel(kernel_path: Path, kernel_sha256: str, architecture: str, stora
 	frappe.get_doc(
 		{
 			"doctype": "Virtual Machine Kernel",
+			"title": title,
 			"sha256": kernel_sha256,
 			"architecture": architecture,
 			"size_mib": bytes_to_mib(kernel_path.stat().st_size),
