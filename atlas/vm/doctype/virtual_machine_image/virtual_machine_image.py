@@ -64,7 +64,6 @@ class VirtualMachineImage(Document):
 		image_type: DF.Literal["system", "machine"]
 		is_termination_protected: DF.Check
 		kernel: DF.Link | None
-		kernel_size_mib: DF.Int
 		memory_snapshot: DF.Check
 		memory_snapshot_disk_mib: DF.Int
 		memory_snapshot_memory_mib: DF.Int
@@ -228,6 +227,13 @@ class VirtualMachineImage(Document):
 		}
 
 	@property
+	def kernel_size_mib(self) -> int:
+		"""Return the size of the linked kernel, or 0 before the image has one."""
+		if not self.kernel:
+			return 0
+		return frappe.get_cached_value("Virtual Machine Kernel", self.kernel, "size_mib")
+
+	@property
 	def is_stored_in_site_file(self) -> bool:
 		"""Return whether the artifacts are public site files instead of objects."""
 		return self.artifact_storage == "Site File"
@@ -275,8 +281,8 @@ class VirtualMachineImage(Document):
 			frappe.throw(_("An available Virtual Machine Image requires a kernel."))
 		if not SHA256_PATTERN.fullmatch(self.image_sha256 or ""):
 			frappe.throw(_("Image SHA-256 must contain 64 lowercase hexadecimal characters."))
-		if self.image_size_mib <= 0 or self.kernel_size_mib <= 0:
-			frappe.throw(_("An available Virtual Machine Image requires positive artifact sizes."))
+		if self.image_size_mib <= 0:
+			frappe.throw(_("An available Virtual Machine Image requires a positive rootfs size."))
 
 	def validate_site_file_artifacts(self) -> None:
 		"""Require the public rootfs file, and refuse tenant content on a public URL."""
