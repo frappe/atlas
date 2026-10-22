@@ -5,7 +5,7 @@ frappe.ui.form.on("Virtual Machine", {
 			return;
 		}
 
-		// All fields mirror Metal and are edited through actions, never a direct save.
+		// VM fields are edited through actions, never a direct save.
 		frm.disable_save();
 
 		const current_state = frm.doc.current_state;
@@ -459,13 +459,31 @@ function showResizeDialog(frm) {
 				default: frm.doc.sleep_after_idle_seconds,
 				description: __("0 disables automatic idle sleep."),
 			},
+			{
+				fieldname: "deep_sleep_after_idle_seconds",
+				fieldtype: "Int",
+				label: __("Deep Sleep After Idle (Seconds)"),
+				default: frm.doc.deep_sleep_after_idle_seconds,
+				description: __("0 disables deep sleep."),
+			},
+			{
+				fieldname: "coma_after_idle_seconds",
+				fieldtype: "Int",
+				label: __("Coma After Idle (Seconds)"),
+				default: frm.doc.coma_after_idle_seconds,
+				description: __("Must exceed Deep Sleep After Idle. 0 disables coma."),
+			},
 		],
-		(values) =>
-			frm
+		(values) => {
+			const changes = {};
+			Object.entries(values).forEach(([field, value]) => {
+				if (value !== frm.doc[field]) changes[field] = value;
+			});
+			return frm
 				.call({
 					method: "resize",
 					doc: frm.doc,
-					args: values,
+					args: changes,
 					freeze: true,
 					freeze_message: __("Resizing..."),
 				})
@@ -477,7 +495,8 @@ function showResizeDialog(frm) {
 						});
 					}
 					frm.reload_doc();
-				}),
+				});
+		},
 		__("Resize VM"),
 		__("Resize")
 	);

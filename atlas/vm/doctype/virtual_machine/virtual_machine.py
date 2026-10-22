@@ -574,9 +574,10 @@ class VirtualMachine(Document):
 		memory_mib: int | None = None,
 		disk_mib: int | None = None,
 		sleep_after_idle_seconds: int | None = None,
+		deep_sleep_after_idle_seconds: int | None = None,
+		coma_after_idle_seconds: int | None = None,
 	) -> str | None:
-		"""Change CPU, memory, disk size, or idle shutdown delay. Return the migration name when the
-		current host cannot hold the new shape."""
+		"""Change resources or sleep delays. Return the migration name when the VM must move."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
@@ -591,6 +592,8 @@ class VirtualMachine(Document):
 			"memory_mib": memory_mib,
 			"disk_mib": disk_mib,
 			"sleep_after_idle_seconds": sleep_after_idle_seconds,
+			"deep_sleep_after_idle_seconds": deep_sleep_after_idle_seconds,
+			"coma_after_idle_seconds": coma_after_idle_seconds,
 		}
 		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
