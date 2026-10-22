@@ -51,10 +51,10 @@ func (store *fakeImageStore) PruneKernels(usedKernelSHA256s []string, _ time.Tim
 	return nil
 }
 
-type fakeVirtualMachines []vm.Information
+type fakeVirtualMachineKernels []string
 
-func (virtualMachines fakeVirtualMachines) List(context.Context) ([]vm.Information, error) {
-	return virtualMachines, nil
+func (kernels fakeVirtualMachineKernels) KernelSHA256s(context.Context) ([]string, error) {
+	return kernels, nil
 }
 
 func (store *fakeImageStore) PruneStagedSnapshots(
@@ -86,8 +86,8 @@ func TestImageReconcilerCachesAndWarmsDesiredImages(t *testing.T) {
 		{Name: "on-demand"},
 	}}
 	builder := &fakeMemorySnapshotBuilder{}
-	virtualMachines := fakeVirtualMachines{{ID: "vm-1", Image: vm.Image{KernelSHA256: "kernel"}}}
-	reconciler := NewImageReconciler(store, store, builder, virtualMachines, time.Hour, ImageConfig{Telemetry: telemetry.NewRegistry(nil)})
+	virtualMachineKernels := fakeVirtualMachineKernels{"kernel"}
+	reconciler := NewImageReconciler(store, store, builder, virtualMachineKernels, time.Hour, ImageConfig{Telemetry: telemetry.NewRegistry(nil)})
 
 	reconciler.reconcileAll(context.Background())
 

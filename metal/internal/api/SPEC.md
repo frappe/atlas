@@ -42,6 +42,7 @@ The generated [Metal API reference](/api/metal/) lists each route. Rules:
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.
 - The coordination stop route is idempotent. It returns the final snapshot.
 - The coordination memory snapshot route streams one memory snapshot file for the final sequence with a SHA-256 trailer. The migration manager checks the source lock and file name.
+- The coordination kernel route streams the kernel of the locked source VM with zstd. A source without the kernel returns 404.
 
 | Listener | Caller | Routes |
 |---|---|---|

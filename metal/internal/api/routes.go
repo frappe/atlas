@@ -52,6 +52,7 @@ func (s *Server) registerCoordinationRoutes(router *echo.Echo) {
 	sourceRoutes.POST("/:id/stream", s.startMigrationStream)
 	sourceRoutes.POST("/:id/stop", s.stopMigrationSource)
 	sourceRoutes.GET("/:id/memory-snapshot", s.streamMigrationMemorySnapshotFile)
+	sourceRoutes.GET("/:id/kernel", s.streamMigrationKernel)
 	sourceRoutes.POST("/:id/start", s.startMigrationSource)
 	sourceRoutes.POST("/:id/destroy", s.destroyMigrationSource)
 	sourceRoutes.DELETE("/:id", s.deleteMigrationSource)
