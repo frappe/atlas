@@ -8,6 +8,7 @@
   "is_terminating",
   "current_state",
   "desired_state",
+  "sleep_state",
   "active_migration",
   "tenant_id",
   "is_privileged",
@@ -82,6 +83,14 @@
    "fieldtype": "Data",
    "is_virtual": 1,
    "label": "Desired State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sleep_state",
+   "fieldtype": "Select",
+   "is_virtual": 1,
+   "label": "Sleep State",
+   "options": "\nsleeping\ndeep-sleeping\ncomatose",
    "read_only": 1
   },
   {
@@ -376,7 +385,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-02 16:12:39.232054",
+ "modified": "2026-10-22 18:05:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

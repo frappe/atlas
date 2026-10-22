@@ -146,6 +146,7 @@ func (manager *Manager) reconcileActive(
 	}
 
 	observed.State = status.State
+	observed.SleepState = SleepStateAwake
 	observed.completeOperation()
 
 	return manager.store.writeObserved(desired.ID, observed)
@@ -193,7 +194,7 @@ func (manager *Manager) reconcileSavedState(
 			if err := manager.traffic.StartWatching(target); err != nil {
 				return status, false, fmt.Errorf("watch traffic for VM %s: %w", desired.ID, err)
 			}
-			return status, true, manager.writeAppliedState(desired, observed, StateStopped)
+			return status, true, manager.writeAppliedState(desired, observed, StateStopped, SleepStateSleeping)
 		}
 		if err := manager.restoreSavedState(ctx, desired, machine, observed, operationID, StateRunning); err != nil {
 			return status, false, err
@@ -228,7 +229,7 @@ func (manager *Manager) restoreSavedState(
 		return err
 	}
 	manager.stopTrafficWatch(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
-	return manager.writeAppliedState(desired, observed, resultState)
+	return manager.writeAppliedState(desired, observed, resultState, SleepStateAwake)
 }
 
 // reconcileHardStop stops the runtime and applies all stopped-state changes.
@@ -248,12 +249,13 @@ func (manager *Manager) reconcileHardStop(
 	if err := manager.applyDesiredSpecification(ctx, desired, machine, RuntimeStatus{State: StateStopped}, observed, operationID); err != nil {
 		return err
 	}
-	return manager.writeAppliedState(desired, observed, StateStopped)
+	return manager.writeAppliedState(desired, observed, StateStopped, SleepStateAwake)
 }
 
 // writeAppliedState records a complete state transition at the desired generations.
-func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *ObservedRecord, state State) error {
+func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *ObservedRecord, state State, sleepState SleepState) error {
 	observed.State = state
+	observed.SleepState = sleepState
 	observed.Generation = desired.Generation
 	observed.SpecificationGeneration = desired.SpecificationGeneration
 	observed.RestartGeneration = desired.RestartGeneration

@@ -164,6 +164,12 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 
 		self.assertEqual(machine.desired.network.public_ipv4, "")
 
+	def test_an_omitted_sleep_state_reads_as_awake(self) -> None:
+		"""Metal omits sleep_state for an awake VM, and older hosts never send it."""
+		machine = MetalVirtualMachine.from_dict(new_virtual_machine_response())
+
+		self.assertEqual(machine.observed.sleep_state, "")
+
 	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
 		"""A truncated response must fail loudly, not read as an empty VM."""
 		for removed in ("desired", "observed"):
@@ -238,7 +244,16 @@ class TestMetalContract(UnitTestCase):
 		self.assert_has_fields(
 			definitions,
 			"api.observedVirtualMachineResponse",
-			{"generation", "restart_generation", "state", "updated_at", "disk", "network", "error"},
+			{
+				"generation",
+				"restart_generation",
+				"state",
+				"sleep_state",
+				"updated_at",
+				"disk",
+				"network",
+				"error",
+			},
 		)
 		self.assert_has_fields(definitions, "api.observedDiskResponse", {"used_mib"})
 		self.assert_has_fields(definitions, "api.operationErrorResponse", {"code", "message", "updated_at"})

@@ -371,6 +371,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		ID:                              desired.ID,
 		State:                           observed.State,
 		DesiredState:                    desired.State,
+		SleepState:                      observed.SleepState,
 		Error:                           errorDetail,
 		CPUMillicores:                   desired.Specification.CPUMillicores,
 		MemoryMiB:                       desired.Specification.MemoryMiB,

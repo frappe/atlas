@@ -143,7 +143,7 @@ func (manager *Manager) stopAfterIdle(
 		return false, nil
 	}
 
-	return true, manager.writeAppliedState(desired, observed, StateStopped)
+	return true, manager.writeAppliedState(desired, observed, StateStopped, SleepStateSleeping)
 }
 
 // resetIdle starts the idle time of a Sleepy VM again after it starts.
