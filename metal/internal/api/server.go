@@ -64,6 +64,8 @@ type VirtualMachineManager interface {
 	ReplaceMetadata(context.Context, string, map[string]string) (bool, error)
 	Delete(context.Context, string) error
 	CreateSnapshot(context.Context, string) (vm.StagedSnapshot, error)
+	OffloadSleepState(context.Context, string, vm.SleepStateRequest) error
+	RefreshSleepState(context.Context, string, vm.SleepStateRequest) error
 	ConnectSSH(ctx context.Context, id, sessionID string) (vm.SSHSession, error)
 }
 
