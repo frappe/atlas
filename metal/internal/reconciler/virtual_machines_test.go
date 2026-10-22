@@ -191,6 +191,65 @@ type concurrencyManager struct {
 	maximumObserved int
 }
 
+type sleepTransferTestManager struct {
+	*recordingManager
+	uploads *concurrencyManager
+}
+
+func (manager *sleepTransferTestManager) OffloadSleepArtifacts(ctx context.Context, id string) error {
+	return manager.uploads.Reconcile(ctx, id)
+}
+
+func (manager *sleepTransferTestManager) RestoreSleepState(ctx context.Context, id string) error {
+	return manager.uploads.Reconcile(ctx, id)
+}
+
+func TestSleepPoolsDoNotBlockVMWorkersAndStopOnShutdown(t *testing.T) {
+	for _, operation := range []string{"upload"} {
+		t.Run(operation, func(t *testing.T) {
+			ids := []string{"a", "b", "c", "d", "e"}
+			manager := &sleepTransferTestManager{
+				recordingManager: newRecordingManager(ids...),
+				uploads:          &concurrencyManager{ids: ids, started: make(chan string, 32)},
+			}
+			configuration := VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)}
+			uploads := NewSleepTransferReconciler(manager, time.Hour, configuration)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			stopped := make(chan struct{})
+			go func() {
+				uploads.Run(ctx)
+				close(stopped)
+			}()
+			for range 2 {
+				select {
+				case <-manager.uploads.started:
+				case <-time.After(time.Second):
+					t.Fatal("upload workers did not start")
+				}
+			}
+			operationContext, cancelOperation := context.WithTimeout(t.Context(), time.Second)
+			defer cancelOperation()
+			NewVirtualMachineReconciler(manager, time.Hour, configuration).reconcileAll(operationContext)
+			if operationContext.Err() != nil || len(manager.seen) != len(ids) {
+				t.Fatal("blocked uploads stalled ordinary VM reconciliation")
+			}
+			for range 10 {
+				uploads.Wake()
+			}
+			cancel()
+			select {
+			case <-stopped:
+			case <-time.After(time.Second):
+				t.Fatal("upload workers did not stop after cancellation")
+			}
+			if manager.uploads.maximumObserved != 2 || manager.uploads.active != 0 {
+				t.Fatalf("upload workers: maximum=%d, active=%d", manager.uploads.maximumObserved, manager.uploads.active)
+			}
+		})
+	}
+}
+
 func (manager *concurrencyManager) ListIDs(context.Context) ([]string, error) {
 	return manager.ids, nil
 }
