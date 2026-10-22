@@ -12,6 +12,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -140,4 +141,70 @@ func (reader *sleepArtifactReader) Read(data []byte) (int, error) {
 		return 0, err
 	}
 	return reader.source.Read(data)
+}
+
+// DownloadSleepMemory verifies an archive and extracts only the three saved-state files.
+func (store *SnapshotStore) DownloadSleepMemory(ctx context.Context, directory, source string, artifact vm.SleepArtifact) error {
+	destination := &temporaryFileDestination{directory: directory}
+	defer destination.discard()
+	if err := download(ctx, store.httpClient, source, artifact.SHA256, destination, store.logger); err != nil {
+		return err
+	}
+	archive, err := os.Open(destination.file.Name())
+	if err != nil {
+		return err
+	}
+	defer archive.Close()
+	information, err := archive.Stat()
+	if err != nil {
+		return err
+	}
+	if information.Size() != artifact.SizeBytes {
+		return ErrImageIntegrity
+	}
+	return extractSleepMemory(ctx, archive, directory)
+}
+
+func extractSleepMemory(ctx context.Context, source io.Reader, directory string) error {
+	archive := tar.NewReader(source)
+	for _, name := range []string{"state", "memory", "metadata.json"} {
+		header, err := archive.Next()
+		if err != nil {
+			return err
+		}
+		if header.Name != name || header.Typeflag != tar.TypeReg || header.Size <= 0 {
+			return fmt.Errorf("invalid sleep archive entry %q", header.Name)
+		}
+		file, err := os.OpenFile(filepath.Join(directory, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		_, copyError := io.Copy(&SparseWriter{File: file}, &sleepArtifactReader{context: ctx, source: archive})
+		err = errors.Join(copyError, file.Truncate(header.Size), file.Sync(), file.Close())
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := archive.Next(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("unexpected data after sleep archive files")
+	}
+	return nil
+}
+
+// RestoreSleepDisk publishes a verified disk without replacing an existing VM disk.
+func (store *SnapshotStore) RestoreSleepDisk(ctx context.Context, identifier, source string, artifact vm.SleepArtifact) error {
+	dataset := store.pool.virtualMachineDataset(identifier)
+	exists, err := datasetExists(ctx, dataset)
+	if err != nil || exists {
+		return err
+	}
+	staging := store.pool.stagingDataset("sleep-" + identifier)
+	volume := &volumeDestination{dataset: staging}
+	// A crash can leave only the unpublished staging volume.
+	volume.destroy()
+	defer volume.destroy()
+	if err := download(ctx, store.httpClient, source, artifact.SHA256, volume, store.logger); err != nil {
+		return err
+	}
+	return platform.Run(ctx, "zfs", "rename", staging, dataset)
 }
