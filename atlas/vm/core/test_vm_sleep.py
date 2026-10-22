@@ -29,7 +29,13 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			get_object_storage_client=lambda: storage,
 		)
 		virtual_machine = SimpleNamespace(
-			name="vm-1", server="host-1", is_draft=False, is_terminating=False, active_migration=None
+			name="vm-1",
+			server="host-1",
+			is_draft=False,
+			is_terminating=False,
+			active_migration=None,
+			deep_sleep_after_idle_seconds=0,
+			coma_after_idle_seconds=0,
 		)
 		for state, artifacts in (
 			("deep-sleeping", {"memory": {"uploaded": True}}),

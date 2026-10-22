@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class VirtualMachineSleepService:
-	"""Apply the regional offload policy to one sleeping VM."""
+	"""Apply the VM's offload policy to its sleeping checkpoint."""
 
 	def __init__(self, virtual_machine: VirtualMachine) -> None:
 		self.virtual_machine = virtual_machine
@@ -36,8 +36,8 @@ class VirtualMachineSleepService:
 		settings = frappe.get_cached_doc("Atlas Settings")
 		artifacts = self.artifacts_to_offload(
 			information,
-			settings.deep_sleep_after_idle_seconds,
-			settings.coma_after_idle_seconds,
+			machine.deep_sleep_after_idle_seconds,
+			machine.coma_after_idle_seconds,
 			now_datetime(),
 		)
 		snapshot = information.observed.sleep_snapshot
