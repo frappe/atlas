@@ -862,7 +862,7 @@
   },
   {
    "default": "0",
-   "description": "Idle time before Metal moves the saved memory of a sleepy VM to object storage. Metal counts it from the last request, like the sleep timeout. 0 turns deep sleep off.",
+   "description": "Idle time from the last request before Atlas offloads saved memory to object storage. 0 turns deep sleep off.",
    "fieldname": "deep_sleep_after_idle_seconds",
    "fieldtype": "Int",
    "label": "Deep Sleep After Idle (seconds)",
@@ -875,7 +875,7 @@
   },
   {
    "default": "0",
-   "description": "Idle time before Metal also moves the disk to object storage. It must be greater than Deep Sleep After Idle. 0 turns coma off.",
+   "description": "Idle time from the last request before Atlas also offloads the disk. It must be greater than Deep Sleep After Idle. 0 turns coma off.",
    "fieldname": "coma_after_idle_seconds",
    "fieldtype": "Int",
    "label": "Coma After Idle (seconds)",

@@ -54,6 +54,16 @@ Metal sets `deep-sleeping` after it uploads and removes local saved memory. It s
 
 The saved state belongs to one VM. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
 
+## Configure automatic offload
+
+Atlas checks sleepy VMs every minute. It compares Metal's `observed.last_request_at` with **Deep Sleep After Idle (seconds)** and **Coma After Idle (seconds)** in Atlas Settings. Both times start at the last request, not when the VM entered sleep. `0` disables that transition. Coma requires a shorter, nonzero deep-sleep threshold.
+
+At the deep-sleep threshold, Atlas supplies signed memory upload and download URLs. At the coma threshold, it also supplies disk URLs. If both thresholds have passed, it requests both artifacts together. Atlas skips awake, draft, terminating, and migrating VMs. Missing request timestamps do not trigger an upload.
+
+Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk` as object keys. A later sleep checkpoint on the same host replaces these objects. The host prefix separates uploads across migration. Keep these objects available while the VM depends on them.
+
+The same job refreshes GET URLs for stored checkpoints, even when offload thresholds are disabled. Set the signed URL lifetime longer than the one-minute schedule and allow time for queue delays and downloads. A failed check appears in Error Log and retries on the next schedule. Atlas does not store signed URLs or a second copy of Metal's sleep state.
+
 ## Upload saved snapshots
 
 Atlas can offload snapshots with `POST /v1/vms/{id}/sleep-state`. The VM must already be sleeping. Supply presigned PUT and GET URLs for memory, disk, or both. Upload memory before disk. Atlas can request both together or add disk in a later request.
