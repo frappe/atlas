@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -18,7 +19,7 @@ from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
 from atlas.vm.core import reconciliation
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics, timestamp_field
 from atlas.vm.core.models import (
 	IPV6_INTERNET_DESTINATION,
 	ROUTE_VIA_HOST,
@@ -155,6 +156,12 @@ class VirtualMachine(Document):
 		"""Return where Metal keeps the saved state of a sleeping VM. An awake VM has none."""
 		information = self.get_metal_vm_info()
 		return (information.observed.sleep_state or None) if information else None
+
+	@property
+	def last_request_at(self) -> datetime | None:
+		"""Return when the VM last received a request, in the site timezone."""
+		information = self.get_metal_vm_info()
+		return timestamp_field(asdict(information.observed), "last_request_at") if information else None
 
 	@property
 	def error(self) -> str | None:

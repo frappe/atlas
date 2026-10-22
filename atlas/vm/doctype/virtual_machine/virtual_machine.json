@@ -9,6 +9,7 @@
   "current_state",
   "desired_state",
   "sleep_state",
+  "last_request_at",
   "active_migration",
   "tenant_id",
   "is_privileged",
@@ -91,6 +92,13 @@
    "is_virtual": 1,
    "label": "Sleep State",
    "options": "\nsleeping\ndeep-sleeping\ncomatose",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_request_at",
+   "fieldtype": "Datetime",
+   "is_virtual": 1,
+   "label": "Last Request At",
    "read_only": 1
   },
   {
@@ -385,7 +393,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-22 18:05:00.000000",
+ "modified": "2026-10-22 20:30:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
