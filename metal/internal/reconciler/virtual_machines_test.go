@@ -205,7 +205,7 @@ func (manager *sleepTransferTestManager) RestoreSleepState(ctx context.Context, 
 }
 
 func TestSleepPoolsDoNotBlockVMWorkersAndStopOnShutdown(t *testing.T) {
-	for _, operation := range []string{"upload"} {
+	for _, operation := range []string{"upload", "restore"} {
 		t.Run(operation, func(t *testing.T) {
 			ids := []string{"a", "b", "c", "d", "e"}
 			manager := &sleepTransferTestManager{
@@ -214,6 +214,9 @@ func TestSleepPoolsDoNotBlockVMWorkersAndStopOnShutdown(t *testing.T) {
 			}
 			configuration := VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)}
 			uploads := NewSleepTransferReconciler(manager, time.Hour, configuration)
+			if operation == "restore" {
+				uploads = NewSleepRestoreReconciler(manager, time.Hour, configuration)
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			stopped := make(chan struct{})
