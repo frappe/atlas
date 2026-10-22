@@ -64,7 +64,7 @@ def list_images(query: ImageListQuery) -> Page[ImageResponse]:
 			"memory_snapshot",
 			"is_termination_protected",
 			"image_size_mib",
-			"kernel_size_mib",
+			"kernel.size_mib as kernel_size_mib",
 			"transfer_progress",
 			"transfer_error",
 			"creation",

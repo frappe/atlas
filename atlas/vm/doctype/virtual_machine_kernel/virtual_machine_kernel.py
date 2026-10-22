@@ -8,6 +8,7 @@ from frappe.model.document import Document
 
 from atlas.atlas.core.artifacts import get_download_url
 from atlas.atlas.core.exceptions import AtlasConflictError
+from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import SIGNED_URL_EXPIRY_SECONDS
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -29,6 +30,7 @@ class VirtualMachineKernel(Document):
 		object_key: DF.Data | None
 		sha256: DF.Data
 		size_mib: DF.Int
+		title: DF.Data | None
 	# end: auto-generated types
 
 	def on_trash(self) -> None:
@@ -40,6 +42,11 @@ class VirtualMachineKernel(Document):
 			settings.get_object_storage_client().delete_object(self.object_key)
 		if self.file:
 			frappe.delete_doc("File", self.file, force=True, ignore_permissions=True, delete_permanently=True)
+
+	@frappe.whitelist()
+	def get_download_link(self) -> str:
+		"""Return the download URL for the Desk button."""
+		return self.get_url(SIGNED_URL_EXPIRY_SECONDS)
 
 	def get_url(self, expiry_seconds: int) -> str:
 		"""Return the download URL. A kernel in object storage no longer uses its site file."""

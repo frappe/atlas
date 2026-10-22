@@ -26,14 +26,13 @@
   "section_break_files",
   "image_size_mib",
   "image_stored_size_mib",
+  "kernel",
+  "site_file_retention_until",
+  "artifact_retention_until",
+  "column_break_files",
   "image_object_key",
   "image_file",
   "image_sha256",
-  "artifact_retention_until",
-  "column_break_files",
-  "kernel_size_mib",
-  "kernel",
-  "site_file_retention_until",
   "section_break_tags",
   "tags",
   "version",
@@ -188,13 +187,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "kernel_size_mib",
-   "fieldtype": "Int",
-   "label": "Kernel Size (MiB)",
-   "read_only": 1,
-   "fetch_from": "kernel.size_mib"
-  },
-  {
    "depends_on": "eval:doc.image_type === 'machine'",
    "fieldname": "section_break_source",
    "fieldtype": "Section Break",
@@ -316,7 +308,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-22 12:00:00.000000",
+ "modified": "2026-10-22 14:51:52.811271",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Image",

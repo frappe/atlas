@@ -39,7 +39,6 @@ class TestVirtualMachineImage(UnitTestCase):
 			"image_object_key": "images/image/rootfs.img",
 			"image_file": None,
 			"image_size_mib": 10,
-			"kernel_size_mib": 5,
 			"architecture": "amd64",
 			"status": "Available",
 			"title": "Machine image",
@@ -150,6 +149,7 @@ class TestVirtualMachineImage(UnitTestCase):
 		with (
 			patch.object(VirtualMachineImage, "validate_is_available"),
 			patch.object(VirtualMachineImage, "get_artifact_url", artifact_url),
+			patch("frappe.get_cached_value", return_value=5),
 		):
 			rootfs = image.get_presigned_download_url("rootfs")
 			kernel = image.get_presigned_download_url("kernel")

@@ -60,6 +60,7 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			patch("atlas.vm.core.image_builder.store_kernel") as store_kernel,
 			patch("atlas.vm.core.image_builder.upload_with_progress") as upload,
 			patch("atlas.vm.core.image_builder.Path.stat", return_value=SimpleNamespace(st_size=MEBIBYTE)),
+			patch("atlas.vm.core.image_builder.Path.read_text", return_value="6.17.0-5-generic\n"),
 			patch(
 				"atlas.vm.core.image_builder.frappe.get_doc",
 				side_effect=lambda values: SimpleNamespace(
@@ -68,13 +69,15 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			),
 			patch("atlas.vm.core.image_builder.VirtualMachineImageDeletionService") as deletion,
 		):
-			publish_ubuntu_image("Ubuntu 24.04", "24.04", "amd64", Path("rootfs.img"), Path("kernel"))
+			publish_ubuntu_image("ubuntu-24.04-minimal", "24.04", "amd64", Path("rootfs.img"), Path("kernel"))
 
 		self.assertEqual(created["set_name"], "new-image")
 		self.assertNotIn("version", created)
 		self.assertEqual(created["image_object_key"], "images/new-image/rootfs.img")
 		self.assertEqual(created["kernel"], "b" * 64)
-		store_kernel.assert_called_once_with(Path("kernel"), "b" * 64, "amd64", "Object Storage")
+		store_kernel.assert_called_once_with(
+			"ubuntu-24.04 - kernel 6.17.0-5-generic", Path("kernel"), "b" * 64, "amd64", "Object Storage"
+		)
 		self.assertEqual(upload.call_args.args[1:], (Path("rootfs.img.zst"), "images/new-image/rootfs.img"))
 		self.assertEqual(created["image_stored_size_mib"], 1)
 		deletion.return_value.request.assert_called_once_with(previous)
@@ -94,6 +97,7 @@ class TestUbuntuImageBuilder(UnitTestCase):
 				side_effect=["file-kernel", "file-rootfs"],
 			) as publish_file,
 			patch("atlas.vm.core.image_builder.Path.stat", return_value=SimpleNamespace(st_size=MEBIBYTE)),
+			patch("atlas.vm.core.image_builder.Path.read_text", return_value="6.17.0-5-generic\n"),
 			patch(
 				"atlas.vm.core.image_builder.frappe.get_doc",
 				side_effect=lambda values: SimpleNamespace(
@@ -133,6 +137,7 @@ class TestUbuntuImageBuilderIntegration(IntegrationTestCase):
 		with (
 			patch("atlas.vm.core.image_builder.get_sha256", side_effect=[image_sha256, "b" * 64]),
 			patch("atlas.vm.core.image_builder.Path.stat", return_value=SimpleNamespace(st_size=MEBIBYTE)),
+			patch("atlas.vm.core.image_builder.Path.read_text", return_value="6.17.0-5-generic\n"),
 			patch("atlas.vm.core.image_builder.frappe.get_single"),
 			patch("atlas.vm.core.image_builder.upload_with_progress") as upload,
 		):
