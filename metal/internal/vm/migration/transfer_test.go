@@ -42,6 +42,7 @@ func writeCopyingDestination(t *testing.T, machines *fakeMigrationHost, sourceSt
 	if err := store.writeDestination(record); err != nil {
 		t.Fatal(err)
 	}
+	machines.desired["vm-1"] = vm.DesiredRecord{ID: "vm-1", Specification: testSpecification()}
 	return store
 }
 

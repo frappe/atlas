@@ -89,3 +89,22 @@ func TestClearedSourceLockRestoresMutations(t *testing.T) {
 		t.Fatal("source lock still present after clear")
 	}
 }
+
+func TestKernelSHA256sIncludesAnIncomingMigration(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	ctx := context.Background()
+	specification := testSpecification()
+	specification.Image.KernelSHA256 = "kernel"
+	if _, err := manager.Create(ctx, "vm-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	manager.SetMigrationGuard(&fakeMigrationGuard{destinationReserved: map[string]bool{"vm-1": true}})
+
+	kernels, err := manager.KernelSHA256s(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kernels) != 1 || kernels[0] != "kernel" {
+		t.Fatalf("kernels = %v", kernels)
+	}
+}

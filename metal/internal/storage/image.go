@@ -242,6 +242,58 @@ func (store *ImageStore) ensureKernel(ctx context.Context, kernelURL, expectedDi
 	return os.Chmod(target, 0o644)
 }
 
+// HasKernel reports whether one kernel is stored.
+func (store *ImageStore) HasKernel(kernelSHA256 string) (bool, error) {
+	_, err := os.Stat(store.kernelFile(kernelSHA256))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// OpenKernel opens one stored kernel.
+func (store *ImageStore) OpenKernel(kernelSHA256 string) (*os.File, error) {
+	if !validSHA256(kernelSHA256) {
+		return nil, fmt.Errorf("invalid kernel digest %q", kernelSHA256)
+	}
+	file, err := os.Open(store.kernelFile(kernelSHA256))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	return file, err
+}
+
+// StoreKernel stores one kernel from source after its digest matches.
+func (store *ImageStore) StoreKernel(kernelSHA256 string, source io.Reader) error {
+	if !validSHA256(kernelSHA256) {
+		return fmt.Errorf("invalid kernel digest %q", kernelSHA256)
+	}
+	kernel := &temporaryFileDestination{directory: store.directory}
+	writer, err := kernel.open(context.Background(), 0)
+	if err != nil {
+		return err
+	}
+	defer kernel.discard()
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(writer, hash), source); err != nil {
+		return err
+	}
+	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), kernelSHA256) {
+		return fmt.Errorf("%w: received kernel digest mismatch", ErrImageIntegrity)
+	}
+	if err := kernel.commit(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(store.kernelsDirectory, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(kernel.file.Name(), store.kernelFile(kernelSHA256)); err != nil {
+		return err
+	}
+	return os.Chmod(store.kernelFile(kernelSHA256), 0o644)
+}
+
 // importRootFileSystem downloads the root file system straight into a new ZFS
 // volume and snapshots it. Every failure destroys the volume, so no half-written
 // base image can be cloned.
