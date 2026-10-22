@@ -59,10 +59,10 @@ class VirtualMachineImageStorageMigration:
 		settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		client = settings.get_object_storage_client()
 		kernel: VirtualMachineKernel = frappe.get_doc("Virtual Machine Kernel", image.kernel)
-		if not kernel.object_key:
-			kernel.object_key = self.upload(client, kernel.file, f"kernels/{kernel.name}")
-			kernel.save()
+		kernel_object_key = kernel.object_key or self.upload(client, kernel.file, f"kernels/{kernel.name}")
 		image.image_object_key = self.upload(client, image.image_file, f"images/{image.name}/rootfs.img")
+		# Images that share the kernel can migrate at once. Each writes the same key after its uploads.
+		kernel.db_set("object_key", kernel_object_key)
 		image.artifact_storage = "Object Storage"
 		image.site_file_retention_until = now_datetime() + SITE_FILE_RETENTION
 		image.save()
