@@ -988,6 +988,8 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 		virtual_machine.tenant_id = tenant_id
 		virtual_machine.is_privileged = is_privileged
 		virtual_machine.is_network_gateway = 0
+		virtual_machine.deep_sleep_after_idle_seconds = 0
+		virtual_machine.coma_after_idle_seconds = 0
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None

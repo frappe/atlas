@@ -146,6 +146,8 @@ class VirtualMachineService:
 				"is_privileged": request.is_privileged,
 				"is_termination_protected": request.is_termination_protected,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
+				"deep_sleep_after_idle_seconds": request.deep_sleep_after_idle_seconds,
+				"coma_after_idle_seconds": request.coma_after_idle_seconds,
 				"tags": [{"key": key, "value": value} for key, value in request.tags.items()],
 				"placement_rules": frappe.as_json(request.placement_rules.as_list())
 				if request.placement_rules.nodes

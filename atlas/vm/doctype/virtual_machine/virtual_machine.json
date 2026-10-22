@@ -25,6 +25,8 @@
   "cpu_millicores",
   "memory_mib",
   "sleep_after_idle_seconds",
+  "deep_sleep_after_idle_seconds",
+  "coma_after_idle_seconds",
   "column_break_compute",
   "disk_mib",
   "disk_throughput_mibps",
@@ -160,6 +162,26 @@
    "fieldname": "sleep_after_idle_seconds",
    "fieldtype": "Int",
    "label": "Sleep After Idle (Seconds)",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "description": "Idle time before Atlas offloads saved memory. 0 disables deep sleep.",
+   "fieldname": "deep_sleep_after_idle_seconds",
+   "fieldtype": "Int",
+   "label": "Deep Sleep After Idle (Seconds)",
+   "non_negative": 1,
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "description": "Idle time before Atlas offloads the disk. Must exceed Deep Sleep After Idle. 0 disables coma.",
+   "fieldname": "coma_after_idle_seconds",
+   "fieldtype": "Int",
+   "label": "Coma After Idle (Seconds)",
+   "non_negative": 1,
    "read_only": 1,
    "show_description_on_click": 1
   },
@@ -393,7 +415,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-22 20:30:00.000000",
+ "modified": "2026-10-23 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

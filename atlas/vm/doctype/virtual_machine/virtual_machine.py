@@ -25,6 +25,7 @@ from atlas.vm.core.models import (
 	ROUTE_VIA_HOST,
 	Route,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.vm_service import VirtualMachineService
 
@@ -51,7 +52,9 @@ class VirtualMachine(Document):
 
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
+		coma_after_idle_seconds: DF.Int
 		cpu_millicores: DF.Int
+		deep_sleep_after_idle_seconds: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
 		is_draft: DF.Check
@@ -65,6 +68,7 @@ class VirtualMachine(Document):
 		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int
+		sleep_state: DF.Literal["", "sleeping", "deep-sleeping", "comatose"]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		virtual_machine_image: DF.Data
@@ -104,6 +108,10 @@ class VirtualMachine(Document):
 		the address from the next whitelist and ends cross-tenant traffic.
 		"""
 		validate_tags(self)
+		try:
+			validate_sleep_times(self.deep_sleep_after_idle_seconds or 0, self.coma_after_idle_seconds or 0)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
 
 		if self.is_privileged and self.tenant_id != PRIVILEGED_TENANT_ID:
 			frappe.throw(_("A privileged Virtual Machine must use tenant {0}.").format(PRIVILEGED_TENANT_ID))
