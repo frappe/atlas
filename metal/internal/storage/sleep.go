@@ -125,7 +125,7 @@ func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	if _, err := store.uploadPartWithRetry(ctx, SnapshotUploadPart{PartNumber: 1, URL: destination}, compressed, 0, information.Size()); err != nil {
+	if _, err := store.uploadPartWithRetry(ctx, SnapshotUploadPart{PartNumber: 1, URL: destination}, compressed, 0, information.Size(), nil); err != nil {
 		return vm.SleepArtifact{}, err
 	}
 	return vm.SleepArtifact{SizeBytes: sizeBytes, StoredSizeBytes: information.Size(), SHA256: hex.EncodeToString(digest)}, nil
