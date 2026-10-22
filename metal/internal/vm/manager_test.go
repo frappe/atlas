@@ -51,6 +51,15 @@ type fakeRuntime struct {
 	diskError          error
 	guestCheckError    error
 	guestChecks        int
+	savedDirectory     string
+	savedIdentity      string
+}
+
+func (runtime *fakeRuntime) SavedState(context.Context, RuntimeMachine) (SavedState, error) {
+	if !runtime.hasSavedState {
+		return SavedState{}, ErrNotFound
+	}
+	return SavedState{Directory: runtime.savedDirectory, Identity: runtime.savedIdentity}, nil
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
@@ -230,6 +239,16 @@ type fakeSnapshots struct{}
 
 func (fakeSnapshots) Stage(context.Context, SnapshotRequest) (StagedSnapshot, error) {
 	return StagedSnapshot{}, nil
+}
+
+func (fakeSnapshots) StageSleepMemory(context.Context, string, string) error        { return nil }
+func (fakeSnapshots) StageSleepDisk(context.Context, SnapshotRequest, string) error { return nil }
+func (fakeSnapshots) DeleteSnapshot(context.Context, string) error                  { return nil }
+func (fakeSnapshots) UploadSleepMemory(context.Context, string, string) (SleepArtifact, error) {
+	return SleepArtifact{}, nil
+}
+func (fakeSnapshots) UploadSleepDisk(context.Context, string, string) (SleepArtifact, error) {
+	return SleepArtifact{}, nil
 }
 
 func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeStorage) {
