@@ -31,10 +31,11 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	if err := os.MkdirAll(request.ChrootRoot, 0o755); err != nil {
 		return BootConfiguration{}, err
 	}
-	if err := store.images.ensureImage(ctx, request.ImageReference, request.Image); err != nil {
+	// An existing disk boots without its image, so the image can be pruned.
+	if err := store.images.ensureKernel(ctx, request.Image.KernelURL, request.Image.KernelSHA256); err != nil {
 		return BootConfiguration{}, err
 	}
-	if err := replaceHardLink(store.images.kernelFile(request.ImageReference), filepath.Join(request.ChrootRoot, "vmlinux")); err != nil {
+	if err := replaceHardLink(store.images.kernelFile(request.Image.KernelSHA256), filepath.Join(request.ChrootRoot, "vmlinux")); err != nil {
 		return BootConfiguration{}, err
 	}
 	if err := store.provisionDisk(ctx, request); err != nil {
