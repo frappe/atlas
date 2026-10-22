@@ -26,7 +26,6 @@ from atlas.vm.core.placement.models import (
 from atlas.vm.core.placement.transaction import is_read_committed
 
 CAPACITY_MAXIMUM_AGE = timedelta(minutes=2)
-PLACEMENT_RATE_WINDOW = timedelta(minutes=5)
 # Keep reservations longer than capacity samples.
 RESERVATION_MAXIMUM_AGE = timedelta(minutes=15)
 # Snapshots rank hosts. Locked reads recheck capacity.
@@ -113,16 +112,6 @@ class PlacementContext:
 	def selected_host(self) -> str | None:
 		"""Return the selected and locked host name."""
 		return self._selected_host
-
-	def get_placement_rate(self, host_name: str | None = None) -> float:
-		"""Return VM creations per minute over five minutes, including drafts."""
-		host = self._find_snapshot_host(host_name) if host_name is not None else None
-		if host_name is not None:
-			count = host.placement_count if host else 0
-		else:
-			count = self.usage.placement_count
-
-		return count / (PLACEMENT_RATE_WINDOW.total_seconds() / 60)
 
 	def _is_candidate(self, host_name: str) -> bool:
 		"""Return whether this placement may choose the host. Without an allowed set, every host that is not excluded is a candidate."""
@@ -342,27 +331,13 @@ class PlacementContext:
 		)
 
 	def _load_snapshot_rows(self) -> list[frappe._dict]:
-		"""Load the capacity rows of the host pool with the counts that strategies rank by."""
+		"""Load the capacity rows of the host pool with the sleepy memory that strategies rank by."""
 		rows = self._load_capacity_rows()
 		if not rows:
 			return rows
 
-		host_names = [row.name for row in rows]
-		tenant_vm_counts = self._count_tenant_virtual_machines(host_names)
-		placement_counts = Counter(
-			frappe.get_all(
-				"Virtual Machine",
-				filters={
-					"server": ("in", host_names),
-					"creation": (">=", self._created_at - PLACEMENT_RATE_WINDOW),
-				},
-				pluck="server",
-			)
-		)
-		sleepy_memory = self._sum_sleepy_memory(host_names)
+		sleepy_memory = self._sum_sleepy_memory([row.name for row in rows])
 		for row in rows:
-			row.tenant_vm_count = tenant_vm_counts[row.name]
-			row.placement_count = placement_counts[row.name]
 			row.sleepy_reserved_memory_mib = sleepy_memory[row.name]
 		return rows
 
@@ -509,23 +484,6 @@ class PlacementContext:
 			)
 		return Resources(migration.cpu_millicores, migration.memory_mib, migration.disk_mib)
 
-	def _count_tenant_virtual_machines(self, host_names: list[str]) -> Counter[str]:
-		"""Count the VMs of the tenant on each host, and again on the destination of an active migration."""
-		tenant_id = self.requirements.tenant_id
-		counts = Counter(
-			frappe.get_all(
-				"Virtual Machine",
-				filters={"server": ("in", host_names), "tenant_id": tenant_id},
-				pluck="server",
-			)
-		)
-		counts.update(
-			migration.server
-			for migration in self._load_incoming_migrations(host_names)
-			if migration.tenant_id == tenant_id
-		)
-		return counts
-
 	def _sum_sleepy_memory(self, host_names: list[str]) -> Counter[str]:
 		"""Sum the memory of sleepy VMs on each host, which only a sleepy placement ranks by."""
 		memory: Counter[str] = Counter()
@@ -558,9 +516,7 @@ class PlacementContext:
 					row.free_memory_mib,
 					row.free_storage_mib,
 				),
-				tenant_vm_count=row.tenant_vm_count,
 				sleepy_reserved_memory_mib=row.sleepy_reserved_memory_mib,
-				placement_count=row.placement_count,
 			)
 			for row in rows
 			if self._is_candidate(row.name)
@@ -569,9 +525,7 @@ class PlacementContext:
 			hosts=hosts,
 			total=self._sum_resources(host.total for host in hosts),
 			free=self._sum_resources(host.free for host in hosts),
-			tenant_vm_count=sum(host.tenant_vm_count for host in hosts),
 			sleepy_reserved_memory_mib=sum(host.sleepy_reserved_memory_mib for host in hosts),
-			placement_count=sum(host.placement_count for host in hosts),
 		)
 
 	@staticmethod

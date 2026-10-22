@@ -34,7 +34,6 @@ class TestComparisonStrategies(TestCase):
 		free_cpu_millicores: int = 10000,
 		used_memory_mib: int = 0,
 		used_storage_mib: int = 0,
-		tenant_vm_count: int = 0,
 		subscribed_memory_mib: int = 0,
 	) -> HostUsage:
 		return HostUsage(
@@ -44,9 +43,7 @@ class TestComparisonStrategies(TestCase):
 			sample_created_at=datetime(2026, 9, 18),
 			total=Resources(10000, 10000, 10000),
 			free=Resources(free_cpu_millicores, 10000 - used_memory_mib, 10000 - used_storage_mib),
-			tenant_vm_count=tenant_vm_count,
 			sleepy_reserved_memory_mib=subscribed_memory_mib,
-			placement_count=0,
 		)
 
 	@staticmethod
@@ -55,7 +52,6 @@ class TestComparisonStrategies(TestCase):
 		*,
 		is_sleepy: bool = False,
 		factor: float = 1.0,
-		rates: dict[str, float] | None = None,
 		memory_mib: int = 1000,
 		storage_mib: int = 1000,
 		action: str = "create",
@@ -73,11 +69,10 @@ class TestComparisonStrategies(TestCase):
 		)
 		return SimpleNamespace(
 			requirements=PlacementRequirements(1000, memory_mib, storage_mib, "amd64", 7, is_sleepy),
-			usage=FleetUsage(hosts, total, free, 0, 0, 0),
+			usage=FleetUsage(hosts, total, free, 0),
 			action=action,
 			current_host_name=current_host_name,
 			sleepy_vm_overcommit_factor=factor,
-			get_placement_rate=Mock(side_effect=lambda host_name: (rates or {}).get(host_name, 0.0)),
 			try_select=Mock(return_value=True),
 			has_contended_hosts=False,
 			last_probe_was_contended=False,
@@ -195,6 +190,39 @@ class TestComparisonStrategies(TestCase):
 		BalancedStrategy(placement).select_host()
 
 		placement.try_select.assert_called_once_with("available", wait=False)
+
+	def test_balanced_ranks_memory_bands_then_storage_then_cpu(self) -> None:
+		memory_first = self._placement(
+			(
+				self._host("higher-memory-band", used_memory_mib=3000),
+				self._host(
+					"lower-memory-band",
+					used_memory_mib=2000,
+					used_storage_mib=8000,
+					free_cpu_millicores=0,
+				),
+			)
+		)
+		same_memory_band = self._placement(
+			(
+				self._host("less-memory", used_memory_mib=3100, used_storage_mib=5000),
+				self._host("less-storage", used_memory_mib=3300),
+			)
+		)
+		storage_next = self._placement(
+			(
+				self._host("fuller-storage", used_storage_mib=3000),
+				self._host("fuller-cpu", used_storage_mib=2000, free_cpu_millicores=0),
+			)
+		)
+
+		BalancedStrategy(memory_first).select_host()
+		BalancedStrategy(same_memory_band).select_host()
+		BalancedStrategy(storage_next).select_host()
+
+		memory_first.try_select.assert_called_once_with("lower-memory-band", wait=False)
+		same_memory_band.try_select.assert_called_once_with("less-storage", wait=False)
+		storage_next.try_select.assert_called_once_with("fuller-cpu", wait=False)
 
 	def test_balanced_keeps_a_fitting_lifecycle_change_on_current_host(self) -> None:
 		placement = self._placement(
