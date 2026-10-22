@@ -178,6 +178,36 @@ class MetalOperationError:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalSleepArtifact:
+	"""Store completion of one sleep artifact upload."""
+
+	uploaded: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MetalSleepSnapshot:
+	"""Identify a sleep checkpoint and its selected artifacts."""
+
+	id: str
+	memory: MetalSleepArtifact | None
+	disk: MetalSleepArtifact | None
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepSnapshot:
+		"""Validate sleep snapshot status at the Metal boundary."""
+		snapshot = object_value(value, "sleep_snapshot")
+		artifacts = {}
+		for name in ("memory", "disk"):
+			artifact = snapshot.get(name)
+			artifacts[name] = (
+				MetalSleepArtifact(uploaded=boolean_field(object_value(artifact, name), "uploaded"))
+				if artifact is not None
+				else None
+			)
+		return cls(id=string_field(snapshot, "id"), **artifacts)
+
+
+@dataclass(frozen=True, slots=True)
 class MetalObservedState:
 	"""Store one observed virtual machine state."""
 
@@ -193,6 +223,7 @@ class MetalObservedState:
 	disk: MetalObservedDisk
 	network: MetalObservedNetwork
 	error: MetalOperationError | None
+	sleep_snapshot: MetalSleepSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,6 +455,11 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		disk=MetalObservedDisk(used_mib=integer_field(object_field(value, "disk"), "used_mib")),
 		network=MetalObservedNetwork(mac=string_field(object_field(value, "network"), "mac", default="")),
 		error=operation_error,
+		sleep_snapshot=(
+			MetalSleepSnapshot.from_dict(value["sleep_snapshot"])
+			if value.get("sleep_snapshot") is not None
+			else None
+		),
 	)
 
 
