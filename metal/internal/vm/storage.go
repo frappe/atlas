@@ -20,6 +20,13 @@ type Snapshots interface {
 	Stage(context.Context, SnapshotRequest) (StagedSnapshot, error)
 }
 
+// SleepArtifact binds a remote object to its uncompressed content.
+type SleepArtifact struct {
+	SizeBytes       int64  `json:"size_bytes"`
+	StoredSizeBytes int64  `json:"stored_size_bytes"`
+	SHA256          string `json:"sha256"`
+}
+
 // SnapshotRequest identifies the virtual machine and kernel to stage.
 type SnapshotRequest struct {
 	VirtualMachineID string

@@ -73,3 +73,9 @@ type RuntimeStatus struct {
 	State         State
 	HasSavedState bool
 }
+
+// SavedState identifies the immutable files of one sleep checkpoint.
+type SavedState struct {
+	Directory string
+	Identity  string
+}

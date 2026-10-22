@@ -3,6 +3,8 @@ package firecracker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,6 +60,20 @@ type savedState struct {
 	Metadata   savedStateMetadata
 	StatePath  string
 	MemoryPath string
+}
+
+// SavedState validates and identifies the current VM-local sleep checkpoint.
+func (runtime *Runtime) SavedState(_ context.Context, machine vm.RuntimeMachine) (vm.SavedState, error) {
+	if _, err := runtime.configuration.loadSavedState(runtime.newMachine(machine).savedStateRequirement()); err != nil {
+		return vm.SavedState{}, err
+	}
+	directory := runtime.configuration.savedStateDirectory(machine.ID)
+	metadata, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
+	if err != nil {
+		return vm.SavedState{}, err
+	}
+	digest := sha256.Sum256(metadata)
+	return vm.SavedState{Directory: directory, Identity: hex.EncodeToString(digest[:])}, nil
 }
 
 func (snapshot savedState) restoreNetwork(ctx context.Context, networkInterface vm.NetworkInterface) error {
