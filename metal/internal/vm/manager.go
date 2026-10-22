@@ -270,7 +270,12 @@ func (manager *Manager) information(identifier string) (Information, error) {
 	if err != nil {
 		return Information{}, err
 	}
-	return informationFromRecords(desired, observed, observed.Disk), nil
+	information := informationFromRecords(desired, observed, observed.Disk)
+	if manager.traffic != nil {
+		// A VM without attached traffic hooks reports no request time.
+		information.LastRequestAt, _ = manager.traffic.LastRequestAt(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
+	}
+	return information, nil
 }
 
 // isTornRemoval reports whether removal left one record temporarily absent.

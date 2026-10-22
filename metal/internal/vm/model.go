@@ -236,6 +236,7 @@ type Information struct {
 	State                           State
 	DesiredState                    State
 	SleepState                      SleepState
+	LastRequestAt                   time.Time
 	Error                           *PublicOperationError
 	CPUMillicores                   int
 	MemoryMiB                       int
