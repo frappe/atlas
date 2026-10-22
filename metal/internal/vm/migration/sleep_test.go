@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,5 +75,104 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 				t.Fatal("rollback did not reconnect and release source")
 			}
 		})
+	}
+}
+
+func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
+	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+		t.Run(string(state), func(t *testing.T) {
+			manager, host, source := newMigrationManager(t)
+			source.prepareDefinition = virtualMachineDefinition("vm-1")
+			source.prepareDefinition.Specification.SleepAfterIdleSeconds = 60
+			source.prepareDefinition.Sleep = sleepMigration(t, state)
+			source.prepareState = vm.StateStopped
+			source.memoryReceive = func(_ context.Context, _ string) error {
+				t.Error("migration downloaded offloaded memory")
+				return nil
+			}
+			source.stopSnapshot = SourceSnapshot{Sequence: 1, SizeBytes: 1024, GUID: "disk-1"}
+			if state == vm.SleepStateComatose {
+				source.stopSnapshot = SourceSnapshot{}
+			}
+			disks := manager.disks.(*fakeMigrationStorage)
+			disks.guid = "disk-1"
+			if _, err := manager.CreateDestination(t.Context(), "mig-1", "vm-1", "https://10.0.0.3:9000", nil, true, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.AdvanceDestination(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			awaitTransfer(t, manager, "vm-1")
+			record, err := manager.store.readDestination("vm-1")
+			if err != nil || record.State != destinationReady || !manager.IsDestinationReserved("vm-1") {
+				t.Fatalf("destination = %+v, %v", record, err)
+			}
+			if record.usesMemorySnapshot() || record.memorySnapshotStatus() != "" || source.nextCalls != 0 {
+				t.Fatal("offloaded handoff entered live memory migration")
+			}
+			if host.desired["vm-1"].State != vm.StateRunning || host.observed["vm-1"].SleepState != state || host.sleep == nil {
+				t.Fatal("destination did not preserve sleeping checkpoint")
+			}
+			manager.rootCancel()
+			manager, err = newManager(host, source, disks, manager.kernels, ampleCapacity, 0, nil, manager.telemetry)
+			if err != nil {
+				t.Fatalf("restart lost the ready checkpoint: %v", err)
+			}
+			defer manager.rootCancel()
+			if err := manager.RequestFinish(t.Context(), "mig-1"); err != nil {
+				t.Fatal(err)
+			}
+			record, _ = manager.store.readDestination("vm-1")
+			for range 2 {
+				if err := manager.advanceFinish(t.Context(), record); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if manager.IsDestinationReserved("vm-1") || host.applyStateCalls+host.restoreMemoryCalls+host.activateMemoryCalls != 0 {
+				t.Fatal("finish activated the guest or retained its reservation")
+			}
+			wantDisks := 1
+			if state == vm.SleepStateComatose {
+				wantDisks = 0
+			}
+			if disks.received != wantDisks {
+				t.Fatalf("disk receives = %d, want %d", disks.received, wantDisks)
+			}
+		})
+	}
+}
+
+func TestOffloadedMigrationRejectsResizeAndDiskOnlyMode(t *testing.T) {
+	definition := virtualMachineDefinition("vm-1")
+	definition.Sleep = sleepMigration(t, vm.SleepStateDeepSleeping)
+	if _, err := (&Resize{CPUMillicores: 2000, MemoryMiB: 2048, DiskMiB: 4096}).apply(definition); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("offloaded checkpoint accepted a resize: %v", err)
+	}
+	if err := definition.validateSleepMigration(vm.StateStopped, false); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("offloaded checkpoint accepted disk-only mode: %v", err)
+	}
+}
+
+func TestComatoseSourceFinishesWithoutAFinalDiskSnapshot(t *testing.T) {
+	manager, host, _ := newMigrationManager(t)
+	host.create("vm-1", testSpecification())
+	host.observed["vm-1"] = vm.ObservedRecord{State: vm.StateStopped, SleepState: vm.SleepStateComatose}
+	host.sleep = sleepMigration(t, vm.SleepStateComatose)
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.StopSource(t.Context(), "mig-1", "vm-1", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := manager.DestroySource(t.Context(), "mig-1", "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if host.releaseStorageCalls != 1 || host.removeRuntimeCalls != 1 || host.restoreCalls != 0 {
+		t.Fatalf("source cleanup was not idempotent: %+v", host)
+	}
+	if len(manager.disks.(*fakeMigrationStorage).created) != 0 {
+		t.Fatal("comatose cleanup created a disk snapshot")
 	}
 }
