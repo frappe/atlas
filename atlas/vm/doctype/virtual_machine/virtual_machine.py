@@ -151,6 +151,12 @@ class VirtualMachine(Document):
 		return information.desired.state if information else None
 
 	@property
+	def sleep_state(self) -> str | None:
+		"""Return where Metal keeps the saved state of a sleeping VM. An awake VM has none."""
+		information = self.get_metal_vm_info()
+		return (information.observed.sleep_state or None) if information else None
+
+	@property
 	def error(self) -> str | None:
 		"""Return the last reconciliation failure message, when there is one."""
 		information = self.get_metal_vm_info()
