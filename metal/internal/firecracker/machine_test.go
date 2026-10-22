@@ -47,6 +47,27 @@ func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 	}
 }
 
+func TestSaveAndStopRemovesPreviousRestoreFiles(t *testing.T) {
+	runtime := &Runtime{configuration: Config{MachinesDir: t.TempDir(), FirecrackerBin: "/missing/firecracker"}, units: &stubUnits{}}
+	machine := runtime.newMachine(vm.RuntimeMachine{ID: "vm-1", UserID: 1001})
+	requirement := machine.savedStateRequirement()
+	savedStateFixture(t, runtime.configuration, requirement)
+	previous := filepath.Join(runtime.configuration.chrootRoot(machine.input.ID), "snap")
+	if err := os.MkdirAll(previous, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeSavedStateFile(t, filepath.Join(previous, "mem"), 256)
+	if err := machine.saveAndStop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(previous); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("previous restore files remain: %v", err)
+	}
+	if _, err := runtime.configuration.loadSavedState(requirement); err != nil {
+		t.Fatalf("current saved state was lost: %v", err)
+	}
+}
+
 func TestKillFinishesWhenTheUnitStoppedDespiteASignalError(t *testing.T) {
 	units := &stubUnits{failed: true, killErr: errors.New("Failed to send signal SIGKILL to auxiliary processes")}
 	m := testMachine(units, fcSocket(t, nil), time.Minute)
