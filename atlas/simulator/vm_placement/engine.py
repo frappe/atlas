@@ -5,7 +5,6 @@ from __future__ import annotations
 import heapq
 import math
 import random
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -26,7 +25,6 @@ from atlas.simulator.vm_placement.workload import (
 from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.models import FleetUsage, HostUsage, Resources
 
-RATE_WINDOW_TICKS = 5 * 60 * TICKS_PER_SECOND
 SAMPLE_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 PAID_STATES = frozenset(("running", "asleep", "saving"))
 
@@ -141,7 +139,7 @@ class SimulatedPlacementContext:
 		self.requirements = requirements
 		self.action = action
 		self.current_host_name = current_host_name
-		self.usage = simulation._usage(requirements.tenant_id)
+		self.usage = simulation._usage()
 		self.sleepy_vm_overcommit_factor = simulation.scenario.sleepy_vm_overcommit_factor
 		self.use_dedicated_sleepy_vm_hosts = True
 		self.last_probe_was_contended = False
@@ -150,9 +148,6 @@ class SimulatedPlacementContext:
 	def remaining_seconds(self) -> float:
 		"""A simulated placement has no wall clock deadline."""
 		return math.inf
-
-	def get_placement_rate(self, host_name: str | None = None) -> float:
-		return self._simulation._placement_rate(host_name)
 
 	def try_select(self, host_name: str, *, wait: bool = False) -> bool:
 		"""Select a simulated host when it still has enough capacity."""
@@ -216,7 +211,6 @@ class Simulation:
 		self._tenants = {profile.identifier: _Tenant(profile) for profile in workload.tenants}
 		self._events: list[tuple[int, int, str, object]] = []
 		self._sequence = count()
-		self._placements: deque[tuple[int, str]] = deque()
 		self._strategy: type[PlacementStrategy] | Callable[[SimulatedPlacementContext], None] | None = None
 		self._ready_capacity = Resources(0, 0, 0)
 		self._ready_used = Resources(0, 0, 0)
@@ -293,7 +287,7 @@ class Simulation:
 			and host.used_storage_mib - old.storage_mib + wanted.storage_mib <= total.storage_mib
 		)
 
-	def _usage(self, tenant_id: int) -> FleetUsage:
+	def _usage(self) -> FleetUsage:
 		at = SAMPLE_EPOCH + timedelta(seconds=self._now / TICKS_PER_SECOND)
 		hosts = tuple(
 			HostUsage(
@@ -307,15 +301,11 @@ class Simulation:
 					max(host.host_type.memory_mib - host.used_memory_mib, 0),
 					max(host.host_type.storage_mib - host.used_storage_mib, 0),
 				),
-				tenant_vm_count=sum(
-					self._virtual_machines[key].tenant_id == tenant_id for key in host.allocations if key > 0
-				),
 				sleepy_reserved_memory_mib=sum(
 					self.scenario.shape(self._virtual_machines[key].shape_name).memory_mib
 					for key in host.allocations
 					if key > 0 and self.scenario.shape(self._virtual_machines[key].shape_name).is_sleepy
 				),
-				placement_count=self._placement_count(host.name),
 			)
 			for host in self._hosts.values()
 			if host.ready
@@ -328,18 +318,8 @@ class Simulation:
 				sum(host.free.memory_mib for host in hosts),
 				sum(host.free.storage_mib for host in hosts),
 			),
-			sum(host.tenant_vm_count for host in hosts),
 			sum(host.sleepy_reserved_memory_mib for host in hosts),
-			sum(host.placement_count for host in hosts),
 		)
-
-	def _placement_count(self, host_name: str | None) -> int:
-		while self._placements and self._placements[0][0] < self._now - RATE_WINDOW_TICKS:
-			self._placements.popleft()
-		return sum(host_name is None or name == host_name for _, name in self._placements)
-
-	def _placement_rate(self, host_name: str | None) -> float:
-		return self._placement_count(host_name) / 5
 
 	def _choose(
 		self, requirements: PlacementRequirements, action: str, vm: _VM | None
@@ -469,7 +449,6 @@ class Simulation:
 			vm_id,
 			Resources(shape.cpu_millicores, shape.memory_mib, allocation.disk_mib),
 		)
-		self._placements.append((self._now, host_name))
 		self._created += 1
 		self._schedule(
 			self._now + max(1, round(self.scenario.traffic.boot_seconds * TICKS_PER_SECOND)),

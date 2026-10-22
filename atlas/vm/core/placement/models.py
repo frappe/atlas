@@ -56,9 +56,7 @@ class HostUsage:
 	sample_created_at: datetime
 	total: Resources
 	free: Resources
-	tenant_vm_count: int
 	sleepy_reserved_memory_mib: int
-	placement_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +66,4 @@ class FleetUsage:
 	hosts: tuple[HostUsage, ...]
 	total: Resources
 	free: Resources
-	tenant_vm_count: int
 	sleepy_reserved_memory_mib: int
-	placement_count: int

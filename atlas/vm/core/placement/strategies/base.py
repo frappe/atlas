@@ -155,10 +155,6 @@ class PlacementStrategy(ABC):
 			and host.free.storage_mib >= self.requirements.disk_mib
 		]
 
-	def get_placement_rate(self, host_name: str | None = None) -> float:
-		"""Return the recent placement rate for a host or the fleet."""
-		return self._placement.get_placement_rate(host_name)
-
 	def try_select(self, host_name: str, *, wait: bool = False) -> bool:
 		"""Lock and recheck one host, and report whether this placement selected it."""
 		return self._placement.try_select(host_name, wait=wait)

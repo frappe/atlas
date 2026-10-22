@@ -7,25 +7,24 @@ from typing import override
 from atlas.vm.core.placement.models import HostUsage
 from atlas.vm.core.placement.strategies.base import PlacementStrategy, register
 
+# Hosts in one memory band rank by storage, then CPU.
+MEMORY_PRESSURE_BAND = 0.05
+
 
 @register("balanced")
 class BalancedStrategy(PlacementStrategy):
-	"""Balance tenant isolation, placement rate, CPU shortfall, and resource pressure.
+	"""Balance memory, storage, and CPU pressure.
 
 	The strategy keeps a lifecycle operation on its current host when capacity permits.
 	For a new placement, it ranks eligible hosts by these keys:
 
-	1. The number of VMs from the same tenant, from low to high.
-	2. The placement rate during the last 5 minutes, from low to high.
-	3. The projected CPU shortfall, from low to high.
-	4. The projected memory or storage pressure, from low to high.
-	5. The host name.
+	1. The projected memory pressure in 5% bands, from low to high.
+	2. The projected storage pressure, from low to high.
+	3. The projected CPU pressure, from low to high.
+	4. The host name.
 
 	For a sleepy VM, the memory rank applies the configured overcommit factor. The
 	locked capacity check does not apply this factor.
-
-	Example: Host A has 2 VMs from the tenant, and host B has 1. Host B ranks first,
-	even if host A has a lower placement rate.
 	"""
 
 	@override
@@ -38,8 +37,8 @@ class BalancedStrategy(PlacementStrategy):
 		eligible_hosts = self.get_eligible_hosts(host_pool)
 		self.select_from_ranked(sorted(eligible_hosts, key=self._host_priority))
 
-	def _host_priority(self, host: HostUsage) -> tuple[int, float, int, float, str]:
-		"""Prefer fewer tenant VMs, then a quieter host, then a better fit."""
+	def _host_priority(self, host: HostUsage) -> tuple[int, float, float, str]:
+		"""Prefer a lower memory band, then lower storage pressure, then lower CPU pressure."""
 		requirements = self.requirements
 		factor = self.sleepy_vm_overcommit_factor if requirements.is_sleepy else 1.0
 		used_memory_mib = host.total.memory_mib - host.free.memory_mib
@@ -50,11 +49,8 @@ class BalancedStrategy(PlacementStrategy):
 		storage_pressure = (
 			host.total.storage_mib - host.free.storage_mib + requirements.disk_mib
 		) / host.total.storage_mib
+		cpu_pressure = (
+			host.total.cpu_millicores - host.free.cpu_millicores + requirements.cpu_millicores
+		) / host.total.cpu_millicores
 
-		return (
-			host.tenant_vm_count,
-			self.get_placement_rate(host.name),
-			max(requirements.cpu_millicores - host.free.cpu_millicores, 0),
-			max(memory_pressure, storage_pressure),
-			host.name,
-		)
+		return int(memory_pressure // MEMORY_PRESSURE_BAND), storage_pressure, cpu_pressure, host.name
