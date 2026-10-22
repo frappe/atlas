@@ -13,7 +13,6 @@ from atlas.vm.core.placement.affinity import AffinityRules, AffinityUnsatisfied
 from atlas.vm.core.placement.context import (
 	CAPACITY_MAXIMUM_AGE,
 	LOCK_WAIT_MAXIMUM_SECONDS,
-	PLACEMENT_RATE_WINDOW,
 	PlacementContext,
 	is_pool_known_full,
 	remember_pool_is_full,
@@ -36,9 +35,7 @@ def host_row(name: str = "a", **overrides: object) -> frappe._dict:
 		free_cpu_millicores=1000,
 		free_memory_mib=4096,
 		free_storage_mib=20480,
-		tenant_vm_count=0,
 		sleepy_reserved_memory_mib=0,
-		placement_count=0,
 	)
 	row.update(overrides)
 	return row
@@ -353,7 +350,7 @@ class TestPlacementContext(UnitTestCase):
 	def test_snapshot_aggregates_hosts_and_drops_excluded_servers(self) -> None:
 		rows = [
 			host_row("a", free_memory_mib=3000, free_storage_mib=15000),
-			host_row("b", total_memory_mib=8192, free_memory_mib=6000, tenant_vm_count=2),
+			host_row("b", total_memory_mib=8192, free_memory_mib=6000),
 			host_row("excluded"),
 		]
 		placement = self.context([rows], exclude_servers={"excluded"})
@@ -361,7 +358,6 @@ class TestPlacementContext(UnitTestCase):
 		self.assertEqual([host.name for host in placement.usage.hosts], ["a", "b"])
 		self.assertEqual(placement.usage.total, Resources(2000, 12288, 40960))
 		self.assertEqual(placement.usage.free, Resources(2000, 9000, 35480))
-		self.assertEqual(placement.usage.tenant_vm_count, 2)
 		self.assertEqual(placement.action, "migration")
 
 	def test_allowed_servers_limit_the_snapshot_and_selection(self) -> None:
@@ -374,18 +370,6 @@ class TestPlacementContext(UnitTestCase):
 			self.assertFalse(placement.try_select("excluded"))
 
 		acquire.assert_not_called()
-
-	def test_rate_comes_from_the_snapshot_without_another_query(self) -> None:
-		rows = [host_row("a", placement_count=2), host_row("b", placement_count=1)]
-		with patch.object(PlacementContext, "_load_snapshot_rows", return_value=rows) as load:
-			placement = PlacementContext(self.requirements(), 1.0)
-
-			self.assertEqual(placement.get_placement_rate(), 0.6)
-			self.assertEqual(placement.get_placement_rate("a"), 0.4)
-			self.assertEqual(placement.get_placement_rate("b"), 0.2)
-			self.assertEqual(placement.get_placement_rate("missing"), 0.0)
-
-		load.assert_called_once()
 
 	def test_select_holds_the_host_lock_after_the_capacity_check(self) -> None:
 		placement = self.context([[host_row("a")]])
@@ -847,28 +831,3 @@ class TestPlacementSnapshot(IntegrationTestCase):
 
 		# The VM made after the sample, the draft, and the resized migration target.
 		self.assertEqual(self.snapshot()[self.host_name].free_memory_mib, 8192 - 1024 - 512 - 2048)
-
-	def test_the_placement_rate_counts_virtual_machines_of_the_last_five_minutes(self) -> None:
-		self.insert_sample(self.host_name, seconds_ago=30)
-		self.insert_virtual_machine(seconds_ago=60)
-		self.insert_virtual_machine(seconds_ago=600)
-
-		self.assertEqual(self.snapshot()[self.host_name].placement_count, 1)
-
-	def test_a_migrating_virtual_machine_counts_on_its_destination(self) -> None:
-		self.insert_sample(self.host_name, seconds_ago=30)
-		virtual_machine = self.insert_virtual_machine(seconds_ago=3600, server=str(uuid7()))
-		migration = frappe.get_doc(
-			{
-				"doctype": "Virtual Machine Migration",
-				"name": str(uuid7()),
-				"virtual_machine": virtual_machine,
-				"destination_metal_server": self.host_name,
-				"status": "scheduled",
-			}
-		)
-		migration.db_insert()
-		self.assertEqual(self.snapshot()[self.host_name].tenant_vm_count, 0)
-
-		migration.db_set("status", "copying")
-		self.assertEqual(self.snapshot()[self.host_name].tenant_vm_count, 1)
