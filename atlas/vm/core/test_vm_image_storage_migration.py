@@ -65,7 +65,7 @@ class TestVirtualMachineImageStorageMigrationRequest(UnitTestCase):
 class TestVirtualMachineImageStorageMigration(UnitTestCase):
 	def test_migration_uploads_and_keeps_the_files_for_their_retention_time(self) -> None:
 		image = build_image()
-		kernel = SimpleNamespace(name="b" * 64, object_key=None, file="file-kernel", save=Mock())
+		kernel = SimpleNamespace(name="b" * 64, object_key=None, file="file-kernel", db_set=Mock())
 		client = Mock()
 
 		with (
@@ -91,8 +91,7 @@ class TestVirtualMachineImageStorageMigration(UnitTestCase):
 			VirtualMachineImageStorageMigration().migrate("image-1")
 
 		self.assertEqual(image.image_object_key, "images/image-1/rootfs.img")
-		self.assertEqual(kernel.object_key, f"kernels/{'b' * 64}")
-		kernel.save.assert_called_once()
+		kernel.db_set.assert_called_once_with("object_key", f"kernels/{'b' * 64}")
 		self.assertEqual(image.artifact_storage, "Object Storage")
 		self.assertEqual(image.image_file, "file-rootfs")
 		self.assertEqual(kernel.file, "file-kernel")
