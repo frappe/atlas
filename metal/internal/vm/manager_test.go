@@ -31,6 +31,7 @@ type fakeRuntime struct {
 	diskRefresh    int
 	diskLimitMiBps int
 	inspectError   error
+	onInspect      func()
 	restoreError   error
 	// restoreFailureState is the state a failed saved-state restore leaves behind.
 	restoreFailureState State
@@ -70,6 +71,9 @@ func (runtime *fakeRuntime) InstallSavedState(_ context.Context, _ RuntimeMachin
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
+	if runtime.onInspect != nil {
+		runtime.onInspect()
+	}
 	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState}, runtime.inspectError
 }
 
@@ -671,6 +675,31 @@ func TestRestartIntentSurvivesManagerRecreation(t *testing.T) {
 	}
 	if observed.RestartGeneration != 1 {
 		t.Fatalf("restart generation = %d, want 1", observed.RestartGeneration)
+	}
+}
+
+func TestRetryKeepsTheLastErrorUntilTheOperationCompletes(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.inspectError = errors.New("runtime unavailable")
+	if err := manager.Reconcile(context.Background(), "machine-1"); err == nil {
+		t.Fatal("reconcile succeeded while inspection failed")
+	}
+
+	// The network phase of the retry succeeds before inspect runs again.
+	runtime.inspectError = nil
+	runtime.onInspect = func() {
+		if observed, _ := manager.store.readObserved("machine-1"); observed.Error == nil {
+			t.Error("the retry cleared the last error before the operation completed")
+		}
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if observed, _ := manager.store.readObserved("machine-1"); observed.Error != nil {
+		t.Fatalf("completed operation kept error %+v", observed.Error)
 	}
 }
 

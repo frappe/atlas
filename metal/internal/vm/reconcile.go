@@ -524,7 +524,7 @@ func (manager *Manager) runOperation(
 	}
 	observed.OperationID = operationID
 	observed.UpdatedAt = now
-	observed.Error = nil
+	// The last error stays visible until the operation completes, so a retry does not hide it.
 	if err := manager.store.writeObserved(identifier, *observed); err != nil {
 		manager.logOperationFailure(ctx, identifier, observed, phase, now, err)
 		return err
