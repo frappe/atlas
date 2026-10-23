@@ -5,6 +5,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import frappe
+from frappe.model.delete_doc import check_if_doc_is_linked
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.core.exceptions import AtlasUserError
@@ -410,3 +411,13 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 
 		run_next_step.assert_not_called()
 		self.assertEqual(frappe.db.get_value("Metal Server Drain", name, "status"), "Cancelled")
+
+	def test_drain_history_does_not_block_deletion(self) -> None:
+		virtual_machine = self.insert_virtual_machine()
+		name = self.submit_drain(move_only_selected_vms=1, virtual_machines=[virtual_machine])
+		drain = self.step(name)
+		self.settle_last_migration(drain, "completed")
+
+		# Virtual Machine on_trash deletes its migrations before Frappe checks links to the VM.
+		frappe.delete_doc("Virtual Machine Migration", drain.migrations[-1].virtual_machine_migration)
+		check_if_doc_is_linked(frappe.get_doc("Virtual Machine", virtual_machine))

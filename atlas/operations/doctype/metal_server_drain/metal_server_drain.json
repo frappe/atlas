@@ -7,14 +7,14 @@
  "field_order": [
   "section_break_overview",
   "source_metal_server",
+  "status",
+  "progress_percent",
+  "parallel_migrations",
+  "column_break_overview",
   "is_sleepy_rebalance",
   "has_memory_snapshot",
   "allow_disk_only_fallback",
   "retry_failed_migrations",
-  "parallel_migrations",
-  "column_break_overview",
-  "status",
-  "progress_percent",
   "amended_from",
   "section_break_virtual_machines",
   "move_only_selected_vms",
@@ -126,6 +126,8 @@
    "search_index": 1
   },
   {
+   "collapsible": 1,
+   "collapsible_depends_on": "true",
    "fieldname": "section_break_virtual_machines",
    "fieldtype": "Section Break",
    "label": "Virtual Machines"
@@ -145,6 +147,8 @@
    "options": "Metal Server Drain Virtual Machine"
   },
   {
+   "collapsible": 1,
+   "collapsible_depends_on": "true",
    "fieldname": "section_break_destinations",
    "fieldtype": "Section Break",
    "label": "Destinations"
@@ -228,7 +232,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-23 13:00:00.000000",
+ "modified": "2026-10-23 21:57:11.405745",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",
