@@ -37,7 +37,8 @@ func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.E
 		}
 	}()
 
-	if observed.SleepState == SleepStateAwake || desired.Generation > observed.Generation || manager.isMigrating(desired.ID) {
+	// A locked source keeps the request: its migration then fails at stop, and the VM wakes after unlock.
+	if observed.SleepState == SleepStateAwake || desired.Generation > observed.Generation || manager.isDestinationReserved(desired.ID) {
 		return nil
 	}
 	desired.Generation++

@@ -70,12 +70,12 @@ Use the normal migration action for a deep-sleeping or comatose VM. Atlas requir
 
 | Source sleep state | Transfer |
 | --- | --- |
-| `deep-sleeping` | The local disk uses the normal ZFS transfer. The remote memory checkpoint stays in object storage. |
+| `deep-sleeping` | The full disk copies before the source stops, while its network stays connected. Only a small final snapshot copies after stop. The remote memory checkpoint stays in object storage. |
 | `comatose` | Configuration and remote memory and disk references move. No memory or disk snapshots transfer. |
 
 Neither host downloads remote snapshots or starts Firecracker during migration. The destination copies a missing kernel through the existing kernel transfer. The source removes its network before destination network setup. The destination stays stopped with its original sleep state through `ready` and `finish`.
 
-Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
+Traffic to the source before it stops fails the migration: the source refuses to stop, and the VM wakes on the source after Atlas aborts. Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
 
 For direct Metal calls, use `has_memory_snapshot: true` after checking host compatibility. Supply each artifact's original `object_key` through the sleep-state URL refresh before migration. A disk-only request rejects an offloaded checkpoint rather than cold-booting it.
 

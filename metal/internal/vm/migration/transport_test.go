@@ -100,6 +100,18 @@ func TestStopSourceReportsASourceWithoutMemory(t *testing.T) {
 	}
 }
 
+func TestStopSourceReportsAWokenSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":{"code":"source_woke","message":"sleeping source received traffic"}}`))
+	}))
+	defer server.Close()
+
+	if _, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2, false); !errors.Is(err, ErrSourceWoke) {
+		t.Fatalf("stop error = %v", err)
+	}
+}
+
 func TestSourceClientUsesALongerDefaultStopTimeout(t *testing.T) {
 	client := NewSourceClient(0, nil)
 	if client.client.Timeout != defaultControlTimeout || client.stopClient.Timeout != defaultStopTimeout {

@@ -378,7 +378,7 @@ func (m *Manager) NextSourceSnapshot(ctx context.Context, migrationID, virtualMa
 	if err != nil {
 		return SourceSnapshot{}, err
 	}
-	if record.State != sourceLocked || record.Sleep != nil {
+	if record.State != sourceLocked || (record.Sleep != nil && record.Sleep.State == vm.SleepStateComatose) {
 		return SourceSnapshot{}, vm.ErrConflict
 	}
 	if receivedSequence < 0 || receivedSequence > record.Sequence {
@@ -435,6 +435,11 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 	}
 
 	if record.State == sourceLocked {
+		if record.Sleep != nil {
+			if err := m.assertSourceAsleep(virtualMachineID); err != nil {
+				return SourceSnapshot{}, err
+			}
+		}
 		if record.HasMemorySnapshot != nil && *record.HasMemorySnapshot != hasMemorySnapshot {
 			return SourceSnapshot{}, vm.ErrConflict
 		}
@@ -491,6 +496,23 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 		}
 	}
 	return m.describeSnapshot(ctx, virtualMachineID, migrationID, record.FinalSequence)
+}
+
+// assertSourceAsleep refuses to stop a sleeping source with a pending wake, so
+// the migration fails and the source can serve the traffic.
+func (m *Manager) assertSourceAsleep(virtualMachineID string) error {
+	desired, err := m.host.ReadDesired(virtualMachineID)
+	if err != nil {
+		return err
+	}
+	observed, err := m.host.ReadObserved(virtualMachineID)
+	if err != nil {
+		return err
+	}
+	if desired.Generation > observed.Generation {
+		return ErrSourceWoke
+	}
+	return nil
 }
 
 // StartSourceStream starts one mutual-TLS listener that sends the requested ZFS stream.

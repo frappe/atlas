@@ -81,6 +81,8 @@ func publicAPIError(err error) *apiError {
 		return newAPIError(http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, migration.ErrNoMemoryToSave):
 		return newAPIError(http.StatusUnprocessableEntity, "memory_snapshot_unavailable", err.Error())
+	case errors.Is(err, migration.ErrSourceWoke):
+		return newAPIError(http.StatusUnprocessableEntity, "source_woke", err.Error())
 	case errors.Is(err, vm.ErrNotFound), errors.Is(err, storage.ErrNotFound):
 		return newAPIError(http.StatusNotFound, "not_found", "resource not found")
 	case errors.Is(err, storage.ErrImageConflict):

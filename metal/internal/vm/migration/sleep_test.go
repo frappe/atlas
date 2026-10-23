@@ -28,7 +28,7 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			manager, host, _ := newMigrationManager(t)
 			host.create("vm-1", testSpecification())
-			host.observed["vm-1"] = vm.ObservedRecord{State: vm.StateStopped, SleepState: state}
+			host.observed["vm-1"] = vm.ObservedRecord{Generation: 1, State: vm.StateStopped, SleepState: state}
 			host.sleep = sleepMigration(t, state)
 			if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", false); !errors.Is(err, vm.ErrConflict) {
 				t.Fatalf("an older destination locked offloaded state: %v", err)
@@ -39,8 +39,9 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 					t.Fatalf("checkpoint handoff = %+v, %v", description, err)
 				}
 			}
-			if _, err := manager.NextSourceSnapshot(t.Context(), "mig-1", "vm-1", 0); !errors.Is(err, vm.ErrConflict) {
-				t.Fatalf("offloaded source accepted a live snapshot: %v", err)
+			_, err := manager.NextSourceSnapshot(t.Context(), "mig-1", "vm-1", 0)
+			if (state == vm.SleepStateComatose) != errors.Is(err, vm.ErrConflict) {
+				t.Fatalf("pre-copy snapshot of a %s source: %v", state, err)
 			}
 			for range 2 {
 				if _, err := manager.StopSource(t.Context(), "mig-1", "vm-1", 0, true); err != nil {
@@ -64,7 +65,7 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 			if host.normalizeCalls+host.saveMemoryCalls+host.restoreCalls != 0 || host.observed["vm-1"].SleepState != state {
 				t.Fatalf("migration woke its source: %+v", host)
 			}
-			wantDisks := 1
+			wantDisks := 2 // the pre-copy and the final snapshot
 			if state == vm.SleepStateComatose {
 				wantDisks = 0
 			}
@@ -90,9 +91,12 @@ func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
 				t.Error("migration downloaded offloaded memory")
 				return nil
 			}
-			source.stopSnapshot = SourceSnapshot{Sequence: 1, SizeBytes: 1024, GUID: "disk-1"}
+			source.nextSnapshot = SourceSnapshot{Sequence: 1, SizeBytes: 1024, GUID: "disk-1"}
+			source.stopSnapshot = SourceSnapshot{Sequence: 2, SizeBytes: 0, GUID: "disk-1"}
+			wantNext := 1
 			if state == vm.SleepStateComatose {
 				source.stopSnapshot = SourceSnapshot{}
+				wantNext = 0
 			}
 			disks := manager.disks.(*fakeMigrationStorage)
 			disks.guid = "disk-1"
@@ -107,7 +111,7 @@ func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
 			if err != nil || record.State != destinationReady || !manager.IsDestinationReserved("vm-1") {
 				t.Fatalf("destination = %+v, %v", record, err)
 			}
-			if record.usesMemorySnapshot() || record.memorySnapshotStatus() != "" || source.nextCalls != 0 {
+			if record.usesMemorySnapshot() || record.memorySnapshotStatus() != "" || source.nextCalls != wantNext {
 				t.Fatal("offloaded handoff entered live memory migration")
 			}
 			if host.desired["vm-1"].State != vm.StateRunning || host.observed["vm-1"].SleepState != state || host.sleep == nil {
@@ -131,7 +135,7 @@ func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
 			if manager.IsDestinationReserved("vm-1") || host.applyStateCalls+host.restoreMemoryCalls+host.activateMemoryCalls != 0 {
 				t.Fatal("finish activated the guest or retained its reservation")
 			}
-			wantDisks := 1
+			wantDisks := 2 // the pre-copy and the final snapshot
 			if state == vm.SleepStateComatose {
 				wantDisks = 0
 			}
@@ -156,7 +160,7 @@ func TestOffloadedMigrationRejectsResizeAndDiskOnlyMode(t *testing.T) {
 func TestComatoseSourceFinishesWithoutAFinalDiskSnapshot(t *testing.T) {
 	manager, host, _ := newMigrationManager(t)
 	host.create("vm-1", testSpecification())
-	host.observed["vm-1"] = vm.ObservedRecord{State: vm.StateStopped, SleepState: vm.SleepStateComatose}
+	host.observed["vm-1"] = vm.ObservedRecord{Generation: 1, State: vm.StateStopped, SleepState: vm.SleepStateComatose}
 	host.sleep = sleepMigration(t, vm.SleepStateComatose)
 	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", true); err != nil {
 		t.Fatal(err)
@@ -174,5 +178,24 @@ func TestComatoseSourceFinishesWithoutAFinalDiskSnapshot(t *testing.T) {
 	}
 	if len(manager.disks.(*fakeMigrationStorage).created) != 0 {
 		t.Fatal("comatose cleanup created a disk snapshot")
+	}
+}
+
+func TestTrafficToASleepingSourceFailsTheMigrationBeforeStop(t *testing.T) {
+	manager, host, _ := newMigrationManager(t)
+	host.create("vm-1", testSpecification())
+	host.observed["vm-1"] = vm.ObservedRecord{Generation: 1, State: vm.StateStopped, SleepState: vm.SleepStateDeepSleeping}
+	host.sleep = sleepMigration(t, vm.SleepStateDeepSleeping)
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", true); err != nil {
+		t.Fatal(err)
+	}
+	desired := host.desired["vm-1"]
+	desired.Generation++
+	host.desired["vm-1"] = desired
+	if _, err := manager.StopSource(t.Context(), "mig-1", "vm-1", 0, true); !errors.Is(err, ErrSourceWoke) {
+		t.Fatalf("a woken source stopped: %v", err)
+	}
+	if err := manager.UnlockSource(t.Context(), "mig-1", "vm-1"); err != nil || manager.IsSourceLocked("vm-1") {
+		t.Fatalf("a woken source stayed locked: %v", err)
 	}
 }

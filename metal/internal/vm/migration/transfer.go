@@ -26,6 +26,9 @@ var errTransferFailed = errors.New("migration transfer failed")
 // ErrNoMemoryToSave reports a memory snapshot request for a source that is not running or paused.
 var ErrNoMemoryToSave = errors.New("source has no guest memory to save")
 
+// ErrSourceWoke reports a sleeping source that received traffic before it stopped.
+var ErrSourceWoke = errors.New("sleeping source received traffic")
+
 // backgroundOperation cancels one VM's background worker and signals its exit.
 type backgroundOperation struct {
 	cancel context.CancelFunc
@@ -142,15 +145,21 @@ func (m *Manager) advanceCopying(ctx context.Context, record destinationRecord) 
 		return err
 	}
 
+	// A deep-sleeping source keeps its network during the full copy, so traffic can still wake it.
+	deepSleeping := record.hasSleepCheckpoint() && record.Definition.Sleep.State == vm.SleepStateDeepSleeping
 	last := lastCompletedSequence(record)
-	if last == 0 && record.SourceObservedState != vm.StateRunning {
+	if last == 0 && record.SourceObservedState != vm.StateRunning && !deepSleeping {
 		return m.enterStopping(ctx, record)
 	}
-	if last >= 1 && m.transferLimitReached(record) {
+	if last >= 1 && (deepSleeping || m.transferLimitReached(record)) {
 		return m.enterStopping(ctx, record)
 	}
 
 	snapshot, err := m.source.NextSnapshot(ctx, record.Source, record.ID, record.VirtualMachineID, last)
+	if deepSleeping && errors.Is(err, vm.ErrConflict) {
+		// An older source cannot snapshot a sleeping VM before it stops.
+		return m.enterStopping(ctx, record)
+	}
 	if err != nil {
 		return err
 	}
@@ -173,7 +182,7 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 		lastCompletedSequence(record),
 		record.HasMemorySnapshot,
 	)
-	if errors.Is(err, ErrNoMemoryToSave) {
+	if errors.Is(err, ErrNoMemoryToSave) || errors.Is(err, ErrSourceWoke) {
 		return m.failTransfer(ctx, record, "stop source: "+err.Error())
 	}
 	if err != nil {
