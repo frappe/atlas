@@ -53,12 +53,18 @@ type VirtualMachineConfig struct {
 type VirtualMachineReconciler struct {
 	passScheduler
 
-	manager                 VirtualMachineManager
-	operation               func(context.Context, string) error
-	maxConcurrentOperations int
-	operationTimeout        time.Duration
-	logger                  *slog.Logger
-	backoff                 *backoff
+	manager          VirtualMachineManager
+	operation        func(context.Context, string) error
+	operationTimeout time.Duration
+	logger           *slog.Logger
+	backoff          *backoff
+
+	// slots bounds active operations across passes. A pass does not wait for
+	// its operations, so one slow VM does not delay the next pass.
+	slots         chan struct{}
+	operations    sync.WaitGroup
+	inFlightMutex sync.Mutex
+	inFlight      map[string]bool
 }
 
 // NewVirtualMachineReconciler returns a reconciler that runs at interval.
@@ -78,13 +84,14 @@ func NewVirtualMachineReconciler(
 	}
 
 	return &VirtualMachineReconciler{
-		passScheduler:           newPassScheduler("virtual_machine", interval, configuration.Telemetry),
-		manager:                 manager,
-		operation:               manager.Reconcile,
-		maxConcurrentOperations: configuration.MaxConcurrentOperations,
-		operationTimeout:        configuration.OperationTimeout,
-		logger:                  configuration.Logger,
-		backoff:                 newBackoff(interval),
+		passScheduler:    newPassScheduler("virtual_machine", interval, configuration.Telemetry),
+		manager:          manager,
+		operation:        manager.Reconcile,
+		operationTimeout: configuration.OperationTimeout,
+		logger:           configuration.Logger,
+		backoff:          newBackoff(interval),
+		slots:            make(chan struct{}, configuration.MaxConcurrentOperations),
+		inFlight:         make(map[string]bool),
 	}
 }
 
@@ -117,12 +124,14 @@ func (r *VirtualMachineReconciler) Wake() {
 	r.passScheduler.Wake()
 }
 
-// Run reconciles every VM until ctx is canceled.
+// Run reconciles every VM until ctx is canceled, then waits for active operations.
 func (r *VirtualMachineReconciler) Run(ctx context.Context) {
 	r.run(ctx, r.reconcileAll)
+	r.operations.Wait()
 }
 
-// reconcileAll reconciles every known VM with a bounded number of workers.
+// reconcileAll starts an operation for every known VM that has none active. It
+// waits for a free slot, not for the operations it starts.
 func (r *VirtualMachineReconciler) reconcileAll(ctx context.Context) {
 	listContext, cancelList := context.WithTimeout(ctx, r.operationTimeout)
 	ids, err := r.manager.ListIDs(listContext)
@@ -132,36 +141,42 @@ func (r *VirtualMachineReconciler) reconcileAll(ctx context.Context) {
 		r.logFailure(ctx, "reconciler list failed", err)
 		return
 	}
-	if len(ids) == 0 {
-		return
-	}
-
-	jobs := make(chan string)
-	workerCount := min(len(ids), r.maxConcurrentOperations)
-
-	var workers sync.WaitGroup
-	workers.Add(workerCount)
-	for range workerCount {
-		go func() {
-			defer workers.Done()
-			for id := range jobs {
-				r.reconcile(ctx, id)
-			}
-		}()
-	}
-
-	defer func() {
-		close(jobs)
-		workers.Wait()
-	}()
 
 	for _, id := range ids {
+		if !r.startOperation(id) {
+			continue
+		}
 		select {
-		case jobs <- id:
+		case r.slots <- struct{}{}:
 		case <-ctx.Done():
+			r.finishOperation(id)
 			return
 		}
+		r.operations.Go(func() {
+			defer func() {
+				<-r.slots
+				r.finishOperation(id)
+			}()
+			r.reconcile(ctx, id)
+		})
 	}
+}
+
+// startOperation marks id active, or reports false when it already is.
+func (r *VirtualMachineReconciler) startOperation(id string) bool {
+	r.inFlightMutex.Lock()
+	defer r.inFlightMutex.Unlock()
+	if r.inFlight[id] {
+		return false
+	}
+	r.inFlight[id] = true
+	return true
+}
+
+func (r *VirtualMachineReconciler) finishOperation(id string) {
+	r.inFlightMutex.Lock()
+	delete(r.inFlight, id)
+	r.inFlightMutex.Unlock()
 }
 
 // reconcile applies one VM's desired record under the operation timeout.
