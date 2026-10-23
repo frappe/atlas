@@ -113,8 +113,21 @@ class TestVirtualMachineState(UnitTestCase):
 			vm_state.report_unknown_virtual_machines("metal-1", ["vm-00001", "vm-00009"])
 
 		log_error.assert_called_once()
-		self.assertIn("vm-00009", log_error.call_args.args[0])
-		self.assertNotIn("vm-00001", log_error.call_args.args[0])
+		self.assertIn("vm-00009", log_error.call_args.kwargs["message"])
+		self.assertNotIn("vm-00001", log_error.call_args.kwargs["message"])
+
+	def test_unreadable_records_on_a_host_are_logged_once(self) -> None:
+		frappe.cache.delete_value("atlas:invalid-virtual-machines:metal-1")
+		with patch.object(vm_state.frappe, "log_error") as log_error:
+			vm_state.report_invalid_virtual_machines("metal-1", ["vm-00002"])
+			vm_state.report_invalid_virtual_machines("metal-1", ["vm-00002"])
+			vm_state.report_invalid_virtual_machines("metal-1", [])
+
+		log_error.assert_called_once()
+		self.assertIn("vm-00002", log_error.call_args.kwargs["message"])
+		self.assertEqual(
+			log_error.call_args.kwargs["title"], "Server metal-1 cannot read Virtual Machine records"
+		)
 
 	def test_an_invalid_response_is_rejected(self) -> None:
 		for reported in ([], {"vm-00001": "running"}, {"vm-00001": {"status": ""}}, {"vm-00001": {}}):

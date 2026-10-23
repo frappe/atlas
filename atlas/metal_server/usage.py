@@ -13,7 +13,7 @@ from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server imp
 )
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility
-from atlas.vm.core.vm_state import store_reported_states
+from atlas.vm.core.vm_state import report_invalid_virtual_machines, store_reported_states
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -84,6 +84,7 @@ def sync_server(
 		)
 		values = get_usage_values(response.get("capacity"))
 		store_reported_states(server_name, response.get("virtual_machines"))
+		report_invalid_virtual_machines(server_name, response.get("invalid_virtual_machines") or [])
 	except MetalClientError:
 		log_sync_failure(server.name, f"Metal synchronization failed for Server {server.name}")
 		return

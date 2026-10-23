@@ -6,7 +6,7 @@ import frappe
 from frappe.utils import now_datetime
 
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
-UNKNOWN_REPORT_REPEAT_SECONDS = 3600
+HOST_REPORT_REPEAT_SECONDS = 3600
 
 
 def store_reported_states(server_name: str, reported: object) -> None:
@@ -69,16 +69,31 @@ def report_unknown_virtual_machines(server_name: str, reported_names: list[str])
 	if not reported_names:
 		return
 	known = set(frappe.get_all("Virtual Machine", filters={"name": ["in", reported_names]}, pluck="name"))
-	unknown = sorted(set(reported_names) - known)
-	key = f"atlas:unknown-virtual-machines:{server_name}"
-	if not unknown or frappe.cache.get_value(key):
-		return
+	if unknown := sorted(set(reported_names) - known):
+		log_host_report(
+			f"atlas:unknown-virtual-machines:{server_name}",
+			f"Server {server_name} runs unknown Virtual Machines",
+			"Atlas has no Virtual Machine record for: " + ", ".join(unknown),
+		)
 
-	frappe.cache.set_value(key, 1, expires_in_sec=UNKNOWN_REPORT_REPEAT_SECONDS)
-	frappe.log_error(
-		"Atlas has no Virtual Machine record for: " + ", ".join(unknown),
-		f"Server {server_name} runs unknown Virtual Machines",
-	)
+
+def report_invalid_virtual_machines(server_name: str, names: list[str]) -> None:
+	"""Log, once an hour, the VMs whose records the host cannot read. Metal leaves them
+	unmanaged and offers no capacity until an operator repairs the record."""
+	if names:
+		log_host_report(
+			f"atlas:invalid-virtual-machines:{server_name}",
+			f"Server {server_name} cannot read Virtual Machine records",
+			"Metal cannot read the records of: " + ", ".join(sorted(names)),
+		)
+
+
+def log_host_report(key: str, title: str, message: str) -> None:
+	"""Log one host report, then the same report at most once an hour."""
+	if frappe.cache.get_value(key):
+		return
+	frappe.cache.set_value(key, 1, expires_in_sec=HOST_REPORT_REPEAT_SECONDS)
+	frappe.log_error(title=title, message=message)
 
 
 def get_reported_statuses(reported: object) -> dict[str, str]:
