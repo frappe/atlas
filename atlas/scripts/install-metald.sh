@@ -318,6 +318,7 @@ ExecStartPre=/usr/local/lib/metal/network-setup
 ExecStart=/usr/bin/metald serve --config $config_file
 Restart=on-failure
 RestartSec=5
+WatchdogSec=60
 # Keep PTY masters across a metald restart or stop.
 NotifyAccess=main
 FileDescriptorStoreMax=1024

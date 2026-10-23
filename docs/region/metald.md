@@ -78,7 +78,7 @@ Metal hides command output and secrets in public errors. Read host logs and the 
 
 ## Restart after a failure
 
-systemd restarts `metal.service` 5 seconds after a failure, with no start limit, so `metald` recovers by itself when its cause goes away. VMs keep running during the restart.
+systemd restarts `metal.service` 5 seconds after a failure, with no start limit, so `metald` recovers by itself when its cause goes away. `metald` pings the systemd watchdog. If `metald` hangs for 60 seconds, systemd stops it and starts it again. VMs keep running during the restart.
 
 ## What shutdown stops
 
