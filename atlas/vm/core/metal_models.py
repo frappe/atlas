@@ -459,7 +459,7 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
-		sleep_state=string_field(value, "sleep_state", default=""),
+		sleep_state=sleep_state_field(value),
 		last_request_at=string_field(value, "last_request_at", default=""),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),
@@ -494,6 +494,12 @@ def string_field(value: dict[str, Any], field_name: str, *, default: str | None 
 	if not isinstance(field_value, str):
 		raise ValueError(f"{field_name} must be a string")
 	return field_value
+
+
+def sleep_state_field(value: dict[str, Any]) -> str:
+	"""Return the sleep state. A metald older than Atlas reports coma as comatose."""
+	sleep_state = string_field(value, "sleep_state", default="")
+	return "coma" if sleep_state == "comatose" else sleep_state
 
 
 def timestamp_field(value: dict[str, Any], field_name: str) -> datetime | None:

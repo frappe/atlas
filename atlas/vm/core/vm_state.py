@@ -7,7 +7,7 @@ import frappe
 from frappe.query_builder import Case
 from frappe.utils import now_datetime
 
-from atlas.vm.core.metal_models import timestamp_field
+from atlas.vm.core.metal_models import sleep_state_field, timestamp_field
 
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
 SLEEP_STATES = ("sleeping", "deep-sleeping", "coma")
@@ -122,7 +122,7 @@ def get_reported_states(reported: object) -> dict[str, frappe._dict]:
 		if not isinstance(state, dict):
 			raise ValueError("Metal virtual machine response has invalid values")
 		status = state.get("status")
-		sleep_state = state.get("sleep_state") or ""
+		sleep_state = sleep_state_field(state)
 		sleep_checkpoint_id = state.get("sleep_snapshot_id") or None
 		if (
 			not isinstance(status, str)

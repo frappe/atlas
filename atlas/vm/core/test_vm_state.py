@@ -138,6 +138,11 @@ class TestVirtualMachineState(UnitTestCase):
 			with self.assertRaises(ValueError):
 				vm_state.get_reported_states(reported)
 
+	def test_an_older_host_reports_coma_by_its_old_name(self) -> None:
+		states = vm_state.get_reported_states({"vm-00001": {"status": "stopped", "sleep_state": "comatose"}})
+
+		self.assertEqual(states["vm-00001"].sleep_state, "coma")
+
 	def test_one_failed_write_does_not_stop_the_other_writes(self) -> None:
 		calls = self.store(
 			names=["vm-00001", "vm-00002"],
