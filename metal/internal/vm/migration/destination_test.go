@@ -577,7 +577,7 @@ func TestAbortRestoresSourceWhenTheStopReplyWasLost(t *testing.T) {
 		if err := store.writeDestination(record); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.requestAbort(t.Context(), "vm-1"); err != nil {
+		if err := manager.requestAbort(t.Context(), "vm-1", false); err != nil {
 			t.Fatal(err)
 		}
 		manager.runTransfer(t.Context(), "vm-1")
@@ -588,6 +588,61 @@ func TestAbortRestoresSourceWhenTheStopReplyWasLost(t *testing.T) {
 		if sourceMachines.restoreCalls != 1 || sourceMachines.restoreMemory != memory {
 			t.Fatalf("memory=%t: source restored %d times with memory=%t", memory, sourceMachines.restoreCalls, sourceMachines.restoreMemory)
 		}
+	}
+}
+
+func TestDiscardAfterAnOperatorRestoredTheSource(t *testing.T) {
+	sourceManager, sourceMachines, _ := newMigrationManager(t)
+	seedSourceVM(t, sourceManager, sourceMachines, vm.StateRunning, 1)
+	if _, err := sourceManager.StopSource(t.Context(), "mig-1", "vm-1", 1, false); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := sourceManager.RestoreSource(t.Context(), "mig-1", "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sourceMachines.restoreCalls != 1 || sourceManager.IsSourceLocked("vm-1") {
+		t.Fatalf("restore calls = %d, locked = %t", sourceMachines.restoreCalls, sourceManager.IsSourceLocked("vm-1"))
+	}
+
+	// The lost destination comes back at ready with a booted guest.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		if r.Method == http.MethodDelete {
+			err = sourceManager.UnlockSource(r.Context(), "mig-1", "vm-1")
+		} else {
+			err = sourceManager.StartSourceRollback(r.Context(), "mig-1", "vm-1")
+		}
+		switch {
+		case errors.Is(err, vm.ErrNotFound):
+			w.WriteHeader(http.StatusNotFound)
+		case err != nil:
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	manager, machines, _ := newMigrationManager(t)
+	manager.source = NewSourceClient(0, nil)
+	store := writeReadyDestination(t, machines, func(r *destinationRecord) {
+		r.Source = server.URL
+		r.SourceStopped = true
+	})
+
+	if err := manager.AbortDestination(t.Context(), "mig-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("abort = %v, want ErrConflict", err)
+	}
+	if err := manager.DiscardDestination(t.Context(), "mig-1"); err != nil {
+		t.Fatal(err)
+	}
+	manager.runTransfer(t.Context(), "vm-1")
+	if record, _ := store.readDestination("vm-1"); record.State != destinationAborted {
+		t.Fatalf("state = %s, want aborted", record.State)
+	}
+	if sourceMachines.restoreCalls != 1 {
+		t.Fatalf("source restored %d times, want 1", sourceMachines.restoreCalls)
 	}
 }
 

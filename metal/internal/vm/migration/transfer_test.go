@@ -358,7 +358,7 @@ func TestAWorkerWriteKeepsAnAbortThatArrivedFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrationManager.requestAbort(t.Context(), "vm-1"); err != nil {
+	if err := migrationManager.requestAbort(t.Context(), "vm-1", false); err != nil {
 		t.Fatal(err)
 	}
 	// Each of these once wrote the caller's copy, which had no abort on it.

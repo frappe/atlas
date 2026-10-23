@@ -36,6 +36,8 @@ type stubMigrationManager struct {
 	streamResume      string
 	streamThroughput  int
 	abortedID         string
+	discardedID       string
+	restoreArgs       []string
 	finishedID        string
 	finishErr         error
 	receivedSequence  int
@@ -71,6 +73,16 @@ func (m *stubMigrationManager) RequestFinish(_ context.Context, migrationID stri
 func (m *stubMigrationManager) AbortDestination(_ context.Context, migrationID string) error {
 	m.abortedID = migrationID
 	return m.abortErr
+}
+
+func (m *stubMigrationManager) DiscardDestination(_ context.Context, migrationID string) error {
+	m.discardedID = migrationID
+	return nil
+}
+
+func (m *stubMigrationManager) RestoreSource(_ context.Context, migrationID, virtualMachineID string) error {
+	m.restoreArgs = []string{migrationID, virtualMachineID}
+	return nil
 }
 
 func (m *stubMigrationManager) LockSource(_ context.Context, migrationID, virtualMachineID string, _ bool) (migration.SourceDescription, error) {
@@ -224,6 +236,17 @@ func TestCreateMigrationRejectsAnInvalidResize(t *testing.T) {
 func TestCreateMigrationRejectsAMissingField(t *testing.T) {
 	server := newMigrationTestServer(t, &stubMigrationManager{})
 	do(t, server, http.MethodPut, "/v1/migrations/mig-1", `{"virtual_machine_id":"vm-1"}`, http.StatusBadRequest)
+}
+
+func TestRestoreMigrationSourceRequiresAVirtualMachineID(t *testing.T) {
+	stub := &stubMigrationManager{}
+	server := newMigrationTestServer(t, stub)
+
+	do(t, server, http.MethodPost, "/v1/migrations/mig-1/restore-source", `{}`, http.StatusBadRequest)
+	do(t, server, http.MethodPost, "/v1/migrations/mig-1/restore-source", `{"virtual_machine_id":"vm-1"}`, http.StatusAccepted)
+	if len(stub.restoreArgs) != 2 || stub.restoreArgs[0] != "mig-1" || stub.restoreArgs[1] != "vm-1" {
+		t.Fatalf("restore arguments = %v", stub.restoreArgs)
+	}
 }
 
 func TestGetAndAbortMigration(t *testing.T) {

@@ -266,6 +266,28 @@ func (m *Manager) StartSourceRollback(ctx context.Context, migrationID, virtualM
 	return m.writeSourceContact(record)
 }
 
+// RestoreSource starts a stopped source again and unlocks it. Atlas calls it
+// before commit, when an operator confirmed that the destination host is lost.
+// A source that already began finish belongs to the destination and conflicts.
+func (m *Manager) RestoreSource(ctx context.Context, migrationID, virtualMachineID string) error {
+	record, err := m.store.readSource(virtualMachineID)
+	if errors.Is(err, vm.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if record.ID != migrationID || record.State == sourceRuntimeRemoved || record.State == sourceStorageRemoved {
+		return vm.ErrConflict
+	}
+	if record.State == sourceStopped || record.State == sourceDetached {
+		if err := m.StartSourceRollback(ctx, migrationID, virtualMachineID); err != nil {
+			return err
+		}
+	}
+	return m.UnlockSource(ctx, migrationID, virtualMachineID)
+}
+
 // DestroySource removes a stopped source and its migration state. It requires a
 // stopped, network-removed source with a final snapshot.
 func (m *Manager) DestroySource(ctx context.Context, migrationID, virtualMachineID string) error {

@@ -322,7 +322,23 @@ func (m *Manager) AbortDestination(ctx context.Context, migrationID string) erro
 	if err != nil {
 		return err
 	}
-	if err := m.requestAbort(ctx, virtualMachineID); err != nil {
+	if err := m.requestAbort(ctx, virtualMachineID, false); err != nil {
+		return err
+	}
+	return m.CancelTransfer(ctx, virtualMachineID)
+}
+
+// DiscardDestination removes a destination whose source Atlas already restored,
+// even after the destination booted the guest. Its writes since cutover are lost.
+func (m *Manager) DiscardDestination(ctx context.Context, migrationID string) error {
+	virtualMachineID, _, err := m.store.findDestination(migrationID)
+	if errors.Is(err, vm.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := m.requestAbort(ctx, virtualMachineID, true); err != nil {
 		return err
 	}
 	return m.CancelTransfer(ctx, virtualMachineID)
@@ -353,7 +369,7 @@ func (m *Manager) mutateDestination(
 	return record, nil
 }
 
-func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) error {
+func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string, isDiscard bool) error {
 	unlock, err := m.locks.Lock(ctx, virtualMachineID)
 	if err != nil {
 		return err
@@ -374,7 +390,7 @@ func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) err
 		return vm.ErrConflict
 	}
 	// A cold-booted destination guest has written to its disk, and rollback would lose those writes.
-	if record.State == destinationReady && !record.usesMemorySnapshot() {
+	if record.State == destinationReady && !record.usesMemorySnapshot() && !isDiscard {
 		return vm.ErrConflict
 	}
 	if record.State == destinationRemovingRuntime || record.State == destinationRemovingStorage ||

@@ -299,7 +299,8 @@ func (m *Manager) advanceAbort(ctx context.Context, record destinationRecord) er
 
 	// Restore a stopped source before unlocking it.
 	if record.State == destinationRestoringSource {
-		if err := m.source.StartSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
+		// A missing source record means Atlas already restored and unlocked the source.
+		if err := m.source.StartSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil && !errors.Is(err, vm.ErrNotFound) {
 			return err
 		}
 		if record, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
