@@ -27,6 +27,7 @@ type Drive struct {
 	IsRootDevice bool         `json:"is_root_device"`
 	IsReadOnly   bool         `json:"is_read_only"`
 	CacheType    string       `json:"cache_type,omitempty"`
+	Discard      bool         `json:"discard,omitempty"`
 	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
 }
 
