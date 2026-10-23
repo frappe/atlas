@@ -43,7 +43,7 @@ func (s *Server) offloadVirtualMachineSleepState(c echo.Context) error {
 }
 
 // @Summary Refresh virtual machine sleep download URLs
-// @Description Store replacement GET URLs for the named sleep snapshot. Omitted artifacts keep their URLs. This request does not download artifacts.
+// @Description Refresh GET URLs and acknowledge controller-completed multipart uploads for the named checkpoint. An acknowledgment enables local eviction. This request does not download artifacts or wake the VM.
 // @ID refreshVirtualMachineSleepState
 // @Tags Virtual machines
 // @Accept json

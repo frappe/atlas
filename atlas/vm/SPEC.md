@@ -12,6 +12,7 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/vm_service.py` | Changes that span an Atlas record and a Metal host. |
 | `core/reconciliation.py` | Draft and termination checks after an uncertain Metal result. |
 | `core/vm_sleep.py` | Scheduled idle-threshold checks, offload requests, and recovery URL refresh. |
+| `core/sleep_snapshot_objects.py` | Durable multipart ownership and retryable remote sleep snapshot cleanup. |
 | `core/sleepy_rebalance.py` | Automatic pressure checks, VM migration priority, and selected-only drain planning. |
 | `core/placement/` | Host selection, capacity reservations, and placement strategies. |
 | `core/placement/affinity.py` | Affinity rule types, their validation, and their stored JSON form. |
@@ -33,7 +34,8 @@ This file identifies code owners and rules that a code change must preserve. The
 - `VirtualMachineSleepService` reads the VM's stored offload thresholds and Metal's request time. `VirtualMachineResize` stores offload-only changes without a Metal call and merges partial changes under a VM row lock after host work. These thresholds are not part of `VirtualMachineShape`. See [automatic offload](../../docs/compute/sleepy-vms.md#configure-automatic-offload).
 - The URL-refresh cache is site-scoped and keyed by VM and checkpoint. Populate it only after Metal accepts the refresh. It must not suppress offload requests or retries after a failed refresh.
 - Sleepy rebalances use fresh host-matched reports and normal placement admission. Their source maintenance flag is not changed. See [automatic host rebalancing](../../docs/compute/sleepy-vms.md#automatic-host-rebalancing).
-- Each sleep artifact retains its original `object_key` across host moves. `refresh_urls` signs that key and fills missing keys on the source before migration.
+- Each sleep artifact retains its original `object_key` across host moves. `SleepSnapshotObjects` owns durable cleanup references in the hidden `sleep_snapshot_objects` JSON field. See [remote cleanup](../../docs/compute/sleepy-vms.md#delete-remote-sleep-snapshots).
+- Sleep object updates use a site-scoped Redis lock. Database row locks end before object storage calls. VM saves preserve these references from Frappe's locked previous record.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
 - The draft commits its tags and affinity rules in the same transaction as its host reservation.

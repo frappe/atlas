@@ -62,55 +62,86 @@ Set the delays in the create API request or with **Actions → Resize VM**. New 
 
 At the deep-sleep threshold, Atlas supplies signed memory upload and download URLs. At the coma threshold, it also supplies disk URLs. If both thresholds have passed, it requests both artifacts together. Atlas skips awake, draft, terminating, and migrating VMs. Missing request timestamps do not trigger an upload.
 
-Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk` as object keys. A later sleep checkpoint on the same host replaces these objects. The host prefix separates uploads across migration. Keep these objects available while the VM depends on them.
+Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas creates unique keys under `sleep/<site>/<vm>/<object-id>/memory` and `disk`. A key identifies one artifact and is not reused for a later checkpoint. Keep current checkpoint objects available while the VM depends on them.
 
-The same job refreshes GET URLs for stored checkpoints once an hour, even when offload thresholds are disabled. Each artifact keeps its original object key after migration. Memory and disk can use different host prefixes. Set the signed URL lifetime longer than one hour and allow time for queue delays and downloads.
+The same job refreshes GET URLs for stored checkpoints once an hour, even when offload thresholds are disabled. Each artifact keeps its original object key after migration. Set the signed URL lifetime longer than one hour and allow time for queue delays and downloads.
 
-Atlas caches each successful refresh per VM and checkpoint for one hour. A cache miss refreshes URLs immediately. A failed check appears in Error Log and retries on the next minute's schedule. Atlas does not store signed URLs or a second copy of Metal's sleep state.
+Atlas caches each successful refresh per VM and checkpoint for one hour. Pending multipart completion bypasses this cache. A failed check appears in Error Log and retries on the next minute's schedule. The hidden `sleep_snapshot_objects` field retains object keys, upload IDs, and checkpoint ownership. It does not store signed URLs.
 
 ## Upload saved snapshots
 
-Atlas can offload snapshots with `POST /v1/vms/{id}/sleep-state`. The VM must already be sleeping. Supply presigned PUT and GET URLs for memory, disk, or both. Upload memory before disk. Atlas can request both together or add disk in a later request.
+Atlas can offload snapshots with `POST /v1/vms/{id}/sleep-state`. The VM must already be sleeping. Supply a multipart plan and a presigned GET URL for memory, disk, or both. Atlas uses the same part signing and object completion code as Machine images. Metal needs no object storage credentials.
 
-After each successful upload, Metal removes the matching local artifact to free host storage. An upload failure keeps the artifact needed for recovery. Metal records the remote checkpoint before it removes local data, so reconciliation can finish an interrupted eviction.
+Metal uploads memory parts first. Atlas completes the multipart upload and checks the exact compressed object size. It then acknowledges the upload through PATCH. Metal persists this acknowledgment before it removes local memory. Disk upload follows the same path after memory eviction. A failure keeps the artifact needed for recovery.
 
 ```json
 {
   "memory": {
-    "upload_url": "https://objects.example/sleep/checkpoint/memory?signature=...",
-    "download_url": "https://objects.example/sleep/checkpoint/memory?signature=..."
+    "object_key": "sleep/site/vm/checkpoint/memory",
+    "multipart": {
+      "upload_id": "memory-upload-id",
+      "part_size_mib": 64,
+      "parts": [
+        {"part_number": 1, "url": "https://objects.example/sleep/site/vm/checkpoint/memory?partNumber=1&uploadId=memory-upload-id&signature=..."}
+      ]
+    },
+    "download_url": "https://objects.example/sleep/site/vm/checkpoint/memory?signature=..."
   },
   "disk": {
-    "upload_url": "https://objects.example/sleep/checkpoint/disk?signature=...",
-    "download_url": "https://objects.example/sleep/checkpoint/disk?signature=..."
+    "object_key": "sleep/site/vm/checkpoint/disk",
+    "multipart": {
+      "upload_id": "disk-upload-id",
+      "part_size_mib": 64,
+      "parts": [
+        {"part_number": 1, "url": "https://objects.example/sleep/site/vm/checkpoint/disk?partNumber=1&uploadId=disk-upload-id&signature=..."}
+      ]
+    },
+    "download_url": "https://objects.example/sleep/site/vm/checkpoint/disk?signature=..."
   }
 }
 ```
 
-Each upload URL must accept a complete object with HTTP PUT. Memory is a zstd-compressed tar archive of `state`, `memory`, and `metadata.json`. Disk uses the zstd-compressed raw image format. Metal records each artifact's SHA-256 digest and size. The digest covers the uncompressed content, including the tar headers for memory.
+The example shows one part per artifact. Include enough consecutive signed part URLs for the uncompressed size plus compression overhead. Part sizes range from 5 MiB through 5 GiB. Memory is a zstd-compressed tar archive of `state`, `memory`, and `metadata.json`. Disk uses the zstd-compressed raw image format. The SHA-256 digest covers uncompressed content, including the tar headers for memory.
 
-The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again.
+Metal streams the memory archive into the image multipart compressor. It buffers at most two compressed parts on disk.
+
+Metal keeps part ETags for retries and daemon restart. A new upload ID cannot reuse old ETags. A retry removes compressed part files left by a crash. Failed transfers retain immutable staging for retry; a wake or checkpoint replacement removes obsolete staging.
+
+The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID and artifact status. After part upload, each artifact reports `upload_id` and `pending`, which contains raw and compressed sizes, the digest, and part ETags. `uploaded` stays false until Atlas acknowledges object completion. A repeated request does not upload pending or acknowledged artifacts again. Signed URLs stay out of responses and logs.
+
+`observed.phase` distinguishes preparation, compression, and HTTP upload. Progress counts compressed bytes read by HTTP and resets for each retry. Streaming compression learns the total compressed size at its end, so `upload_percent` can be absent while that total is unknown. Pending completion reports 99. Only an acknowledged object reports 100.
 
 In Desk, open or refresh the VM form during an offload. The **Snapshot Upload** bar below **Sleep State** shows progress only while Metal uploads memory or disk over HTTP. Refresh the form to update the value. The field is hidden outside uploads, including preparation, compression, completion, and failure. Progress is not stored in Atlas.
 
-Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
+Atlas uses `PATCH /v1/vms/{id}/sleep-state` to refresh GET URLs and acknowledge completed objects:
 
 ```json
 {
   "snapshot_id": "<observed.sleep_snapshot.id>",
   "memory": {
-    "download_url": "https://objects.example/sleep/checkpoint/memory?signature=..."
+    "completed_upload_id": "memory-upload-id",
+    "download_url": "https://objects.example/sleep/site/vm/checkpoint/memory?signature=..."
   }
 }
 ```
 
-An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint and keep each URL's scheme, host, and object path. It cannot supply an upload URL. This request stores URLs only. It does not download artifacts or wake the VM.
+Omit `completed_upload_id` for a URL refresh alone. An omitted artifact keeps its GET URL. PATCH must name the stored checkpoint and keep each URL's scheme, host, and object path. An acknowledgment must match the artifact's pending upload ID. It enables local eviction but does not download artifacts or wake the VM.
 
-Artifact status includes `object_key` when stored. Set it with the optional `object_key` field in an upload or URL refresh request. A nonempty key cannot change within a checkpoint. Atlas fills missing keys before migration. Older hosts ignore this optional request field.
+Artifact status includes `object_key` when stored. Set it with the optional `object_key` field in an upload or URL refresh request. A nonempty key cannot change within a checkpoint. Atlas retains the original keys across migration.
 
 Uploads use stable staging data, so a wake can proceed during upload. Upload completion does not evict data if the VM has already woken. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
 
 Staging, compression, and uploads run in a separate pool of two background workers. Slow object storage does not consume normal VM reconciliation workers. The daemon cancels and waits for upload workers during shutdown. A later pass retries incomplete transfers after restart.
+
+## Delete remote sleep snapshots
+
+Atlas saves each object key and multipart upload ID before it sends the upload plan to Metal. After a new checkpoint replaces an old checkpoint, the sleep job aborts the retired uploads and deletes their objects. Migration preserves references instead of deleting the active checkpoint.
+
+After Metal confirms VM termination, Atlas cleans all retained objects before it deletes the VM record. Cleanup runs before Frappe takes the document deletion lock. A failed abort or deletion keeps the reference and VM record for the next reconciliation attempt. Successful cleanup removes each reference separately. Use **Terminate** for a VM with retained objects; direct record deletion waits for cleanup.
+
+VM saves preserve the transfer owner's current references from Frappe's locked previous record. A stale form cannot erase these references or replace them with another object's key. Retrying a completed multipart upload uses an exact-size HEAD check, so a lost acknowledgment does not publish the object twice.
+
+Configure bucket lifecycle rules to abort abandoned multipart uploads. This catches a crash after object storage creates an upload but before Atlas receives and saves its ID. If bucket versioning is enabled, configure noncurrent-version expiration too: an ordinary object deletion leaves old versions in that bucket. Do not expire all objects under `sleep/` by age, because an active comatose VM can depend on them indefinitely.
 
 ## Wake an offloaded VM
 

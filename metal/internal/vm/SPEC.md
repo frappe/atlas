@@ -47,13 +47,17 @@ machines/<id>/metrics/     seven days of daily VM usage files
 
 Idle behavior is in [Sleepy VMs](../../../docs/compute/sleepy-vms.md).
 
-`sleep_state.go` owns `machines/<id>/sleep-state.json`, a mode `0600` record for one upload checkpoint and its artifact URLs. `sleep_transfer.go` uploads artifacts through a separate two-worker reconciler and evicts local data only for the matching sleeping checkpoint. It persists the remote sleep state before eviction.
+`sleep_state.go` owns `machines/<id>/sleep-state.json`, a mode `0600` record for one upload checkpoint, multipart plans, pending part results, and artifact URLs. `sleep_transfer.go` uploads artifacts through a separate two-worker reconciler.
+
+Atlas completes and verifies each object, then acknowledges its upload ID through PATCH. Metal persists the acknowledgment before eviction. Memory eviction precedes disk upload. A new saved state removes the previous checkpoint metadata.
 
 A per-VM transfer lock serializes uploads. The operation lock protects staging and status updates, and is released while upload bytes move. Wake holds the operation lock through download and restore. Reconciliation skips a busy VM instead of waiting for its lock. `restoreSavedState` prepares remote artifacts for both deep sleep and comatose states before runtime restore. See [offloaded wake](../../../docs/compute/sleepy-vms.md#wake-an-offloaded-vm).
 
 `OffloadSleepArtifacts` runs under the daemon-owned upload pool. `RestoreSleepState` reconciles sleeping VMs in a separate two-worker pool. Normal VM reconciliation does not wait for either pool. Sleep reconciliation preserves upload phases while the checkpoint still matches. A stop, restart, shape change, or destruction can proceed without acquiring the transfer lock. A late upload failure cannot replace a wake or stop result.
 
 Upload completion cannot evict artifacts after migration takes the VM's source lock.
+
+The transfer pool removes obsolete memory staging and disk clones after wake or checkpoint replacement. A failed current transfer keeps its staging and part progress for retry. The per-VM transfer lock prevents cleanup from removing data that an upload still reads.
 
 Start and traffic requests increase the desired generation for a sleeping VM. A pending generation prevents further offload and tells reconciliation to restore instead of rearming sleep. The request survives daemon restart. Duplicate pending starts do not wait for the restore lock or add another generation.
 

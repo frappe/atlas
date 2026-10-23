@@ -31,7 +31,7 @@ type Snapshots interface {
 	RestoreSleepDisk(ctx context.Context, identifier, source string, artifact SleepArtifact) error
 }
 
-// SleepUploadProgress counts compressed bytes read by the current HTTP attempt.
+// SleepUploadProgress tracks compressed HTTP bytes for an active transfer.
 type SleepUploadProgress struct {
 	UploadedBytes  atomic.Int64
 	TotalBytes     atomic.Int64
