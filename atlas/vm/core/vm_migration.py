@@ -451,10 +451,14 @@ class MigrationService:
 			status, int(self.migration.progress_percent or 0)
 		)
 
-	def commit_destination(self) -> bool:
-		"""Commit the VM server, a resized shape, and finalizing status in one transaction."""
+	def commit_destination(self, *, is_rollback_refused: bool = False) -> bool:
+		"""Commit the VM server, a resized shape, and finalizing status in one transaction.
+
+		A canceling migration commits only when the destination refused rollback.
+		"""
 		virtual_machine, migration = self._lock_records()
-		if migration.status == "canceling" or migration.status in TERMINAL_STATUSES:
+		is_canceling = migration.status == "canceling" and not is_rollback_refused
+		if is_canceling or migration.status in TERMINAL_STATUSES:
 			self.migration = migration
 			frappe.db.commit()  # nosemgrep
 			return False
@@ -513,7 +517,7 @@ class MigrationService:
 			self.request_destination_abort()
 
 	def request_destination_abort(self) -> None:
-		"""Roll back before ownership changes; retry finish after the commit."""
+		"""Roll back before ownership changes; finish after the commit."""
 		try:
 			if (
 				frappe.db.get_value("Virtual Machine", self.migration.virtual_machine, "server")
@@ -521,9 +525,19 @@ class MigrationService:
 			):
 				self.finish()
 			else:
-				self.destination_client.abort_migration(self.migration.name)
+				self.abort_or_take_destination()
 		except MetalClientError as error:
 			self.record_error(error)
+
+	def abort_or_take_destination(self) -> None:
+		"""Ask for rollback. A destination that already ran the guest refuses it, so the VM moves there."""
+		try:
+			self.destination_client.abort_migration(self.migration.name)
+		except MetalClientError as error:
+			if error.status != 409:
+				raise
+			if self.commit_destination(is_rollback_refused=True):
+				self.finish()
 
 	def fail(self, code: str, message: str) -> None:
 		"""Record an error and continue destination cleanup."""

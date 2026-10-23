@@ -494,6 +494,30 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960}
 		)
 
+	def test_a_refused_rollback_moves_the_vm_to_the_destination(self) -> None:
+		for status, is_committed in ((409, True), (503, False)):
+			virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
+			migration = migration_doc(status="canceling", db_set=Mock())
+			service = MigrationService(migration)
+			destination_client = Mock()
+			destination_client.abort_migration.side_effect = MetalClientError("refused", status=status)
+			with (
+				self.subTest(status=status),
+				patch.object(MigrationService, "destination_client", destination_client),
+				patch.object(service, "_lock_records", return_value=(virtual_machine, migration)),
+				patch.object(service, "record_error") as record_error,
+				patch("atlas.vm.core.vm_migration.frappe.db.get_value", return_value="metal-1"),
+				patch("atlas.vm.core.vm_migration.frappe.db.commit"),
+				patch("atlas.vm.core.vm_migration.frappe.get_all", return_value=[]),
+			):
+				service.request_destination_abort()
+
+			self.assertEqual(destination_client.finish_migration.called, is_committed)
+			self.assertEqual(record_error.called, not is_committed)
+			if is_committed:
+				virtual_machine.db_set.assert_any_call("server", "metal-2")
+				migration.db_set.assert_any_call("status", "finalizing")
+
 	def test_scheduled_abort_does_not_contact_an_unreserved_destination(self) -> None:
 		service = MigrationService(migration_doc(status="scheduled", destination_metal_server="metal-2"))
 		service.settle = Mock()
