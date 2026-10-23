@@ -66,11 +66,11 @@ At the deep-sleep threshold, Atlas supplies signed memory upload and download UR
 
 Atlas signs each artifact as parts of 512 MiB, enough for the uncompressed size. Metal uses only the parts that it needs. Only a VM with due work gets a job, and only that job calls Metal.
 
-Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Each checkpoint has its own object directory, `sleep/<site>/<vm>/<random>/`, with `memory.<n>` and `disk.<n>` parts. A checkpoint from an older Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk`. An artifact keeps its object key after migration.
+Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas names each new checkpoint and stores it in a directory with the same name, `sleep/<site>/<vm>/<checkpoint>/`, with `memory.<n>` and `disk.<n>` parts. A checkpoint from an older Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk`. An artifact keeps its object key after migration.
 
 ## Keep download URLs valid
 
-A wake from deep sleep or coma downloads the artifacts with the signed GET URLs that Metal stored. An expired URL fails the wake. Atlas records on the **Virtual Machine State** which checkpoint has signed URLs and when they expire. It signs new URLs when half of their lifetime has passed, so an Atlas outage shorter than half the lifetime cannot stop a wake. A new checkpoint gets new URLs on the next minute.
+A wake from deep sleep or coma downloads the artifacts with the signed GET URLs that Metal stored. An expired URL fails the wake. Atlas stores **Download URLs Expire At** on the **Virtual Machine State**. It signs new URLs when half of their lifetime has passed, so an Atlas outage shorter than half the lifetime cannot stop a wake.
 
 **Signed URL Expiry (seconds)** in Atlas Settings sets the lifetime, from one hour to seven days. The default is one day. A change to it or to the object storage credentials makes Atlas sign new URLs for every checkpoint on the next minute, because a new key makes the old signatures invalid. New URLs also retry a wake that failed on expired URLs.
 
@@ -78,7 +78,9 @@ A failed check appears in Error Log at most once an hour per VM. It retries on t
 
 ## Delete unused objects
 
-After a VM wakes, or sleeps again with a new checkpoint, Atlas deletes the objects of the old checkpoint. When Atlas deletes a VM, it deletes all of its sleep objects.
+Each check of a sleeping or awake VM deletes every checkpoint directory of that VM except the current checkpoint. An awake VM keeps no objects. Atlas sets **Download URLs Expire At** before it asks Metal to upload, so a VM that wakes after any upload gets this check.
+
+When Atlas deletes a VM, it deletes all of its sleep objects. A daily job also deletes the objects of VMs that no longer exist, in case that deletion failed.
 
 ## Upload saved snapshots
 
@@ -117,7 +119,7 @@ Each upload URL must accept a complete object with HTTP PUT. Memory is a zstd-co
 
 The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again. The first request for a new checkpoint can set `snapshot_id`, so the controller can name its objects after the checkpoint. Without it, Metal chooses the ID. A later request for the same checkpoint must use the same ID.
 
-In Desk, each **Virtual Machine State** shows the **Sleep State**, **Last Request At**, and **Sleep Snapshot ID** that the host reported in its last sync. It also shows the snapshot whose URLs Atlas signed last and when those URLs expire. Atlas does not store upload progress. Read `observed.phase` from Metal for that.
+In Desk, each **Virtual Machine State** shows the **Sleep State**, **Last Request At**, and **Sleep Checkpoint** that the host reported in its last sync. It also shows **Download URLs Expire At**, which Atlas sets. Atlas does not store upload progress. Read `observed.phase` from Metal for that.
 
 Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
 

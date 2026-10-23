@@ -11,8 +11,8 @@ from atlas.vm.core.metal_models import timestamp_field
 
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
 SLEEP_STATES = ("sleeping", "deep-sleeping", "coma")
-# Metal owns these values. Atlas owns the signed URL fields on the same row.
-REPORTED_FIELDS = ("sleep_state", "sleep_snapshot_id", "last_request_at")
+# Metal owns these values. Atlas owns download_urls_expire_at on the same row.
+REPORTED_FIELDS = ("sleep_state", "sleep_checkpoint_id", "last_request_at")
 HOST_REPORT_REPEAT_SECONDS = 3600
 
 
@@ -123,18 +123,18 @@ def get_reported_states(reported: object) -> dict[str, frappe._dict]:
 			raise ValueError("Metal virtual machine response has invalid values")
 		status = state.get("status")
 		sleep_state = state.get("sleep_state") or ""
-		sleep_snapshot_id = state.get("sleep_snapshot_id") or None
+		sleep_checkpoint_id = state.get("sleep_snapshot_id") or None
 		if (
 			not isinstance(status, str)
 			or not status
 			or sleep_state not in ("", *SLEEP_STATES)
-			or not isinstance(sleep_snapshot_id, str | None)
+			or not isinstance(sleep_checkpoint_id, str | None)
 		):
 			raise ValueError("Metal virtual machine response has invalid values")
 		states[name] = frappe._dict(
 			status=status,
 			sleep_state=sleep_state,
-			sleep_snapshot_id=sleep_snapshot_id,
+			sleep_checkpoint_id=sleep_checkpoint_id,
 			last_request_at=timestamp_field(state, "last_request_at"),
 		)
 	return states

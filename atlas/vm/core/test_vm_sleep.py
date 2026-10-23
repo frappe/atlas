@@ -84,61 +84,52 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 
 		client.refresh_sleep_state.assert_not_called()
 
-	def test_offload_signs_enough_parts_in_one_checkpoint_directory(self) -> None:
+	def test_offload_names_the_checkpoint_and_its_directory(self) -> None:
 		client = Mock(spec=MetalClient)
-		with patch.object(vm_sleep.frappe, "generate_hash", return_value="new"):
+		site = frappe.local.site
+		with (
+			patch.object(vm_sleep.frappe, "generate_hash", return_value="checkpoint-a"),
+			patch.object(vm_sleep.frappe.db, "set_value") as set_value,
+			patch.object(vm_sleep.frappe.db, "commit") as commit,
+		):
 			self.service().offload(sleeping_response("sleeping", None), client, ["memory", "disk"])
 		request = client.offload_sleep_state.call_args.args[1]
 
-		self.assertEqual(request["memory"]["object_key"], f"sleep/{frappe.local.site}/vm-1/new/memory")
+		self.assertEqual(request["snapshot_id"], "checkpoint-a")
+		self.assertEqual(request["memory"]["object_key"], f"sleep/{site}/vm-1/checkpoint-a/memory")
 		self.assertEqual(len(request["memory"]["parts"]), 2048 // 512 + 2)
 		self.assertEqual(len(request["disk"]["parts"]), 10240 // 512 + 2)
 		self.assertEqual(request["disk"]["part_size_bytes"], 512 << 20)
 		self.assertEqual(
-			object_path(request["disk"]["parts"][1]["upload_url"]),
-			f"sleep/{frappe.local.site}/vm-1/new/disk.2",
+			object_path(request["disk"]["parts"][1]["upload_url"]), f"sleep/{site}/vm-1/checkpoint-a/disk.2"
 		)
+		# The expiry marks the objects for cleanup before Metal can upload any of them.
+		self.assertEqual(set_value.call_args.args[2], "download_urls_expire_at")
+		commit.assert_called_once()
 
-		# A later disk upload joins the directory of its checkpoint.
 		existing = sleeping_response(
 			"deep-sleeping",
 			{
-				"id": "checkpoint-1",
-				"memory": {"uploaded": True, "object_key": "sleep/test.local/vm-1/old/memory"},
+				"id": "checkpoint-b",
+				"memory": {"uploaded": True, "object_key": "sleep/old/host-1/vm-1/memory"},
 			},
 		)
-		self.service().offload(existing, client, ["disk"])
-		self.assertEqual(
-			client.offload_sleep_state.call_args.args[1]["disk"]["object_key"],
-			"sleep/test.local/vm-1/old/disk",
-		)
+		with patch.object(vm_sleep.frappe.db, "set_value"), patch.object(vm_sleep.frappe.db, "commit"):
+			self.service().offload(existing, client, ["disk"])
+		request = client.offload_sleep_state.call_args.args[1]
+		self.assertEqual(request["snapshot_id"], "checkpoint-b")
+		self.assertEqual(request["disk"]["object_key"], f"sleep/{site}/vm-1/checkpoint-b/disk")
 
-	def test_a_wake_or_a_new_checkpoint_deletes_only_unused_objects(self) -> None:
-		current = sleeping_response(
-			"deep-sleeping",
-			{
-				"id": "checkpoint-2",
-				"memory": {"uploaded": True, "object_key": "sleep/test.local/vm-1/new/memory"},
-			},
-		).observed.sleep_snapshot
+	def test_cleanup_keeps_only_the_current_checkpoint(self) -> None:
+		current = sleeping_response("deep-sleeping", {"id": "checkpoint-2"}).observed.sleep_snapshot
 		site = frappe.local.site
-		for signed, snapshot, expected in (
-			(None, current, []),
-			("checkpoint-2", current, []),
-			("checkpoint-1", current, [call(f"sleep/{site}/vm-1/", keep={"sleep/test.local/vm-1/new"})]),
-			(
-				"checkpoint-1",
-				None,
-				[call(f"sleep/{site}/vm-1/", keep=set()), call(f"sleep/{site}/host-1/vm-1/")],
-			),
+		for snapshot, expected in (
+			(current, [call(f"sleep/{site}/vm-1/", keep={f"sleep/{site}/vm-1/checkpoint-2"})]),
+			(None, [call(f"sleep/{site}/vm-1/", keep=set()), call(f"sleep/{site}/host-1/vm-1/")]),
 		):
 			service = self.service()
 			service.storage = Mock(spec=ObjectStorageClient)
-			with (
-				self.subTest(signed=signed, snapshot=snapshot),
-				patch.object(vm_sleep.frappe.db, "get_value", return_value=signed),
-			):
-				service.delete_unused_objects(snapshot)
+			service.delete_unused_objects(snapshot)
 			self.assertEqual(service.storage.delete_prefix.call_args_list, expected)
 
 	def test_only_an_awake_vm_loses_its_objects(self) -> None:
@@ -162,7 +153,6 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			with (
 				self.subTest(state=state, sleep_state=sleep_state),
 				patch.object(vm_sleep.VirtualMachineService, "metal_client", client),
-				patch.object(vm_sleep.frappe.db, "get_value", return_value="checkpoint-1"),
 				patch.object(vm_sleep.frappe.db, "set_value"),
 				patch("frappe.utils.data.get_system_timezone", return_value="UTC"),
 			):
@@ -178,27 +168,23 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			deep_sleep=3600,
 			coma=7200,
 			sleep_state="deep-sleeping",
-			sleep_snapshot_id="checkpoint-1",
-			sleep_urls_snapshot_id="checkpoint-1",
-			sleep_urls_expire_at=now + timedelta(hours=20),
+			download_urls_expire_at=now + timedelta(hours=20),
 			last_request_at=now - timedelta(minutes=90),
 		)
 		for changes, expected in (
 			({}, False),
-			({"sleep_urls_expire_at": now + timedelta(hours=11)}, True),
-			({"sleep_urls_expire_at": None}, True),
-			({"sleep_snapshot_id": "checkpoint-2"}, True),
-			({"sleep_state": "", "sleep_snapshot_id": None}, True),
-			({"sleep_state": "", "sleep_snapshot_id": None, "sleep_urls_snapshot_id": None}, False),
+			({"download_urls_expire_at": now + timedelta(hours=11)}, True),
+			({"download_urls_expire_at": None}, True),
+			({"sleep_state": ""}, True),
+			({"sleep_state": "", "download_urls_expire_at": None}, False),
 			({"last_request_at": now - timedelta(hours=3)}, True),
 			({"last_request_at": now - timedelta(hours=3), "disk_mib": 102400}, False),
 			({"sleep_state": "coma", "last_request_at": now - timedelta(hours=3)}, False),
-			({"sleep_state": "sleeping", "sleep_snapshot_id": None, "sleep_urls_snapshot_id": None}, True),
+			({"sleep_state": "sleeping", "download_urls_expire_at": None}, True),
 			(
 				{
 					"sleep_state": "sleeping",
-					"sleep_snapshot_id": None,
-					"sleep_urls_snapshot_id": None,
+					"download_urls_expire_at": None,
 					"last_request_at": now - timedelta(minutes=30),
 				},
 				False,
@@ -207,6 +193,31 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			with self.subTest(changes=changes):
 				row = frappe._dict(base, **changes)
 				self.assertEqual(VirtualMachineSleepService.is_due(row, now, renew_before), expected)
+
+	def test_the_sweep_deletes_only_objects_of_deleted_vms(self) -> None:
+		site = frappe.local.site
+		storage = Mock(spec=ObjectStorageClient)
+		directories = {
+			f"sleep/{site}/": ["vm-live", "vm-gone", "host-1"],
+			f"sleep/{site}/vm-gone/": ["checkpoint-a"],
+			f"sleep/{site}/host-1/": ["vm-live"],
+		}
+		storage.list_directories.side_effect = lambda prefix: directories.get(prefix, [])
+		settings = SimpleNamespace(
+			is_object_storage_configured=True, get_object_storage_client=lambda: storage
+		)
+
+		def exists(doctype, name):
+			names = name["name"][1] if isinstance(name, dict) else [name]
+			return "vm-live" in names
+
+		with (
+			patch.object(vm_sleep.frappe, "get_cached_doc", return_value=settings),
+			patch.object(vm_sleep.frappe.db, "exists", side_effect=exists),
+		):
+			vm_sleep.delete_orphaned_sleep_objects()
+
+		storage.delete_prefix.assert_called_once_with(f"sleep/{site}/vm-gone/")
 
 	def test_idle_thresholds_select_memory_before_disk(self) -> None:
 		information = MetalVirtualMachine.from_dict(complete_response())

@@ -349,7 +349,9 @@ class AtlasSettings(Document):
 		):
 			# Sleep URLs signed with the old values may no longer work, so sign new ones on the next pass.
 			state = frappe.qb.DocType("Virtual Machine State")
-			frappe.qb.update(state).set(state.sleep_urls_expire_at, None).run()
+			frappe.qb.update(state).set(state.download_urls_expire_at, now_datetime()).where(
+				state.download_urls_expire_at.isnotnull()
+			).run()
 
 		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
 			self.server_provider_controller.validate_credentials()

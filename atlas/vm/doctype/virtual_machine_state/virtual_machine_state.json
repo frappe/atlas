@@ -14,9 +14,8 @@
   "sleep_state",
   "last_request_at",
   "column_break_sleep",
-  "sleep_snapshot_id",
-  "sleep_urls_snapshot_id",
-  "sleep_urls_expire_at"
+  "sleep_checkpoint_id",
+  "download_urls_expire_at"
  ],
  "fields": [
   {
@@ -84,22 +83,16 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "sleep_snapshot_id",
+   "fieldname": "sleep_checkpoint_id",
    "fieldtype": "Data",
-   "label": "Sleep Snapshot ID",
+   "label": "Sleep Checkpoint",
    "read_only": 1
   },
   {
-   "description": "The snapshot whose object storage URLs Atlas signed last",
-   "fieldname": "sleep_urls_snapshot_id",
-   "fieldtype": "Data",
-   "label": "Signed Snapshot ID",
-   "read_only": 1
-  },
-  {
-   "fieldname": "sleep_urls_expire_at",
+   "description": "When the URLs that Metal uses to download the sleep checkpoint expire",
+   "fieldname": "download_urls_expire_at",
    "fieldtype": "Datetime",
-   "label": "Signed URLs Expire At",
+   "label": "Download URLs Expire At",
    "read_only": 1
   }
  ],

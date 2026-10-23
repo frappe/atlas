@@ -12,12 +12,11 @@ class VirtualMachineState(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		download_urls_expire_at: DF.Datetime | None
 		last_request_at: DF.Datetime | None
 		server: DF.Link
-		sleep_snapshot_id: DF.Data | None
+		sleep_checkpoint_id: DF.Data | None
 		sleep_state: DF.Literal["", "sleeping", "deep-sleeping", "coma"]
-		sleep_urls_expire_at: DF.Datetime | None
-		sleep_urls_snapshot_id: DF.Data | None
 		status: DF.Data
 		synced_at: DF.Datetime
 		virtual_machine: DF.Link

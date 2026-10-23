@@ -216,8 +216,9 @@ class TestLiveVirtualMachineLookup(IntegrationTestCase):
 
 	def test_reported_values_of_many_rows_update_together(self) -> None:
 		asleep, awake = self.insert_virtual_machine(), self.insert_virtual_machine()
-		self.store_state(asleep, "stopped", sleep_urls_snapshot_id="checkpoint-1")
-		self.store_state(awake, "running", sleep_state="sleeping", sleep_snapshot_id="checkpoint-0")
+		expire_at = datetime(2026, 10, 24, 12, 0)
+		self.store_state(asleep, "stopped", download_urls_expire_at=expire_at)
+		self.store_state(awake, "running", sleep_state="sleeping", sleep_checkpoint_id="checkpoint-0")
 		synced_at = datetime(2026, 10, 23, 12, 0)
 		requested_at = datetime(2026, 10, 23, 11, 0)
 
@@ -225,24 +226,24 @@ class TestLiveVirtualMachineLookup(IntegrationTestCase):
 			{
 				asleep: frappe._dict(
 					sleep_state="deep-sleeping",
-					sleep_snapshot_id="checkpoint-1",
+					sleep_checkpoint_id="checkpoint-1",
 					last_request_at=requested_at,
 				),
-				awake: frappe._dict(sleep_state="", sleep_snapshot_id=None, last_request_at=None),
+				awake: frappe._dict(sleep_state="", sleep_checkpoint_id=None, last_request_at=None),
 			},
 			synced_at,
 		)
 
 		fields = [
 			"sleep_state",
-			"sleep_snapshot_id",
-			"sleep_urls_snapshot_id",
+			"sleep_checkpoint_id",
+			"download_urls_expire_at",
 			"last_request_at",
 			"synced_at",
 		]
 		self.assertEqual(
 			frappe.db.get_value("Virtual Machine State", asleep, fields),
-			("deep-sleeping", "checkpoint-1", "checkpoint-1", requested_at, synced_at),
+			("deep-sleeping", "checkpoint-1", expire_at, requested_at, synced_at),
 		)
 		self.assertEqual(
 			frappe.db.get_value("Virtual Machine State", awake, fields), ("", None, None, None, synced_at)
