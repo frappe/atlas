@@ -44,6 +44,8 @@ func (record SleepCheckpoint) validateMigrationArtifacts() error {
 
 // ReadSleepMigration captures a stable, acknowledged checkpoint under the operation lock.
 func (host *MigrationHost) ReadSleepMigration(identifier string) (*SleepMigration, error) {
+	// The destination takes the checkpoint as it is now, so a running upload must not change it.
+	host.manager.stopSleepUpload(identifier)
 	desired, observed, err := host.manager.newVirtualMachine(identifier).records()
 	if err != nil || !observed.hasRemoteSleepState() {
 		return nil, err

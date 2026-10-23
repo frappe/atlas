@@ -65,8 +65,8 @@ func (upload *sleepUpload) phase() string {
 }
 
 // stopSleepUpload cancels the running sleep upload of a VM. A change to the desired
-// record makes its checkpoint stale, and a part sent after the controller removes
-// the checkpoint objects would stay in object storage.
+// record makes its checkpoint stale, and a migration hands the checkpoint to another
+// host. A part sent after that would stay in object storage.
 func (manager *Manager) stopSleepUpload(identifier string) {
 	manager.sleepUploadsMutex.Lock()
 	defer manager.sleepUploadsMutex.Unlock()
@@ -242,11 +242,11 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 		return err
 	}
 	if uploadError != nil {
+		if errors.Is(uploadError, context.Canceled) && ctx.Err() == nil {
+			// stopSleepUpload cancelled it. A later pass uploads again if the checkpoint still needs it.
+			return nil
+		}
 		if !current.canUpload(desired, observed) {
-			if errors.Is(uploadError, context.Canceled) && ctx.Err() == nil {
-				// stopSleepUpload cancelled an upload that the VM no longer needs.
-				return nil
-			}
 			return uploadError
 		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })

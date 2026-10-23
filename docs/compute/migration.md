@@ -87,7 +87,7 @@ Use the normal migration action for a VM in deep sleep or coma. Atlas requires m
 
 Neither host downloads remote snapshots or starts Firecracker during migration. The destination copies a missing kernel through the existing kernel transfer. The source removes its network before destination network setup. The destination stays stopped with its original sleep state through `ready` and `finish`.
 
-Traffic to the source before it stops fails the migration: the source refuses to stop, and the VM wakes on the source after Atlas aborts. Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
+Locking the source cancels a running sleep upload, so the checkpoint that moves cannot change. Traffic to the source before it stops fails the migration: the source refuses to stop, and the VM wakes on the source after Atlas aborts. Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
 
 For direct Metal calls, use `has_memory_snapshot: true` after checking host compatibility. Supply each artifact's original `object_key` through the sleep-state URL refresh before migration. A disk-only request rejects an offloaded checkpoint rather than cold-booting it.
 
