@@ -80,6 +80,18 @@ class TestMetalServerDrain(IntegrationTestCase):
 		drain.allow_any_destination = 1
 		drain.insert()
 
+	def test_new_drains_retry_failed_migrations_by_default(self) -> None:
+		self.assertEqual(self.new_drain([self.destination]).insert().retry_failed_migrations, 1)
+		self.assertEqual(MetalServerDrain.start(self.source).retry_failed_migrations, 1)
+		name = frappe.get_doc("Metal Server", self.destination).drain()
+		self.assertEqual(frappe.get_doc("Metal Server Drain", name).retry_failed_migrations, 1)
+
+	def test_new_drains_can_disable_failed_migration_retries(self) -> None:
+		drain = MetalServerDrain.start(self.source, retry_failed_migrations=False)
+		self.assertEqual(drain.retry_failed_migrations, 0)
+		name = frappe.get_doc("Metal Server", self.destination).drain(retry_failed_migrations=False)
+		self.assertEqual(frappe.get_doc("Metal Server Drain", name).retry_failed_migrations, 0)
+
 
 class TestMetalServerDrainSteps(IntegrationTestCase):
 	def setUp(self) -> None:
@@ -94,13 +106,22 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 		virtual_machine.db_insert()
 		return virtual_machine.name
 
-	def submit_drain(self, retry_failed_migrations: int = 0, parallel_migrations: int = 1) -> str:
+	def submit_drain(
+		self,
+		retry_failed_migrations: int = 0,
+		parallel_migrations: int = 1,
+		*,
+		move_only_selected_vms: int = 0,
+		virtual_machines: list[str] | None = None,
+	) -> str:
 		drain = frappe.get_doc(
 			{
 				"doctype": "Metal Server Drain",
 				"source_metal_server": self.source,
 				"retry_failed_migrations": retry_failed_migrations,
 				"parallel_migrations": parallel_migrations,
+				"move_only_selected_vms": move_only_selected_vms,
+				"virtual_machines": [{"virtual_machine": name} for name in virtual_machines or []],
 			}
 		).insert()
 		drain.submit()
@@ -146,6 +167,87 @@ class TestMetalServerDrainSteps(IntegrationTestCase):
 
 		frappe.get_doc("Metal Server Drain", first).cancel()
 		self.submit_drain()
+
+	def test_selected_drain_requires_virtual_machines(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "Add at least one Virtual Machine"):
+			self.submit_drain(move_only_selected_vms=1)
+
+	def test_selected_drain_rejects_duplicate_virtual_machines(self) -> None:
+		virtual_machine = self.insert_virtual_machine()
+		with self.assertRaisesRegex(frappe.ValidationError, "only once"):
+			self.submit_drain(move_only_selected_vms=1, virtual_machines=[virtual_machine, virtual_machine])
+
+	def test_selected_drain_rejects_other_hosts_drafts_and_terminating_virtual_machines(self) -> None:
+		for field, value in (("server", self.destination), ("is_draft", 1), ("is_terminating", 1)):
+			with self.subTest(field=field):
+				virtual_machine = self.insert_virtual_machine()
+				frappe.db.set_value("Virtual Machine", virtual_machine, field, value)
+				with self.assertRaisesRegex(frappe.ValidationError, "Select Virtual Machines on the Source"):
+					self.submit_drain(move_only_selected_vms=1, virtual_machines=[virtual_machine])
+
+	def test_moves_only_selected_virtual_machines_and_completes_with_others_on_the_source(self) -> None:
+		unselected, first, second = (self.insert_virtual_machine() for _ in range(3))
+		name = self.submit_drain(move_only_selected_vms=1, virtual_machines=[second, first])
+
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first])
+		self.settle_last_migration(drain, "completed")
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second])
+		self.assertEqual(drain.progress_percent, 50)
+		self.settle_last_migration(drain, "completed")
+		drain = self.step(name)
+
+		self.assertEqual((drain.status, drain.progress_percent), ("Completed", 100))
+		self.assertEqual(frappe.db.get_value("Virtual Machine", unselected, "server"), self.source)
+		self.assertTrue(frappe.db.get_value("Metal Server", self.source, "is_in_maintenance"))
+
+	def test_unchecked_selection_does_not_limit_the_drain(self) -> None:
+		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
+		name = self.submit_drain(virtual_machines=[second])
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first])
+		self.settle_last_migration(drain, "completed")
+		drain = self.step(name)
+		self.assertEqual([row.virtual_machine for row in drain.migrations], [first, second])
+		self.settle_last_migration(drain, "completed")
+		self.assertEqual(self.step(name).status, "Completed")
+
+	def test_selected_drain_reports_only_selected_failures(self) -> None:
+		unselected, selected = self.insert_virtual_machine(), self.insert_virtual_machine()
+		name = self.submit_drain(move_only_selected_vms=1, virtual_machines=[selected])
+		drain = self.step(name)
+		self.settle_migration(drain.migrations[-1], "failed", "copy_timeout")
+		drain = self.step(name)
+
+		self.assertEqual((drain.status, drain.progress_percent), ("Failed", 0))
+		self.assertIn(selected, drain.error_message)
+		self.assertNotIn(unselected, drain.error_message)
+
+	def test_selected_drain_waits_for_an_external_migration_of_a_selected_virtual_machine(self) -> None:
+		selected = self.insert_virtual_machine()
+		self.insert_virtual_machine()
+		migration = self.create_migration(frappe.get_doc("Virtual Machine", selected), None)
+		frappe.db.set_value("Virtual Machine", selected, "active_migration", migration)
+		name = self.submit_drain(move_only_selected_vms=1, virtual_machines=[selected])
+
+		drain = self.step(name)
+		self.assertEqual((drain.status, drain.migrations), ("Running", []))
+		frappe.db.set_value(
+			"Virtual Machine", selected, {"server": self.destination, "active_migration": None}
+		)
+		self.assertEqual(self.step(name).status, "Completed")
+
+	def test_selected_drain_does_not_wait_for_an_unselected_virtual_machine_migration(self) -> None:
+		unselected, selected = self.insert_virtual_machine(), self.insert_virtual_machine()
+		migration = self.create_migration(frappe.get_doc("Virtual Machine", unselected), None)
+		frappe.db.set_value("Virtual Machine", unselected, "active_migration", migration)
+		name = self.submit_drain(move_only_selected_vms=1, virtual_machines=[selected])
+		drain = self.step(name)
+		self.settle_last_migration(drain, "completed")
+
+		self.assertEqual(self.step(name).status, "Completed")
+		self.assertEqual(frappe.db.get_value("Virtual Machine", unselected, "active_migration"), migration)
 
 	def test_moves_one_virtual_machine_at_a_time_until_the_source_is_empty(self) -> None:
 		first, second = self.insert_virtual_machine(), self.insert_virtual_machine()
