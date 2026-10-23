@@ -7,6 +7,7 @@ from functools import cached_property
 import frappe
 from frappe.utils import now_datetime
 
+from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.metal_client import MetalClient
 from atlas.vm.core.metal_models import MetalVirtualMachine
@@ -252,3 +253,60 @@ class SleepyHostRebalance:
 			for name in frappe.get_all(doctype, pluck="virtual_machine")
 			if name
 		}
+
+
+@run_as_admin
+def enqueue_sleepy_host_rebalances() -> None:
+	"""Queue one check per ready sleepy host, including hosts in maintenance."""
+	for name in frappe.get_all(
+		"Metal Server",
+		filters={
+			"is_sleepy_vm_host": 1,
+			"status": "Running",
+			"is_provisioning_completed": 1,
+		},
+		pluck="name",
+	):
+		frappe.enqueue(
+			rebalance_sleepy_host,
+			server_name=name,
+			queue="long",
+			timeout=600,
+			job_id=f"atlas||sleepy-rebalance||{name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+
+
+@run_as_admin
+@use_read_committed
+def rebalance_sleepy_host(server_name: str) -> None:
+	"""Submit a selected-only drain without changing host maintenance."""
+	if frappe.db.get_single_value("Atlas Settings", "is_vm_migration_paused"):
+		return
+	policy = SleepyHostRebalance(server_name)
+	if (
+		policy.server.status != "Running"
+		or not policy.server.is_sleepy_vm_host
+		or not policy.server.is_provisioning_completed
+	):
+		return
+	if frappe.db.exists("Metal Server Drain", {"source_metal_server": server_name, "status": "Running"}):
+		return
+	selected, destinations = policy.plan()
+	if not selected:
+		return
+	frappe.get_doc(
+		{
+			"doctype": "Metal Server Drain",
+			"source_metal_server": server_name,
+			"is_sleepy_rebalance": 1,
+			"move_only_selected_vms": 1,
+			"virtual_machines": [{"virtual_machine": name} for name in selected],
+			"allow_any_destination": 0,
+			"destinations": [{"metal_server": name} for name in destinations],
+			"has_memory_snapshot": 1,
+			"allow_disk_only_fallback": 0,
+			"parallel_migrations": 4,
+		}
+	).insert().submit()
