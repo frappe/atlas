@@ -25,6 +25,7 @@ class TestReconciliation(UnitTestCase):
 		with (
 			patch.object(reconciliation.frappe, "get_doc", return_value=virtual_machine),
 			patch.object(reconciliation, "VirtualMachineService") as service,
+			patch.object(reconciliation, "SleepSnapshotObjects"),
 			patch.object(reconciliation.frappe, "log_error") as log_error,
 			patch.object(reconciliation.frappe, "get_traceback", return_value=""),
 			patch.object(reconciliation.frappe, "db") as database,

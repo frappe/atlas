@@ -7,6 +7,7 @@ import frappe
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.vm.core.metal_client import MetalClientError
+from atlas.vm.core.sleep_snapshot_objects import SleepSnapshotObjects
 from atlas.vm.core.vm_service import VirtualMachineService
 
 if TYPE_CHECKING:
@@ -52,8 +53,11 @@ def delete_virtual_machine(virtual_machine: VirtualMachine, description: str) ->
 	virtual_machine.flags.metal_absence_confirmed = True
 
 	try:
-		virtual_machine.delete()
-		frappe.db.commit()  # nosemgrep
+		objects = SleepSnapshotObjects(virtual_machine)
+		with objects.lock():
+			objects.delete()
+			virtual_machine.delete()
+			frappe.db.commit()  # nosemgrep
 	except Exception:
 		frappe.db.rollback()
 		log_failure(cast(str, virtual_machine.name), description)

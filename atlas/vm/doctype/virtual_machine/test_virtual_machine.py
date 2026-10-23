@@ -945,6 +945,7 @@ class TestVirtualMachineTrash(UnitTestCase):
 	def _trash(self, state_exists: bool, migrations: list[str] | None = None) -> Mock:
 		virtual_machine = Mock(doctype="Virtual Machine")
 		virtual_machine.name = "vm-00003"
+		virtual_machine.sleep_snapshot_objects = None
 
 		with (
 			patch.object(virtual_machine_module, "VirtualMachineService") as service,
