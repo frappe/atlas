@@ -27,6 +27,7 @@ from atlas.vm.core.models import (
 	VirtualMachineCreateRequest,
 	validate_sleep_times,
 )
+from atlas.vm.core.sleep_snapshot_objects import SleepSnapshotObjects
 from atlas.vm.core.vm_service import VirtualMachineService
 
 DRAFT_EXPIRY_MINUTES = 2
@@ -128,6 +129,9 @@ class VirtualMachine(Document):
 		"""Delete only after Metal confirms that the VM is absent."""
 		self.ensure_not_termination_protected()
 		VirtualMachineService(self).validate_deletion()
+		objects = SleepSnapshotObjects(self)
+		with objects.lock():
+			objects.delete()
 		delete_tasks_for_target(self.doctype, self.name)
 		if frappe.db.exists("Virtual Machine State", self.name):
 			frappe.delete_doc(

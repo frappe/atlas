@@ -23,6 +23,7 @@ from atlas.vm.core.models import (
 )
 from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
+from atlas.vm.core.sleep_snapshot_objects import SleepSnapshotObjects
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -229,13 +230,15 @@ class VirtualMachineService:
 
 	def terminate(self) -> None:
 		"""Request deletion in Metal, then release the public address intent."""
-		try:
-			self.metal_client.delete_virtual_machine(cast(str, self.virtual_machine.name))
-		except MetalClientError as error:
-			if not error.is_not_found:
-				self.raise_metal_error(error)
-
-		self.virtual_machine.db_set("is_terminating", 1)
+		objects = SleepSnapshotObjects(self.virtual_machine)
+		with objects.lock():
+			try:
+				self.metal_client.delete_virtual_machine(cast(str, self.virtual_machine.name))
+			except MetalClientError as error:
+				if not error.is_not_found:
+					self.raise_metal_error(error)
+			self.virtual_machine.db_set("is_terminating", 1)
+			frappe.db.commit()  # nosemgrep
 		self.release_public_addresses()
 
 	def replace_ssh_keys(self, ssh_keys: list[str]) -> dict[str, Any]:
