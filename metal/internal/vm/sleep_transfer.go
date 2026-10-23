@@ -110,9 +110,23 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		return err
 	}
 	record, err := manager.readSleepRecord(identifier)
-	if err != nil || record == nil {
+	if err != nil {
 		unlock()
 		return err
+	}
+	if memory {
+		keep := ""
+		if record != nil && record.canUpload(desired, observed) {
+			keep = record.ID
+		}
+		if err := manager.pruneSleepTransfers(ctx, identifier, keep); err != nil {
+			unlock()
+			return err
+		}
+	}
+	if record == nil {
+		unlock()
+		return nil
 	}
 	target := record.target(memory)
 	if !record.canUpload(desired, observed) || target == nil {
@@ -123,8 +137,10 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 	if target.Artifact != nil {
 		defer unlock()
 		if memory {
-			if err := os.RemoveAll(directory); err != nil {
-				return err
+			for _, name := range []string{"state", "memory", "metadata.json", "sleep-parts.json"} {
+				if err := os.RemoveAll(filepath.Join(directory, name)); err != nil {
+					return err
+				}
 			}
 			return manager.evictSleepArtifacts(ctx, desired, &observed, record)
 		}
@@ -180,6 +196,9 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		artifactName = "memory"
 	}
 	if err := manager.runOperation(ctx, identifier, &observed, record.ID, "prepare-sleep-"+artifactName, func() error {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			return err
+		}
 		if memory {
 			return manager.snapshots.StageSleepMemory(ctx, saved.Directory, directory)
 		}
@@ -214,6 +233,29 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 	}
 	uploadSucceeded = err == nil
 	return manager.finishSleepUpload(ctx, identifier, record.ID, memory, artifact, upload.phase(), err)
+}
+
+func (manager *Manager) pruneSleepTransfers(ctx context.Context, identifier, keep string) error {
+	directory := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer")
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == keep || !validIdentifier(entry.Name()) {
+			continue
+		}
+		if err := manager.snapshots.DeleteSnapshot(ctx, entry.Name()); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(filepath.Join(directory, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snapshotID string, memory bool, artifact SleepArtifact, phase string, uploadError error) error {
