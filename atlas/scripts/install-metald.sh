@@ -348,6 +348,28 @@ Restart=no
 IOAccounting=yes
 EOF
 
+# A firewall reload or flush removes the host rules, so a timer adds them again.
+cat > /etc/systemd/system/metal-network-setup.service <<EOF
+[Unit]
+Description=metal host network rules
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/metal/network-setup
+EOF
+
+cat > /etc/systemd/system/metal-network-setup.timer <<EOF
+[Unit]
+Description=Restore metal host network rules
+
+[Timer]
+OnActiveSec=30
+OnUnitActiveSec=30
+
+[Install]
+WantedBy=timers.target
+EOF
+
 step "enable IP forwarding"
 # A forwarding host ignores router advertisements unless accept_ra is 2, and a
 # gateway VM needs its host to hold the IPv6 default route.
@@ -364,6 +386,7 @@ sysctl -q -p /etc/sysctl.d/99-metald.conf
 
 step "enable and start metal service"
 systemctl daemon-reload
+systemctl enable --now metal-network-setup.timer
 systemctl enable metal.service
 # Restart preserves console descriptors and running VMs.
 if ! systemctl restart metal.service || ! service_is_stable; then
