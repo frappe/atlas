@@ -5,7 +5,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 import frappe
-from frappe.query_builder.functions import Coalesce
 from frappe.utils import add_to_date, now_datetime
 
 from atlas.atlas.core.background_jobs import run_as_admin
@@ -219,7 +218,8 @@ def get_due_virtual_machines(now: datetime) -> list[str]:
 		.where(
 			(machine.is_draft == 0)
 			& (machine.is_terminating == 0)
-			& (Coalesce(machine.active_migration, "") == "")
+			# A Link to a UUID-named DocType can be a uuid column, where COALESCE with "" is NULL.
+			& machine.active_migration.isnull()
 			& (state.server == machine.server)
 			& (state.sleep_state.isin(SLEEP_STATES) | state.download_urls_expire_at.isnotnull())
 		)
