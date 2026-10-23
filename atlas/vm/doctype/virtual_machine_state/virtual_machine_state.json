@@ -70,7 +70,7 @@
    "fieldname": "sleep_state",
    "fieldtype": "Select",
    "label": "Sleep State",
-   "options": "\nsleeping\ndeep-sleeping\ncomatose",
+   "options": "\nsleeping\ndeep-sleeping\ncoma",
    "read_only": 1
   },
   {

@@ -11,7 +11,7 @@ func sleepRestoreManager(t *testing.T, state SleepState) (*Manager, *fakeRuntime
 	manager, runtime, storage, snapshots := sleepyManager(t)
 	if state != SleepStateSleeping {
 		request := SleepStateRequest{Memory: sleepTarget()}
-		if state == SleepStateComatose {
+		if state == SleepStateComa {
 			request.Disk = sleepTarget()
 		}
 		if err := manager.OffloadSleepState(t.Context(), "vm-1", request); err != nil {
@@ -27,7 +27,7 @@ func sleepRestoreManager(t *testing.T, state SleepState) (*Manager, *fakeRuntime
 }
 
 func TestRepeatedSleepRestoreFailuresColdBootTheExistingDisk(t *testing.T) {
-	for _, state := range []SleepState{SleepStateSleeping, SleepStateDeepSleeping, SleepStateComatose} {
+	for _, state := range []SleepState{SleepStateSleeping, SleepStateDeepSleeping, SleepStateComa} {
 		for _, resultState := range []State{StateRunning, StatePaused} {
 			t.Run(string(state)+"/"+string(resultState), func(t *testing.T) {
 				manager, runtime, storage, _ := sleepRestoreManager(t, state)
@@ -77,7 +77,7 @@ func TestSleepRestoreKeepsAGuestThatResumedDespiteAnError(t *testing.T) {
 func TestSleepRestoreFallbackStopsOnCancellationOrAMissingDisk(t *testing.T) {
 	for _, failure := range []string{"canceled", "deadline", "disk", "download"} {
 		t.Run(failure, func(t *testing.T) {
-			manager, runtime, storage, snapshots := sleepRestoreManager(t, SleepStateComatose)
+			manager, runtime, storage, snapshots := sleepRestoreManager(t, SleepStateComa)
 			runtime.restoreError = errors.New("snapshot load failed")
 			switch failure {
 			case "canceled":
@@ -93,7 +93,7 @@ func TestSleepRestoreFallbackStopsOnCancellationOrAMissingDisk(t *testing.T) {
 				t.Fatal("wake failure was hidden")
 			}
 			information, err := manager.Information(t.Context(), "vm-1")
-			if err != nil || information.Error == nil || information.SleepState != SleepStateComatose || runtime.coldStarts != 0 || runtime.removes != 0 {
+			if err != nil || information.Error == nil || information.SleepState != SleepStateComa || runtime.coldStarts != 0 || runtime.removes != 0 {
 				t.Fatalf("failed wake discarded memory or booted: %+v, %v; runtime=%+v", information, err, runtime)
 			}
 		})
@@ -103,7 +103,7 @@ func TestSleepRestoreFallbackStopsOnCancellationOrAMissingDisk(t *testing.T) {
 func TestSleepRestoreFallbackRetryDoesNotReloadRemoteMemory(t *testing.T) {
 	for _, failure := range []string{"cleanup", "boot"} {
 		t.Run(failure, func(t *testing.T) {
-			manager, runtime, storage, snapshots := sleepRestoreManager(t, SleepStateComatose)
+			manager, runtime, storage, snapshots := sleepRestoreManager(t, SleepStateComa)
 			runtime.restoreError = errors.New("snapshot load failed")
 			if failure == "cleanup" {
 				runtime.deleteError = errors.New("saved state cleanup failed")

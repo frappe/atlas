@@ -24,7 +24,7 @@ func sleepMigration(t *testing.T, state vm.SleepState) *vm.SleepMigration {
 }
 
 func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
-	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComa} {
 		t.Run(string(state), func(t *testing.T) {
 			manager, host, _ := newMigrationManager(t)
 			host.create("vm-1", testSpecification())
@@ -40,7 +40,7 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 				}
 			}
 			_, err := manager.NextSourceSnapshot(t.Context(), "mig-1", "vm-1", 0)
-			if (state == vm.SleepStateComatose) != errors.Is(err, vm.ErrConflict) {
+			if (state == vm.SleepStateComa) != errors.Is(err, vm.ErrConflict) {
 				t.Fatalf("pre-copy snapshot of a %s source: %v", state, err)
 			}
 			for range 2 {
@@ -66,7 +66,7 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 				t.Fatalf("migration woke its source: %+v", host)
 			}
 			wantDisks := 2 // the pre-copy and the final snapshot
-			if state == vm.SleepStateComatose {
+			if state == vm.SleepStateComa {
 				wantDisks = 0
 			}
 			if got := len(manager.disks.(*fakeMigrationStorage).created); got != wantDisks {
@@ -80,7 +80,7 @@ func TestOffloadedSourceNeverRestoresDuringCutoverOrAbort(t *testing.T) {
 }
 
 func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
-	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComa} {
 		t.Run(string(state), func(t *testing.T) {
 			manager, host, source := newMigrationManager(t)
 			source.prepareDefinition = virtualMachineDefinition("vm-1")
@@ -94,7 +94,7 @@ func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
 			source.nextSnapshot = SourceSnapshot{Sequence: 1, SizeBytes: 1024, GUID: "disk-1"}
 			source.stopSnapshot = SourceSnapshot{Sequence: 2, SizeBytes: 0, GUID: "disk-1"}
 			wantNext := 1
-			if state == vm.SleepStateComatose {
+			if state == vm.SleepStateComa {
 				source.stopSnapshot = SourceSnapshot{}
 				wantNext = 0
 			}
@@ -136,7 +136,7 @@ func TestOffloadedDestinationKeepsCheckpointAcrossReadyAndFinish(t *testing.T) {
 				t.Fatal("finish activated the guest or retained its reservation")
 			}
 			wantDisks := 2 // the pre-copy and the final snapshot
-			if state == vm.SleepStateComatose {
+			if state == vm.SleepStateComa {
 				wantDisks = 0
 			}
 			if disks.received != wantDisks {
@@ -157,11 +157,11 @@ func TestOffloadedMigrationRejectsResizeAndDiskOnlyMode(t *testing.T) {
 	}
 }
 
-func TestComatoseSourceFinishesWithoutAFinalDiskSnapshot(t *testing.T) {
+func TestComaSourceFinishesWithoutAFinalDiskSnapshot(t *testing.T) {
 	manager, host, _ := newMigrationManager(t)
 	host.create("vm-1", testSpecification())
-	host.observed["vm-1"] = vm.ObservedRecord{Generation: 1, State: vm.StateStopped, SleepState: vm.SleepStateComatose}
-	host.sleep = sleepMigration(t, vm.SleepStateComatose)
+	host.observed["vm-1"] = vm.ObservedRecord{Generation: 1, State: vm.StateStopped, SleepState: vm.SleepStateComa}
+	host.sleep = sleepMigration(t, vm.SleepStateComa)
 	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", true); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestComatoseSourceFinishesWithoutAFinalDiskSnapshot(t *testing.T) {
 		t.Fatalf("source cleanup was not idempotent: %+v", host)
 	}
 	if len(manager.disks.(*fakeMigrationStorage).created) != 0 {
-		t.Fatal("comatose cleanup created a disk snapshot")
+		t.Fatal("coma cleanup created a disk snapshot")
 	}
 }
 

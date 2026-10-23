@@ -103,14 +103,14 @@ func sleepTarget() *SleepArtifactTarget {
 }
 
 func TestSleepMigrationDefersDownloadsUntilDestinationWake(t *testing.T) {
-	for _, state := range []SleepState{SleepStateDeepSleeping, SleepStateComatose} {
+	for _, state := range []SleepState{SleepStateDeepSleeping, SleepStateComa} {
 		t.Run(string(state), func(t *testing.T) {
 			source, sourceRuntime, _, _ := sleepyManager(t)
 			sourceRuntime.savedIdentity = strings.Repeat("c", 64)
 			memory := sleepTarget()
 			memory.ObjectKey = "sleep/source/vm-1/memory"
 			request := SleepStateRequest{Memory: memory}
-			if state == SleepStateComatose {
+			if state == SleepStateComa {
 				request.Disk = sleepTarget()
 				request.Disk.ObjectKey = "sleep/source/vm-1/disk"
 			}
@@ -165,7 +165,7 @@ func TestSleepMigrationDefersDownloadsUntilDestinationWake(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantDownloads := 1
-			if state == SleepStateComatose {
+			if state == SleepStateComa {
 				wantDownloads = 2
 			}
 			if len(snapshots.downloads) != wantDownloads || runtime.restores != 1 || runtime.coldStarts != 0 {
@@ -212,7 +212,7 @@ func TestSleepUploadsEvictUploadedArtifacts(t *testing.T) {
 			}
 			wantState, wantReleases := SleepStateDeepSleeping, 0
 			if selected == "both" {
-				wantState, wantReleases = SleepStateComatose, 1
+				wantState, wantReleases = SleepStateComa, 1
 			}
 			if information.SleepState != wantState || information.State != StateStopped || runtime.hasSavedState || storage.releases != wantReleases || !information.SleepSnapshot.Memory.Uploaded {
 				t.Fatalf("uploaded resources were not evicted: %+v; runtime=%+v storage=%+v", information, runtime, storage)
@@ -297,7 +297,7 @@ func TestSleepDiskFollowsMemoryUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	information, err := manager.Information(t.Context(), "vm-1")
-	if err != nil || information.SleepState != SleepStateComatose || snapshots.uploads != 2 {
+	if err != nil || information.SleepState != SleepStateComa || snapshots.uploads != 2 {
 		t.Fatalf("disk did not follow memory without reuploading: %+v, %v", information.SleepSnapshot, err)
 	}
 }
@@ -447,13 +447,13 @@ func TestSleepStateRequestRejectsInvalidTransport(t *testing.T) {
 }
 
 func TestSleepRequestsShareOneWakePath(t *testing.T) {
-	for _, sleepState := range []SleepState{SleepStateSleeping, SleepStateDeepSleeping, SleepStateComatose} {
+	for _, sleepState := range []SleepState{SleepStateSleeping, SleepStateDeepSleeping, SleepStateComa} {
 		for _, request := range []string{"traffic", "start", "reconcile", "waiting"} {
 			t.Run(string(sleepState)+"/"+request, func(t *testing.T) {
 				manager, runtime, _, snapshots := sleepyManager(t)
 				if sleepState != SleepStateSleeping {
 					upload := SleepStateRequest{Memory: sleepTarget()}
-					if sleepState == SleepStateComatose {
+					if sleepState == SleepStateComa {
 						upload.Disk = sleepTarget()
 					}
 					if err := manager.OffloadSleepState(t.Context(), "vm-1", upload); err != nil {
@@ -467,7 +467,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				snapshots.diskPresent = sleepState != SleepStateComatose
+				snapshots.diskPresent = sleepState != SleepStateComa
 				if request == "waiting" {
 					manager.traffic = &traffic.Monitor{}
 					// The fixture has no TAP hook. Rearming, not downloading, must fail.
@@ -508,7 +508,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 				wantDownloads := 0
 				if sleepState == SleepStateDeepSleeping {
 					wantDownloads = 1
-				} else if sleepState == SleepStateComatose {
+				} else if sleepState == SleepStateComa {
 					wantDownloads = 2
 					if !strings.HasPrefix(snapshots.downloads[0], "disk:") {
 						t.Fatal("memory was restored before the disk")
@@ -528,7 +528,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 }
 
 func TestRemoteSleepDownloadFailureCanRetryWithRefreshedURL(t *testing.T) {
-	for _, sleepState := range []SleepState{SleepStateDeepSleeping, SleepStateComatose} {
+	for _, sleepState := range []SleepState{SleepStateDeepSleeping, SleepStateComa} {
 		t.Run(string(sleepState), func(t *testing.T) {
 			manager, runtime, _, snapshots := sleepyManager(t)
 			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
@@ -587,7 +587,7 @@ func TestSleepEvictionRetriesWithoutReupload(t *testing.T) {
 			information, err := manager.Information(t.Context(), "vm-1")
 			wantState := SleepStateDeepSleeping
 			if artifact == "disk" {
-				wantState = SleepStateComatose
+				wantState = SleepStateComa
 			}
 			if err != nil || information.Error == nil || information.SleepState != wantState || !information.SleepSnapshot.Memory.Uploaded {
 				t.Fatalf("recoverable state was not recorded before eviction: %+v, %v", information, err)
@@ -608,7 +608,7 @@ func TestSleepEvictionRetriesWithoutReupload(t *testing.T) {
 	}
 }
 
-func TestComatosePowerChangesPreserveDisk(t *testing.T) {
+func TestComaPowerChangesPreserveDisk(t *testing.T) {
 	for _, change := range []string{"stop", "restart", "shape"} {
 		t.Run(change, func(t *testing.T) {
 			manager, runtime, _, snapshots := sleepyManager(t)

@@ -10,7 +10,7 @@ from frappe.utils import now_datetime
 from atlas.vm.core.metal_models import timestamp_field
 
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
-SLEEP_STATES = ("sleeping", "deep-sleeping", "comatose")
+SLEEP_STATES = ("sleeping", "deep-sleeping", "coma")
 # Metal owns these values. Atlas owns the signed URL fields on the same row.
 REPORTED_FIELDS = ("sleep_state", "sleep_snapshot_id", "last_request_at")
 HOST_REPORT_REPEAT_SECONDS = 3600

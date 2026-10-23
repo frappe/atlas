@@ -64,7 +64,7 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 		)
 		for state, artifacts, deep_sleep in (
 			("deep-sleeping", {"memory": {"uploaded": True}}, 0),
-			("comatose", {"memory": {"uploaded": True}, "disk": {"uploaded": True}}, 0),
+			("coma", {"memory": {"uploaded": True}, "disk": {"uploaded": True}}, 0),
 			("sleeping", None, 3600),
 			("sleeping", None, 0),
 		):
@@ -189,7 +189,7 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			("sleeping", 7200, ["memory", "disk"]),
 			("deep-sleeping", 3600, []),
 			("deep-sleeping", 7200, ["disk"]),
-			("comatose", 7200, []),
+			("coma", 7200, []),
 		):
 			with (
 				self.subTest(state=state, idle=idle),

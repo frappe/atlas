@@ -13,7 +13,7 @@ func (sleep *SleepMigration) Validate(specificationGeneration, restartGeneration
 	record := sleep.Checkpoint
 	switch sleep.State {
 	case SleepStateDeepSleeping:
-	case SleepStateComatose:
+	case SleepStateComa:
 		if record.Disk == nil {
 			return fmt.Errorf("migration sleep checkpoint is missing its disk")
 		}

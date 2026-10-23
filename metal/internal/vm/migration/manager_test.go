@@ -108,7 +108,7 @@ func (f *fakeMigrationHost) WriteObserved(virtualMachineID string, record vm.Obs
 
 func (f *fakeMigrationHost) ReadSleepMigration(identifier string) (*vm.SleepMigration, error) {
 	state := f.observed[identifier].SleepState
-	if (state == vm.SleepStateComatose || state == vm.SleepStateDeepSleeping) && f.sleep == nil {
+	if (state == vm.SleepStateComa || state == vm.SleepStateDeepSleeping) && f.sleep == nil {
 		return nil, vm.ErrConflict
 	}
 	return f.sleep, nil

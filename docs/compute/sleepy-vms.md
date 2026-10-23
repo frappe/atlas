@@ -48,9 +48,9 @@ Metal reports the sleep state as `observed.sleep_state`. Atlas shows it as **Sle
 | Empty | None. The VM is awake. | On the host |
 | `sleeping` | On the host | On the host |
 | `deep-sleeping` | In object storage | On the host |
-| `comatose` | In object storage | In object storage |
+| `coma` | In object storage | In object storage |
 
-Metal sets `deep-sleeping` after it uploads and removes local saved memory. It sets `comatose` after it also uploads and removes the local disk. A host with an older `metald` does not send the field, so Atlas shows the VM as awake.
+Metal sets `deep-sleeping` after it uploads and removes local saved memory. It sets `coma` after it also uploads and removes the local disk. A host with an older `metald` does not send the field, so Atlas shows the VM as awake.
 
 The saved state belongs to one VM. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
 
@@ -128,13 +128,13 @@ Staging, compression, and uploads run in a separate pool of two background worke
 
 ## Wake an offloaded VM
 
-Traffic and an explicit start use one restore path for all sleep states. For a comatose VM, Metal first recovers a missing disk. For either remote sleep state, it then recovers missing memory and calls the normal saved-state restore. It verifies artifact checksums and checkpoint metadata before use. A completed local download can be reused on retry.
+Traffic and an explicit start use one restore path for all sleep states. For a VM in coma, Metal first recovers a missing disk. For either remote sleep state, it then recovers missing memory and calls the normal saved-state restore. It verifies artifact checksums and checkpoint metadata before use. A completed local download can be reused on retry.
 
-Start returns `202` after it saves the wake request. Normal VM reconciliation restores memory that is on the host. Deep-sleeping and comatose VMs restore in a separate pool of two background workers, so a slow download does not delay other VMs. Poll the VM response for `observed.phase`, `observed.error`, and completion. A repeated pending start returns without waiting for the download. The daemon cancels and waits for restore workers at shutdown, and a saved wake request resumes after restart.
+Start returns `202` after it saves the wake request. Normal VM reconciliation restores memory that is on the host. VMs in deep sleep or coma restore in a separate pool of two background workers, so a slow download does not delay other VMs. Poll the VM response for `observed.phase`, `observed.error`, and completion. A repeated pending start returns without waiting for the download. The daemon cancels and waits for restore workers at shutdown, and a saved wake request resumes after restart.
 
 A download or artifact validation failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed wake and retries pending requests. If a GET URL expires, Atlas refreshes it with PATCH. PATCH stores URLs only. It does not create a wake request, but a pending wake uses the new URLs on retry.
 
-If runtime restore fails after artifact preparation, Metal checks whether the guest already reached the requested state. If not, it keeps the saved memory and tries again. After 3 failed attempts since metald started, it removes the failed runtime and saved memory, then cold-boots the existing disk. This keeps the disk but loses processes and unsaved memory. A comatose VM must recover its disk first.
+If runtime restore fails after artifact preparation, Metal checks whether the guest already reached the requested state. If not, it keeps the saved memory and tries again. After 3 failed attempts since metald started, it removes the failed runtime and saved memory, then cold-boots the existing disk. This keeps the disk but loses processes and unsaved memory. A VM in coma must recover its disk first.
 
 Cancellation and timeout errors retry without a cold boot. Metal logs the fallback and prevents later retries from loading the old remote memory. Cleanup and cold-boot failures report `observed.error`.
 

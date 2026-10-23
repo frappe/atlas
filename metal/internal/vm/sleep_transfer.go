@@ -280,7 +280,7 @@ func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired Desired
 		if err != nil {
 			return err
 		}
-		observed.SleepState = SleepStateComatose
+		observed.SleepState = SleepStateComa
 		if hasDisk {
 			if err := manager.runOperation(ctx, desired.ID, observed, record.ID, "evict-sleep-disk", func() error {
 				return manager.storage.Release(ctx, desired.ID)

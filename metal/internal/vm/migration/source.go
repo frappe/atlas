@@ -311,7 +311,7 @@ func (m *Manager) DestroySource(ctx context.Context, migrationID, virtualMachine
 	if record.State != sourceDetached && record.State != sourceRuntimeRemoved && record.State != sourceStorageRemoved {
 		return vm.ErrConflict
 	}
-	if record.FinalSequence < 1 && (record.Sleep == nil || record.Sleep.State != vm.SleepStateComatose) {
+	if record.FinalSequence < 1 && (record.Sleep == nil || record.Sleep.State != vm.SleepStateComa) {
 		return vm.ErrConflict
 	}
 	if err := m.stopSourceStream(ctx, virtualMachineID); err != nil {
@@ -378,7 +378,7 @@ func (m *Manager) NextSourceSnapshot(ctx context.Context, migrationID, virtualMa
 	if err != nil {
 		return SourceSnapshot{}, err
 	}
-	if record.State != sourceLocked || (record.Sleep != nil && record.Sleep.State == vm.SleepStateComatose) {
+	if record.State != sourceLocked || (record.Sleep != nil && record.Sleep.State == vm.SleepStateComa) {
 		return SourceSnapshot{}, vm.ErrConflict
 	}
 	if receivedSequence < 0 || receivedSequence > record.Sequence {
@@ -476,7 +476,7 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 			return SourceSnapshot{}, err
 		}
 	}
-	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComatose {
+	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComa {
 		return SourceSnapshot{}, nil
 	}
 	if record.FinalSequence == 0 {
@@ -536,7 +536,7 @@ func (m *Manager) StartSourceStream(ctx context.Context, migrationID, virtualMac
 	if sequence != record.Sequence {
 		return vm.ErrConflict
 	}
-	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComatose {
+	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComa {
 		return vm.ErrConflict
 	}
 	m.transfersMutex.Lock()

@@ -31,7 +31,7 @@ class VirtualMachineSleepService:
 		information = client.get_virtual_machine(machine.name)
 		if information.observed.state != "stopped":
 			return
-		if information.observed.sleep_state not in {"sleeping", "deep-sleeping", "comatose"}:
+		if information.observed.sleep_state not in {"sleeping", "deep-sleeping", "coma"}:
 			return
 		artifacts = self.artifacts_to_offload(
 			information,
@@ -102,7 +102,7 @@ class VirtualMachineSleepService:
 		artifacts = []
 		if information.observed.sleep_state == "sleeping":
 			artifacts.append("memory")
-		if coma_seconds and idle_seconds >= coma_seconds and information.observed.sleep_state != "comatose":
+		if coma_seconds and idle_seconds >= coma_seconds and information.observed.sleep_state != "coma":
 			artifacts.append("disk")
 		return artifacts
 

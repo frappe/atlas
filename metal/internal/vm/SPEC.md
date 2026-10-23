@@ -49,7 +49,7 @@ Idle behavior is in [Sleepy VMs](../../../docs/compute/sleepy-vms.md).
 
 `sleep_state.go` owns `machines/<id>/sleep-state.json`, a mode `0600` record for one upload checkpoint and its artifact URLs. `sleep_transfer.go` uploads artifacts through a separate two-worker reconciler and evicts local data only for the matching sleeping checkpoint. It persists the remote sleep state before eviction.
 
-A per-VM transfer lock serializes uploads. The operation lock protects staging and status updates, and is released while upload bytes move. Wake holds the operation lock through download and restore. Reconciliation skips a busy VM instead of waiting for its lock. `restoreSavedState` prepares remote artifacts for both deep sleep and comatose states before runtime restore. See [offloaded wake](../../../docs/compute/sleepy-vms.md#wake-an-offloaded-vm).
+A per-VM transfer lock serializes uploads. The operation lock protects staging and status updates, and is released while upload bytes move. Wake holds the operation lock through download and restore. Reconciliation skips a busy VM instead of waiting for its lock. `restoreSavedState` prepares remote artifacts for both deep sleep and coma before runtime restore. See [offloaded wake](../../../docs/compute/sleepy-vms.md#wake-an-offloaded-vm).
 
 `OffloadSleepArtifacts` runs under the daemon-owned upload pool. `RestoreSleepState` reconciles sleeping VMs in a separate two-worker pool. Normal VM reconciliation does not wait for either pool. Sleep reconciliation preserves upload phases while the checkpoint still matches. A stop, restart, shape change, or destruction can proceed without acquiring the transfer lock. A late upload failure cannot replace a wake or stop result.
 

@@ -366,7 +366,7 @@ func (record *SleepCheckpoint) status() *SleepSnapshotStatus {
 }
 
 func (observed ObservedRecord) hasRemoteSleepState() bool {
-	return observed.SleepState == SleepStateDeepSleeping || observed.SleepState == SleepStateComatose
+	return observed.SleepState == SleepStateDeepSleeping || observed.SleepState == SleepStateComa
 }
 
 func (manager *Manager) restoreSleepArtifacts(ctx context.Context, desired DesiredRecord, machine RuntimeMachine, observed ObservedRecord) error {
@@ -378,10 +378,10 @@ func (manager *Manager) restoreSleepArtifacts(ctx context.Context, desired Desir
 		return err
 	}
 	if record == nil || record.SpecificationGeneration != desired.SpecificationGeneration || record.RestartGeneration != desired.RestartGeneration ||
-		record.Memory.Artifact == nil || (observed.SleepState == SleepStateComatose && (record.Disk == nil || record.Disk.Artifact == nil)) {
+		record.Memory.Artifact == nil || (observed.SleepState == SleepStateComa && (record.Disk == nil || record.Disk.Artifact == nil)) {
 		return fmt.Errorf("sleep checkpoint is missing or does not match the VM")
 	}
-	if observed.SleepState == SleepStateComatose {
+	if observed.SleepState == SleepStateComa {
 		if err := manager.restoreSleepDisk(ctx, desired.ID, record); err != nil {
 			return err
 		}

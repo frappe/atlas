@@ -114,7 +114,7 @@ func (manager *Manager) reconcileActive(
 	machine := runtimeMachine(desired, networkInterface)
 	discardSavedState := desired.State == StateStopped || desired.SpecificationGeneration > observed.SpecificationGeneration ||
 		desired.RestartGeneration > observed.RestartGeneration
-	if discardSavedState && observed.SleepState == SleepStateComatose {
+	if discardSavedState && observed.SleepState == SleepStateComa {
 		if err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseStorage, func() error {
 			record, err := manager.readSleepRecord(desired.ID)
 			if err != nil {

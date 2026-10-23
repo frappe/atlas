@@ -15,7 +15,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 ## Invariants
 
 - One host allocation lock covers the destination capacity check and reservation. A retry with a different resize conflicts. A resize never shrinks the disk.
-- A deep-sleeping or comatose source hands off `vm.SleepMigration` without runtime save, load, or start. Memory mode and source preparation capability are required. Deep sleep transfers only the local disk. Coma transfers no memory or disk snapshots. See [asleep migration](../../../../docs/compute/migration.md#move-an-offloaded-vm).
+- A source in deep sleep or coma hands off `vm.SleepMigration` without runtime save, load, or start. Memory mode and source preparation capability are required. Deep sleep transfers only the local disk. Coma transfers no memory or disk snapshots. See [asleep migration](../../../../docs/compute/migration.md#move-an-offloaded-vm).
 - A destination record read before a long operation must be read again before mutation. Otherwise an abort can be lost.
 - Every destination record read-modify-write holds its VM migration lock. Code that already holds the lock uses `writeDestination`. Other code uses `mutateDestination`, which rereads under the lock. The lock is not reentrant.
 - A transfer holds no VM lock while bytes move. The source retains the last acknowledged snapshot as the next incremental base. A received interval counts only when its GUID matches.

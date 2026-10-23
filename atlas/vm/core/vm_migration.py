@@ -289,7 +289,7 @@ class MigrationService:
 			return False
 		client = MetalClient(self.source_metal_server)
 		information = client.get_virtual_machine(virtual_machine.name)
-		if information.observed.sleep_state not in {"deep-sleeping", "comatose"}:
+		if information.observed.sleep_state not in {"deep-sleeping", "coma"}:
 			return False
 		VirtualMachineSleepService(virtual_machine).refresh_urls(information, client, force=True)
 		return True

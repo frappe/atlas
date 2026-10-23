@@ -188,8 +188,8 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 	if err != nil {
 		return err
 	}
-	comatose := record.hasSleepCheckpoint() && record.Definition.Sleep.State == vm.SleepStateComatose
-	if !comatose && (final.Sequence < 1 || (record.usesMemorySnapshot() && final.GUID == "")) {
+	coma := record.hasSleepCheckpoint() && record.Definition.Sleep.State == vm.SleepStateComa
+	if !coma && (final.Sequence < 1 || (record.usesMemorySnapshot() && final.GUID == "")) {
 		return m.failTransfer(ctx, record, "source returned an invalid final sequence")
 	}
 
@@ -203,7 +203,7 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 	if record.State != destinationStopping {
 		return nil
 	}
-	if !comatose {
+	if !coma {
 		if err := m.receiveFinalSnapshots(ctx, record, final); err != nil {
 			return err
 		}
