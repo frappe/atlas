@@ -250,6 +250,14 @@ func (manager *Manager) writeSleepRecord(identifier string, record *SleepCheckpo
 	return platform.WriteFile(path, data, 0o600)
 }
 
+func (manager *Manager) removeSleepRecord(identifier string) error {
+	err := os.Remove(filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-state.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (record *SleepCheckpoint) status() *SleepSnapshotStatus {
 	status := &SleepSnapshotStatus{ID: record.ID}
 	if record.Memory != nil {

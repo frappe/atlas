@@ -216,7 +216,10 @@ func (manager *Manager) reconcileSavedState(
 
 	if status.State == StatePaused {
 		if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseSaveState, func() error {
-			return manager.runtime.SaveAndStop(ctx, machine)
+			if err := manager.runtime.SaveAndStop(ctx, machine); err != nil {
+				return err
+			}
+			return manager.removeSleepRecord(desired.ID)
 		}); err != nil {
 			return status, false, err
 		}
