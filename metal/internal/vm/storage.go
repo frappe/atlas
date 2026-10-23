@@ -33,15 +33,24 @@ type Snapshots interface {
 
 // SleepUploadProgress counts compressed bytes read by the current HTTP attempt.
 type SleepUploadProgress struct {
-	UploadedBytes atomic.Int64
-	TotalBytes    atomic.Int64
+	UploadedBytes  atomic.Int64
+	TotalBytes     atomic.Int64
+	CompletedBytes atomic.Int64
+	Uploading      atomic.Bool
+}
+
+// UploadedPart identifies a part acknowledged by object storage.
+type UploadedPart struct {
+	PartNumber int    `json:"part_number"`
+	ETag       string `json:"etag"`
 }
 
 // SleepArtifact binds a remote object to its uncompressed content.
 type SleepArtifact struct {
-	SizeBytes       int64  `json:"size_bytes"`
-	StoredSizeBytes int64  `json:"stored_size_bytes"`
-	SHA256          string `json:"sha256"`
+	SizeBytes       int64          `json:"size_bytes"`
+	StoredSizeBytes int64          `json:"stored_size_bytes"`
+	SHA256          string         `json:"sha256"`
+	Parts           []UploadedPart `json:"parts,omitempty"`
 }
 
 // SnapshotRequest identifies the virtual machine and kernel to stage.

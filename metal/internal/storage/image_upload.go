@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 // Artifact names for the stored upload progress of one staged snapshot.
@@ -55,10 +56,7 @@ type SnapshotUploadRequest struct {
 }
 
 // UploadedPart contains the ETag returned for one part.
-type UploadedPart struct {
-	PartNumber int    `json:"part_number"`
-	ETag       string `json:"etag"`
-}
+type UploadedPart = vm.UploadedPart
 
 // UploadedArtifact describes one uploaded artifact. SizeBytes is the
 // uncompressed image and StoredSizeBytes is what the object store holds.
@@ -415,8 +413,11 @@ func (store *SnapshotStore) uploadArtifact(ctx context.Context, snapshotID, arti
 		reader:  io.NewSectionReader(file, 0, sizeBytes),
 		counter: uploaded,
 	})
-	storedBytes, parts, err := store.compressArtifact(ctx, snapshotID, artifact, source, sizeBytes, request,
-		store.storedParts(snapshotID, artifact, request.UploadID))
+	storedBytes, parts, err := store.compressArtifact(ctx, source, sizeBytes, request, store.snapshotDirectory(snapshotID),
+		store.storedParts(snapshotID, artifact, request.UploadID), func(parts []storedPart) error {
+			store.recordParts(snapshotID, artifact, request.UploadID, parts)
+			return nil
+		}, nil)
 	// Call Sum before the error check, so the hash goroutine always exits.
 	digest := source.Sum()
 	if err != nil {

@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
+	"github.com/frappe/atlas/metal/internal/vm"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -17,24 +19,26 @@ const snapshotEncoderConcurrency = 1
 // it compresses the next.
 func (store *SnapshotStore) compressArtifact(
 	ctx context.Context,
-	snapshotID, artifact string,
 	source io.Reader,
 	sizeBytes int64,
 	request SnapshotArtifactUpload,
+	directory string,
 	stored []storedPart,
+	recordParts func([]storedPart) error,
+	progress *vm.SleepUploadProgress,
 ) (int64, []UploadedPart, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	chunker := &partChunker{
 		store:         store,
 		ctx:           ctx,
-		snapshotID:    snapshotID,
-		artifact:      artifact,
 		uploadID:      request.UploadID,
 		parts:         request.Parts,
 		partSizeBytes: request.PartSizeBytes,
 		stored:        stored,
-		directory:     store.snapshotDirectory(snapshotID),
+		directory:     directory,
+		recordParts:   recordParts,
+		sleepProgress: progress,
 		bufferedParts: make(chan bufferedPart),
 		uploadFailed:  make(chan struct{}),
 		uploaderDone:  make(chan struct{}),
@@ -57,7 +61,7 @@ func (store *SnapshotStore) compressArtifact(
 
 	if chunker.skipped > 0 {
 		store.logger.Info("resumed a snapshot upload",
-			"snapshot_id", snapshotID, "artifact", artifact,
+			"upload_id", request.UploadID,
 			"parts", len(chunker.uploadedParts), "skipped_parts", chunker.skipped)
 	}
 	return chunker.storedBytes, chunker.uploadedParts, nil
@@ -66,15 +70,16 @@ func (store *SnapshotStore) compressArtifact(
 // partChunker writes compressed parts to disk and hands them to its uploader
 // goroutine. The uploader owns the upload results until uploaderDone is closed.
 type partChunker struct {
-	store         *SnapshotStore
-	ctx           context.Context
-	snapshotID    string
-	artifact      string
-	uploadID      string
-	parts         []SnapshotUploadPart
-	partSizeBytes int64
-	stored        []storedPart
-	directory     string
+	store           *SnapshotStore
+	ctx             context.Context
+	uploadID        string
+	parts           []SnapshotUploadPart
+	partSizeBytes   int64
+	stored          []storedPart
+	directory       string
+	recordParts     func([]storedPart) error
+	sleepProgress   *vm.SleepUploadProgress
+	compressedBytes atomic.Int64
 
 	index   int
 	current *os.File
@@ -123,6 +128,9 @@ func (chunker *partChunker) compress(source io.Reader, sizeBytes int64) error {
 	if chunker.current == nil {
 		return nil
 	}
+	if chunker.sleepProgress != nil {
+		chunker.sleepProgress.TotalBytes.Store(chunker.compressedBytes.Load())
+	}
 	return chunker.flush()
 }
 
@@ -142,6 +150,7 @@ func (chunker *partChunker) Write(data []byte) (int, error) {
 		}
 		written, err := chunker.current.Write(chunk)
 		chunker.written += int64(written)
+		chunker.compressedBytes.Add(int64(written))
 		if err != nil {
 			return total - len(data) + written, err
 		}
@@ -210,7 +219,12 @@ func (chunker *partChunker) uploadBufferedPart(buffered bufferedPart) error {
 		if _, err := buffered.file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		uploaded, err := chunker.store.uploadPartWithRetry(chunker.ctx, part, buffered.file, 0, buffered.length, nil)
+		var counter *atomic.Int64
+		if chunker.sleepProgress != nil {
+			chunker.sleepProgress.Uploading.Store(true)
+			counter = &chunker.sleepProgress.UploadedBytes
+		}
+		uploaded, err := chunker.store.uploadPartWithRetry(chunker.ctx, part, buffered.file, 0, buffered.length, counter)
 		if err != nil {
 			return err
 		}
@@ -218,10 +232,13 @@ func (chunker *partChunker) uploadBufferedPart(buffered bufferedPart) error {
 	}
 
 	chunker.storedBytes += buffered.length
+	if chunker.sleepProgress != nil {
+		chunker.sleepProgress.UploadedBytes.Store(0)
+		chunker.sleepProgress.CompletedBytes.Store(chunker.storedBytes)
+	}
 	chunker.uploadedParts = append(chunker.uploadedParts, UploadedPart{PartNumber: part.PartNumber, ETag: etag})
 	chunker.progress = append(chunker.progress, storedPart{PartNumber: part.PartNumber, ETag: etag, SizeBytes: buffered.length})
-	chunker.store.recordParts(chunker.snapshotID, chunker.artifact, chunker.uploadID, chunker.progress)
-	return nil
+	return chunker.recordParts(chunker.progress)
 }
 
 // reusableETag returns a stored ETag only when the part length matches.
