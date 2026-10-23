@@ -14,7 +14,7 @@ set -eu
 : "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
-firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
+firecracker_version=${FIRECRACKER_VERSION:-v1.17.0}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
 mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
