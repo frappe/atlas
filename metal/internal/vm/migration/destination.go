@@ -131,11 +131,9 @@ func (m *Manager) ActiveDestinationVirtualMachineIDs(_ context.Context) ([]strin
 		if !m.store.has(m.store.destinationPath(virtualMachineID)) {
 			continue
 		}
+		// An unreadable record stays active, so each pass reports its error.
 		record, err := m.store.readDestination(virtualMachineID)
-		if err != nil {
-			return nil, err
-		}
-		if !record.State.terminal() {
+		if err != nil || !record.State.terminal() {
 			active = append(active, virtualMachineID)
 		}
 	}
@@ -299,7 +297,8 @@ func (m *Manager) advanceAbort(ctx context.Context, record destinationRecord) er
 
 	// Restore a stopped source before unlocking it.
 	if record.State == destinationRestoringSource {
-		if err := m.source.StartSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
+		// A missing source record means Atlas already restored and unlocked the source.
+		if err := m.source.StartSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil && !errors.Is(err, vm.ErrNotFound) {
 			return err
 		}
 		if record, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {

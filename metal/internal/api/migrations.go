@@ -154,6 +154,44 @@ func (s *Server) abortMigration(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
+// restoreSourceRequest names the VM whose stopped source Atlas restores.
+type restoreSourceRequest struct {
+	VirtualMachineID string `json:"virtual_machine_id"`
+}
+
+// restoreMigrationSource starts and unlocks a stopped source whose destination is lost.
+func (s *Server) restoreMigrationSource(c echo.Context) error {
+	identifier, err := migrationIdentifier(c)
+	if err != nil {
+		return err
+	}
+	var request restoreSourceRequest
+	if err := decodeJSONRequest(c, &request); err != nil {
+		return err
+	}
+	if !validResourceID(request.VirtualMachineID) {
+		return badRequest("invalid virtual machine identifier")
+	}
+	if err := s.migrationManager.RestoreSource(c.Request().Context(), identifier, request.VirtualMachineID); err != nil {
+		return err
+	}
+	s.wakeReconciler()
+	return c.NoContent(http.StatusAccepted)
+}
+
+// discardMigration removes a destination whose source Atlas already restored.
+func (s *Server) discardMigration(c echo.Context) error {
+	identifier, err := migrationIdentifier(c)
+	if err != nil {
+		return err
+	}
+	if err := s.migrationManager.DiscardDestination(c.Request().Context(), identifier); err != nil {
+		return err
+	}
+	s.wakeReconciler()
+	return c.NoContent(http.StatusAccepted)
+}
+
 // toMigration maps migration progress to its public response.
 func toMigration(record migration.DestinationProgress) migrationResponse {
 	response := migrationResponse{

@@ -81,6 +81,12 @@ A routed address can change after detach and attach.
 
 Tenants cannot select pools or reserve routed IPv6. A System Manager uses **Reserve Allocation** on the pool form for tenant-0 service addresses.
 
+### Block an address
+
+A System Manager can keep a bad address, such as a blocklisted IPv4, out of every later allocation. Open its `Available` allocation and use **Actions → Block**. The status changes to `Blocked`, and no request receives the address. Use **Actions → Unblock** to return it to `Available`.
+
+Only an unused address can be blocked. Detach it or release its reservation first. A static pool creates allocations in batches, so use **Generate Available Allocations** on the pool if the address has no allocation yet. A pool with blocked addresses can still be deleted.
+
 ### Pending changes
 
 Each attach or detach increases `intent_version`, the saved request number. A background job changes the provider and Metal, then completes only that number.

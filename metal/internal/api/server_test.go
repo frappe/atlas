@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -84,9 +85,9 @@ func (manager *fakeVirtualMachineManager) Information(_ context.Context, id stri
 	return virtualMachine.info, nil
 }
 
-func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Information, error) {
+func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Information, []string, error) {
 	if manager.listError != nil {
-		return nil, manager.listError
+		return nil, nil, manager.listError
 	}
 
 	virtualMachines := make([]vm.Information, 0, len(manager.virtualMachines))
@@ -94,7 +95,7 @@ func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Informatio
 		virtualMachines = append(virtualMachines, virtualMachine.info)
 	}
 
-	return virtualMachines, nil
+	return virtualMachines, nil, nil
 }
 
 func (manager *fakeVirtualMachineManager) SetPowerState(_ context.Context, id string, state vm.State) error {
@@ -261,6 +262,8 @@ func (services *fakeRuntimeServices) SetWireGuardGatewayRoutes(_ context.Context
 	return nil
 }
 
+func (*fakeRuntimeServices) EnsureHooks(context.Context) error { return nil }
+
 func (services *fakeRuntimeServices) ApplyPrivilegedAddresses(
 	_ context.Context,
 	addresses []string,
@@ -341,7 +344,7 @@ func (manager *fakeWireGuardManager) Apply(_ context.Context, peers []network.Wi
 type fakeCapacityProvider struct{}
 
 func (fakeCapacityProvider) Capacity(context.Context) (storage.Capacity, error) {
-	return storage.Capacity{TotalMiB: 1000, AvailableMiB: 750}, nil
+	return storage.Capacity{TotalMiB: 2000, AvailableMiB: 750}, nil
 }
 
 func newTestServer(t *testing.T) http.Handler {
@@ -880,6 +883,7 @@ func TestPublicAPIErrorMapsUploadAndShutdownErrors(t *testing.T) {
 	}{
 		{name: "invalid upload", err: storage.ErrInvalidUpload, status: http.StatusBadRequest, code: "invalid_request"},
 		{name: "shutdown", err: storage.ErrShuttingDown, status: http.StatusServiceUnavailable, code: "unavailable"},
+		{name: "full host storage", err: fmt.Errorf("write record: %w", &os.PathError{Op: "write", Path: "config.json", Err: syscall.ENOSPC}), status: http.StatusInsufficientStorage, code: "host_storage_full"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			apiError := publicAPIError(testCase.err)
@@ -973,7 +977,7 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Capacity.TotalStorageMiB != 1000 || response.Capacity.AvailableStorageMiB != 750 {
+	if response.Capacity.TotalStorageMiB != 2000 || response.Capacity.AvailableStorageMiB != 750 {
 		t.Fatalf("storage capacity = %d/%d", response.Capacity.TotalStorageMiB, response.Capacity.AvailableStorageMiB)
 	}
 	if strings.Contains(recorder.Body.String(), "\"host_compatibility\"") {

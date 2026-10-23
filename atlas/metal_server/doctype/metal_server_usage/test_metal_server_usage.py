@@ -14,6 +14,7 @@ from atlas.metal_server.usage import (
 	get_usage_values,
 	get_wireguard_peers,
 	is_unicast_network_enabled,
+	sync_failure_key,
 	sync_server,
 )
 from atlas.vm.core.metal_client import MetalClientError
@@ -30,6 +31,9 @@ CAPACITY = {
 
 
 class TestServerUsage(UnitTestCase):
+	def setUp(self) -> None:
+		frappe.cache.delete_value(sync_failure_key("server-1"))
+
 	def test_sync_persists_changed_compatibility_only(self) -> None:
 		report = {
 			"architecture": "amd64",
@@ -123,19 +127,29 @@ class TestServerUsage(UnitTestCase):
 						"Metal Server", "server-1", "is_cpu_template_disabled", 1, update_modified=False
 					)
 
-	def test_sync_logs_a_metal_connection_failure(self) -> None:
-		server = SimpleNamespace(name="server-1")
+	def test_sync_logs_a_metal_connection_failure_once_until_it_recovers(self) -> None:
+		server = Mock(
+			private_network_mac_address=None, host_compatibility_report=None, tsc_scaling_supported=0
+		)
+		server.name = "server-1"
 		client = Mock()
-		client.sync.side_effect = MetalClientError("connection refused")
+		failure = MetalClientError("connection refused")
 
 		with (
 			patch("atlas.metal_server.usage.frappe.get_doc", return_value=server),
 			patch("atlas.metal_server.usage.MetalClient", return_value=client),
 			patch("atlas.metal_server.usage.get_desired_images", return_value=[]),
+			patch("atlas.metal_server.usage.store_reported_states"),
+			patch("atlas.metal_server.usage.get_usage_values", return_value={}),
 			patch("atlas.metal_server.usage.frappe.log_error") as log_error,
 		):
-			sync_server("server-1", [], [], False)
+			for result in (failure, failure, {"capacity": CAPACITY}, failure):
+				client.sync.side_effect = result if isinstance(result, Exception) else None
+				client.sync.return_value = result
+				sync_server("server-1", [], [], False)
 
+		# The repeated failure is logged once, and the failure after a recovery again.
+		self.assertEqual(log_error.call_count, 2)
 		self.assertEqual(log_error.call_args.args[1], "Metal synchronization failed for Server server-1")
 
 	def test_sync_logs_an_invalid_capacity_response(self) -> None:

@@ -206,8 +206,8 @@ const (
 	SleepStateSleeping SleepState = "sleeping"
 	// SleepStateDeepSleeping means the saved memory is in object storage.
 	SleepStateDeepSleeping SleepState = "deep-sleeping"
-	// SleepStateComatose means the saved memory and the disk are in object storage.
-	SleepStateComatose SleepState = "comatose"
+	// SleepStateComa means the saved memory and the disk are in object storage.
+	SleepStateComa SleepState = "coma"
 )
 
 // IsDesiredState reports whether state is a valid requested state.

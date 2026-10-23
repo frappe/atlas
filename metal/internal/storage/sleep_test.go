@@ -3,6 +3,7 @@ package storage
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -26,40 +27,54 @@ func (transport sleepUploadTransport) RoundTrip(request *http.Request) (*http.Re
 	return transport(request)
 }
 
-func TestSleepUploadCountsCompressedHTTPAttempts(t *testing.T) {
-	contents := bytes.Repeat([]byte("compressible snapshot"), 1<<16)
+func TestSleepUploadSplitsPartsAndRoundTrips(t *testing.T) {
+	contents := make([]byte, 200<<10)
+	if _, err := rand.Read(contents); err != nil {
+		t.Fatal(err)
+	}
 	store, _, path := uploadFixture(t, contents)
+	objects := map[string][]byte{}
+	failed := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet {
+			writer.Write(objects[request.URL.Path])
+			return
+		}
+		if request.URL.Path == "/part-2" && !failed {
+			failed = true
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		data, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		objects[request.URL.Path] = data
+		writer.Header().Set("ETag", "stored")
+	}))
+	defer server.Close()
+	store.httpClient = server.Client()
+
+	destination := vm.SleepArtifactTarget{PartSizeBytes: 64 << 10}
+	for index := 1; index <= 6; index++ {
+		url := fmt.Sprintf("%s/part-%d", server.URL, index)
+		destination.Parts = append(destination.Parts, vm.SleepArtifactPart{UploadURL: url + "?put=secret", DownloadURL: url + "?get=secret"})
+	}
 	progress := &vm.SleepUploadProgress{}
-	attempts := 0
-	store.httpClient = &http.Client{Transport: sleepUploadTransport(func(request *http.Request) (*http.Response, error) {
-		attempts++
-		total := progress.TotalBytes.Load()
-		if total <= 0 || total >= int64(len(contents)) || request.ContentLength != total || progress.UploadedBytes.Load() != 0 {
-			return nil, fmt.Errorf("attempt %d: size=%d, length=%d, read=%d", attempts, total, request.ContentLength, progress.UploadedBytes.Load())
-		}
-		defer request.Body.Close()
-		if _, err := io.CopyN(io.Discard, request.Body, total/2); err != nil {
-			return nil, err
-		}
-		if read := progress.UploadedBytes.Load(); read != total/2 {
-			return nil, fmt.Errorf("counted %d compressed bytes, want %d", read, total/2)
-		}
-		if _, err := io.Copy(io.Discard, request.Body); err != nil {
-			return nil, err
-		}
-		if read := progress.UploadedBytes.Load(); read != total {
-			return nil, fmt.Errorf("counted %d compressed bytes, want %d", read, total)
-		}
-		response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}
-		response.Header.Set("ETag", "stored")
-		if attempts == 1 {
-			response.StatusCode = http.StatusServiceUnavailable
-		}
-		return response, nil
-	})}
-	artifact, err := store.uploadSleepArtifact(t.Context(), path, int64(len(contents)), "https://objects.example/upload", t.TempDir(), progress)
-	if err != nil || attempts != 2 || artifact.StoredSizeBytes != progress.TotalBytes.Load() {
-		t.Fatalf("upload after retry: %+v, attempts=%d, error=%v", artifact, attempts, err)
+	artifact, err := store.uploadSleepArtifact(t.Context(), path, int64(len(contents)), destination, t.TempDir(), progress)
+	if err != nil || !failed || artifact.PartCount != 4 || len(objects) != 4 || progress.UploadedBytes.Load() != int64(len(contents)) {
+		t.Fatalf("upload = %+v, %v; retried=%t objects=%d read=%d", artifact, err, failed, len(objects), progress.UploadedBytes.Load())
+	}
+
+	destination.Parts = destination.Parts[:artifact.PartCount]
+	restored := &temporaryFileDestination{directory: t.TempDir()}
+	defer restored.discard()
+	if err := downloadParts(t.Context(), store.httpClient, destination.DownloadURLs(), artifact.SHA256, restored); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(restored.file.Name())
+	if err != nil || !bytes.Equal(actual, contents) {
+		t.Fatalf("parts did not restore the artifact: %v", err)
 	}
 }
 
@@ -93,7 +108,7 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "state"), []byte("changed after wake"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := store.UploadSleepMemory(t.Context(), staged, server.URL+"?put=secret", &vm.SleepUploadProgress{})
+	artifact, err := store.UploadSleepMemory(t.Context(), staged, vm.SleepArtifactTarget{UploadURL: server.URL + "?put=secret"}, &vm.SleepUploadProgress{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +145,7 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	}))
 	defer downloadServer.Close()
 	restored := t.TempDir()
-	if err := store.DownloadSleepMemory(t.Context(), restored, downloadServer.URL+"?get=secret", artifact); err != nil {
+	if err := store.DownloadSleepMemory(t.Context(), restored, []string{downloadServer.URL + "?get=secret"}, artifact); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range contents {
@@ -141,7 +156,7 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	}
 	artifact.SHA256 = strings.Repeat("0", 64)
 	corrupt := t.TempDir()
-	if err := store.DownloadSleepMemory(t.Context(), corrupt, downloadServer.URL, artifact); err == nil {
+	if err := store.DownloadSleepMemory(t.Context(), corrupt, []string{downloadServer.URL}, artifact); err == nil {
 		t.Fatal("corrupt checkpoint accepted")
 	}
 	entries, err := os.ReadDir(corrupt)
@@ -175,7 +190,7 @@ func TestSleepMemoryArchiveRejectsPathsAndLinks(t *testing.T) {
 func TestSleepDiskRestoreDoesNotReplaceExistingDisk(t *testing.T) {
 	logFile := fakeZFS(t, "", "none")
 	store := &SnapshotStore{pool: &ZFSPool{name: "metal"}}
-	if err := store.RestoreSleepDisk(t.Context(), "vm-1", "https://unused.example", vm.SleepArtifact{}); err != nil {
+	if err := store.RestoreSleepDisk(t.Context(), "vm-1", []string{"https://unused.example"}, vm.SleepArtifact{}); err != nil {
 		t.Fatal(err)
 	}
 	if commands := commandLog(t, logFile); len(commands) != 1 || commands[0] != "list metal/vms/vm-1" {

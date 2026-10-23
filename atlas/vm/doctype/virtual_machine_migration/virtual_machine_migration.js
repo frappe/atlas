@@ -16,6 +16,13 @@ frappe.ui.form.on("Virtual Machine Migration", {
 		if (is_active && frm.doc.status !== "canceling") {
 			frm.add_custom_button(__("Abort Migration"), () => abortMigration(frm), __("Actions"));
 		}
+		if (is_active && frm.doc.destination_metal_server) {
+			frm.add_custom_button(
+				__("Restore Source"),
+				() => restoreSource(frm),
+				__("Dangerous Actions")
+			);
+		}
 
 		// Always called, so a finished migration also clears a running interval.
 		scheduleProgressRefresh(frm);
@@ -66,6 +73,24 @@ function abortMigration(frm) {
 					args: { dt: frm.doctype, dn: frm.doc.name, method: "abort" },
 					freeze: true,
 					freeze_message: __("Requesting abort..."),
+				})
+				.then(() => frm.reload_doc())
+	);
+}
+
+function restoreSource(frm) {
+	frappe.confirm(
+		__(
+			"Restore the VM on {0}? Use this only when {1} is lost for good. Writes the VM made on {1} after cutover are lost. Atlas refuses while {1} still reports.",
+			[frm.doc.source_metal_server, frm.doc.destination_metal_server]
+		),
+		() =>
+			frappe
+				.call({
+					method: "run_doc_method",
+					args: { dt: frm.doctype, dn: frm.doc.name, method: "restore_source" },
+					freeze: true,
+					freeze_message: __("Restoring the source..."),
 				})
 				.then(() => frm.reload_doc())
 	);

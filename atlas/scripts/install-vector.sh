@@ -26,6 +26,10 @@ if [ "$(vector --version 2>/dev/null | cut -d' ' -f2)" != "$vector_version" ]; t
 	apt-get install -y -qq "$package"
 fi
 usermod -aG systemd-journal vector
+# The package unit stops restarting after 5 failures in 10 seconds.
+install -d /etc/systemd/system/vector.service.d
+printf '[Service]\nStartLimitInterval=0\nRestartSec=5\n' > /etc/systemd/system/vector.service.d/restart.conf
+systemctl daemon-reload
 
 if ! command -v smartctl >/dev/null; then
 	echo "==> install smartmontools"

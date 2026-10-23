@@ -29,6 +29,7 @@ func (manager *Manager) RequestRestart(ctx context.Context, identifier string) e
 	if err := manager.store.writeDesired(record); err != nil {
 		return err
 	}
+	manager.stopSleepUpload(identifier)
 	manager.noteRequest(ctx, record, false)
 	return nil
 }
@@ -152,6 +153,7 @@ func (manager *Manager) SetNetwork(ctx context.Context, identifier string, confi
 	if err := manager.store.writeDesired(record); err != nil {
 		return err
 	}
+	manager.stopSleepUpload(identifier)
 	manager.noteRequest(ctx, record, true)
 	return nil
 }
@@ -354,6 +356,7 @@ func (manager *Manager) mutateAndReport(ctx context.Context, identifier string, 
 	if err := manager.store.writeDesired(record); err != nil {
 		return false, err
 	}
+	manager.stopSleepUpload(identifier)
 	manager.noteRequest(ctx, record, false)
 
 	return true, nil

@@ -53,6 +53,8 @@ func (driver *recordingDriver) ExpireSource(_ context.Context, virtualMachineID 
 	return nil
 }
 
+func (*recordingDriver) RemoveAbortedDestinations(context.Context) error { return nil }
+
 func TestRunReleasesEveryExpiredSourceLock(t *testing.T) {
 	driver := newRecordingDriver()
 	driver.expiredIDs = []string{"vm-9"}

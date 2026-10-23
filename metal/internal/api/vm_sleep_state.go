@@ -72,5 +72,7 @@ func (s *Server) refreshVirtualMachineSleepState(c echo.Context) error {
 	if err := s.virtualMachineManager.RefreshSleepState(c.Request().Context(), identifier, request); err != nil {
 		return err
 	}
+	// A wake that failed on expired URLs retries now instead of after its backoff.
+	s.wakeReconciler()
 	return s.respondWithCurrentVirtualMachine(c, http.StatusAccepted)
 }

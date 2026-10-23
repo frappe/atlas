@@ -53,6 +53,30 @@ def remember_pool_is_full(requirements: PlacementRequirements) -> None:
 	)
 
 
+def has_hosts_without_fresh_capacity(architecture: str) -> bool:
+	"""Return whether a ready host of the architecture sent no capacity sample within the maximum age."""
+	hosts = frappe.get_all(
+		"Metal Server",
+		filters={
+			"status": "Running",
+			"is_provisioning_completed": 1,
+			"is_in_maintenance": 0,
+			"architecture": architecture,
+		},
+		pluck="name",
+	)
+	if not hosts:
+		return False
+
+	fresh_hosts = frappe.get_all(
+		"Metal Server Usage",
+		filters={"server": ("in", hosts), "creation": (">=", now_datetime() - CAPACITY_MAXIMUM_AGE)},
+		pluck="server",
+		distinct=True,
+	)
+	return len(set(fresh_hosts)) < len(hosts)
+
+
 def is_pool_known_full(requirements: PlacementRequirements) -> bool:
 	"""Return whether this shape is at least as large as a recent failed shape."""
 	entry = frappe.cache().get_value(_full_pool_key(requirements))

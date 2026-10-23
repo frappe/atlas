@@ -45,6 +45,8 @@ type syncResponse struct {
 	Capacity          capacityResponse           `json:"capacity"`
 	// VirtualMachines maps a VM identifier to its last observed state.
 	VirtualMachines map[string]virtualMachineStateResponse `json:"virtual_machines"`
+	// InvalidVirtualMachines lists the VMs whose records metald cannot read. They are left out of virtual_machines.
+	InvalidVirtualMachines []string `json:"invalid_virtual_machines,omitempty"`
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string `json:"private_network_mac_address,omitempty"`
 }
@@ -66,6 +68,9 @@ type hostCompatibilityResponse struct {
 type virtualMachineStateResponse struct {
 	Status        string `json:"status"`
 	LastRequestAt string `json:"last_request_at,omitempty"`
+	// SleepState is empty for an awake VM.
+	SleepState      string `json:"sleep_state,omitempty"`
+	SleepSnapshotID string `json:"sleep_snapshot_id,omitempty"`
 }
 
 // capacityResponse is what the controller needs to place the next VM.
@@ -131,10 +136,11 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 		return synchronizationFailure(err)
 	}
 	return c.JSON(http.StatusOK, syncResponse{
-		HostCompatibility: (*hostCompatibilityResponse)(result.Compatibility),
-		Capacity:          capacityResponseFromHost(result.Capacity),
-		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachines),
-		PrivateNetworkMAC: result.PrivateNetworkMAC,
+		HostCompatibility:      (*hostCompatibilityResponse)(result.Compatibility),
+		Capacity:               capacityResponseFromHost(result.Capacity),
+		VirtualMachines:        virtualMachineStateResponses(result.VirtualMachines),
+		InvalidVirtualMachines: result.InvalidVirtualMachineIDs,
+		PrivateNetworkMAC:      result.PrivateNetworkMAC,
 	})
 }
 
@@ -221,10 +227,15 @@ func capacityResponseFromHost(capacity host.Capacity) capacityResponse {
 func virtualMachineStateResponses(virtualMachines map[string]vm.Information) map[string]virtualMachineStateResponse {
 	responses := make(map[string]virtualMachineStateResponse, len(virtualMachines))
 	for identifier, information := range virtualMachines {
-		responses[identifier] = virtualMachineStateResponse{
+		response := virtualMachineStateResponse{
 			Status:        string(information.State),
 			LastRequestAt: formatRFC3339(information.LastRequestAt),
+			SleepState:    string(information.SleepState),
 		}
+		if information.SleepSnapshot != nil {
+			response.SleepSnapshotID = information.SleepSnapshot.ID
+		}
+		responses[identifier] = response
 	}
 	return responses
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import posixpath
+from collections.abc import Callable, Collection
 from typing import Literal
 
 import boto3
@@ -156,6 +157,42 @@ class ObjectStorageClient:
 			self._client.delete_object(Bucket=self.bucket, Key=key)
 		except (BotoCoreError, ClientError) as error:
 			raise self._error("delete an object", key, error) from error
+
+	def list_directories(self, prefix: str) -> list[str]:
+		"""Return the names of the directories directly under prefix."""
+		try:
+			pages = self._client.get_paginator("list_objects_v2").paginate(
+				Bucket=self.bucket, Prefix=prefix, Delimiter="/"
+			)
+			return [
+				common["Prefix"].removeprefix(prefix).rstrip("/")
+				for page in pages
+				for common in page.get("CommonPrefixes", [])
+			]
+		except (BotoCoreError, ClientError) as error:
+			raise self._error("list directories", prefix, error) from error
+
+	def delete_prefix(self, prefix: str, keep: Collection[str] = ()) -> None:
+		"""Delete each object under prefix, except the objects directly in a kept directory."""
+		try:
+			pages = self._client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix)
+			for page in pages:
+				objects = [
+					{"Key": item["Key"]}
+					for item in page.get("Contents", [])
+					if posixpath.dirname(item["Key"]) not in keep
+				]
+				if not objects:
+					continue
+				response = self._client.delete_objects(
+					Bucket=self.bucket, Delete={"Objects": objects, "Quiet": True}
+				)
+				if response.get("Errors"):
+					raise ObjectStorageError(
+						f"Could not delete {len(response['Errors'])} objects under {prefix}."
+					)
+		except (BotoCoreError, ClientError) as error:
+			raise self._error("delete objects", prefix, error) from error
 
 	@staticmethod
 	def _error(operation: str, key: str, error: Exception) -> ObjectStorageError:

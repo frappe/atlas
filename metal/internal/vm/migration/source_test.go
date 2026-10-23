@@ -480,7 +480,7 @@ func TestLockSourceRejectsAMissingVirtualMachine(t *testing.T) {
 }
 
 func TestLockSourceRequiresOffloadedVMToWakeFirst(t *testing.T) {
-	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComa} {
 		manager, machines, _ := newMigrationManager(t)
 		machines.create("vm-1", testSpecification())
 		if err := machines.WriteObserved("vm-1", vm.ObservedRecord{State: vm.StateStopped, SleepState: state}); err != nil {

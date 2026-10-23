@@ -24,13 +24,13 @@ The diagram shows public phases. Durable records divide these phases into smalle
 | `stopping` | Stop the source and receive final disk and memory snapshots. Save each transfer's completion separately. |
 | `creating_network` | Create and record the destination network. |
 | `applying_state` | Apply disk-only state or load memory paused. Record a fallback cause only after runtime cleanup and network recreation succeed. |
-| `ready` | Wait for the Atlas finish or abort request. |
+| `ready` | Wait for the Atlas finish or abort request. A destination that cold-booted the guest refuses abort with `409`, because the guest writes to the disk. A paused memory restore and an offloaded VM that stays asleep can still roll back. Only `discard`, which Atlas sends after an operator restored the source, removes it. |
 | `finishing` | Activate the destination, destroy the source, then remove received snapshots and memory staging. |
 | `removing_runtime` | Remove destination runtime and network. |
 | `removing_storage` | Remove memory staging, abort the disk receive, and remove destination VM records. |
 | `restoring_source` | Restore the source before unlock. |
 | `unlocking_source` | Remove source migration snapshots and release its lock. |
-| `completed` or `aborted` | Keep a terminal record. Release the destination reservation. |
+| `completed` or `aborted` | Keep a terminal record. Release the destination reservation. Remove an aborted record after 7 days when it holds no VM, source lock, or dataset. A completed record stays until the VM leaves the host. |
 | `failed` | Keep transfer data and the destination reservation until abort cleanup. |
 
 | Source checkpoint | Saved work and next action |
@@ -43,7 +43,7 @@ The diagram shows public phases. Durable records divide these phases into smalle
 | `storage_removed` | Record storage release before VM record removal. |
 | `expired` | Keep a tombstone. Reject the same migration ID. Permit a new migration to replace it. |
 
-Metal validates records at startup. Malformed records stop startup and report their path. Unreadable records keep source locks and destination reservations active.
+An unreadable migration record does not stop metald. It keeps its source lock and destination reservation active, and each migration pass logs its path. A lookup by migration ID answers with an error, not `404`, while an unreadable record could hold that migration. Host sync fails until an operator repairs the record, because the record's capacity reservation is unknown.
 
 The startup patch `initialize_memory_migration_flags` fills missing memory flags and preserves checkpoints. Destination records default to disk-only mode. Source records keep their mode unset until cutover. See [host patches](../develop/metal.md#change-stored-state-with-a-patch).
 

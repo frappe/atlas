@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -49,7 +50,7 @@ type migrationStorage interface {
 	DestinationDatasetExists(ctx context.Context, virtualMachineID string) (bool, error)
 	ReceiveResumeToken(ctx context.Context, virtualMachineID string) (string, error)
 	StartSnapshotServer(ctx context.Context, virtualMachineID, snapshotName, baseSnapshotName, resumeToken string) (storage.SourceStream, error)
-	ReceiveSnapshotTLS(ctx context.Context, virtualMachineID, sourceAddress string) error
+	ReceiveSnapshotTLS(ctx context.Context, virtualMachineID, sourceAddress string, received *atomic.Int64) error
 	AbortReceive(ctx context.Context, virtualMachineID string) error
 }
 
@@ -89,6 +90,10 @@ const reservationTimeout = 10 * time.Minute
 // sits behind the Atlas visibility timeout, which is also 10 minutes, so it only
 // acts when Atlas has already given the migration up.
 const destinationIdleTimeout = 15 * time.Minute
+
+// abortedRecordRetention keeps an aborted destination record, so a late Atlas
+// retry still reads the result instead of starting a new migration.
+const abortedRecordRetention = 7 * 24 * time.Hour
 
 // destinationControlWriteInterval bounds how often a poll rewrites the record.
 const destinationControlWriteInterval = time.Minute
@@ -143,6 +148,9 @@ type Manager struct {
 	sourceStreams          map[string]*backgroundOperation
 	sourceStreamsWaitGroup sync.WaitGroup
 
+	// receivedBytes maps a VM to the byte count of its interval in flight.
+	receivedBytes sync.Map
+
 	// downtimeStarts maps a migration to when its source was asked to stop.
 	downtimeMutex  sync.Mutex
 	downtimeStarts map[string]time.Time
@@ -167,9 +175,6 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 		finalDeltaMiB = defaultFinalDeltaMiB
 	}
 	store := newMigrationStore(host.VirtualMachineRecordsDirectory())
-	if err := store.validate(); err != nil {
-		return nil, fmt.Errorf("validate migration records: %w", err)
-	}
 	rootContext, rootCancel := context.WithCancel(context.Background())
 	return &Manager{
 		host:           host,
@@ -281,7 +286,13 @@ func (m *Manager) DestinationStatus(ctx context.Context, migrationID string) (De
 		return DestinationProgress{}, err
 	}
 	m.noteDestinationControl(ctx, virtualMachineID, record)
-	return record.progress(), nil
+	progress := record.progress()
+	if received, ok := m.receivedBytes.Load(virtualMachineID); ok {
+		if last := len(progress.Intervals) - 1; last >= 0 && !progress.Intervals[last].Completed {
+			progress.Intervals[last].BytesTransferred = received.(*atomic.Int64).Load()
+		}
+	}
+	return progress, nil
 }
 
 // noteDestinationControl records that Atlas called about this migration. It writes
@@ -308,7 +319,23 @@ func (m *Manager) AbortDestination(ctx context.Context, migrationID string) erro
 	if err != nil {
 		return err
 	}
-	if err := m.requestAbort(ctx, virtualMachineID); err != nil {
+	if err := m.requestAbort(ctx, virtualMachineID, false); err != nil {
+		return err
+	}
+	return m.CancelTransfer(ctx, virtualMachineID)
+}
+
+// DiscardDestination removes a destination whose source Atlas already restored,
+// even after the destination booted the guest. Its writes since cutover are lost.
+func (m *Manager) DiscardDestination(ctx context.Context, migrationID string) error {
+	virtualMachineID, _, err := m.store.findDestination(migrationID)
+	if errors.Is(err, vm.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := m.requestAbort(ctx, virtualMachineID, true); err != nil {
 		return err
 	}
 	return m.CancelTransfer(ctx, virtualMachineID)
@@ -339,7 +366,7 @@ func (m *Manager) mutateDestination(
 	return record, nil
 }
 
-func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) error {
+func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string, isDiscard bool) error {
 	unlock, err := m.locks.Lock(ctx, virtualMachineID)
 	if err != nil {
 		return err
@@ -357,6 +384,10 @@ func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) err
 		return nil
 	}
 	if record.State == destinationFinishing || record.State == destinationCompleted {
+		return vm.ErrConflict
+	}
+	// A cold-booted destination guest has written to its disk, and rollback would lose those writes.
+	if record.State == destinationReady && record.hasColdBootedGuest() && !isDiscard {
 		return vm.ErrConflict
 	}
 	if record.State == destinationRemovingRuntime || record.State == destinationRemovingStorage ||
@@ -395,6 +426,47 @@ func (m *Manager) DestinationReservations(_ context.Context) ([]DestinationReser
 		})
 	}
 	return reservations, nil
+}
+
+// RemoveAbortedDestinations removes aborted destination remnants older than the
+// retention time. A completed record stays with its VM until the VM leaves the host.
+func (m *Manager) RemoveAbortedDestinations(ctx context.Context) error {
+	virtualMachineIDs, err := m.store.listVirtualMachineIDs()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, virtualMachineID := range virtualMachineIDs {
+		errs = append(errs, m.removeAbortedDestination(ctx, virtualMachineID))
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) removeAbortedDestination(ctx context.Context, virtualMachineID string) error {
+	unlock, err := m.locks.Lock(ctx, virtualMachineID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	record, err := m.store.readDestination(virtualMachineID)
+	if errors.Is(err, vm.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if record.State != destinationAborted || m.now().Sub(record.FinishedAt) < abortedRecordRetention {
+		return nil
+	}
+	// A remnant that still holds a VM, a source lock, or a dataset needs an operator.
+	if err := m.assertReplaceableAborted(ctx, virtualMachineID); errors.Is(err, vm.ErrConflict) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	// Abort cleanup leaves the empty jail directory, so the whole VM directory goes.
+	return os.RemoveAll(filepath.Dir(m.store.migrationDirectory(virtualMachineID)))
 }
 
 // assertReplaceableAborted confirms an aborted remnant left no VM, source lock,

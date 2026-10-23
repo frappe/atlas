@@ -128,6 +128,19 @@ class TestSleepyVMOvercommitFactor(UnitTestCase):
 					AtlasSettings._validate_sleepy_vm_overcommit_factor(settings)
 
 
+class TestSignedURLExpiry(UnitTestCase):
+	def test_the_expiry_must_allow_renewal_and_stay_within_seven_days(self) -> None:
+		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
+
+		for value in (0, 3600, 86400, 604800):
+			AtlasSettings._validate_signed_url_expiry(SimpleNamespace(object_storage_signed_url_expiry=value))
+		for value in (1, 3599, 604801):
+			with self.subTest(value=value), self.assertRaises(frappe.ValidationError):
+				AtlasSettings._validate_signed_url_expiry(
+					SimpleNamespace(object_storage_signed_url_expiry=value)
+				)
+
+
 class TestPlacementStrategy(UnitTestCase):
 	def test_unknown_strategy_is_rejected(self) -> None:
 		from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings

@@ -40,7 +40,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - `PlacementContext` owns the affinity rules, so the strategies do not know about them. It removes the hosts that fail the rules from the snapshot, and checks the rules again under the host lock. Keep both checks: the snapshot can be 1 second old. A failed check under the lock counts as contention, so the next attempt reads a fresh snapshot.
 - A migration to a destination that an operator names does not apply the affinity rules.
 - A `within` rule reads the VMs of every host in the group of the candidate host. Placement locks each of those hosts without waiting, and keeps the locks until the draft commits.
-- Atlas changes one network value, then sends the complete network object to Metal. Public address requests own their corresponding default routes.
+- Atlas changes one network value, then sends the complete network object to Metal. Public address requests own their corresponding default routes. A per-VM file lock serializes these read-and-replace changes. A change that waits more than 10 seconds returns a conflict, and no database lock waits on Metal.
 - Guest-specific keys, metadata, and mesh addresses go through Metal and guest metadata. Do not bake them into a shared image.
 - Atlas SSH to a guest runs `ip netns exec metal-<id> nc 172.16.0.2 22` on the current host. It depends on the Metal namespace name and guest address in `linux_allocator.go`.
 - A protected VM cannot be terminated. An unprotected Atlas record is deleted only after Metal confirms that the VM is absent.

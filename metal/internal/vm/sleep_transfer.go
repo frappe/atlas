@@ -12,8 +12,10 @@ import (
 )
 
 type sleepUpload struct {
-	memory   bool
-	progress SleepUploadProgress
+	virtualMachineID string
+	memory           bool
+	progress         SleepUploadProgress
+	cancel           context.CancelFunc
 }
 
 // OffloadSleepArtifacts serializes transfers for one VM without occupying its reconciler.
@@ -60,6 +62,19 @@ func (upload *sleepUpload) phase() string {
 		return phase + "memory"
 	}
 	return phase + "disk"
+}
+
+// stopSleepUpload cancels the running sleep upload of a VM. A change to the desired
+// record makes its checkpoint stale, and a migration hands the checkpoint to another
+// host. A part sent after that would stay in object storage.
+func (manager *Manager) stopSleepUpload(identifier string) {
+	manager.sleepUploadsMutex.Lock()
+	defer manager.sleepUploadsMutex.Unlock()
+	for _, upload := range manager.sleepUploads {
+		if upload.virtualMachineID == identifier {
+			upload.cancel()
+		}
+	}
 }
 
 func (manager *Manager) applySleepUpload(snapshotID string, information *Information) {
@@ -119,7 +134,12 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return nil
 	}
-	directory := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer", record.ID)
+	transfers := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer")
+	directory := filepath.Join(transfers, record.ID)
+	if err := removeOtherSleepTransfers(transfers, record.ID); err != nil {
+		unlock()
+		return err
+	}
 	if target.Artifact != nil {
 		defer unlock()
 		if memory {
@@ -181,7 +201,9 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return err
 	}
-	upload := &sleepUpload{memory: memory}
+	uploadContext, cancelUpload := context.WithCancel(ctx)
+	defer cancelUpload()
+	upload := &sleepUpload{virtualMachineID: identifier, memory: memory, cancel: cancelUpload}
 	manager.sleepUploadsMutex.Lock()
 	manager.sleepUploads[record.ID] = upload
 	manager.sleepUploadsMutex.Unlock()
@@ -190,15 +212,15 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		delete(manager.sleepUploads, record.ID)
 		manager.sleepUploadsMutex.Unlock()
 	}()
-	destination := target.UploadURL
+	destination := target.SleepArtifactTarget
 	unlock()
 
 	// The upload reads only staging, so wake does not wait for its network transfer.
 	var artifact SleepArtifact
 	if memory {
-		artifact, err = manager.snapshots.UploadSleepMemory(ctx, directory, destination, &upload.progress)
+		artifact, err = manager.snapshots.UploadSleepMemory(uploadContext, directory, destination, &upload.progress)
 	} else {
-		artifact, err = manager.snapshots.UploadSleepDisk(ctx, record.ID, destination, &upload.progress)
+		artifact, err = manager.snapshots.UploadSleepDisk(uploadContext, record.ID, destination, &upload.progress)
 	}
 	return manager.finishSleepUpload(ctx, identifier, record.ID, memory, artifact, upload.phase(), err)
 }
@@ -220,12 +242,21 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 		return err
 	}
 	if uploadError != nil {
+		if errors.Is(uploadError, context.Canceled) && ctx.Err() == nil {
+			// stopSleepUpload cancelled it. A later pass uploads again if the checkpoint still needs it.
+			return nil
+		}
 		if !current.canUpload(desired, observed) {
 			return uploadError
 		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })
 	}
-	current.target(memory).Artifact = &artifact
+	stored := current.target(memory)
+	stored.Artifact = &artifact
+	if artifact.PartCount > 0 {
+		// Only the used parts stay, so a URL refresh signs exactly these objects.
+		stored.Parts = stored.Parts[:artifact.PartCount]
+	}
 	if err := manager.writeSleepRecord(identifier, current); err != nil {
 		return err
 	}
@@ -270,7 +301,7 @@ func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired Desired
 		if err != nil {
 			return err
 		}
-		observed.SleepState = SleepStateComatose
+		observed.SleepState = SleepStateComa
 		if hasDisk {
 			if err := manager.runOperation(ctx, desired.ID, observed, record.ID, "evict-sleep-disk", func() error {
 				return manager.storage.Release(ctx, desired.ID)
@@ -281,4 +312,24 @@ func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired Desired
 	}
 	observed.completeOperation()
 	return manager.store.writeObserved(desired.ID, *observed)
+}
+
+// removeOtherSleepTransfers deletes the staging of older checkpoints, which a
+// metald restart during an upload leaves behind.
+func removeOtherSleepTransfers(transfers, snapshotID string) error {
+	entries, err := os.ReadDir(transfers)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != snapshotID {
+			if err := os.RemoveAll(filepath.Join(transfers, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -184,6 +184,22 @@ class TestVirtualMachineResize(UnitTestCase):
 
 		self.find_server.assert_not_called()
 
+	def test_offload_is_rejected_for_a_large_virtual_machine_before_a_host_read(self) -> None:
+		for changes in (
+			{"memory_mib": 8192, "deep_sleep_after_idle_seconds": 3600},
+			{"disk_mib": 102400, "deep_sleep_after_idle_seconds": 3600},
+		):
+			with (
+				self.subTest(changes=changes),
+				self.assertRaisesRegex(frappe.ValidationError, "at most 4 GiB"),
+			):
+				self.resize.apply(changes)
+
+		self.virtual_machine.deep_sleep_after_idle_seconds = 3600
+		with self.assertRaisesRegex(frappe.ValidationError, "at most 4 GiB"):
+			self.resize.apply({"memory_mib": 8192})
+		self.metal_client.get_virtual_machine.assert_not_called()
+
 	def test_an_invalid_value_is_rejected_before_a_host_read(self) -> None:
 		for resize_values in (
 			{"cpu_millicores": 99},

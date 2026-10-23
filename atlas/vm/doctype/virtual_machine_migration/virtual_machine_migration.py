@@ -108,6 +108,15 @@ class VirtualMachineMigration(Document):
 		MigrationService(self).request_abort()
 		reconcile_migration(self.name)
 
+	@frappe.whitelist(methods=["POST"])
+	def restore_source(self) -> None:
+		"""Start the stopped source again after the destination host is lost for good."""
+		frappe.only_for("System Manager")
+		frappe.get_doc("Virtual Machine", self.virtual_machine).check_permission("write")
+		from atlas.vm.core.vm_migration import MigrationService
+
+		MigrationService(self).restore_source()
+
 
 @frappe.whitelist(methods=["POST"])
 def set_vm_migration_paused(is_paused: bool) -> None:
