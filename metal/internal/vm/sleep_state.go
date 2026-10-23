@@ -286,6 +286,19 @@ func sameSleepObject(first, second string) bool {
 	return leftError == nil && rightError == nil && left.Scheme == right.Scheme && left.Host == right.Host && left.EscapedPath() == right.EscapedPath()
 }
 
+// saveAndStop saves guest memory locally and forgets the previous checkpoint, so
+// Metal never reports a checkpoint that the new saved state replaced.
+func (manager *Manager) saveAndStop(ctx context.Context, machine RuntimeMachine) error {
+	if err := manager.runtime.SaveAndStop(ctx, machine); err != nil {
+		return err
+	}
+	err := os.Remove(filepath.Join(manager.store.virtualMachineDirectory(machine.ID), "sleep-state.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (manager *Manager) readSleepRecord(identifier string) (*SleepCheckpoint, error) {
 	var record SleepCheckpoint
 	err := readRecord(filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-state.json"), &record)

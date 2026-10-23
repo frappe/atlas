@@ -217,11 +217,14 @@ func (manager *Manager) reconcileSavedState(
 
 	if status.State == StatePaused {
 		if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseSaveState, func() error {
-			return manager.runtime.SaveAndStop(ctx, machine)
+			return manager.saveAndStop(ctx, machine)
 		}); err != nil {
 			return status, false, err
 		}
 		status.State = StateStopped
+		// The new local save is newer than any remote checkpoint.
+		hasRemoteState = false
+		observed.SleepState = SleepStateSleeping
 	}
 
 	if status.State != StateStopped {

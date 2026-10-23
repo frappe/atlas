@@ -142,3 +142,21 @@ func TestSleepRestoreFallbackRetryDoesNotReloadRemoteMemory(t *testing.T) {
 		})
 	}
 }
+
+func TestANewSaveOfAPausedGuestReplacesTheRemoteCheckpoint(t *testing.T) {
+	manager, runtime, _, snapshots := sleepRestoreManager(t, SleepStateDeepSleeping)
+	// The guest resumed paused, but the record still shows the remote checkpoint.
+	runtime.state, runtime.hasSavedState = StatePaused, false
+
+	if err := reconcileSleeping(t.Context(), manager, "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	information, err := manager.Information(t.Context(), "vm-1")
+	if err != nil || information.SleepSnapshot != nil || information.Error != nil {
+		t.Fatalf("the new local save kept the remote checkpoint: %+v, %v", information, err)
+	}
+	if runtime.saves != 1 || len(snapshots.downloads) != 0 {
+		t.Fatalf("the guest resumed the older remote checkpoint: runtime=%+v downloads=%v", runtime, snapshots.downloads)
+	}
+}
