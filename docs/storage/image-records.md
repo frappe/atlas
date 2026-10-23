@@ -87,6 +87,8 @@ flowchart LR
 
 The diagram shows a Machine image transfer and its retry path. A transfer can also fail before upload or during completion.
 
+A timeout or a `5xx` answer from the source host does not fail the transfer. Atlas shows the error on the image, keeps its status, and the pending-transfer job tries again.
+
 Retirement changes an Available or Failed image to `Archived`.
 
 ## Retirement and deletion
