@@ -329,6 +329,14 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 		for allocation in allocations.values():
 			allocation.begin_detach.assert_called_once_with()
 
+	def test_a_concurrent_network_change_gets_a_conflict(self) -> None:
+		with (
+			patch("atlas.vm.core.vm_service.NETWORK_LOCK_TIMEOUT_SECONDS", 0),
+			self.build_service(None).network_lock(),
+			self.assertRaises(AtlasConflictError),
+		):
+			self.build_service(None).set_routes([])
+
 	# An allocation job can run before Metal stores a new VM. An empty route list
 	# would then replace the create routes, so the read must fail and retry.
 	def test_a_route_edit_fails_until_metal_holds_the_vm(self) -> None:

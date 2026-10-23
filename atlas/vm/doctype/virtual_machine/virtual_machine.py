@@ -370,23 +370,24 @@ class VirtualMachine(Document):
 		self.ensure_not_migrating()
 		self.validate_network_change()
 		service = VirtualMachineService(self)
-		service.lock_network()
-		self.is_network_gateway = strict_bool(is_network_gateway, "is_network_gateway")
-		changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
-		if self.is_network_gateway:
-			self.validate_network_gateway()
-			if self.is_accessible_via_wireguard_gateway:
-				frappe.throw(
-					_("Disable WireGuard gateway access before this VM becomes a gateway."),
-					exc=AtlasUserError,
-				)
-			if service.has_gateway_routes():
-				frappe.throw(
-					_("Remove the gateway routes of this VM before it becomes a gateway."), exc=AtlasUserError
-				)
-			changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
-		service.update_network(changes)
-		self.save()
+		with service.network_lock():
+			self.is_network_gateway = strict_bool(is_network_gateway, "is_network_gateway")
+			changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
+			if self.is_network_gateway:
+				self.validate_network_gateway()
+				if self.is_accessible_via_wireguard_gateway:
+					frappe.throw(
+						_("Disable WireGuard gateway access before this VM becomes a gateway."),
+						exc=AtlasUserError,
+					)
+				if service.has_gateway_routes():
+					frappe.throw(
+						_("Remove the gateway routes of this VM before it becomes a gateway."),
+						exc=AtlasUserError,
+					)
+				changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
+			service.update_network(changes)
+			self.save()
 
 	@frappe.whitelist(methods=["POST"])
 	def set_wireguard_gateway_access(self, is_enabled: bool | int | str) -> None:
