@@ -35,7 +35,7 @@ Use a **Metal Server Drain**. By default, it migrates all VMs of one source Meta
 | 1 | Open **Dangerous Actions → Drain Server** on the Metal Server form. Or create a Metal Server Drain and select the **Source Metal Server**. |
 | 2 | Keep **Allow Any Destination**, or clear it and add the destination Metal Servers. In the dialog, leave **Destination Metal Servers** empty for any destination. |
 | 3 | Set **Memory Snapshot** and **Allow Disk-Only Fallback**. They apply to each migration. |
-| 4 | Optionally select **Retry Failed Migrations**. Set **Parallel Migrations**. The default is 1. |
+| 4 | Keep **Retry Failed Migrations**, or clear it to disable retries. Set **Parallel Migrations**. The default is 1. |
 | 5 | Select **Drain** in the dialog, or submit the drain. Follow the **Migrations** table. |
 
 To move only selected VMs, create a Metal Server Drain directly. Select **Move Only Selected VMs** and add VMs to the **Virtual Machines** table before you submit. Select VMs on the source that are not drafts or terminating.
@@ -48,7 +48,9 @@ Each migration writes its status, progress, and destination into its row when th
 
 Every 5 seconds, the drain starts migrations until **Parallel Migrations** run. A VM that cannot start ends that run, so its retry waits for the next one. It starts no migration while VM migrations are paused. It does not finish while another migration moves a VM in its scope off the source.
 
-A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The **Error** column of a row shows why its migration failed or could not start. A completed row shows no error.
+A failed migration does not stop the drain. **Retry Failed Migrations** is selected by default. The drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried.
+
+A VM that cannot start a migration gets a `failed` row without a migration. The **Error** column of a row shows why its migration failed or could not start. A completed row shows no error.
 
 When the last migration has finished, the drain copies each migration into its row again. The drain is **Completed** when no VM in its scope is left on the source. For a selected-only drain, other VMs can stay on the source.
 
