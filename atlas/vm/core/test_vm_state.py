@@ -38,6 +38,7 @@ class TestVirtualMachineState(UnitTestCase):
 			patch.object(vm_state.frappe, "log_error"),
 			patch.object(vm_state, "report_unknown_virtual_machines"),
 			patch.object(vm_state, "update_reported_states") as update,
+			patch.object(vm_state.frappe.db, "get_value", return_value=None),
 			patch.object(vm_state.frappe.db, "commit") as commit,
 		):
 			vm_state.store_reported_states("metal-1", reported)

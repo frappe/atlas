@@ -55,6 +55,10 @@ def store_reported_states(server_name: str, reported: object) -> None:
 				document.virtual_machine = name
 
 			document.update(state)
+			# The sleep job owns this field. Lock and read it now, so the save cannot undo its write.
+			document.download_urls_expire_at = frappe.db.get_value(
+				"Virtual Machine State", name, "download_urls_expire_at", for_update=True
+			)
 			document.server = server_name
 			document.synced_at = synced_at
 			document.save(ignore_permissions=True)
