@@ -15,9 +15,24 @@ import (
 
 // SleepArtifactTarget supplies object storage access for one sleep artifact.
 type SleepArtifactTarget struct {
-	ObjectKey   string `json:"object_key,omitempty"`
-	UploadURL   string `json:"upload_url,omitempty"`
-	DownloadURL string `json:"download_url"`
+	ObjectKey         string                `json:"object_key,omitempty"`
+	UploadURL         string                `json:"upload_url,omitempty"`
+	DownloadURL       string                `json:"download_url"`
+	Multipart         *SleepMultipartUpload `json:"multipart,omitempty"`
+	CompletedUploadID string                `json:"completed_upload_id,omitempty"`
+}
+
+// SleepMultipartUpload supplies the same signed part plan used for image uploads.
+type SleepMultipartUpload struct {
+	UploadID    string            `json:"upload_id"`
+	PartSizeMiB int64             `json:"part_size_mib"`
+	Parts       []SleepUploadPart `json:"parts"`
+}
+
+// SleepUploadPart is one signed multipart destination.
+type SleepUploadPart struct {
+	PartNumber int    `json:"part_number"`
+	URL        string `json:"url"`
 }
 
 // SleepStateRequest selects memory, disk, or both for one sleep checkpoint.
@@ -40,11 +55,14 @@ type SleepArtifactStatus struct {
 	Uploaded      bool           `json:"uploaded"`
 	Artifact      *SleepArtifact `json:"artifact,omitempty"`
 	UploadPercent *int           `json:"upload_percent,omitempty"`
+	UploadID      string         `json:"upload_id,omitempty"`
+	Pending       *SleepArtifact `json:"pending,omitempty"`
 }
 
 type sleepArtifactRecord struct {
 	SleepArtifactTarget
 	Artifact *SleepArtifact `json:"artifact,omitempty"`
+	Pending  *SleepArtifact `json:"pending,omitempty"`
 }
 
 // SleepCheckpoint holds the acknowledged artifacts and identity of one sleeping VM.
