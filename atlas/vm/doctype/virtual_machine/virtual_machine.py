@@ -69,6 +69,7 @@ class VirtualMachine(Document):
 		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int
+		sleep_snapshot_objects: DF.JSON | None
 		sleep_state: DF.Literal["", "sleeping", "deep-sleeping", "comatose"]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
