@@ -263,8 +263,8 @@ func (chunker *partChunker) discard() {
 }
 
 // removeStalePartBuffers deletes buffers left by a crashed upload.
-func (store *SnapshotStore) removeStalePartBuffers(snapshotID string) {
-	matches, err := filepath.Glob(filepath.Join(store.snapshotDirectory(snapshotID), "part-*"))
+func (store *SnapshotStore) removeStalePartBuffers(directory string) {
+	matches, err := filepath.Glob(filepath.Join(directory, "part-*"))
 	if err != nil {
 		return
 	}

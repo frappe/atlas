@@ -134,6 +134,7 @@ func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, source io.R
 	if err := validateUploadParts(request, sizeBytes); err != nil {
 		return vm.SleepArtifact{}, err
 	}
+	store.removeStalePartBuffers(directory)
 	path := filepath.Join(directory, "sleep-parts.json")
 	var saved artifactProgress
 	data, err := os.ReadFile(path)

@@ -157,7 +157,7 @@ func (store *SnapshotStore) StartUpload(_ context.Context, snapshotID string, re
 	store.uploadsMutex.Unlock()
 
 	// Remove buffers left by a crashed upload.
-	store.removeStalePartBuffers(snapshotID)
+	store.removeStalePartBuffers(store.snapshotDirectory(snapshotID))
 
 	metadata.UploadState = UploadStateUploading
 	metadata.UploadError = ""
