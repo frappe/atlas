@@ -40,6 +40,9 @@ OBJECT_STORAGE_FIELDS = (
 	"object_storage_endpoint_url",
 	"object_storage_region",
 )
+# S3 signature version 4 limits a signed URL to seven days.
+MINIMUM_SIGNED_URL_EXPIRY_SECONDS = 3600
+MAXIMUM_SIGNED_URL_EXPIRY_SECONDS = 604800
 
 
 class AtlasSettings(Document):
@@ -250,6 +253,7 @@ class AtlasSettings(Document):
 
 		self._validate_sleepy_vm_overcommit_factor()
 		self._validate_vm_migration_network_change()
+		self._validate_signed_url_expiry()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
 			if frappe.db.exists("Virtual Machine") or frappe.db.exists(
@@ -311,6 +315,11 @@ class AtlasSettings(Document):
 				_("Wait for running VM migrations to finish before you change the migration network.")
 			)
 
+	def _validate_signed_url_expiry(self) -> None:
+		expiry = self.object_storage_signed_url_expiry
+		if expiry and not MINIMUM_SIGNED_URL_EXPIRY_SECONDS <= expiry <= MAXIMUM_SIGNED_URL_EXPIRY_SECONDS:
+			frappe.throw(_("Signed URL Expiry must be from one hour to seven days (3600 to 604800 seconds)."))
+
 	def _validate_sleepy_vm_overcommit_factor(self) -> None:
 		factor = flt(self.sleepy_vm_overcommit_factor)
 		if not isfinite(factor) or factor < 1.0:
@@ -333,6 +342,14 @@ class AtlasSettings(Document):
 				title=_("Upgrade Metald on every host"),
 				indicator="orange",
 			)
+
+		if any(
+			self.has_value_changed(field)
+			for field in (*OBJECT_STORAGE_FIELDS, "object_storage_signed_url_expiry")
+		):
+			# Sleep URLs signed with the old values may no longer work, so sign new ones on the next pass.
+			state = frappe.qb.DocType("Virtual Machine State")
+			frappe.qb.update(state).set(state.sleep_urls_expire_at, None).run()
 
 		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
 			self.server_provider_controller.validate_credentials()

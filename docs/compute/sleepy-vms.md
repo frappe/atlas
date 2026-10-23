@@ -56,19 +56,29 @@ The saved state belongs to one VM. It is not the shared [warm artifact](../stora
 
 ## Configure automatic offload
 
-Atlas checks sleepy VMs every minute. It compares Metal's `observed.last_request_at` with **Deep Sleep After Idle (Seconds)** and **Coma After Idle (Seconds)** on each Virtual Machine. Both times start at the last request, not when the VM entered sleep. `0` disables that transition. Coma requires a shorter, nonzero deep-sleep threshold.
+Every minute, Atlas reads the sleep state and last request time that host sync stored on each **Virtual Machine State**. It compares the last request time with **Deep Sleep After Idle (Seconds)** and **Coma After Idle (Seconds)** on each Virtual Machine. Both times start at the last request, not when the VM entered sleep. `0` disables that transition. Coma requires a shorter, nonzero deep-sleep threshold.
 
 Deep sleep and coma are allowed only for a VM with at most 4 GiB of memory and 50 GiB of disk. Atlas rejects a create, resize, or disk resize that sets a threshold on a larger VM, or that makes a VM with a threshold larger.
 
 Set the delays in the create API request or with **Actions → Resize VM**. New VMs default both offload delays to `0`. Atlas stores these two values locally and does not include them in Metal compute or resize requests. An offload-only update does not contact Metal or wake the VM.
 
-At the deep-sleep threshold, Atlas supplies signed memory upload and download URLs. At the coma threshold, it also supplies disk URLs. If both thresholds have passed, it requests both artifacts together. Atlas skips awake, draft, terminating, and migrating VMs. Missing request timestamps do not trigger an upload.
+At the deep-sleep threshold, Atlas supplies signed memory upload and download URLs. At the coma threshold, it also supplies disk URLs. If both thresholds have passed, it requests both artifacts together. Atlas skips awake, draft, terminating, and migrating VMs, and VMs above the size limit. Missing request timestamps do not trigger an upload.
 
-Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk` as object keys. A later sleep checkpoint on the same host replaces these objects. The host prefix separates uploads across migration. Keep these objects available while the VM depends on them.
+Atlas signs each artifact as parts of 512 MiB, enough for the uncompressed size. Metal uses only the parts that it needs. Only a VM with due work gets a job, and only that job calls Metal.
 
-The same job refreshes GET URLs for stored checkpoints once an hour, even when offload thresholds are disabled. Each artifact keeps its original object key after migration. Memory and disk can use different host prefixes. Set the signed URL lifetime longer than one hour and allow time for queue delays and downloads.
+Upgrade the target Metal hosts and configure **Object Storage** in Atlas Settings before enabling offload. Each checkpoint has its own object directory, `sleep/<site>/<vm>/<random>/`, with `memory.<n>` and `disk.<n>` parts. A checkpoint from an older Atlas uses `sleep/<site>/<server>/<vm>/memory` and `disk`. An artifact keeps its object key after migration.
 
-Atlas caches each successful refresh per VM and checkpoint for one hour. A cache miss refreshes URLs immediately. A failed check appears in Error Log and retries on the next minute's schedule. Atlas does not store signed URLs or a second copy of Metal's sleep state.
+## Keep download URLs valid
+
+A wake from deep sleep or coma downloads the artifacts with the signed GET URLs that Metal stored. An expired URL fails the wake. Atlas records on the **Virtual Machine State** which checkpoint has signed URLs and when they expire. It signs new URLs when half of their lifetime has passed, so an Atlas outage shorter than half the lifetime cannot stop a wake. A new checkpoint gets new URLs on the next minute.
+
+**Signed URL Expiry (seconds)** in Atlas Settings sets the lifetime, from one hour to seven days. The default is one day. A change to it or to the object storage credentials makes Atlas sign new URLs for every checkpoint on the next minute, because a new key makes the old signatures invalid. New URLs also retry a wake that failed on expired URLs.
+
+A failed check appears in Error Log at most once an hour per VM. It retries on the next minute's schedule.
+
+## Delete unused objects
+
+After a VM wakes, or sleeps again with a new checkpoint, Atlas deletes the objects of the old checkpoint. When Atlas deletes a VM, it deletes all of its sleep objects.
 
 ## Upload saved snapshots
 

@@ -132,6 +132,13 @@ class VirtualMachine(Document):
 		self.ensure_not_termination_protected()
 		VirtualMachineService(self).validate_deletion()
 		delete_tasks_for_target(self.doctype, self.name)
+		if frappe.get_cached_doc("Atlas Settings").is_object_storage_configured:
+			frappe.enqueue(
+				"atlas.vm.core.vm_sleep.delete_sleep_objects",
+				virtual_machine_name=self.name,
+				server_name=self.server,
+				enqueue_after_commit=True,
+			)
 		if frappe.db.exists("Virtual Machine State", self.name):
 			frappe.delete_doc(
 				"Virtual Machine State", self.name, ignore_permissions=True, delete_permanently=True

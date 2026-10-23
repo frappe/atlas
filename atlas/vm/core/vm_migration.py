@@ -291,7 +291,7 @@ class MigrationService:
 		information = client.get_virtual_machine(virtual_machine.name)
 		if information.observed.sleep_state not in {"deep-sleeping", "coma"}:
 			return False
-		VirtualMachineSleepService(virtual_machine).refresh_urls(information, client, force=True)
+		VirtualMachineSleepService(virtual_machine).refresh_urls(information, client)
 		return True
 
 	def validate_compatibility(

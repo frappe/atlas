@@ -183,14 +183,21 @@ class MetalSleepArtifact:
 
 	uploaded: bool
 	object_key: str = ""
+	# part_count is how many objects hold an uploaded artifact, or 0 for one object.
+	part_count: int = 0
 
 	@classmethod
 	def from_dict(cls, value: object) -> MetalSleepArtifact:
 		"""Validate one sleep artifact status from Metal."""
 		artifact = object_value(value, "sleep artifact")
+		content = artifact.get("artifact")
+		part_count = (
+			integer_field(object_value(content, "artifact"), "part_count", default=0) if content else 0
+		)
 		return cls(
 			uploaded=boolean_field(artifact, "uploaded"),
 			object_key=string_field(artifact, "object_key", default=""),
+			part_count=part_count,
 		)
 
 
