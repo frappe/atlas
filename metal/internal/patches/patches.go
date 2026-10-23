@@ -27,6 +27,7 @@ var all = []Patch{
 	{Name: "rename_status_keys_to_snake_case", Apply: renameStatusKeysToSnakeCase},
 	{Name: "initialize_memory_migration_flags", Apply: initializeMemoryMigrationFlags},
 	{Name: "move_image_kernels_to_kernel_store", Apply: moveImageKernelsToKernelStore},
+	{Name: "initialize_sleep_migration", Apply: initializeSleepMigration},
 }
 
 // Names returns the patch names in the order they run.

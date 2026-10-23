@@ -8,7 +8,7 @@ from frappe.utils import now_datetime
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.object_storage import ObjectStorageError
-from atlas.vm.core.metal_client import MetalClientError
+from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine, timestamp_field
 from atlas.vm.core.vm_service import VirtualMachineService
 
@@ -33,7 +33,6 @@ class VirtualMachineSleepService:
 			return
 		if information.observed.sleep_state not in {"sleeping", "deep-sleeping", "comatose"}:
 			return
-		settings = frappe.get_cached_doc("Atlas Settings")
 		artifacts = self.artifacts_to_offload(
 			information,
 			machine.deep_sleep_after_idle_seconds,
@@ -43,28 +42,44 @@ class VirtualMachineSleepService:
 		snapshot = information.observed.sleep_snapshot
 		if not artifacts and snapshot is None:
 			return
-		storage = settings.get_object_storage_client()
-		prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
 		if snapshot is not None:
-			cache = frappe.cache()
-			refresh_key = f"atlas:vm-sleep-urls:{machine.name}:{snapshot.id}"
-			if not cache.get_value(refresh_key, use_local_cache=False):
-				refresh = {
-					name: {"download_url": storage.object_url(f"{prefix}/{name}")}
-					for name in ("memory", "disk")
-					if getattr(snapshot, name) is not None
-				}
-				client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
-				cache.set_value(refresh_key, True, expires_in_sec=3600)
+			self.refresh_urls(information, client)
 		if artifacts:
-			request = {
-				name: {
-					"upload_url": storage.object_url(f"{prefix}/{name}", method="PUT"),
-					"download_url": storage.object_url(f"{prefix}/{name}"),
+			storage = frappe.get_cached_doc("Atlas Settings").get_object_storage_client()
+			prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
+			request = {}
+			for name in artifacts:
+				artifact = getattr(snapshot, name) if snapshot else None
+				key = artifact.object_key if artifact and artifact.object_key else f"{prefix}/{name}"
+				request[name] = {
+					"object_key": key,
+					"upload_url": storage.object_url(key, method="PUT"),
+					"download_url": storage.object_url(key),
 				}
-				for name in artifacts
-			}
 			client.offload_sleep_state(machine.name, request)
+
+	def refresh_urls(
+		self, information: MetalVirtualMachine, client: MetalClient, force: bool = False
+	) -> None:
+		"""Refresh each artifact at its original key, also across host migrations."""
+		snapshot = information.observed.sleep_snapshot
+		if snapshot is None:
+			return
+		machine = self.virtual_machine
+		cache = frappe.cache()
+		refresh_key = f"atlas:vm-sleep-urls:{machine.name}:{snapshot.id}"
+		if not force and cache.get_value(refresh_key, use_local_cache=False):
+			return
+		storage = frappe.get_cached_doc("Atlas Settings").get_object_storage_client()
+		prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
+		refresh = {}
+		for name in ("memory", "disk"):
+			artifact = getattr(snapshot, name)
+			if artifact is not None:
+				key = artifact.object_key or f"{prefix}/{name}"
+				refresh[name] = {"object_key": key, "download_url": storage.object_url(key)}
+		client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
+		cache.set_value(refresh_key, True, expires_in_sec=3600)
 
 	@staticmethod
 	def artifacts_to_offload(

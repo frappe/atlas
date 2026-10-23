@@ -80,7 +80,7 @@ func (c *SourceClient) postJSON(ctx context.Context, client *http.Client, addres
 
 // PrepareSource asks the source to lock the VM and return its definition and state.
 func (c *SourceClient) PrepareSource(ctx context.Context, address, migrationID, virtualMachineID string) (VirtualMachineDefinition, vm.State, error) {
-	body, err := c.call(ctx, http.MethodPut, address, sourcePath(migrationID, virtualMachineID, "/source"))
+	body, err := c.call(ctx, http.MethodPut, address, sourcePath(migrationID, virtualMachineID, "/source")+"&sleep_state=true")
 	if err != nil {
 		return VirtualMachineDefinition{}, "", err
 	}

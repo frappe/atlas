@@ -239,7 +239,7 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 	return nil
 }
 
-func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired DesiredRecord, observed *ObservedRecord, record *sleepRecord) error {
+func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired DesiredRecord, observed *ObservedRecord, record *SleepCheckpoint) error {
 	if manager.isMigrating(desired.ID) || !record.canUpload(desired, *observed) || record.Memory.Artifact == nil {
 		return nil
 	}

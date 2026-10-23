@@ -49,7 +49,7 @@ Without that store, daemon exit closes the consoles and stops the guests. Startu
 
 ### Failed restore
 
-Metal keeps valid VM-local saved state for another try. It does not substitute a cold boot for a requested restore or reuse shared warm memory with an existing disk.
+The runtime returns restore errors to the VM manager. The manager owns [wake recovery](sleepy-vms.md#wake-an-offloaded-vm), including cold-boot fallback. Metal never reuses shared warm memory with an existing disk.
 
 ::: details Source code and tests
 

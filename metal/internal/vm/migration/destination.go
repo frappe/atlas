@@ -75,6 +75,10 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	if definition.VirtualMachineID != virtualMachineID {
 		return m.recordDestinationError(record, fmt.Errorf("source returned definition for %s", definition.VirtualMachineID))
 	}
+	if err := definition.validateSleepMigration(observedState, record.HasMemorySnapshot); err != nil {
+		record.State = destinationFailed
+		return m.recordDestinationError(record, err)
+	}
 	definition, err = record.Resize.apply(definition)
 	if err != nil {
 		return m.recordDestinationError(record, err)
@@ -84,6 +88,19 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	}
 	m.StartTransfer(virtualMachineID)
 	return nil
+}
+
+func (definition VirtualMachineDefinition) validateSleepMigration(observedState vm.State, hasMemorySnapshot bool) error {
+	if definition.Sleep == nil {
+		return nil
+	}
+	if !hasMemorySnapshot {
+		return fmt.Errorf("offloaded migration requires memory compatibility: %w", vm.ErrConflict)
+	}
+	if definition.DesiredState != vm.StateRunning || observedState != vm.StateStopped || definition.Specification.SleepAfterIdleSeconds <= 0 {
+		return fmt.Errorf("offloaded migration source must be sleeping: %w", vm.ErrConflict)
+	}
+	return definition.Sleep.Validate(definition.SpecificationGeneration, definition.RestartGeneration)
 }
 
 // reserveAndReconstructDestination makes the capacity check and its reservation one

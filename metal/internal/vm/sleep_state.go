@@ -15,6 +15,7 @@ import (
 
 // SleepArtifactTarget supplies object storage access for one sleep artifact.
 type SleepArtifactTarget struct {
+	ObjectKey   string `json:"object_key,omitempty"`
 	UploadURL   string `json:"upload_url,omitempty"`
 	DownloadURL string `json:"download_url"`
 }
@@ -35,6 +36,7 @@ type SleepSnapshotStatus struct {
 
 // SleepArtifactStatus reports upload progress and verified content.
 type SleepArtifactStatus struct {
+	ObjectKey     string         `json:"object_key,omitempty"`
 	Uploaded      bool           `json:"uploaded"`
 	Artifact      *SleepArtifact `json:"artifact,omitempty"`
 	UploadPercent *int           `json:"upload_percent,omitempty"`
@@ -45,7 +47,9 @@ type sleepArtifactRecord struct {
 	Artifact *SleepArtifact `json:"artifact,omitempty"`
 }
 
-type sleepRecord struct {
+// SleepCheckpoint holds the acknowledged artifacts and identity of one sleeping VM.
+type SleepCheckpoint struct {
+	SourceUserID            uint32               `json:"source_user_id,omitempty"`
 	ID                      string               `json:"id"`
 	Identity                string               `json:"identity"`
 	SpecificationGeneration uint64               `json:"specification_generation"`
@@ -127,7 +131,7 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			if request.SnapshotID != "" {
 				return ErrConflict
 			}
-			record = &sleepRecord{ID: newOperationID(), Identity: saved.Identity,
+			record = &SleepCheckpoint{ID: newOperationID(), Identity: saved.Identity,
 				SpecificationGeneration: desired.SpecificationGeneration, RestartGeneration: desired.RestartGeneration}
 		}
 	}
@@ -161,6 +165,12 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			return ErrConflict
 		}
 		(*pair.stored).DownloadURL = pair.target.DownloadURL
+		if pair.target.ObjectKey != "" {
+			if (*pair.stored).ObjectKey != "" && (*pair.stored).ObjectKey != pair.target.ObjectKey {
+				return ErrConflict
+			}
+			(*pair.stored).ObjectKey = pair.target.ObjectKey
+		}
 		if !refresh {
 			(*pair.stored).UploadURL = pair.target.UploadURL
 		}
@@ -174,8 +184,8 @@ func sameSleepObject(first, second string) bool {
 	return leftError == nil && rightError == nil && left.Scheme == right.Scheme && left.Host == right.Host && left.EscapedPath() == right.EscapedPath()
 }
 
-func (manager *Manager) readSleepRecord(identifier string) (*sleepRecord, error) {
-	var record sleepRecord
+func (manager *Manager) readSleepRecord(identifier string) (*SleepCheckpoint, error) {
+	var record SleepCheckpoint
 	err := readRecord(filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-state.json"), &record)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
@@ -183,40 +193,55 @@ func (manager *Manager) readSleepRecord(identifier string) (*sleepRecord, error)
 	if err != nil {
 		return nil, err
 	}
+	if err := record.validate(); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (record SleepCheckpoint) validate() error {
 	if !validIdentifier(record.ID) || record.Identity == "" || record.Memory == nil {
-		return nil, fmt.Errorf("invalid sleep-state record")
+		return fmt.Errorf("invalid sleep-state record")
 	}
 	for _, target := range []*sleepArtifactRecord{record.Memory, record.Disk} {
 		if target == nil {
 			continue
 		}
-		if target.Artifact != nil {
-			digest, err := hex.DecodeString(target.Artifact.SHA256)
-			if err != nil || len(digest) != 32 || target.Artifact.SizeBytes <= 0 || target.Artifact.StoredSizeBytes <= 0 {
-				return nil, fmt.Errorf("invalid sleep artifact content")
-			}
+		if err := target.validateContent(); err != nil {
+			return err
 		}
 	}
-	return &record, nil
+	return nil
 }
 
-func (record *sleepRecord) canUpload(desired DesiredRecord, observed ObservedRecord) bool {
+func (artifact sleepArtifactRecord) validateContent() error {
+	if artifact.Artifact == nil {
+		return nil
+	}
+	digest, err := hex.DecodeString(artifact.Artifact.SHA256)
+	if err != nil || len(digest) != 32 || artifact.Artifact.SizeBytes <= 0 || artifact.Artifact.StoredSizeBytes <= 0 {
+		return fmt.Errorf("invalid sleep artifact content")
+	}
+	return nil
+}
+
+func (record *SleepCheckpoint) canUpload(desired DesiredRecord, observed ObservedRecord) bool {
 	return record.matchesDesired(desired) && desired.Specification.SleepAfterIdleSeconds > 0 &&
 		desired.Generation == observed.Generation && observed.State == StateStopped && observed.SleepState != SleepStateAwake
 }
 
-func (record *sleepRecord) matchesDesired(desired DesiredRecord) bool {
+func (record *SleepCheckpoint) matchesDesired(desired DesiredRecord) bool {
 	return desired.State == StateRunning && desired.SpecificationGeneration == record.SpecificationGeneration && desired.RestartGeneration == record.RestartGeneration
 }
 
-func (record *sleepRecord) target(memory bool) *sleepArtifactRecord {
+func (record *SleepCheckpoint) target(memory bool) *sleepArtifactRecord {
 	if memory {
 		return record.Memory
 	}
 	return record.Disk
 }
 
-func (manager *Manager) writeSleepRecord(identifier string, record *sleepRecord) error {
+func (manager *Manager) writeSleepRecord(identifier string, record *SleepCheckpoint) error {
 	path := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-state.json")
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -225,13 +250,13 @@ func (manager *Manager) writeSleepRecord(identifier string, record *sleepRecord)
 	return platform.WriteFile(path, data, 0o600)
 }
 
-func (record *sleepRecord) status() *SleepSnapshotStatus {
+func (record *SleepCheckpoint) status() *SleepSnapshotStatus {
 	status := &SleepSnapshotStatus{ID: record.ID}
 	if record.Memory != nil {
-		status.Memory = &SleepArtifactStatus{Uploaded: record.Memory.Artifact != nil, Artifact: record.Memory.Artifact}
+		status.Memory = &SleepArtifactStatus{Uploaded: record.Memory.Artifact != nil, Artifact: record.Memory.Artifact, ObjectKey: record.Memory.ObjectKey}
 	}
 	if record.Disk != nil {
-		status.Disk = &SleepArtifactStatus{Uploaded: record.Disk.Artifact != nil, Artifact: record.Disk.Artifact}
+		status.Disk = &SleepArtifactStatus{Uploaded: record.Disk.Artifact != nil, Artifact: record.Disk.Artifact, ObjectKey: record.Disk.ObjectKey}
 	}
 	for _, artifact := range []*SleepArtifactStatus{status.Memory, status.Disk} {
 		if artifact != nil && artifact.Uploaded {
@@ -288,10 +313,11 @@ func (manager *Manager) restoreSleepArtifacts(ctx context.Context, desired Desir
 	if err := manager.snapshots.DownloadSleepMemory(ctx, directory, record.Memory.DownloadURL, *record.Memory.Artifact); err != nil {
 		return fmt.Errorf("restore sleep memory: %w", err)
 	}
+	machine.SavedStateSourceUserID = record.SourceUserID
 	return manager.runtime.InstallSavedState(ctx, machine, directory, record.Identity)
 }
 
-func (manager *Manager) restoreSleepDisk(ctx context.Context, identifier string, record *sleepRecord) error {
+func (manager *Manager) restoreSleepDisk(ctx context.Context, identifier string, record *SleepCheckpoint) error {
 	if record == nil || record.Disk == nil || record.Disk.Artifact == nil {
 		return fmt.Errorf("sleep disk checkpoint is missing")
 	}

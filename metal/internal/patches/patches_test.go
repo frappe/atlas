@@ -171,25 +171,47 @@ func TestMemoryMigrationPatchRetriesAfterPartialUpgrade(t *testing.T) {
 	baseDirectory := t.TempDir()
 	sourcePath := filepath.Join(baseDirectory, "machines", "vm-1", "migration", "source.json")
 	destinationPath := filepath.Join(baseDirectory, "machines", "vm-2", "migration", "destination.json")
-	writeMigrationPatchRecord(t, sourcePath, `{"sequence":7}`)
+	writeMigrationPatchRecord(t, sourcePath, `{"schema_version":2,"sequence":7}`)
 	writeMigrationPatchRecord(t, destinationPath, "{")
 	logger := slog.New(slog.DiscardHandler)
 
 	if err := Run(baseDirectory, logger); err == nil {
 		t.Fatal("a corrupt destination record was accepted")
 	}
-	wantSource := map[string]any{"sequence": json.Number("7"), "has_memory_snapshot": nil}
+	wantSource := map[string]any{"schema_version": json.Number("2"), "sequence": json.Number("7"), "has_memory_snapshot": nil}
 	if got := readMigrationPatchRecord(t, sourcePath); !reflect.DeepEqual(got, wantSource) {
 		t.Fatalf("source was not upgraded before the failure: %v", got)
 	}
 
-	writeMigrationPatchRecord(t, destinationPath, `{}`)
+	writeMigrationPatchRecord(t, destinationPath, `{"schema_version":2}`)
 	for range 2 {
 		if err := Run(baseDirectory, logger); err != nil {
 			t.Fatal(err)
 		}
 		if mode := readMigrationPatchRecord(t, destinationPath)["has_memory_snapshot"]; mode != false {
 			t.Fatalf("destination mode = %v, want false", mode)
+		}
+	}
+}
+
+func TestSleepMigrationPatchPreservesCheckpointsAndRestrictsCredentials(t *testing.T) {
+	baseDirectory := t.TempDir()
+	for _, name := range []string{"source.json", "destination.json"} {
+		path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", name)
+		writeMigrationPatchRecord(t, path, `{"schema_version":2,"sequence":7,"intervals":[{"total_bytes":9007199254740993}]}`)
+		want := readMigrationPatchRecord(t, path)
+		want["schema_version"] = json.Number("3")
+		for range 2 {
+			if err := initializeSleepMigration(baseDirectory); err != nil {
+				t.Fatal(err)
+			}
+			if got := readMigrationPatchRecord(t, path); !reflect.DeepEqual(got, want) {
+				t.Fatalf("migration checkpoint changed: %v", got)
+			}
+			information, err := os.Stat(path)
+			if err != nil || information.Mode().Perm() != 0o600 {
+				t.Fatalf("migration credentials are not private: %v, %v", information, err)
+			}
 		}
 	}
 }

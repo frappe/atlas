@@ -33,6 +33,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - VM-local snapshots record the source TAP gateway MAC. Local and migration restores apply it before snapshot load so restored ARP and NDP caches remain valid. Migration requires this field; local snapshots without it keep the existing TAP MAC.
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.
 - `SavedState` supplies the validated checkpoint identity and directory for snapshot uploads. `InstallSavedState` validates downloaded metadata, files, and checkpoint identity before atomic publication.
+- Imported sleep checkpoints use `RuntimeMachine.SavedStateSourceUserID` during installation. Host-local metadata retains `origin_identity` for retry. [Saved-state tests](saved_state_test.go) check destination identity and compatibility validation. See [migration recovery](../../../docs/compute/migration-engine.md).
 - `RefreshDisk` changes live drive limits. Unlimited values send zero-sized buckets to clear temporary migration limits.
 - `Remove` deletes runtime files. The VM manager releases storage and network.
 

@@ -47,6 +47,12 @@ Metal validates records at startup. Malformed records stop startup and report th
 
 The startup patch `initialize_memory_migration_flags` fills missing memory flags and preserves checkpoints. Destination records default to disk-only mode. Source records keep their mode unset until cutover. See [host patches](../develop/metal.md#change-stored-state-with-a-patch).
 
+The `initialize_sleep_migration` patch upgrades migration records to schema 3 and restricts their file mode to `0600`. An optional `config.sleep` carries offloaded checkpoint metadata and GET URLs, not PUT credentials. The source record captures the same checkpoint under the VM operation lock. See [asleep migration](migration.md#move-an-offloaded-vm) for transfer and rollback behavior.
+
+Destinations advertise support with `sleep_state=true` on the existing source preparation request. A source rejects offloaded state without this flag. The migration lock prevents snapshot eviction, downloads, wake requests, and normal reconciliation until handoff or rollback completes.
+
+On a later wake, the runtime validates the downloaded metadata against the original user ID, generations, checkpoint digest, VM shape, and TAP MAC. It then publishes host-local metadata for the destination user ID and runtime fingerprint. `origin_identity` retains the remote checkpoint identity for retry. Normal local inspections still enforce the destination runtime fingerprint.
+
 ## How does Metal resume disk transfers? {#copy-the-disk}
 
 The source returns the same unacknowledged snapshot on a repeated request. Destination intervals record the sequence and snapshot GUID. A GUID uniquely identifies a ZFS snapshot.
