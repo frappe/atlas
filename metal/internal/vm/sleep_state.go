@@ -209,7 +209,7 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			}
 			(*pair.stored).ObjectKey = pair.target.ObjectKey
 		}
-		if !refresh {
+		if !refresh && (*pair.stored).Artifact == nil {
 			(*pair.stored).Multipart = pair.target.Multipart
 		}
 		if pair.target.CompletedUploadID != "" {
@@ -219,6 +219,8 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			}
 			if stored.Pending != nil {
 				stored.Artifact = stored.Pending
+				stored.Artifact.Parts = nil
+				stored.Multipart.Parts = nil
 				stored.Pending = nil
 				acknowledged = true
 			}
