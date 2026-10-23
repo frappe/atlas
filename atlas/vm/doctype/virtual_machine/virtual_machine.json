@@ -28,6 +28,7 @@
   "sleep_after_idle_seconds",
   "deep_sleep_after_idle_seconds",
   "coma_after_idle_seconds",
+  "sleep_snapshot_objects",
   "column_break_compute",
   "disk_mib",
   "disk_throughput_mibps",
@@ -193,6 +194,13 @@
    "non_negative": 1,
    "read_only": 1,
    "show_description_on_click": 1
+  },
+  {
+   "fieldname": "sleep_snapshot_objects",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Sleep Snapshot Objects",
+   "read_only": 1
   },
   {
    "fieldname": "disk_mib",
