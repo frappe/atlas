@@ -13,13 +13,15 @@ from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server imp
 )
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility
-from atlas.vm.core.vm_state import store_reported_states
+from atlas.vm.core.vm_state import report_invalid_virtual_machines, store_reported_states
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 USAGE_RETENTION = timedelta(hours=3)
+# Host sync runs every 10 seconds, so a host outage logs its failure once an hour.
+SYNC_FAILURE_REPEAT_SECONDS = 3600
 
 
 def enqueue_server_syncs() -> None:
@@ -82,19 +84,15 @@ def sync_server(
 		)
 		values = get_usage_values(response.get("capacity"))
 		store_reported_states(server_name, response.get("virtual_machines"))
+		report_invalid_virtual_machines(server_name, response.get("invalid_virtual_machines") or [])
 	except MetalClientError:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"Metal synchronization failed for Server {server.name}",
-		)
+		log_sync_failure(server.name, f"Metal synchronization failed for Server {server.name}")
 		return
 	except ValueError:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"Invalid synchronization response from Server {server.name}",
-		)
+		log_sync_failure(server.name, f"Invalid synchronization response from Server {server.name}")
 		return
 
+	frappe.cache.delete_value(sync_failure_key(server.name))
 	frappe.get_doc({"doctype": "Metal Server Usage", "server": server.name, **values}).insert(
 		ignore_permissions=True
 	)
@@ -124,6 +122,19 @@ def sync_server(
 	# A host that cannot run the built-in CPU template already boots its VMs without one.
 	if compatibility and compatibility.default_cpu_template_error and not server.is_cpu_template_disabled:
 		frappe.db.set_value("Metal Server", server.name, "is_cpu_template_disabled", 1, update_modified=False)
+
+
+def log_sync_failure(server_name: str, title: str) -> None:
+	"""Log a failed sync once until the host syncs again or an hour passes."""
+	key = sync_failure_key(server_name)
+	if frappe.cache.get_value(key):
+		return
+	frappe.cache.set_value(key, 1, expires_in_sec=SYNC_FAILURE_REPEAT_SECONDS)
+	frappe.log_error(frappe.get_traceback(), title)
+
+
+def sync_failure_key(server_name: str) -> str:
+	return f"atlas:server-sync-failure:{server_name}"
 
 
 def get_desired_images() -> list[dict[str, Any]]:

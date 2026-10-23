@@ -302,28 +302,28 @@ class PublicIPService:
 		from atlas.vm.core.vm_service import VirtualMachineService
 
 		service = VirtualMachineService(virtual_machine)
-		service.lock_network()
-		if pool.is_routed:
-			router = frappe.get_doc("IPv6 Router Server", pool.gateway)
-			route = Route(IPV6_INTERNET_DESTINATION, router.wireguard_mesh_ipv6)
-			service.update_network({"routes": service.get_routes_with(route)})
-			return
+		with service.network_lock():
+			if pool.is_routed:
+				router = frappe.get_doc("IPv6 Router Server", pool.gateway)
+				route = Route(IPV6_INTERNET_DESTINATION, router.wireguard_mesh_ipv6)
+				service.update_network({"routes": service.get_routes_with(route)})
+				return
 
-		if pool.source == "Provider":
-			self._move_provider_pool(pool, server)
-			pool.begin_provider_attach(server)
-			pool.reconcile()
-			pool.reload()
-		# Replies from a public address leave through the host uplink.
-		address = str(ipaddress.ip_network(prefix).network_address)
-		if pool.version == "4":
-			route = Route(IPV4_INTERNET_DESTINATION, ROUTE_VIA_HOST)
-			service.update_network(
-				{"public_ipv4": pool.host_address or address, "routes": service.get_routes_with(route)}
-			)
-		else:
-			route = Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST)
-			service.update_network({"public_ipv6": prefix, "routes": service.get_routes_with(route)})
+			if pool.source == "Provider":
+				self._move_provider_pool(pool, server)
+				pool.begin_provider_attach(server)
+				pool.reconcile()
+				pool.reload()
+			# Replies from a public address leave through the host uplink.
+			address = str(ipaddress.ip_network(prefix).network_address)
+			if pool.version == "4":
+				route = Route(IPV4_INTERNET_DESTINATION, ROUTE_VIA_HOST)
+				service.update_network(
+					{"public_ipv4": pool.host_address or address, "routes": service.get_routes_with(route)}
+				)
+			else:
+				route = Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST)
+				service.update_network({"public_ipv6": prefix, "routes": service.get_routes_with(route)})
 
 	def _move_provider_pool(self, pool: PublicIPPool, server: str) -> None:
 		if pool.provider_status != "Attached" or pool.attached_server == server:
@@ -343,18 +343,18 @@ class PublicIPService:
 		if virtual_machine.is_terminating:
 			return
 		service = VirtualMachineService(virtual_machine)
-		service.lock_network()
-		# A VM that Metal does not hold has no network to change.
-		if not service.get_information():
-			return
-		if pool.is_routed:
-			service.update_network({"routes": service.get_routes_without(IPV6_INTERNET_DESTINATION)})
-		elif pool.version == "4":
-			service.update_network({"public_ipv4": ""})
-		else:
-			service.update_network(
-				{"public_ipv6": "", "routes": service.get_routes_without(IPV6_INTERNET_DESTINATION)}
-			)
+		with service.network_lock():
+			# A VM that Metal does not hold has no network to change.
+			if not service.get_information():
+				return
+			if pool.is_routed:
+				service.update_network({"routes": service.get_routes_without(IPV6_INTERNET_DESTINATION)})
+			elif pool.version == "4":
+				service.update_network({"public_ipv4": ""})
+			else:
+				service.update_network(
+					{"public_ipv6": "", "routes": service.get_routes_without(IPV6_INTERNET_DESTINATION)}
+				)
 
 	def _complete_attach(self, name: str, intent_version: int) -> None:
 		allocation = frappe.qb.DocType("Public IP Allocation")

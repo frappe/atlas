@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"syscall"
 
 	"github.com/labstack/echo/v4"
 
@@ -80,6 +81,8 @@ func publicAPIError(err error) *apiError {
 		return newAPIError(http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, migration.ErrNoMemoryToSave):
 		return newAPIError(http.StatusUnprocessableEntity, "memory_snapshot_unavailable", err.Error())
+	case errors.Is(err, migration.ErrSourceWoke):
+		return newAPIError(http.StatusUnprocessableEntity, "source_woke", err.Error())
 	case errors.Is(err, vm.ErrNotFound), errors.Is(err, storage.ErrNotFound):
 		return newAPIError(http.StatusNotFound, "not_found", "resource not found")
 	case errors.Is(err, storage.ErrImageConflict):
@@ -90,6 +93,8 @@ func publicAPIError(err error) *apiError {
 		return newAPIError(http.StatusServiceUnavailable, "unavailable", "host is shutting down")
 	case errors.Is(err, storage.ErrImageIntegrity):
 		return newAPIError(http.StatusUnprocessableEntity, "image_integrity_failed", "image content failed verification")
+	case errors.Is(err, syscall.ENOSPC):
+		return newAPIError(http.StatusInsufficientStorage, "host_storage_full", "host storage is full")
 	}
 
 	var httpError *echo.HTTPError

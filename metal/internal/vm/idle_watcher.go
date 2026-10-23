@@ -37,11 +37,16 @@ func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.E
 		}
 	}()
 
-	if observed.SleepState == SleepStateAwake || desired.Generation > observed.Generation || manager.isMigrating(desired.ID) {
+	// A locked source keeps the request: its migration then fails at stop, and the VM wakes after unlock.
+	if observed.SleepState == SleepStateAwake || desired.Generation > observed.Generation || manager.isDestinationReserved(desired.ID) {
 		return nil
 	}
 	desired.Generation++
-	return manager.store.writeDesired(desired)
+	if err := manager.store.writeDesired(desired); err != nil {
+		return err
+	}
+	manager.stopSleepUpload(desired.ID)
+	return nil
 }
 
 // stopAfterIdle saves and stops a Sleepy VM when network traffic remains idle.
@@ -89,7 +94,7 @@ func (manager *Manager) stopAfterIdle(
 	}
 
 	if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseSaveState, func() error {
-		return manager.runtime.SaveAndStop(ctx, machine)
+		return manager.saveAndStop(ctx, machine)
 	}); err != nil {
 		manager.stopTrafficWatch(target)
 		return false, err

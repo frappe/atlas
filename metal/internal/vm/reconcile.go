@@ -40,12 +40,13 @@ func (manager *Manager) Reconcile(ctx context.Context, identifier string) error 
 	return manager.reconcile(ctx, identifier, false)
 }
 
-// RestoreSleepState reconciles sleeping VMs outside the normal VM worker pool.
+// RestoreSleepState reconciles VMs whose sleep state is in object storage, so a
+// slow download does not hold a normal VM worker.
 func (manager *Manager) RestoreSleepState(ctx context.Context, identifier string) error {
 	return manager.reconcile(ctx, identifier, true)
 }
 
-func (manager *Manager) reconcile(ctx context.Context, identifier string, sleeping bool) error {
+func (manager *Manager) reconcile(ctx context.Context, identifier string, remote bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func (manager *Manager) reconcile(ctx context.Context, identifier string, sleepi
 	if err != nil {
 		return err
 	}
-	if (observed.SleepState != SleepStateAwake) != sleeping {
+	if observed.hasRemoteSleepState() != remote {
 		return nil
 	}
 	return manager.reconcileRecords(ctx, desired, observed)
@@ -113,7 +114,7 @@ func (manager *Manager) reconcileActive(
 	machine := runtimeMachine(desired, networkInterface)
 	discardSavedState := desired.State == StateStopped || desired.SpecificationGeneration > observed.SpecificationGeneration ||
 		desired.RestartGeneration > observed.RestartGeneration
-	if discardSavedState && observed.SleepState == SleepStateComatose {
+	if discardSavedState && observed.SleepState == SleepStateComa {
 		if err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseStorage, func() error {
 			record, err := manager.readSleepRecord(desired.ID)
 			if err != nil {
@@ -216,11 +217,14 @@ func (manager *Manager) reconcileSavedState(
 
 	if status.State == StatePaused {
 		if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseSaveState, func() error {
-			return manager.runtime.SaveAndStop(ctx, machine)
+			return manager.saveAndStop(ctx, machine)
 		}); err != nil {
 			return status, false, err
 		}
 		status.State = StateStopped
+		// The new local save is newer than any remote checkpoint.
+		hasRemoteState = false
+		observed.SleepState = SleepStateSleeping
 	}
 
 	if status.State != StateStopped {
@@ -274,6 +278,7 @@ func (manager *Manager) restoreSavedState(
 		if err := restore(ctx, machine); err != nil {
 			return manager.recoverSleepRestore(ctx, machine, observed, resultState, err)
 		}
+		manager.clearRestoreFailures(desired.ID)
 		return nil
 	}); err != nil {
 		if resultState == StateRunning && manager.traffic != nil && desired.Specification.SleepAfterIdleSeconds > 0 {
@@ -288,8 +293,23 @@ func (manager *Manager) restoreSavedState(
 	return manager.writeAppliedState(desired, observed, resultState, SleepStateAwake)
 }
 
+// maximumRestoreAttempts is how many times a wake tries the saved state before it cold boots the disk.
+const maximumRestoreAttempts = 3
+
 func (manager *Manager) recoverSleepRestore(ctx context.Context, machine RuntimeMachine, observed *ObservedRecord, resultState State, cause error) error {
 	if ctx.Err() != nil || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return cause
+	}
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	if status.State == resultState {
+		manager.clearRestoreFailures(machine.ID)
+		return nil
+	}
+	// A transient runtime error must not discard guest memory that a retry could restore.
+	if manager.countRestoreFailure(machine.ID) < maximumRestoreAttempts {
 		return cause
 	}
 	hasDisk, err := manager.storage.HasDisk(ctx, machine.ID)
@@ -305,8 +325,24 @@ func (manager *Manager) recoverSleepRestore(ctx context.Context, machine Runtime
 	if err := manager.store.writeObserved(machine.ID, *observed); err != nil {
 		return errors.Join(cause, err)
 	}
-	_, err = manager.recoverFailedRestore(ctx, resultState, machine, cause)
+	_, err = manager.coldRestartForState(ctx, resultState, machine, cause)
+	if err == nil {
+		manager.clearRestoreFailures(machine.ID)
+	}
 	return err
+}
+
+func (manager *Manager) countRestoreFailure(identifier string) int {
+	manager.restoreFailuresMutex.Lock()
+	defer manager.restoreFailuresMutex.Unlock()
+	manager.restoreFailures[identifier]++
+	return manager.restoreFailures[identifier]
+}
+
+func (manager *Manager) clearRestoreFailures(identifier string) {
+	manager.restoreFailuresMutex.Lock()
+	defer manager.restoreFailuresMutex.Unlock()
+	delete(manager.restoreFailures, identifier)
 }
 
 // reconcileHardStop stops the runtime and applies all stopped-state changes.
@@ -337,7 +373,14 @@ func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *Obser
 	observed.SpecificationGeneration = desired.SpecificationGeneration
 	observed.RestartGeneration = desired.RestartGeneration
 	observed.completeOperation()
-	return manager.store.writeObserved(desired.ID, *observed)
+	if err := manager.store.writeObserved(desired.ID, *observed); err != nil {
+		return err
+	}
+	if sleepState == SleepStateAwake {
+		// An awake VM no longer needs its checkpoint, so Metal stops reporting it.
+		return manager.removeSleepRecord(desired.ID)
+	}
+	return nil
 }
 
 // inspect reads runtime state and stores StateUnknown on failure.
@@ -524,7 +567,7 @@ func (manager *Manager) runOperation(
 	}
 	observed.OperationID = operationID
 	observed.UpdatedAt = now
-	observed.Error = nil
+	// The last error stays visible until the operation completes, so a retry does not hide it.
 	if err := manager.store.writeObserved(identifier, *observed); err != nil {
 		manager.logOperationFailure(ctx, identifier, observed, phase, now, err)
 		return err

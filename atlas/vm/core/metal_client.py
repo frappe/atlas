@@ -397,6 +397,25 @@ class MetalClient:
 			uncertain_on_failure=True,
 		)
 
+	def restore_migration_source(self, migration_id: str, virtual_machine_id: str) -> dict[str, Any]:
+		"""Ask the source host to start and unlock a stopped source. Safe to repeat."""
+		return self._request(
+			"POST",
+			f"/v1/migrations/{quote(migration_id, safe='')}/restore-source",
+			expected_status=202,
+			uncertain_on_failure=True,
+			json={"virtual_machine_id": virtual_machine_id},
+		)
+
+	def discard_migration(self, migration_id: str) -> dict[str, Any]:
+		"""Ask a returned destination host to remove a migration whose source was restored."""
+		return self._request(
+			"POST",
+			f"/v1/migrations/{quote(migration_id, safe='')}/discard",
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+
 	def _request(
 		self,
 		method: str,

@@ -87,6 +87,8 @@ flowchart LR
 
 The diagram shows a Machine image transfer and its retry path. A transfer can also fail before upload or during completion.
 
+A timeout or a `5xx` answer from the source host does not fail the transfer. Atlas shows the error on the image, keeps its status, and the pending-transfer job tries again.
+
 Retirement changes an Available or Failed image to `Archived`.
 
 ## Retirement and deletion
@@ -99,9 +101,9 @@ Atlas keeps a retired image's objects or public site files for six hours. This g
 
 A migrated image also keeps its old site files until the separate migration deadline ends.
 
-After the deadline, Atlas deletes the remote rootfs and Metal staging, even if VMs still use the image. Those VMs boot from their own disk and kernel. The kernel record stays while the image links it, so a host can still download the kernel.
+The image stays `Archived` with its rootfs and kernel while any VM record names it. A host can prune its cached copy, so a VM that starts, restarts, or migrates must still be able to download the image.
 
-The image record stays `Archived` while any VM record names it. After the last VM record is deleted, Atlas changes the image to `Deleting` and removes its record.
+After the deadline and the last VM record, Atlas changes the image to `Deleting`, deletes the remote rootfs and Metal staging, and removes the record.
 
 Atlas records a cleanup failure and retries every **30 seconds**.
 

@@ -18,6 +18,7 @@ type MigrationDriver interface {
 	AdvanceDestination(ctx context.Context, virtualMachineID string) error
 	ExpiredSourceVirtualMachineIDs(ctx context.Context) ([]string, error)
 	ExpireSource(ctx context.Context, virtualMachineID string) error
+	RemoveAbortedDestinations(ctx context.Context) error
 }
 
 // MigrationConfig controls one migration reconcile pass.
@@ -58,10 +59,17 @@ func (r *MigrationReconciler) Run(ctx context.Context) {
 	r.run(ctx, r.pass)
 }
 
-// pass advances every destination migration, then releases every expired source lock.
+// pass advances every destination migration, releases every expired source
+// lock, and removes old aborted destinations.
 func (r *MigrationReconciler) pass(ctx context.Context) {
 	r.advanceAll(ctx)
 	r.expireAll(ctx)
+
+	operationContext, cancel := context.WithTimeout(ctx, r.operationTimeout)
+	defer cancel()
+	if err := r.driver.RemoveAbortedDestinations(operationContext); err != nil {
+		r.logFailure(ctx, "aborted migration cleanup failed", err)
+	}
 }
 
 // advanceAll advances every active destination migration once.

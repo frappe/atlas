@@ -74,6 +74,8 @@ if ! zfs list "$storage_pool_name/state" >/dev/null 2>&1; then
 	fi
 	zfs create -o mountpoint="$base_dir" "$storage_pool_name/state"
 fi
+# Keep room for Metal records when VM data fills the pool.
+zfs set reservation=1G "$storage_pool_name/state"
 if [ "$(zfs get -H -o value mounted "$storage_pool_name/state")" != yes ]; then
 	zfs mount "$storage_pool_name/state"
 fi

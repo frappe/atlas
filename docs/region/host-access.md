@@ -99,7 +99,7 @@ Atlas reads the VM host for each connection. The guest needs no public address f
 | SSH for recovery | The private network on the private uplink. |
 | ICMP, DHCP, and replies | Any address. |
 
-The Metal network setup, which `metal.service` runs at start, drops guest packets to the private network CIDR, on any interface. Guest public addresses, NAT, and mesh traffic do not change.
+The Metal network setup drops guest packets to the private network CIDR, on any interface, and adds the IPv4 masquerade for guests without a public IPv4 address. `metal.service` runs it at start, and the `metal-network-setup.timer` runs it again every 30 seconds, so the rules come back after a firewall reload. Guest public addresses, NAT, and mesh traffic do not change.
 
 ## Internal URL
 

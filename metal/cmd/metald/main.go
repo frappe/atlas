@@ -485,6 +485,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	logger.Info("metald listening", "version", version, "address", options.listen)
 	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
 	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
+	daemon.StartWorker(platform.RunWatchdog)
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(sleepTransferReconciler.Run)
 	daemon.StartWorker(sleepRestoreReconciler.Run)
@@ -500,6 +501,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 			if err := virtualMachineManager.RestoreAfterTraffic(ctx, event); err != nil {
 				return err
 			}
+			virtualMachineReconciler.Wake()
 			sleepRestoreReconciler.Wake()
 			return nil
 		})

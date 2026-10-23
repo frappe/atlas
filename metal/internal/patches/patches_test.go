@@ -216,6 +216,35 @@ func TestSleepMigrationPatchPreservesCheckpointsAndRestrictsCredentials(t *testi
 	}
 }
 
+func TestRenameComatoseSleepStateToComaKeepsOtherValues(t *testing.T) {
+	baseDirectory := t.TempDir()
+	statusPath := filepath.Join(baseDirectory, "machines", "vm-1", "status.json")
+	sourcePath := filepath.Join(baseDirectory, "machines", "vm-1", "migration", "source.json")
+	destinationPath := filepath.Join(baseDirectory, "machines", "vm-2", "migration", "destination.json")
+	writeMigrationPatchRecord(t, statusPath, `{"schema_version":1,"generation":9007199254740993,"state":"stopped","sleep_state":"comatose","updated_at":"2026-10-23T08:00:00Z"}`)
+	writeMigrationPatchRecord(t, sourcePath, `{"schema_version":3,"state":"locked","sleep":{"state":"comatose","checkpoint":{"id":"checkpoint-1"}}}`)
+	writeMigrationPatchRecord(t, destinationPath, `{"schema_version":3,"state":"ready","definition":{"sleep":{"state":"comatose"}}}`)
+
+	for range 2 {
+		if err := renameComatoseSleepStateToComa(baseDirectory); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status := readMigrationPatchRecord(t, statusPath)
+	if status["sleep_state"] != "coma" || status["state"] != "stopped" || status["generation"] != json.Number("9007199254740993") {
+		t.Fatalf("status = %v", status)
+	}
+	source := readMigrationPatchRecord(t, sourcePath)
+	if source["state"] != "locked" || source["sleep"].(map[string]any)["state"] != "coma" {
+		t.Fatalf("source = %v", source)
+	}
+	destination := readMigrationPatchRecord(t, destinationPath)
+	if destination["definition"].(map[string]any)["sleep"].(map[string]any)["state"] != "coma" {
+		t.Fatalf("destination = %v", destination)
+	}
+}
+
 func TestMemoryMigrationPatchRunsWithoutRecords(t *testing.T) {
 	if err := Run(t.TempDir(), slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)

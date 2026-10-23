@@ -16,6 +16,7 @@ from atlas.atlas.core.telemetry.events import timed
 from atlas.vm.core.placement.capacity_expansion import enqueue_capacity_expansion
 from atlas.vm.core.placement.context import (
 	PlacementContext,
+	has_hosts_without_fresh_capacity,
 	is_pool_known_full,
 	remember_pool_is_full,
 )
@@ -325,7 +326,16 @@ class PlacementStrategy(ABC):
 
 	@classmethod
 	def _report_out_of_capacity(cls, requirements: PlacementRequirements) -> Never:
-		"""Queue capacity expansion, then tell the caller to retry later."""
+		"""Queue capacity expansion, then tell the caller to retry later.
+
+		A host without a recent capacity sample can still have room, so a sync outage
+		does not order a new host.
+		"""
+		if has_hosts_without_fresh_capacity(requirements.architecture):
+			frappe.throw(
+				_("Some Metal Servers have not reported their capacity in the last 2 minutes. Retry later."),
+				exc=OutOfCapacity,
+			)
 		enqueue_capacity_expansion(requirements)
 		frappe.throw(_("No Metal Server has capacity. Retry later."), exc=OutOfCapacity)
 

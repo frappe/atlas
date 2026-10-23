@@ -28,6 +28,8 @@ type SyncResult struct {
 	Compatibility   *vm.HostCompatibility
 	Capacity        Capacity
 	VirtualMachines map[string]vm.Information
+	// InvalidVirtualMachineIDs lists the VMs whose records cannot be read.
+	InvalidVirtualMachineIDs []string
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string
 }
@@ -45,6 +47,7 @@ type Capacity struct {
 
 // Mesh applies controller-owned mesh state and reports the MAC of the mesh uplink.
 type Mesh interface {
+	EnsureHooks(context.Context) error
 	ApplyPrivilegedAddresses(context.Context, []string) error
 	SyncPeerState(ctx context.Context, unicast bool) error
 	PrivateNetworkMAC() (string, error)
@@ -60,9 +63,9 @@ type ImagePolicyStore interface {
 	SetImagePolicies(context.Context, []vm.Image) error
 }
 
-// VirtualMachineSource supplies valid host reservations.
+// VirtualMachineSource supplies valid host reservations and the VMs whose records cannot be read.
 type VirtualMachineSource interface {
-	List(context.Context) ([]vm.Information, error)
+	List(context.Context) ([]vm.Information, []string, error)
 }
 
 // WireGuardGatewayRouteStore replaces the controller-owned WireGuard gateway return routes.
@@ -139,6 +142,9 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 	}
 	// The mesh reads the peer state that WireGuard.Apply just wrote.
 	if service.mesh != nil {
+		if err := service.mesh.EnsureHooks(ctx); err != nil {
+			return SyncResult{}, fmt.Errorf("attach Atlas WG Mesh hooks: %w", err)
+		}
 		if err := service.mesh.ApplyPrivilegedAddresses(ctx, desired.PrivilegedVirtualMachineAddresses); err != nil {
 			return SyncResult{}, fmt.Errorf("apply privileged virtual machine addresses: %w", err)
 		}
@@ -155,12 +161,12 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 
 	service.wake()
 
-	virtualMachines, err := service.virtualMachines.List(ctx)
+	virtualMachines, invalidVirtualMachineIDs, err := service.virtualMachines.List(ctx)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("list virtual machine reservations: %w", err)
 	}
 
-	capacity, err := service.capacityOf(ctx, virtualMachines)
+	capacity, err := service.capacityOf(ctx, virtualMachines, invalidVirtualMachineIDs)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -170,7 +176,12 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 		virtualMachinesByID[information.ID] = information
 	}
 
-	result := SyncResult{Compatibility: service.compatibility, Capacity: capacity, VirtualMachines: virtualMachinesByID}
+	result := SyncResult{
+		Compatibility:            service.compatibility,
+		Capacity:                 capacity,
+		VirtualMachines:          virtualMachinesByID,
+		InvalidVirtualMachineIDs: invalidVirtualMachineIDs,
+	}
 	if service.mesh != nil {
 		mac, err := service.mesh.PrivateNetworkMAC()
 		if err != nil {
@@ -183,22 +194,26 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 }
 
 // Capacity returns current host capacity and valid VM reservations. CPU is
-// reported against reservations, while memory and storage are read from the host.
+// reported against reservations and memory is read from the host. Storage is
+// the smaller of free pool space and the pool size less every provisioned disk,
+// because thin disks can grow to their full size.
 func (service *Service) Capacity(ctx context.Context) (Capacity, error) {
-	virtualMachines, err := service.virtualMachines.List(ctx)
+	virtualMachines, invalidVirtualMachineIDs, err := service.virtualMachines.List(ctx)
 	if err != nil {
 		return Capacity{}, fmt.Errorf("list virtual machine reservations: %w", err)
 	}
 
-	return service.capacityOf(ctx, virtualMachines)
+	return service.capacityOf(ctx, virtualMachines, invalidVirtualMachineIDs)
 }
 
 // capacityOf reports capacity against reservations the caller already listed.
-// Incoming destinations reserve capacity before their data arrives.
-func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Information) (Capacity, error) {
-	reservedCPUMillicores := 0
+// Incoming destinations reserve capacity before their data arrives. A VM whose
+// records cannot be read holds an unknown shape, so the host offers nothing.
+func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Information, invalidVirtualMachineIDs []string) (Capacity, error) {
+	reservedCPUMillicores, provisionedStorageMiB := 0, 0
 	for _, information := range virtualMachines {
 		reservedCPUMillicores += information.CPUMillicores
+		provisionedStorageMiB += information.DiskMiB
 	}
 
 	reservedMemoryMiB, reservedStorageMiB := 0, 0
@@ -225,14 +240,20 @@ func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Inf
 	}
 
 	totalCPUMillicores := runtime.NumCPU() * 1000
+	totalStorageMiB := int(storageCapacity.TotalMiB)
+	availableStorageMiB := min(int(storageCapacity.AvailableMiB), totalStorageMiB-provisionedStorageMiB) - reservedStorageMiB
 
-	return Capacity{
+	capacity := Capacity{
 		TotalCPUMillicores:     totalCPUMillicores,
 		AvailableCPUMillicores: max(totalCPUMillicores-reservedCPUMillicores, 0),
 		VirtualMachineCount:    len(virtualMachines),
 		TotalMemoryMiB:         totalMemoryMiB,
 		AvailableMemoryMiB:     max(availableMemoryMiB-reservedMemoryMiB, 0),
-		TotalStorageMiB:        int(storageCapacity.TotalMiB),
-		AvailableStorageMiB:    max(int(storageCapacity.AvailableMiB)-reservedStorageMiB, 0),
-	}, nil
+		TotalStorageMiB:        totalStorageMiB,
+		AvailableStorageMiB:    max(availableStorageMiB, 0),
+	}
+	if len(invalidVirtualMachineIDs) > 0 {
+		capacity.AvailableCPUMillicores, capacity.AvailableMemoryMiB, capacity.AvailableStorageMiB = 0, 0, 0
+	}
+	return capacity, nil
 }

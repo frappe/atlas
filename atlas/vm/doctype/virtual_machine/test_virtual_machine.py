@@ -92,10 +92,17 @@ class TestVirtualMachineRequest(UnitTestCase):
 
 	def test_offload_times_require_non_negative_integers_and_ordered_coma(self) -> None:
 		for deep, coma in ((0, 0), (3600, 0), (3600, 86400)):
-			validate_sleep_times(deep, coma)
+			validate_sleep_times(deep, coma, 1024, 10240)
 		for deep, coma in ((-1, 0), (True, 0), (1.5, 0), (2**31, 0), (0, 3600), (3600, 3600), (7200, 3600)):
 			with self.subTest(deep=deep, coma=coma), self.assertRaises(ValueError):
-				validate_sleep_times(deep, coma)
+				validate_sleep_times(deep, coma, 1024, 10240)
+
+	def test_offload_is_limited_to_small_virtual_machines(self) -> None:
+		validate_sleep_times(3600, 86400, 4096, 51200)
+		validate_sleep_times(0, 0, 8192, 102400)
+		for memory_mib, disk_mib in ((4097, 51200), (4096, 51201)):
+			with self.subTest(memory_mib=memory_mib, disk_mib=disk_mib), self.assertRaises(ValueError):
+				validate_sleep_times(3600, 0, memory_mib, disk_mib)
 
 	def test_request_parses_ssh_keys_and_defaults(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -530,48 +537,6 @@ class TestVirtualMachineService(UnitTestCase):
 
 
 class TestVirtualMachineVirtualFields(UnitTestCase):
-	def test_snapshot_upload_percent_is_visible_only_during_http_upload(self) -> None:
-		virtual_machine = frappe.new_doc("Virtual Machine")
-		self.assertIsNone(virtual_machine.snapshot_upload_percent)
-		virtual_machine.permitted_fieldnames = {"snapshot_upload_percent"}
-
-		for name in ("memory", "disk"):
-			for phase, artifact, failed, expected in (
-				("upload", {"uploaded": False, "upload_percent": 0}, False, "0"),
-				("upload", {"uploaded": False, "upload_percent": 42}, False, "42"),
-				("upload", {"uploaded": False, "upload_percent": 99}, False, "99"),
-				("upload", {"uploaded": True, "upload_percent": 100}, False, None),
-				("upload", {"uploaded": False}, False, None),
-				("upload", None, False, None),
-				("upload", {"uploaded": False, "upload_percent": 42}, True, None),
-				("prepare", {"uploaded": False, "upload_percent": 42}, False, None),
-				("compress", {"uploaded": False, "upload_percent": 42}, False, None),
-				("evict", {"uploaded": True, "upload_percent": 100}, False, None),
-				("network", {"uploaded": False, "upload_percent": 42}, False, None),
-			):
-				with self.subTest(name=name, phase=phase, artifact=artifact, failed=failed):
-					response = json.loads(json.dumps(METAL_VIRTUAL_MACHINE_RESPONSE))
-					response["observed"].update(
-						phase=f"{phase}-sleep-{name}",
-						sleep_snapshot={"id": "checkpoint-1", name: artifact},
-					)
-					if failed:
-						response["observed"]["error"] = {
-							"code": "operation_failed",
-							"message": "upload failed",
-							"updated_at": "",
-						}
-					virtual_machine.get_metal_vm_info = Mock(
-						return_value=MetalVirtualMachine.from_dict(response)
-					)
-					self.assertEqual(virtual_machine.snapshot_upload_percent, expected)
-					self.assertEqual(virtual_machine.as_dict()["snapshot_upload_percent"], expected)
-
-		virtual_machine.get_metal_vm_info = Mock(
-			return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE)
-		)
-		self.assertIsNone(virtual_machine.snapshot_upload_percent)
-
 	def test_the_public_address_comes_from_the_atlas_record(self) -> None:
 		virtual_machine = VirtualMachine.__new__(VirtualMachine)
 		virtual_machine.name = "vm-0000001"
@@ -1068,6 +1033,8 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 		virtual_machine.is_network_gateway = 0
 		virtual_machine.deep_sleep_after_idle_seconds = 0
 		virtual_machine.coma_after_idle_seconds = 0
+		virtual_machine.memory_mib = 1024
+		virtual_machine.disk_mib = 10240
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None

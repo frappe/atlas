@@ -19,6 +19,9 @@ MINIMUM_CPU_MILLICORES = 100
 MAXIMUM_CPU_MILLICORES = 32_000
 MAXIMUM_SLEEP_AFTER_IDLE_SECONDS = 9_223_372_036
 MAXIMUM_SLEEP_OFFLOAD_SECONDS = 2_147_483_647
+# Deep sleep and coma move a VM to object storage. A larger VM takes too long to upload and wake.
+MAXIMUM_OFFLOAD_MEMORY_MIB = 4096
+MAXIMUM_OFFLOAD_DISK_MIB = 51200
 FIREWALL_PROTOCOLS = ("any", "tcp", "udp", "icmp")
 MAXIMUM_FIREWALL_PREFIXES = 50
 MAXIMUM_METADATA_BYTES = 48 * 1024
@@ -26,8 +29,10 @@ MAXIMUM_METADATA_COUNT = 16
 FIREWALL_PORTS_PATTERN = re.compile(r"^[0-9]+(?:-[0-9]+)?$")
 
 
-def validate_sleep_times(deep_sleep_after_idle_seconds: int, coma_after_idle_seconds: int) -> None:
-	"""Validate the VM's stored offload delays and their order."""
+def validate_sleep_times(
+	deep_sleep_after_idle_seconds: int, coma_after_idle_seconds: int, memory_mib: int, disk_mib: int
+) -> None:
+	"""Validate the VM's stored offload delays, their order, and the VM size they allow."""
 	for value in (deep_sleep_after_idle_seconds, coma_after_idle_seconds):
 		if (
 			isinstance(value, bool)
@@ -37,6 +42,10 @@ def validate_sleep_times(deep_sleep_after_idle_seconds: int, coma_after_idle_sec
 			raise ValueError("Sleep offload delays must be non-negative 32-bit integers.")
 	if coma_after_idle_seconds and not 0 < deep_sleep_after_idle_seconds < coma_after_idle_seconds:
 		raise ValueError("Coma After Idle needs a Deep Sleep After Idle that is set and shorter.")
+	if deep_sleep_after_idle_seconds and (
+		memory_mib > MAXIMUM_OFFLOAD_MEMORY_MIB or disk_mib > MAXIMUM_OFFLOAD_DISK_MIB
+	):
+		raise ValueError("Deep sleep and coma need at most 4 GiB of memory and 50 GiB of disk.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,7 +319,7 @@ class VirtualMachineCreateRequest:
 			raise ValueError("sleep_after_idle_seconds is too large.")
 		deep_sleep_after_idle_seconds = cls.non_negative_integer(payload, "deep_sleep_after_idle_seconds")
 		coma_after_idle_seconds = cls.non_negative_integer(payload, "coma_after_idle_seconds")
-		validate_sleep_times(deep_sleep_after_idle_seconds, coma_after_idle_seconds)
+		validate_sleep_times(deep_sleep_after_idle_seconds, coma_after_idle_seconds, memory_mib, disk_mib)
 
 		return cls(
 			virtual_machine_image=image,

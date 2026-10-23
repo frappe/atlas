@@ -299,6 +299,9 @@ class TestPlacementRetry(TestCase):
 			patch.object(PlacementStrategy, "bind_strategy"),
 			patch.object(PlacementStrategy, "_wait_before_retry") as wait,
 			patch("atlas.vm.core.placement.strategies.base.enqueue_capacity_expansion") as expansion,
+			patch(
+				"atlas.vm.core.placement.strategies.base.has_hosts_without_fresh_capacity", return_value=False
+			),
 		):
 			yield context, wait, expansion, full
 
@@ -349,6 +352,9 @@ class TestPlacementRetry(TestCase):
 			patch("atlas.vm.core.placement.strategies.base.PlacementContext") as context,
 			patch.object(PlacementStrategy, "_load_settings", return_value=("balanced", 1.0)) as settings,
 			patch("atlas.vm.core.placement.strategies.base.enqueue_capacity_expansion") as expansion,
+			patch(
+				"atlas.vm.core.placement.strategies.base.has_hosts_without_fresh_capacity", return_value=False
+			),
 		):
 			with self.assertRaises(OutOfCapacity):
 				PlacementStrategy.find_server(self._requirements())
@@ -356,6 +362,19 @@ class TestPlacementRetry(TestCase):
 		context.assert_not_called()
 		settings.assert_not_called()
 		expansion.assert_called_once()
+
+	def test_a_host_without_a_recent_sample_does_not_expand_the_pool(self) -> None:
+		placements = [self._placement_result(probe_count=0)]
+		with (
+			self._patched(placements) as (_context, _wait, expansion, _full),
+			patch(
+				"atlas.vm.core.placement.strategies.base.has_hosts_without_fresh_capacity", return_value=True
+			),
+			self.assertRaisesRegex(OutOfCapacity, "not reported their capacity"),
+		):
+			PlacementStrategy.find_server(self._requirements())
+
+		expansion.assert_not_called()
 
 	def test_a_resize_checks_its_current_host_when_the_pool_is_known_full(self) -> None:
 		current_placement = CurrentPlacement("a", memory_mib=1024, disk_mib=1024)

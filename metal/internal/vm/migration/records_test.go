@@ -266,7 +266,7 @@ func TestListVirtualMachineIDsFindsDestinationAndSource(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsACorruptRecord(t *testing.T) {
+func TestACorruptRecordAffectsOnlyItsMigration(t *testing.T) {
 	directory := t.TempDir()
 	migrationDirectory := filepath.Join(directory, "vm-1", migrationSubdirectory)
 	if err := os.MkdirAll(migrationDirectory, 0o750); err != nil {
@@ -277,12 +277,19 @@ func TestValidateRejectsACorruptRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newMigrationStore(directory)
+	if err := store.writeDestination(destinationRecord{ID: "mig-2", VirtualMachineID: "vm-2", State: destinationCopying, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
 
-	if err := store.validate(); err == nil {
-		t.Fatal("startup accepted a corrupt migration record")
+	if virtualMachineID, _, err := store.findDestination("mig-2"); err != nil || virtualMachineID != "vm-2" {
+		t.Fatalf("find a readable migration = %s, %v", virtualMachineID, err)
+	}
+	// The corrupt record can hold any other migration, so it is not reported absent.
+	if _, _, err := store.findDestination("mig-1"); err == nil || errors.Is(err, vm.ErrNotFound) {
+		t.Fatalf("find beside a corrupt record = %v", err)
 	}
 	if !store.has(store.destinationPath("vm-1")) {
-		t.Fatal("startup removed the corrupt migration record")
+		t.Fatal("the corrupt migration record was removed")
 	}
 }
 

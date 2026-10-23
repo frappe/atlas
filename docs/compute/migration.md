@@ -78,16 +78,18 @@ After you change a profile or replace Firecracker, cold-boot existing VMs before
 
 ## How do I move an offloaded VM? {#move-an-offloaded-vm}
 
-Use the normal migration action for a deep-sleeping or comatose VM. Atlas requires memory-compatible hosts and disables disk-only fallback for this move, regardless of the dialog choices. A resize is not allowed. Upgrade both Metal hosts before the move. Older destinations cannot lock an offloaded source.
+Use the normal migration action for a VM in deep sleep or coma. Atlas requires memory-compatible hosts and disables disk-only fallback for this move, regardless of the dialog choices. A resize is not allowed. Upgrade both Metal hosts before the move. Older destinations cannot lock an offloaded source.
+
+A VM in deep sleep or coma cannot fall back to a disk-only move. To move it between hosts with a different Firecracker binary or kernel, start the VM first. The running VM then uses the normal disk-only fallback and cold-boots on the destination, so it loses its memory state.
 
 | Source sleep state | Transfer |
 | --- | --- |
-| `deep-sleeping` | The local disk uses the normal ZFS transfer. The remote memory checkpoint stays in object storage. |
-| `comatose` | Configuration and remote memory and disk references move. No memory or disk snapshots transfer. |
+| `deep-sleeping` | The full disk copies before the source stops, while its network stays connected. Only a small final snapshot copies after stop. The remote memory checkpoint stays in object storage. |
+| `coma` | Configuration and remote memory and disk references move. No memory or disk snapshots transfer. |
 
 Neither host downloads remote snapshots or starts Firecracker during migration. The destination copies a missing kernel through the existing kernel transfer. The source removes its network before destination network setup. The destination stays stopped with its original sleep state through `ready` and `finish`.
 
-Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
+Locking the source cancels a running sleep upload, so the checkpoint that moves cannot change. Traffic to the source before it stops fails the migration: the source refuses to stop, and the VM wakes on the source after Atlas aborts. Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
 
 For direct Metal calls, use `has_memory_snapshot: true` after checking host compatibility. Supply each artifact's original `object_key` through the sleep-state URL refresh before migration. A disk-only request rejects an offloaded checkpoint rather than cold-booting it.
 
@@ -180,11 +182,13 @@ Atlas starts each worker run with a fresh destination visibility timer. A tempor
 | A source cold boot runs, but pause fails | The next restore pass only pauses the running process. | Source runs temporarily, then pauses. | `canceling` until rollback completes. |
 | Rollback cleanup, restore, or cold boot fails | Metal retains checkpoints and locks, then retries. | Atlas keeps source ownership. Runtime state depends on the failed step. | `canceling`. Metal phase `rollback`. |
 | Failure causes the abort | Atlas preserves the failure code through cleanup. | Source, in its original desired state after recovery. | `canceling`, then `failed`. A client error alone permits `aborted`. |
+| Metal refuses rollback with HTTP 409 | Atlas commits the destination and finishes. A disk-only destination refuses rollback once its guest runs, so an operator abort or the visibility timeout at `ready` cannot drop its writes. | Destination remains the owner. | `canceling`, then `finalizing`, then `completed`. |
 | The operator aborts after commit | Atlas rejects abort and continues finish. Metal also rejects abort after finish starts. | Destination remains the owner. | Atlas user error. Metal HTTP 409, `conflict`. |
 | Finish and abort requests compete at Metal | Metal accepts finish only from `ready`. The first accepted intent controls recovery. | Destination after finish, or source after abort. | A conflicting request returns HTTP 409, `conflict`. |
 | Destination control contact stops for 15 minutes | Metal rolls back abandoned work, including failed transfers. Ready, finishing, and rollback states do not expire. | Source after successful rollback, in its original desired state. | Metal `rollback`, then `aborted`. Atlas needs contact to settle. |
 | A pre-stop source has no contact for 15 minutes | Metal expires its lock only when no source stream runs. It restores disk limits and removes migration snapshots. | Source, with its current runtime state. | Source record `expired`. The same migration ID cannot restart it. |
 | A source is stopped or a destination is ready | Metal does not expire these records automatically. | Source remains locked, or destination remains ready, until recovery continues. | Current migration status remains visible. |
+| The destination host is lost for good after source stop | An operator runs **Dangerous Actions > Restore Source** on the migration. Atlas allows it only before commit and after the destination has not reported for 15 minutes. Metal starts and unlocks the source. If the destination host reports again within 30 days, Atlas discards its copy. | Source, in its original desired state. Writes the guest made on the destination after cutover are lost. | `failed`, error `destination_lost`. |
 
 The **Abort Migration** button sends the record name. The server reads the latest record and locks the VM before the migration record. This avoids a stale form save while the worker records progress.
 
@@ -205,7 +209,7 @@ The **Abort Migration** button sends the record name. The server reads the lates
 | `failed` | Migration fails. A transfer failure reaches this status after rollback. |
 | `aborted` | Cancellation and cleanup complete. |
 
-`progress_percent` estimates lifecycle progress. Use transfer rows for copied MiB. Each row identifies a `Disk` or `Memory` transfer. Bytes update at completion. Retries update the same sequence row.
+`progress_percent` estimates lifecycle progress. Use transfer rows for copied MiB. Each row identifies a `Disk` or `Memory` transfer. A disk row shows the bytes received so far while it copies, so a stalled copy shows a flat byte count. Throughput is the copied MiB divided by the time since the row started. Retries update the same sequence row.
 
 A memory row starts with the VM memory size. Its final total includes the verified state, memory, and metadata files.
 

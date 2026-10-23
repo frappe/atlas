@@ -163,7 +163,7 @@ It probes at most 16 hosts, tries up to 3 times, and gives up after **0.4 second
 | Result | Meaning | Action |
 | --- | --- | --- |
 | Host selected | The draft or migration holds the capacity. | Atlas sends the host request. |
-| `out_of_capacity` | No host in the pool fits. | Retry later. With auto-spawn enabled, Atlas queues a new host. |
+| `out_of_capacity` | No host in the pool fits, or a ready host sent no capacity sample in the last 2 minutes. | Retry later. With auto-spawn enabled, Atlas queues a new host, but not while a ready host has no recent sample. |
 | `placement_busy` | Hosts fit, but all were locked until the deadline. | Retry after `Retry-After` (1 second). |
 
 Lock contention never creates a host. Only a full pool does.

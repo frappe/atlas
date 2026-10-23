@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shlex
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -19,7 +18,7 @@ from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
 from atlas.vm.core import reconciliation
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics, timestamp_field
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
 	IPV6_INTERNET_DESTINATION,
 	ROUTE_VIA_HOST,
@@ -68,7 +67,6 @@ class VirtualMachine(Document):
 		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int
-		sleep_state: DF.Literal["", "sleeping", "deep-sleeping", "comatose"]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		virtual_machine_image: DF.Data
@@ -109,7 +107,12 @@ class VirtualMachine(Document):
 		"""
 		validate_tags(self)
 		try:
-			validate_sleep_times(self.deep_sleep_after_idle_seconds or 0, self.coma_after_idle_seconds or 0)
+			validate_sleep_times(
+				self.deep_sleep_after_idle_seconds or 0,
+				self.coma_after_idle_seconds or 0,
+				self.memory_mib,
+				self.disk_mib,
+			)
 		except ValueError as error:
 			frappe.throw(_(str(error)), exc=AtlasUserError)
 
@@ -129,6 +132,13 @@ class VirtualMachine(Document):
 		self.ensure_not_termination_protected()
 		VirtualMachineService(self).validate_deletion()
 		delete_tasks_for_target(self.doctype, self.name)
+		if frappe.get_cached_doc("Atlas Settings").is_object_storage_configured:
+			frappe.enqueue(
+				"atlas.vm.core.vm_sleep.delete_sleep_objects",
+				virtual_machine_name=self.name,
+				server_name=self.server,
+				enqueue_after_commit=True,
+			)
 		if frappe.db.exists("Virtual Machine State", self.name):
 			frappe.delete_doc(
 				"Virtual Machine State", self.name, ignore_permissions=True, delete_permanently=True
@@ -158,42 +168,6 @@ class VirtualMachine(Document):
 		"""Return the state Metal was asked to reach."""
 		information = self.get_metal_vm_info()
 		return information.desired.state if information else None
-
-	@property
-	def sleep_state(self) -> str | None:
-		"""Return where Metal keeps the saved state of a sleeping VM. An awake VM has none."""
-		information = self.get_metal_vm_info()
-		return (information.observed.sleep_state or None) if information else None
-
-	@property
-	def snapshot_upload_percent(self) -> str | None:
-		"""Return progress only while Metal uploads an artifact over HTTP."""
-		information = self.get_metal_vm_info()
-		if not information or information.observed.error:
-			return None
-
-		observed = information.observed
-		if not observed.sleep_snapshot:
-			return None
-
-		if observed.phase == "upload-sleep-memory":
-			artifact = observed.sleep_snapshot.memory
-		elif observed.phase == "upload-sleep-disk":
-			artifact = observed.sleep_snapshot.disk
-		else:
-			return None
-
-		if not artifact or artifact.uploaded or artifact.upload_percent is None:
-			return None
-
-		# A Data field preserves None; Frappe converts an empty Percent field to zero.
-		return str(artifact.upload_percent)
-
-	@property
-	def last_request_at(self) -> datetime | None:
-		"""Return when the VM last received a request, in the site timezone."""
-		information = self.get_metal_vm_info()
-		return timestamp_field(asdict(information.observed), "last_request_at") if information else None
 
 	@property
 	def error(self) -> str | None:
@@ -370,23 +344,24 @@ class VirtualMachine(Document):
 		self.ensure_not_migrating()
 		self.validate_network_change()
 		service = VirtualMachineService(self)
-		service.lock_network()
-		self.is_network_gateway = strict_bool(is_network_gateway, "is_network_gateway")
-		changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
-		if self.is_network_gateway:
-			self.validate_network_gateway()
-			if self.is_accessible_via_wireguard_gateway:
-				frappe.throw(
-					_("Disable WireGuard gateway access before this VM becomes a gateway."),
-					exc=AtlasUserError,
-				)
-			if service.has_gateway_routes():
-				frappe.throw(
-					_("Remove the gateway routes of this VM before it becomes a gateway."), exc=AtlasUserError
-				)
-			changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
-		service.update_network(changes)
-		self.save()
+		with service.network_lock():
+			self.is_network_gateway = strict_bool(is_network_gateway, "is_network_gateway")
+			changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
+			if self.is_network_gateway:
+				self.validate_network_gateway()
+				if self.is_accessible_via_wireguard_gateway:
+					frappe.throw(
+						_("Disable WireGuard gateway access before this VM becomes a gateway."),
+						exc=AtlasUserError,
+					)
+				if service.has_gateway_routes():
+					frappe.throw(
+						_("Remove the gateway routes of this VM before it becomes a gateway."),
+						exc=AtlasUserError,
+					)
+				changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
+			service.update_network(changes)
+			self.save()
 
 	@frappe.whitelist(methods=["POST"])
 	def set_wireguard_gateway_access(self, is_enabled: bool | int | str) -> None:

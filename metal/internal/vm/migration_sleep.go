@@ -13,7 +13,7 @@ func (sleep *SleepMigration) Validate(specificationGeneration, restartGeneration
 	record := sleep.Checkpoint
 	switch sleep.State {
 	case SleepStateDeepSleeping:
-	case SleepStateComatose:
+	case SleepStateComa:
 		if record.Disk == nil {
 			return fmt.Errorf("migration sleep checkpoint is missing its disk")
 		}
@@ -35,7 +35,7 @@ func (record SleepCheckpoint) validateMigrationArtifacts() error {
 		if artifact == nil {
 			continue
 		}
-		if artifact.Artifact == nil || artifact.ObjectKey == "" || artifact.UploadURL != "" || !validSleepURL(artifact.DownloadURL) {
+		if artifact.Artifact == nil || artifact.ObjectKey == "" || artifact.validate(true) != nil {
 			return fmt.Errorf("migration sleep artifact is not acknowledged or has no object key")
 		}
 	}
@@ -44,6 +44,8 @@ func (record SleepCheckpoint) validateMigrationArtifacts() error {
 
 // ReadSleepMigration captures a stable, acknowledged checkpoint under the operation lock.
 func (host *MigrationHost) ReadSleepMigration(identifier string) (*SleepMigration, error) {
+	// The destination takes the checkpoint as it is now, so a running upload must not change it.
+	host.manager.stopSleepUpload(identifier)
 	desired, observed, err := host.manager.newVirtualMachine(identifier).records()
 	if err != nil || !observed.hasRemoteSleepState() {
 		return nil, err
@@ -68,7 +70,7 @@ func (record SleepCheckpoint) forMigration(userID uint32) SleepCheckpoint {
 	}
 	for _, artifact := range []*sleepArtifactRecord{record.Memory, record.Disk} {
 		if artifact != nil {
-			artifact.UploadURL = ""
+			artifact.SleepArtifactTarget = artifact.withoutUploadURLs()
 		}
 	}
 	if record.SourceUserID == 0 {

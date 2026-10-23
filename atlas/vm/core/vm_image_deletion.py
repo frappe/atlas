@@ -42,7 +42,10 @@ class VirtualMachineImageDeletionService:
 		return cast(str, image.status)
 
 	def reclaim_archived(self) -> None:
-		"""Queue artifact cleanup, then delete records with no VM references."""
+		"""Queue the deletion of each archived image that no VM references.
+
+		A VM can start or migrate again at any time and then needs its image artifacts.
+		"""
 		for image in frappe.get_all(
 			"Virtual Machine Image",
 			filters={"status": "Archived"},
@@ -56,13 +59,10 @@ class VirtualMachineImageDeletionService:
 				"source_server",
 			],
 		):
-			if is_retaining_artifacts(image):
+			if is_retaining_artifacts(image) or has_virtual_machines(image.name):
 				continue
-			if not has_virtual_machines(image.name):
-				frappe.db.set_value("Virtual Machine Image", image.name, "status", "Deleting")
-				self.enqueue(image.name)
-			elif has_stored_artifacts(image):
-				self.enqueue(image.name)
+			frappe.db.set_value("Virtual Machine Image", image.name, "status", "Deleting")
+			self.enqueue(image.name)
 
 	def enqueue(self, image_name: str) -> None:
 		"""Enqueue one repeatable image cleanup."""
@@ -77,9 +77,9 @@ class VirtualMachineImageDeletionService:
 		)
 
 	def delete(self, image_name: str) -> None:
-		"""Remove artifacts after retention, then remove an unused record."""
+		"""Remove the artifacts and the record of an image that no VM references."""
 		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
-		if is_retaining_artifacts(image):
+		if is_retaining_artifacts(image) or has_virtual_machines(image_name):
 			return
 		if image.image_object_key:
 			settings: AtlasSettings = frappe.get_single("Atlas Settings")
@@ -107,10 +107,9 @@ class VirtualMachineImageDeletionService:
 			):
 				setattr(image, field, None)
 			image.save()
-		if not has_virtual_machines(image_name):
-			if image.status != "Deleting":
-				frappe.db.set_value("Virtual Machine Image", image_name, "status", "Deleting")
-			frappe.delete_doc("Virtual Machine Image", image_name)
+		if image.status != "Deleting":
+			frappe.db.set_value("Virtual Machine Image", image_name, "status", "Deleting")
+		frappe.delete_doc("Virtual Machine Image", image_name)
 
 	@staticmethod
 	def delete_staged_snapshot(image: VirtualMachineImage) -> None:

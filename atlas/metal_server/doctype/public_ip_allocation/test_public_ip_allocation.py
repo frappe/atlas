@@ -64,3 +64,22 @@ class TestPublicIPAllocation(IntegrationTestCase):
 		self.assertEqual(created, 4)
 		self.assertEqual(frappe.db.count("Public IP Allocation", {"pool": pool.name}), 4)
 		self.assertEqual(generate_available_allocations(pool.name), 0)
+
+	def test_a_blocked_address_is_never_allocated(self) -> None:
+		pool = insert_pool("198.19.44.0/31", 32)
+		generate_available_allocations(pool.name)
+		blocked = frappe.get_doc("Public IP Allocation", {"pool": pool.name, "prefix": "198.19.44.0/32"})
+		blocked.block()
+
+		reserved = PublicIPService().reserve(7, 4)
+		with self.assertRaisesRegex(frappe.ValidationError, "capacity"):
+			PublicIPService().reserve(7, 4)
+
+		self.assertEqual(reserved.prefix, "198.19.44.1/32")
+		self.assertEqual(frappe.db.get_value("Public IP Allocation", blocked.name, "status"), "Blocked")
+		with self.assertRaises(frappe.ValidationError):
+			frappe.get_doc("Public IP Allocation", reserved.name).block()
+
+		blocked.reload()
+		blocked.unblock()
+		self.assertEqual(PublicIPService().reserve(7, 4).name, blocked.name)

@@ -67,13 +67,13 @@ type sleepAPISnapshots struct {
 	diskRestores int
 }
 
-func (snapshots *sleepAPISnapshots) RestoreSleepDisk(context.Context, string, string, vm.SleepArtifact) error {
+func (snapshots *sleepAPISnapshots) RestoreSleepDisk(context.Context, string, []string, vm.SleepArtifact) error {
 	snapshots.diskRestores++
 	return nil
 }
 
 func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
-	for _, sleeping := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+	for _, sleeping := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComa} {
 		t.Run(string(sleeping), func(t *testing.T) {
 			started := make(chan string, 4)
 			release := make(chan struct{}, 2)
@@ -168,7 +168,7 @@ func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
 				t.Fatalf("URL refresh started a %s transfer", method)
 			default:
 			}
-			if sleeping == vm.SleepStateComatose {
+			if sleeping == vm.SleepStateComa {
 				// Seed an already offloaded disk; ZFS publishing has separate storage tests.
 				path := filepath.Join(directory, "vm1", "sleep-state.json")
 				data, err := os.ReadFile(path)
@@ -217,8 +217,8 @@ func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
 			if awake.Observed.State != "running" || awake.Observed.SleepState != "" || awake.Observed.Error != nil || runtime.restores != 1 {
 				t.Fatalf("restore did not complete: %+v; restores=%d", awake.Observed, runtime.restores)
 			}
-			if sleeping == vm.SleepStateComatose && snapshots.diskRestores != 1 {
-				t.Fatal("comatose restore did not restore the disk")
+			if sleeping == vm.SleepStateComa && snapshots.diskRestores != 1 {
+				t.Fatal("coma restore did not restore the disk")
 			}
 		})
 	}
