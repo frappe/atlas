@@ -76,7 +76,7 @@ The idle timeout is per VM. A create request and a compute request carry `sleep_
 | `METALD_BULK_DIR` | `/tmp/metald` | Directory for the ZFS pool file. |
 | `METALD_WORKDIR` | `/tmp/metald` | Directory for runtime files, images, keys, and configuration. |
 | `METALD_POOL_SIZE` | 8 GiB to 30 GiB | ZFS pool file size. |
-| `METALD_FC_VERSION` | `v1.16.1` | Firecracker release. |
+| `METALD_FC_VERSION` | `v1.17.0` | Firecracker release. |
 | `METALD_POOL` | `metal` | ZFS pool name. |
 | `METALD_LISTEN` | `127.0.0.1:8080` | API address in the generated configuration. |
 | `METALD_ATLAS_COMMON_NAME` | `atlas.metal.test` | Common name of the development Atlas client certificate. |
