@@ -455,10 +455,19 @@ func TestAbortConflictsAfterTheDestinationBooted(t *testing.T) {
 		t.Fatalf("state = %s, want ready", record.State)
 	}
 
-	// A paused memory restore has not run the guest, so it can still roll back.
-	writeReadyDestination(t, machines, func(r *destinationRecord) { r.HasMemorySnapshot = true })
-	if err := migrationManager.AbortDestination(t.Context(), "mig-1"); err != nil {
-		t.Fatalf("abort of a paused destination = %v", err)
+	// A paused memory restore and an asleep offloaded VM have not run the guest, so they can still roll back.
+	for _, mutate := range []func(*destinationRecord){
+		func(r *destinationRecord) { r.HasMemorySnapshot = true },
+		func(r *destinationRecord) {
+			definition := virtualMachineDefinition("vm-1")
+			definition.Sleep = sleepMigration(t, vm.SleepStateDeepSleeping)
+			r.Definition = &definition
+		},
+	} {
+		writeReadyDestination(t, machines, mutate)
+		if err := migrationManager.AbortDestination(t.Context(), "mig-1"); err != nil {
+			t.Fatalf("abort of a destination whose guest did not run = %v", err)
+		}
 	}
 }
 

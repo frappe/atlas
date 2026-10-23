@@ -24,7 +24,7 @@ The diagram shows public phases. Durable records divide these phases into smalle
 | `stopping` | Stop the source and receive final disk and memory snapshots. Save each transfer's completion separately. |
 | `creating_network` | Create and record the destination network. |
 | `applying_state` | Apply disk-only state or load memory paused. Record a fallback cause only after runtime cleanup and network recreation succeed. |
-| `ready` | Wait for the Atlas finish or abort request. A disk-only destination refuses abort with `409`, because its guest already runs and writes to the disk. Only `discard`, which Atlas sends after an operator restored the source, removes it. |
+| `ready` | Wait for the Atlas finish or abort request. A destination that cold-booted the guest refuses abort with `409`, because the guest writes to the disk. A paused memory restore and an offloaded VM that stays asleep can still roll back. Only `discard`, which Atlas sends after an operator restored the source, removes it. |
 | `finishing` | Activate the destination, destroy the source, then remove received snapshots and memory staging. |
 | `removing_runtime` | Remove destination runtime and network. |
 | `removing_storage` | Remove memory staging, abort the disk receive, and remove destination VM records. |

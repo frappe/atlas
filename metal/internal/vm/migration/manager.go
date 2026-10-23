@@ -390,7 +390,7 @@ func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string, isD
 		return vm.ErrConflict
 	}
 	// A cold-booted destination guest has written to its disk, and rollback would lose those writes.
-	if record.State == destinationReady && !record.usesMemorySnapshot() && !isDiscard {
+	if record.State == destinationReady && record.hasColdBootedGuest() && !isDiscard {
 		return vm.ErrConflict
 	}
 	if record.State == destinationRemovingRuntime || record.State == destinationRemovingStorage ||

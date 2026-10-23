@@ -256,6 +256,12 @@ func (record destinationRecord) hasSleepCheckpoint() bool {
 	return record.Definition != nil && record.Definition.Sleep != nil
 }
 
+// hasColdBootedGuest reports whether a ready destination runs its guest from the
+// received disk. A memory restore stays paused and an offloaded VM stays asleep.
+func (record destinationRecord) hasColdBootedGuest() bool {
+	return !record.usesMemorySnapshot() && !record.hasSleepCheckpoint()
+}
+
 func (record destinationRecord) memorySnapshotStatus() string {
 	if !record.HasMemorySnapshot || record.hasSleepCheckpoint() {
 		return ""

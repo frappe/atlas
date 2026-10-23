@@ -24,7 +24,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 - `MemoryTransfer` uses `TransferProgress` for the memory snapshot and stays separate from disk intervals. Its sequence follows the final disk row, so retries keep one controller row. The API identifies it with optional `snapshot_type: "memory"`.
 - Memory snapshot migrations activate only during `finishing`, after Atlas commits ownership. Activation retries inspect the existing process and never replay the original snapshot after guest execution.
 - Finish and abort are mutually exclusive. The first request wins. Finish requires a destination in `ready`.
-- A disk-only destination in `ready` refuses abort. `DiscardDestination` removes it anyway, after Atlas restored the source with `RestoreSource`. Rollback then treats a missing source record as already restored.
+- A destination in `ready` that cold-booted its guest refuses abort. `DiscardDestination` removes it anyway, after Atlas restored the source with `RestoreSource`. Rollback then treats a missing source record as already restored.
 - A rollback failure keeps both records, locks, and the source disk. The source ends an active stream before unlock or destruction. Two hosts must never own one disk.
 - A source lock expires only before the source stops. Its `expired` tombstone rejects the same migration ID. A `ready` destination does not expire.
 - A terminal or failed destination reserves no capacity. A new migration replaces an aborted record only after its VM, lock, and dataset records are gone. The migration reconciler removes such a clean aborted record after 7 days.
