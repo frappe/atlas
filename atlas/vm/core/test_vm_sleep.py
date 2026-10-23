@@ -53,6 +53,7 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 		settings = SimpleNamespace(
 			get_object_storage_client=lambda: storage,
 		)
+		storage.create_multipart_upload = Mock(return_value="multipart-1")
 		virtual_machine = SimpleNamespace(
 			name="vm-1",
 			server="host-1",
@@ -61,6 +62,9 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			active_migration=None,
 			deep_sleep_after_idle_seconds=0,
 			coma_after_idle_seconds=0,
+			reload=Mock(),
+			memory_mib=512,
+			disk_mib=1024,
 		)
 		for state, artifacts, deep_sleep in (
 			("deep-sleeping", {"memory": {"uploaded": True}}, 0),
@@ -77,6 +81,7 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			)
 			client = Mock(spec=MetalClient)
 			client.get_virtual_machine.return_value = MetalVirtualMachine.from_dict(response)
+			client.offload_sleep_state.return_value = client.get_virtual_machine.return_value
 			refresh_key = f"atlas:vm-sleep-urls:{virtual_machine.name}:checkpoint-1"
 			frappe.cache.delete_value(refresh_key)
 			self.addCleanup(frappe.cache.delete_value, refresh_key)
@@ -124,7 +129,11 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			active_migration=None,
 			deep_sleep_after_idle_seconds=0,
 			coma_after_idle_seconds=0,
+			reload=Mock(),
+			memory_mib=512,
+			disk_mib=1024,
 		)
+		storage.create_multipart_upload = Mock(return_value="multipart-1")
 		response = complete_response()
 		response["observed"].update(
 			state="stopped",
@@ -133,6 +142,7 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 		)
 		client = Mock(spec=MetalClient)
 		client.get_virtual_machine.return_value = MetalVirtualMachine.from_dict(response)
+		client.offload_sleep_state.return_value = client.get_virtual_machine.return_value
 		cache = frappe.cache()
 		refresh_key = f"atlas:vm-sleep-urls:{machine.name}:checkpoint-1"
 		self.addCleanup(cache.delete_value, refresh_key)

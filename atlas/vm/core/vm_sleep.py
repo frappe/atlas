@@ -10,7 +10,7 @@ from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.object_storage import ObjectStorageError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine, timestamp_field
-from atlas.vm.core.multipart_upload import MultipartUpload, bytes_to_mib
+from atlas.vm.core.multipart_upload import MultipartUpload, MultipartUploadError, bytes_to_mib
 from atlas.vm.core.sleep_snapshot_objects import SleepSnapshotObjects
 from atlas.vm.core.vm_service import VirtualMachineService
 
@@ -26,11 +26,18 @@ class VirtualMachineSleepService:
 
 	def reconcile(self) -> None:
 		"""Refresh recovery URLs and request artifacts whose idle thresholds have passed."""
+		with SleepSnapshotObjects(self.virtual_machine).lock():
+			self.virtual_machine.reload()
+			self._reconcile()
+
+	def _reconcile(self) -> None:
 		machine = self.virtual_machine
 		if machine.is_draft or machine.is_terminating or machine.active_migration or not machine.server:
 			return
 		client = VirtualMachineService(machine).metal_client
 		information = client.get_virtual_machine(machine.name)
+		objects = SleepSnapshotObjects(machine)
+		objects.remember(information)
 		if information.observed.state != "stopped":
 			return
 		if information.observed.sleep_state not in {"sleeping", "deep-sleeping", "comatose"}:
@@ -45,20 +52,29 @@ class VirtualMachineSleepService:
 		if not artifacts and snapshot is None:
 			return
 		if snapshot is not None:
-			self.refresh_urls(information, client)
+			self._refresh_urls(information, client)
+			objects.delete(keep_checkpoint=snapshot.id)
 		if artifacts:
 			storage = frappe.get_cached_doc("Atlas Settings").get_object_storage_client()
-			prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
+			multipart = MultipartUpload(storage)
 			request = {}
 			for name in artifacts:
 				artifact = getattr(snapshot, name) if snapshot else None
-				key = artifact.object_key if artifact and artifact.object_key else f"{prefix}/{name}"
+				if artifact is not None and (artifact.uploaded or artifact.pending is not None):
+					continue
+				stored = objects.prepare_upload(
+					name, snapshot.id if snapshot else "", artifact.object_key if artifact else ""
+				)
+				key = stored["object_key"]
+				# Memory includes Firecracker state, metadata, and tar headers.
+				size_mib = machine.memory_mib + 16 if name == "memory" else machine.disk_mib
 				request[name] = {
 					"object_key": key,
-					"upload_url": storage.object_url(key, method="PUT"),
+					"multipart": multipart.get_request(key, stored["upload_id"], size_mib),
 					"download_url": storage.object_url(key),
 				}
-			client.offload_sleep_state(machine.name, request)
+			if request:
+				objects.remember(client.offload_sleep_state(machine.name, request))
 
 	def refresh_urls(
 		self, information: MetalVirtualMachine, client: MetalClient, force: bool = False
@@ -70,10 +86,10 @@ class VirtualMachineSleepService:
 
 	def _refresh_urls(
 		self, information: MetalVirtualMachine, client: MetalClient, force: bool = False
-	) -> MetalVirtualMachine:
+	) -> None:
 		snapshot = information.observed.sleep_snapshot
 		if snapshot is None:
-			return information
+			return
 		machine = self.virtual_machine
 		cache = frappe.cache()
 		refresh_key = f"atlas:vm-sleep-urls:{machine.name}:{snapshot.id}"
@@ -82,7 +98,7 @@ class VirtualMachineSleepService:
 			for artifact in (snapshot.memory, snapshot.disk)
 		)
 		if not force and not pending and cache.get_value(refresh_key, use_local_cache=False):
-			return information
+			return
 		storage = frappe.get_cached_doc("Atlas Settings").get_object_storage_client()
 		prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
 		refresh = {}
@@ -102,9 +118,8 @@ class VirtualMachineSleepService:
 						size_bytes=artifact.pending.stored_size_bytes,
 					)
 					refresh[name]["completed_upload_id"] = artifact.upload_id
-		information = client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
+		client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
 		cache.set_value(refresh_key, True, expires_in_sec=3600)
-		return information
 
 	@staticmethod
 	def artifacts_to_offload(
@@ -157,7 +172,7 @@ def reconcile_sleep_state(virtual_machine_name: str) -> None:
 		return
 	try:
 		VirtualMachineSleepService(frappe.get_doc("Virtual Machine", virtual_machine_name)).reconcile()
-	except MetalClientError, ObjectStorageError, ValueError:
+	except MetalClientError, ObjectStorageError, MultipartUploadError, ValueError:
 		frappe.log_error(
 			title=f"Sleep state reconciliation failed for {virtual_machine_name}",
 			message=frappe.get_traceback(with_context=False),
