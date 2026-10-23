@@ -105,7 +105,7 @@ Each upload URL must accept a complete object with HTTP PUT. Memory is a zstd-co
 
 The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again.
 
-In Desk, open or refresh the VM form during an offload. The **Snapshot Upload** bar below **Sleep State** shows progress only while Metal uploads memory or disk over HTTP. Refresh the form to update the value. The field is hidden outside uploads, including preparation, compression, completion, and failure. Progress is not stored in Atlas.
+In Desk, each **Virtual Machine State** shows the **Sleep State**, **Last Request At**, and **Sleep Snapshot ID** that the host reported in its last sync. It also shows the snapshot whose URLs Atlas signed last and when those URLs expire. Atlas does not store upload progress. Read `observed.phase` from Metal for that.
 
 Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
 

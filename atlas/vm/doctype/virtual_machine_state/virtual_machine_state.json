@@ -9,7 +9,14 @@
   "server",
   "virtual_machine",
   "column_break_state",
-  "synced_at"
+  "synced_at",
+  "section_break_sleep",
+  "sleep_state",
+  "last_request_at",
+  "column_break_sleep",
+  "sleep_snapshot_id",
+  "sleep_urls_snapshot_id",
+  "sleep_urls_expire_at"
  ],
  "fields": [
   {
@@ -53,10 +60,51 @@
    "label": "Synced At",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "section_break_sleep",
+   "fieldtype": "Section Break",
+   "label": "Sleep"
+  },
+  {
+   "fieldname": "sleep_state",
+   "fieldtype": "Select",
+   "label": "Sleep State",
+   "options": "\nsleeping\ndeep-sleeping\ncomatose",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_request_at",
+   "fieldtype": "Datetime",
+   "label": "Last Request At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sleep",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sleep_snapshot_id",
+   "fieldtype": "Data",
+   "label": "Sleep Snapshot ID",
+   "read_only": 1
+  },
+  {
+   "description": "The snapshot whose object storage URLs Atlas signed last",
+   "fieldname": "sleep_urls_snapshot_id",
+   "fieldtype": "Data",
+   "label": "Signed Snapshot ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sleep_urls_expire_at",
+   "fieldtype": "Datetime",
+   "label": "Signed URLs Expire At",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-29 15:35:02.858934",
+ "modified": "2026-10-23 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine State",

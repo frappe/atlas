@@ -1,22 +1,29 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import frappe
+from frappe.query_builder import Case
 from frappe.utils import now_datetime
 
+from atlas.vm.core.metal_models import timestamp_field
+
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
+SLEEP_STATES = ("sleeping", "deep-sleeping", "comatose")
+# Metal owns these values. Atlas owns the signed URL fields on the same row.
+REPORTED_FIELDS = ("sleep_state", "sleep_snapshot_id", "last_request_at")
 HOST_REPORT_REPEAT_SECONDS = 3600
 
 
 def store_reported_states(server_name: str, reported: object) -> None:
 	"""Store the reported virtual machine states of one host.
 
-	A new or changed state is saved as a document, so its webhook runs. An unchanged
-	state needs only its sync time, so all of them share one update.
+	A new or changed status is saved as a document, so its webhook runs. The other
+	reported values change often, so all rows with an unchanged status share one update.
 	"""
-	statuses = get_reported_statuses(reported)
-	report_unknown_virtual_machines(server_name, list(statuses))
+	states = get_reported_states(reported)
+	report_unknown_virtual_machines(server_name, list(states))
 	names = frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name")
 	if not names:
 		return
@@ -28,40 +35,49 @@ def store_reported_states(server_name: str, reported: object) -> None:
 		)
 	}
 	synced_at = now_datetime()
-	unchanged = []
+	unchanged = {}
 
 	for name in names:
-		status = statuses.get(name)
-		if status is None:
+		state = states.get(name)
+		if state is None:
 			continue
 
 		row = stored.get(name)
-		if row and row.status == status and row.server == server_name:
-			unchanged.append(name)
+		if row and row.status == state.status and row.server == server_name:
+			unchanged[name] = state
 			continue
 
 		try:
 			if row:
-				state = frappe.get_doc("Virtual Machine State", name)
+				document = frappe.get_doc("Virtual Machine State", name)
 			else:
-				state = frappe.new_doc("Virtual Machine State")
-				state.virtual_machine = name
+				document = frappe.new_doc("Virtual Machine State")
+				document.virtual_machine = name
 
-			state.server = server_name
-			state.status = status
-			state.synced_at = synced_at
-			state.save(ignore_permissions=True)
+			document.update(state)
+			document.server = server_name
+			document.synced_at = synced_at
+			document.save(ignore_permissions=True)
 			frappe.db.commit()  # nosemgrep
 		except Exception:
 			frappe.db.rollback()
 			frappe.log_error(f"Virtual Machine State write failed: {name}")
 
 	if unchanged:
-		state_table = frappe.qb.DocType("Virtual Machine State")
-		frappe.qb.update(state_table).set(state_table.synced_at, synced_at).where(
-			state_table.name.isin(unchanged)
-		).run()
-		frappe.db.commit()  # nosemgrep
+		update_reported_states(unchanged, synced_at)
+
+
+def update_reported_states(states: dict[str, frappe._dict], synced_at: datetime) -> None:
+	"""Write the reported values of many rows in one statement."""
+	table = frappe.qb.DocType("Virtual Machine State")
+	query = frappe.qb.update(table).set(table.synced_at, synced_at).where(table.name.isin(list(states)))
+	for field in REPORTED_FIELDS:
+		value = Case()
+		for name, state in states.items():
+			value = value.when(table.name == name, state[field])
+		query = query.set(table[field], value)
+	query.run()
+	frappe.db.commit()  # nosemgrep
 
 
 def report_unknown_virtual_machines(server_name: str, reported_names: list[str]) -> None:
@@ -96,18 +112,32 @@ def log_host_report(key: str, title: str, message: str) -> None:
 	frappe.log_error(title=title, message=message)
 
 
-def get_reported_statuses(reported: object) -> dict[str, str]:
-	"""Return the status of each virtual machine in a Metal sync response."""
+def get_reported_states(reported: object) -> dict[str, frappe._dict]:
+	"""Return the reported values of each virtual machine in a Metal sync response."""
 	if not isinstance(reported, dict):
 		raise ValueError("Metal virtual machine response must be an object")
 
-	statuses = {}
+	states = {}
 	for name, state in reported.items():
-		status = state.get("status") if isinstance(state, dict) else None
-		if not isinstance(status, str) or not status:
+		if not isinstance(state, dict):
 			raise ValueError("Metal virtual machine response has invalid values")
-		statuses[name] = status
-	return statuses
+		status = state.get("status")
+		sleep_state = state.get("sleep_state") or ""
+		sleep_snapshot_id = state.get("sleep_snapshot_id") or None
+		if (
+			not isinstance(status, str)
+			or not status
+			or sleep_state not in ("", *SLEEP_STATES)
+			or not isinstance(sleep_snapshot_id, str | None)
+		):
+			raise ValueError("Metal virtual machine response has invalid values")
+		states[name] = frappe._dict(
+			status=status,
+			sleep_state=sleep_state,
+			sleep_snapshot_id=sleep_snapshot_id,
+			last_request_at=timestamp_field(state, "last_request_at"),
+		)
+	return states
 
 
 def get_reported_state_rows(names: list[str]) -> dict[str, Any]:
