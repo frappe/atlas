@@ -126,6 +126,26 @@ Cancellation and timeout errors retry without a cold boot. Metal logs the fallba
 
 An explicit stop, restart, or shape change recovers an offloaded disk before it discards saved memory. [Migration](migration.md#move-an-offloaded-vm) moves an offloaded VM without waking it or downloading its snapshots.
 
+## Automatic host rebalancing
+
+Every minute, Atlas checks ready sleepy hosts, including hosts in maintenance. It adds the configured memory of running and paused VMs and compares the sum with host memory. It does not use guest RSS or discount the sum by the sleepy overcommit factor.
+
+At 85% or more, Atlas selects sleepy VMs that are sleeping, deep-sleeping, or comatose. Above 90%, it also selects running sleepy VMs. Paused VMs count toward pressure but do not move automatically.
+
+Running candidates rank by the fewest completed migrations in the last 24 hours, then largest memory, then VM name. Atlas selects enough running candidates to bring projected source pressure toward 85%. Sleeping candidates follow, largest memory first. There is no fixed VM-count cap.
+
+Atlas submits a selected-only [Metal Server Drain](migration.md#drain-a-host) with four parallel migrations, memory snapshots enabled, and disk-only fallback disabled. Automatic drains leave the source maintenance flag unchanged. Manual drains keep their normal maintenance behavior.
+
+Destinations must be emptier, ready sleepy hosts outside maintenance. Atlas checks projected destination memory, disk space, affinity, and memory compatibility through the existing placement and migration code. Planning counts the whole batch and existing incoming reservations. Placement rechecks capacity under its normal lock.
+
+Host capacity and cached VM states must be at most two minutes old and match the current host. Metal confirms each candidate's sleep state. Draft, terminating, protected, service, and already migrating VMs are excluded. A host with a running drain gets no second drain.
+
+Automatic drains recheck eligibility before starting migrations. A queued migration is aborted before placement if the VM wakes below the running-move threshold or the source no longer meets the policy. A drain can complete with selected VMs still on the source when they no longer qualify. Started migrations use the normal recovery path.
+
+Follow automatic moves in Metal Server Drain and Virtual Machine Migration. The hidden `is_sleepy_rebalance` field identifies automatic drains. Pausing VM migrations also pauses new rebalance drains and migration starts.
+
+Ordinary sleeping VMs resume on the destination. Deep-sleeping and comatose VMs stay asleep until a later wake. Moving sleepers reduces future wake demand, not the current running-memory sum.
+
 ## Placement
 
 Sleepy VMs can live on their own hosts. With **Use Dedicated Sleepy VM Hosts** on in Atlas Settings, sleepy VMs go only to sleepy hosts, and regular VMs only to regular hosts. Auto-spawn creates a host for the right pool.

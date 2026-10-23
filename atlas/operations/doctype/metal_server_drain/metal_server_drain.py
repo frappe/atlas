@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 import frappe
@@ -15,6 +16,7 @@ from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService, get_active_migrations
 
 if TYPE_CHECKING:
+	from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_migration.virtual_machine_migration import (
 		VirtualMachineMigration,
@@ -24,7 +26,7 @@ MAXIMUM_MIGRATION_ATTEMPTS = 3
 
 
 class MetalServerDrain(Document):
-	"""Move every Virtual Machine off one Metal Server."""
+	"""Move Virtual Machines off one Metal Server."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -40,6 +42,9 @@ class MetalServerDrain(Document):
 		from atlas.operations.doctype.metal_server_drain_migration.metal_server_drain_migration import (
 			MetalServerDrainMigration,
 		)
+		from atlas.operations.doctype.metal_server_drain_virtual_machine.metal_server_drain_virtual_machine import (
+			MetalServerDrainVirtualMachine,
+		)
 
 		allow_any_destination: DF.Check
 		allow_disk_only_fallback: DF.Check
@@ -49,13 +54,16 @@ class MetalServerDrain(Document):
 		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
 		has_memory_snapshot: DF.Check
+		is_sleepy_rebalance: DF.Check
 		migrations: DF.Table[MetalServerDrainMigration]
+		move_only_selected_vms: DF.Check
 		parallel_migrations: DF.Int
 		progress_percent: DF.Int
 		retry_failed_migrations: DF.Check
 		source_metal_server: DF.Link
 		started_at: DF.Datetime | None
 		status: DF.Literal["Draft", "Running", "Completed", "Failed", "Cancelled"]
+		virtual_machines: DF.Table[MetalServerDrainVirtualMachine]
 	# end: auto-generated types
 
 	@property
@@ -64,6 +72,23 @@ class MetalServerDrain(Document):
 		if self.allow_any_destination:
 			return None
 		return {row.metal_server for row in self.destinations}
+
+	@cached_property
+	def rebalance_policy(self) -> SleepyHostRebalance:
+		"""Keep one eligibility snapshot for this drain step."""
+		from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
+
+		return SleepyHostRebalance(
+			self.source_metal_server, {row.virtual_machine for row in self.virtual_machines}
+		)
+
+	@property
+	def virtual_machine_filters(self) -> dict[str, str | tuple[str, list[str]]]:
+		"""Select all or only the chosen VMs on the source."""
+		filters: dict[str, str | tuple[str, list[str]]] = {"server": self.source_metal_server}
+		if self.move_only_selected_vms:
+			filters["name"] = ("in", [row.virtual_machine for row in self.virtual_machines])
+		return filters
 
 	@property
 	def active_migration_count(self) -> int:
@@ -80,7 +105,8 @@ class MetalServerDrain(Document):
 		return {name for name, status in last_statuses.items() if status == "failed"}
 
 	def validate(self) -> None:
-		"""Check the destination choice and the number of parallel migrations."""
+		"""Check the VM selection, destinations, and number of parallel migrations."""
+		self.validate_virtual_machines()
 		destinations = [row.metal_server for row in self.destinations]
 		if not self.allow_any_destination and not destinations:
 			frappe.throw(_("Add a destination or allow any destination."))
@@ -90,6 +116,22 @@ class MetalServerDrain(Document):
 			frappe.throw(_("Each destination can be in the drain only once."))
 		if self.parallel_migrations < 1:
 			frappe.throw(_("Parallel Migrations must be at least 1."))
+
+	def validate_virtual_machines(self) -> None:
+		"""Require distinct, eligible VMs from the source when selection is enabled."""
+		if not self.move_only_selected_vms:
+			return
+		virtual_machines = [row.virtual_machine for row in self.virtual_machines]
+		if not virtual_machines:
+			frappe.throw(_("Add at least one Virtual Machine."))
+		if len(virtual_machines) != len(set(virtual_machines)):
+			frappe.throw(_("Each Virtual Machine can be in the drain only once."))
+		if frappe.db.count(
+			"Virtual Machine", {**self.virtual_machine_filters, "is_draft": 0, "is_terminating": 0}
+		) != len(virtual_machines):
+			frappe.throw(
+				_("Select Virtual Machines on the Source Metal Server that are not drafts or terminating.")
+			)
 
 	def before_submit(self) -> None:
 		"""Allow one running drain per source server."""
@@ -108,9 +150,10 @@ class MetalServerDrain(Document):
 			)
 
 	def on_submit(self) -> None:
-		"""Start the drain and keep new VMs off the source."""
+		"""Start the drain and put manual drain sources in maintenance."""
 		self.db_set({"status": "Running", "started_at": now_datetime()})
-		frappe.db.set_value("Metal Server", self.source_metal_server, "is_in_maintenance", 1)
+		if not self.is_sleepy_rebalance:
+			frappe.db.set_value("Metal Server", self.source_metal_server, "is_in_maintenance", 1)
 
 	def on_cancel(self) -> None:
 		"""Stop starting migrations. The active migration finishes."""
@@ -177,11 +220,13 @@ class MetalServerDrain(Document):
 		return min(retryable, key=lambda name: attempts[name], default=None)
 
 	def get_candidate_virtual_machines(self) -> list[str]:
-		"""Return the VMs on the source that can start a migration, oldest first."""
+		"""Return eligible VMs in automatic policy order, or oldest first for manual drains."""
+		if self.is_sleepy_rebalance:
+			return [machine.name for machine in self.rebalance_policy.candidates]
 		return frappe.get_all(
 			"Virtual Machine",
 			filters={
-				"server": self.source_metal_server,
+				**self.virtual_machine_filters,
 				"is_draft": 0,
 				"is_terminating": 0,
 				"active_migration": ("is", "not set"),
@@ -200,23 +245,30 @@ class MetalServerDrain(Document):
 			self.db_set("progress_percent", progress_percent, update_modified=False)
 
 	def finish_after_last_migration(self) -> None:
-		"""Complete the drain when the source is empty. A VM that stays on the source fails it."""
+		"""Complete the drain when no VM in its scope is left on the source."""
+		eligible = set(self.get_candidate_virtual_machines()) if self.is_sleepy_rebalance else None
 		# A cancel from Desk can commit during this step. The row lock reads its result.
 		if frappe.db.get_value(self.doctype, self.name, "status", for_update=True) != "Running":
 			return
 		# A migration that this drain did not start can still move a VM off the source.
-		if get_active_migrations(self.source_metal_server):
+		if not self.move_only_selected_vms and get_active_migrations(self.source_metal_server):
 			return
 
 		self.refresh_migration_rows()
 		remaining = frappe.get_all(
 			"Virtual Machine",
-			filters={"server": self.source_metal_server, "is_terminating": 0},
+			filters={**self.virtual_machine_filters, "is_terminating": 0},
 			order_by="creation asc",
-			pluck="name",
+			fields=["name", "active_migration"],
 		)
+		if any(virtual_machine.active_migration for virtual_machine in remaining):
+			return
+		if eligible is not None:
+			remaining = [virtual_machine for virtual_machine in remaining if virtual_machine.name in eligible]
 		if remaining:
-			self.finish("Failed", self.get_failure_message(remaining))
+			self.finish(
+				"Failed", self.get_failure_message([virtual_machine.name for virtual_machine in remaining])
+			)
 		else:
 			self.finish("Completed")
 
@@ -270,7 +322,7 @@ class MetalServerDrain(Document):
 		destinations: list[str] | None = None,
 		has_memory_snapshot: bool = False,
 		allow_disk_only_fallback: bool = True,
-		retry_failed_migrations: bool = False,
+		retry_failed_migrations: bool = True,
 		parallel_migrations: int = 1,
 	) -> MetalServerDrain:
 		"""Create and submit a drain of one Metal Server. No destinations means any destination."""
