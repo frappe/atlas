@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -223,7 +224,13 @@ func (m *machine) Stop(ctx context.Context) error {
 }
 
 // saveAndStop publishes guest memory and then stops Firecracker.
-func (m *machine) saveAndStop(ctx context.Context) error {
+func (m *machine) saveAndStop(ctx context.Context) (saveError error) {
+	defer func() {
+		if saveError == nil {
+			// A stopped VM no longer needs the previous restore's jail copies.
+			saveError = os.RemoveAll(filepath.Join(m.runtime.configuration.chrootRoot(m.input.ID), "snap"))
+		}
+	}()
 	state, err := m.status(ctx)
 	if err != nil {
 		return err

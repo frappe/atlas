@@ -65,7 +65,7 @@ type ImageStore struct {
 	telemetry        *telemetry.Registry
 }
 
-// SnapshotStore manages staged image snapshots.
+// SnapshotStore manages staged snapshots and their uploads.
 type SnapshotStore struct {
 	pool          *ZFSPool
 	images        *ImageStore

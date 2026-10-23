@@ -25,9 +25,9 @@ type DesiredState struct {
 
 // SyncResult contains what the controller reads back from one sync exchange.
 type SyncResult struct {
-	Compatibility        *vm.HostCompatibility
-	Capacity             Capacity
-	VirtualMachineStates map[string]vm.State
+	Compatibility   *vm.HostCompatibility
+	Capacity        Capacity
+	VirtualMachines map[string]vm.Information
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string
 }
@@ -165,12 +165,12 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 		return SyncResult{}, err
 	}
 
-	states := make(map[string]vm.State, len(virtualMachines))
+	virtualMachinesByID := make(map[string]vm.Information, len(virtualMachines))
 	for _, information := range virtualMachines {
-		states[information.ID] = information.State
+		virtualMachinesByID[information.ID] = information
 	}
 
-	result := SyncResult{Compatibility: service.compatibility, Capacity: capacity, VirtualMachineStates: states}
+	result := SyncResult{Compatibility: service.compatibility, Capacity: capacity, VirtualMachines: virtualMachinesByID}
 	if service.mesh != nil {
 		mac, err := service.mesh.PrivateNetworkMAC()
 		if err != nil {

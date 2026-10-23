@@ -29,6 +29,8 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	virtualMachineRoutes.PUT("/:id/metadata", s.replaceVirtualMachineMetadata)
 	virtualMachineRoutes.DELETE("/:id", s.deleteVirtualMachine)
 	virtualMachineRoutes.POST("/:id/snapshots", s.createVirtualMachineSnapshot)
+	virtualMachineRoutes.POST("/:id/sleep-state", s.offloadVirtualMachineSleepState)
+	virtualMachineRoutes.PATCH("/:id/sleep-state", s.refreshVirtualMachineSleepState)
 	virtualMachineRoutes.GET("/:id/console", s.getVirtualMachineConsole)
 	virtualMachineRoutes.GET("/:id/metrics", s.getVirtualMachineMetrics)
 

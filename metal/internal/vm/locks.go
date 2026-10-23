@@ -19,6 +19,21 @@ type KeyedLocks struct {
 	locks map[string]*keyedLock
 }
 
+// TryLock skips an identifier that already has an operation in progress.
+func (locks *KeyedLocks) TryLock(identifier string) (func(), bool) {
+	entry := locks.reference(identifier)
+	select {
+	case <-entry.available:
+		return func() {
+			entry.available <- struct{}{}
+			locks.release(identifier, entry)
+		}, true
+	default:
+		locks.release(identifier, entry)
+		return nil, false
+	}
+}
+
 // lock blocks until identifier is free and returns the function that frees it.
 func (locks *KeyedLocks) Lock(ctx context.Context, identifier string) (func(), error) {
 	entry := locks.reference(identifier)

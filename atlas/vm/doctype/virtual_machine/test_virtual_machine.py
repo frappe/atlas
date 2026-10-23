@@ -17,6 +17,7 @@ from atlas.vm.core.models import (
 	FirewallRule,
 	Route,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.vm_service import VirtualMachineService
 from atlas.vm.doctype.virtual_machine import virtual_machine as virtual_machine_module
@@ -73,6 +74,29 @@ METAL_VIRTUAL_MACHINE_RESPONSE = {
 
 
 class TestVirtualMachineRequest(UnitTestCase):
+	def test_request_parses_vm_offload_times(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04",
+				"cpu_millicores": 1000,
+				"memory_mib": 1024,
+				"disk_mib": 8192,
+				"tenant_id": 7,
+				"deep_sleep_after_idle_seconds": 3600,
+				"coma_after_idle_seconds": 86400,
+			}
+		)
+		self.assertEqual(
+			(request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (3600, 86400)
+		)
+
+	def test_offload_times_require_non_negative_integers_and_ordered_coma(self) -> None:
+		for deep, coma in ((0, 0), (3600, 0), (3600, 86400)):
+			validate_sleep_times(deep, coma)
+		for deep, coma in ((-1, 0), (True, 0), (1.5, 0), (2**31, 0), (0, 3600), (3600, 3600), (7200, 3600)):
+			with self.subTest(deep=deep, coma=coma), self.assertRaises(ValueError):
+				validate_sleep_times(deep, coma)
+
 	def test_request_parses_ssh_keys_and_defaults(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
 			{
@@ -89,6 +113,7 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.cpu_millicores, 1500)
 		self.assertEqual(request.routes, DEFAULT_ROUTES)
 		self.assertEqual(request.firewall, FirewallConfiguration())
+		self.assertEqual((request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (0, 0))
 
 	def test_request_parses_a_firewall(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -428,7 +453,15 @@ class TestVirtualMachineResize(UnitTestCase):
 
 class TestVirtualMachineService(UnitTestCase):
 	def test_create_request_starts_without_a_public_address(self) -> None:
-		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)
+		request = VirtualMachineCreateRequest(
+			"machine-image",
+			2000,
+			2048,
+			10240,
+			7,
+			deep_sleep_after_idle_seconds=3600,
+			coma_after_idle_seconds=86400,
+		)
 		image = SimpleNamespace(get_metal_image_request=Mock(return_value={}))
 		virtual_machine = SimpleNamespace(tenant_id=7, name="VM-00001", is_network_gateway=0)
 
@@ -438,6 +471,9 @@ class TestVirtualMachineService(UnitTestCase):
 			metal_request = VirtualMachineService(virtual_machine).get_metal_request(request, image)
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
+		self.assertEqual(
+			set(metal_request["compute"]), {"cpu_millicores", "memory_mib", "sleep_after_idle_seconds"}
+		)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
 		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)
@@ -494,6 +530,48 @@ class TestVirtualMachineService(UnitTestCase):
 
 
 class TestVirtualMachineVirtualFields(UnitTestCase):
+	def test_snapshot_upload_percent_is_visible_only_during_http_upload(self) -> None:
+		virtual_machine = frappe.new_doc("Virtual Machine")
+		self.assertIsNone(virtual_machine.snapshot_upload_percent)
+		virtual_machine.permitted_fieldnames = {"snapshot_upload_percent"}
+
+		for name in ("memory", "disk"):
+			for phase, artifact, failed, expected in (
+				("upload", {"uploaded": False, "upload_percent": 0}, False, "0"),
+				("upload", {"uploaded": False, "upload_percent": 42}, False, "42"),
+				("upload", {"uploaded": False, "upload_percent": 99}, False, "99"),
+				("upload", {"uploaded": True, "upload_percent": 100}, False, None),
+				("upload", {"uploaded": False}, False, None),
+				("upload", None, False, None),
+				("upload", {"uploaded": False, "upload_percent": 42}, True, None),
+				("prepare", {"uploaded": False, "upload_percent": 42}, False, None),
+				("compress", {"uploaded": False, "upload_percent": 42}, False, None),
+				("evict", {"uploaded": True, "upload_percent": 100}, False, None),
+				("network", {"uploaded": False, "upload_percent": 42}, False, None),
+			):
+				with self.subTest(name=name, phase=phase, artifact=artifact, failed=failed):
+					response = json.loads(json.dumps(METAL_VIRTUAL_MACHINE_RESPONSE))
+					response["observed"].update(
+						phase=f"{phase}-sleep-{name}",
+						sleep_snapshot={"id": "checkpoint-1", name: artifact},
+					)
+					if failed:
+						response["observed"]["error"] = {
+							"code": "operation_failed",
+							"message": "upload failed",
+							"updated_at": "",
+						}
+					virtual_machine.get_metal_vm_info = Mock(
+						return_value=MetalVirtualMachine.from_dict(response)
+					)
+					self.assertEqual(virtual_machine.snapshot_upload_percent, expected)
+					self.assertEqual(virtual_machine.as_dict()["snapshot_upload_percent"], expected)
+
+		virtual_machine.get_metal_vm_info = Mock(
+			return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE)
+		)
+		self.assertIsNone(virtual_machine.snapshot_upload_percent)
+
 	def test_the_public_address_comes_from_the_atlas_record(self) -> None:
 		virtual_machine = VirtualMachine.__new__(VirtualMachine)
 		virtual_machine.name = "vm-0000001"
@@ -988,6 +1066,8 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 		virtual_machine.tenant_id = tenant_id
 		virtual_machine.is_privileged = is_privileged
 		virtual_machine.is_network_gateway = 0
+		virtual_machine.deep_sleep_after_idle_seconds = 0
+		virtual_machine.coma_after_idle_seconds = 0
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None

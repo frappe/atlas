@@ -12,6 +12,7 @@ from atlas.vm.core.models import (
 	MAXIMUM_SLEEP_AFTER_IDLE_SECONDS,
 	MINIMUM_CPU_MILLICORES,
 	VirtualMachineShape,
+	validate_sleep_times,
 )
 from atlas.vm.core.placement import AffinityRules, CurrentPlacement, PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
@@ -22,7 +23,14 @@ if TYPE_CHECKING:
 	from atlas.vm.core.metal_models import MetalVirtualMachine
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
-RESIZE_FIELDS = ("cpu_millicores", "memory_mib", "disk_mib", "sleep_after_idle_seconds")
+RESIZE_FIELDS = (
+	"cpu_millicores",
+	"memory_mib",
+	"disk_mib",
+	"sleep_after_idle_seconds",
+	"deep_sleep_after_idle_seconds",
+	"coma_after_idle_seconds",
+)
 
 
 class VirtualMachineResize:
@@ -36,6 +44,29 @@ class VirtualMachineResize:
 	def apply(self, resize_values: dict[str, int]) -> str | None:
 		"""Apply the changed values. Return the migration name when the VM moves."""
 		self._validate_values(resize_values)
+		sleep_values = {
+			field: resize_values[field]
+			for field in ("deep_sleep_after_idle_seconds", "coma_after_idle_seconds")
+			if field in resize_values
+		}
+		if sleep_values:
+			try:
+				validate_sleep_times(
+					sleep_values.get(
+						"deep_sleep_after_idle_seconds", self.virtual_machine.deep_sleep_after_idle_seconds
+					),
+					sleep_values.get("coma_after_idle_seconds", self.virtual_machine.coma_after_idle_seconds),
+				)
+			except ValueError as error:
+				frappe.throw(_(str(error)), exc=AtlasUserError)
+		shape_values = {field: value for field, value in resize_values.items() if field not in sleep_values}
+		migration = self._resize(shape_values) if shape_values or not sleep_values else None
+		if sleep_values:
+			self._set_sleep_times(sleep_values)
+		return migration
+
+	def _resize(self, resize_values: dict[str, int]) -> str | None:
+		"""Apply resource and Metal idle shutdown changes."""
 		information = self.service.require_information()
 		current_shape = self._get_current_shape(information)
 		target_shape = self._get_target_shape(current_shape, resize_values)
@@ -70,6 +101,24 @@ class VirtualMachineResize:
 			destination_metal_server=destination if destination != self.virtual_machine.server else None,
 			resize=target_shape,
 		)
+
+	def _set_sleep_times(self, changes: dict[str, int]) -> None:
+		"""Merge partial offload changes under a short VM row lock after host work."""
+		values = frappe.db.get_value(
+			"Virtual Machine",
+			self.virtual_machine.name,
+			["deep_sleep_after_idle_seconds", "coma_after_idle_seconds"],
+			as_dict=True,
+			for_update=True,
+		)
+		if values is None:
+			frappe.throw(_("Virtual Machine no longer exists."), exc=frappe.DoesNotExistError)
+		values.update(changes)
+		try:
+			validate_sleep_times(values.deep_sleep_after_idle_seconds, values.coma_after_idle_seconds)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
+		self.virtual_machine.db_set(values)
 
 	@staticmethod
 	def _validate_values(resize_values: dict[str, int]) -> None:

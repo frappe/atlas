@@ -64,7 +64,8 @@ type hostCompatibilityResponse struct {
 
 // virtualMachineStateResponse is the state of one virtual machine on this host.
 type virtualMachineStateResponse struct {
-	Status string `json:"status"`
+	Status        string `json:"status"`
+	LastRequestAt string `json:"last_request_at,omitempty"`
 }
 
 // capacityResponse is what the controller needs to place the next VM.
@@ -132,7 +133,7 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	return c.JSON(http.StatusOK, syncResponse{
 		HostCompatibility: (*hostCompatibilityResponse)(result.Compatibility),
 		Capacity:          capacityResponseFromHost(result.Capacity),
-		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachineStates),
+		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachines),
 		PrivateNetworkMAC: result.PrivateNetworkMAC,
 	})
 }
@@ -217,10 +218,13 @@ func capacityResponseFromHost(capacity host.Capacity) capacityResponse {
 }
 
 // virtualMachineStateResponses converts host states into the response form.
-func virtualMachineStateResponses(states map[string]vm.State) map[string]virtualMachineStateResponse {
-	responses := make(map[string]virtualMachineStateResponse, len(states))
-	for identifier, state := range states {
-		responses[identifier] = virtualMachineStateResponse{Status: string(state)}
+func virtualMachineStateResponses(virtualMachines map[string]vm.Information) map[string]virtualMachineStateResponse {
+	responses := make(map[string]virtualMachineStateResponse, len(virtualMachines))
+	for identifier, information := range virtualMachines {
+		responses[identifier] = virtualMachineStateResponse{
+			Status:        string(information.State),
+			LastRequestAt: formatRFC3339(information.LastRequestAt),
+		}
 	}
 	return responses
 }

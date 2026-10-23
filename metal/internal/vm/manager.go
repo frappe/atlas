@@ -57,6 +57,9 @@ type Manager struct {
 	logger               *slog.Logger
 	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
+	sleepTransferLocks   KeyedLocks
+	sleepUploadsMutex    sync.Mutex
+	sleepUploads         map[string]*sleepUpload
 	allocationMutex      sync.Mutex
 	temporaryUserIDs     map[uint32]bool
 	temporaryIdentifiers map[string]bool
@@ -107,6 +110,7 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		traffic:              dependencies.Traffic,
 		logger:               dependencies.Logger,
 		telemetry:            dependencies.Telemetry,
+		sleepUploads:         make(map[string]*sleepUpload),
 		requests:             make(map[string]notedRequest),
 		availability:         newAvailabilityTracker(),
 		temporaryUserIDs:     make(map[uint32]bool),
@@ -270,7 +274,20 @@ func (manager *Manager) information(identifier string) (Information, error) {
 	if err != nil {
 		return Information{}, err
 	}
-	return informationFromRecords(desired, observed, observed.Disk), nil
+	information := informationFromRecords(desired, observed, observed.Disk)
+	sleep, err := manager.readSleepRecord(identifier)
+	if err != nil {
+		return Information{}, err
+	}
+	if sleep != nil {
+		information.SleepSnapshot = sleep.status()
+		manager.applySleepUpload(sleep.ID, &information)
+	}
+	if manager.traffic != nil {
+		// A VM without attached traffic hooks reports no request time.
+		information.LastRequestAt, _ = manager.traffic.LastRequestAt(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
+	}
+	return information, nil
 }
 
 // isTornRemoval reports whether removal left one record temporarily absent.

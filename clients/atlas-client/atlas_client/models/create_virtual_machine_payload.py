@@ -36,6 +36,9 @@ class CreateVirtualMachinePayload:
             disk_mib (int): Root disk capacity in MiB.
             image_id (str): Image used to create the virtual machine.
             memory_mib (int): Memory capacity in MiB.
+            coma_after_idle_seconds (int | Unset): Idle time before Atlas offloads the disk. Zero disables it. Default: 0.
+            deep_sleep_after_idle_seconds (int | Unset): Idle time before Atlas offloads saved memory. Zero disables it.
+                Default: 0.
             disk_iops (int | Unset): Disk IOPS limit. Zero removes the limit. Default: 0.
             disk_throughput_mibps (int | Unset): Disk throughput limit in MiB/s. Zero removes the limit. Default: 0.
             firewall (FirewallPayload | Unset): The complete desired firewall configuration.
@@ -64,6 +67,8 @@ class CreateVirtualMachinePayload:
     disk_mib: int
     image_id: str
     memory_mib: int
+    coma_after_idle_seconds: int | Unset = 0
+    deep_sleep_after_idle_seconds: int | Unset = 0
     disk_iops: int | Unset = 0
     disk_throughput_mibps: int | Unset = 0
     firewall: FirewallPayload | Unset = UNSET
@@ -100,6 +105,10 @@ class CreateVirtualMachinePayload:
         image_id = self.image_id
 
         memory_mib = self.memory_mib
+
+        coma_after_idle_seconds = self.coma_after_idle_seconds
+
+        deep_sleep_after_idle_seconds = self.deep_sleep_after_idle_seconds
 
         disk_iops = self.disk_iops
 
@@ -176,6 +185,10 @@ class CreateVirtualMachinePayload:
             "image_id": image_id,
             "memory_mib": memory_mib,
         })
+        if coma_after_idle_seconds is not UNSET:
+            field_dict["coma_after_idle_seconds"] = coma_after_idle_seconds
+        if deep_sleep_after_idle_seconds is not UNSET:
+            field_dict["deep_sleep_after_idle_seconds"] = deep_sleep_after_idle_seconds
         if disk_iops is not UNSET:
             field_dict["disk_iops"] = disk_iops
         if disk_throughput_mibps is not UNSET:
@@ -231,6 +244,10 @@ class CreateVirtualMachinePayload:
         image_id = d.pop("image_id")
 
         memory_mib = d.pop("memory_mib")
+
+        coma_after_idle_seconds = d.pop("coma_after_idle_seconds", UNSET)
+
+        deep_sleep_after_idle_seconds = d.pop("deep_sleep_after_idle_seconds", UNSET)
 
         disk_iops = d.pop("disk_iops", UNSET)
 
@@ -349,6 +366,8 @@ class CreateVirtualMachinePayload:
             disk_mib=disk_mib,
             image_id=image_id,
             memory_mib=memory_mib,
+            coma_after_idle_seconds=coma_after_idle_seconds,
+            deep_sleep_after_idle_seconds=deep_sleep_after_idle_seconds,
             disk_iops=disk_iops,
             disk_throughput_mibps=disk_throughput_mibps,
             firewall=firewall,
