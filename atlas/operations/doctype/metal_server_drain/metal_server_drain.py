@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 import frappe
@@ -15,6 +16,7 @@ from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.vm_migration import TERMINAL_STATUSES, MigrationService, get_active_migrations
 
 if TYPE_CHECKING:
+	from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_migration.virtual_machine_migration import (
 		VirtualMachineMigration,
@@ -70,6 +72,15 @@ class MetalServerDrain(Document):
 		if self.allow_any_destination:
 			return None
 		return {row.metal_server for row in self.destinations}
+
+	@cached_property
+	def rebalance_policy(self) -> SleepyHostRebalance:
+		"""Keep one eligibility snapshot for this drain step."""
+		from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
+
+		return SleepyHostRebalance(
+			self.source_metal_server, {row.virtual_machine for row in self.virtual_machines}
+		)
 
 	@property
 	def virtual_machine_filters(self) -> dict[str, str | tuple[str, list[str]]]:
@@ -139,9 +150,10 @@ class MetalServerDrain(Document):
 			)
 
 	def on_submit(self) -> None:
-		"""Start the drain and keep new VMs off the source."""
+		"""Start the drain and put manual drain sources in maintenance."""
 		self.db_set({"status": "Running", "started_at": now_datetime()})
-		frappe.db.set_value("Metal Server", self.source_metal_server, "is_in_maintenance", 1)
+		if not self.is_sleepy_rebalance:
+			frappe.db.set_value("Metal Server", self.source_metal_server, "is_in_maintenance", 1)
 
 	def on_cancel(self) -> None:
 		"""Stop starting migrations. The active migration finishes."""
@@ -208,7 +220,9 @@ class MetalServerDrain(Document):
 		return min(retryable, key=lambda name: attempts[name], default=None)
 
 	def get_candidate_virtual_machines(self) -> list[str]:
-		"""Return the VMs on the source that can start a migration, oldest first."""
+		"""Return eligible VMs in automatic policy order, or oldest first for manual drains."""
+		if self.is_sleepy_rebalance:
+			return [machine.name for machine in self.rebalance_policy.candidates]
 		return frappe.get_all(
 			"Virtual Machine",
 			filters={
@@ -232,6 +246,7 @@ class MetalServerDrain(Document):
 
 	def finish_after_last_migration(self) -> None:
 		"""Complete the drain when no VM in its scope is left on the source."""
+		eligible = set(self.get_candidate_virtual_machines()) if self.is_sleepy_rebalance else None
 		# A cancel from Desk can commit during this step. The row lock reads its result.
 		if frappe.db.get_value(self.doctype, self.name, "status", for_update=True) != "Running":
 			return
@@ -248,6 +263,8 @@ class MetalServerDrain(Document):
 		)
 		if any(virtual_machine.active_migration for virtual_machine in remaining):
 			return
+		if eligible is not None:
+			remaining = [virtual_machine for virtual_machine in remaining if virtual_machine.name in eligible]
 		if remaining:
 			self.finish(
 				"Failed", self.get_failure_message([virtual_machine.name for virtual_machine in remaining])
