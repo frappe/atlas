@@ -17,7 +17,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 | `firecracker/api.Error` | Non-2xx status and fault message. |
 | `sshSession` | Owns an SSH unit, console PTY, MMDS key, and session files. |
 
-`Start` chooses shared warm memory only for a fresh disk clone and exact shape. `ColdStart` never uses source guest memory. `Restore` and `RestorePaused` use VM-local saved state and return an error instead of silently cold-booting. See the [warm-memory incident](../../../docs/incidents/2026-09-24-guest-disk-corruption.md).
+`Start` chooses shared warm memory only for a fresh disk clone with the exact vCPU count and memory and a disk at least as large as the warm disk. It refreshes the drive before resume, so the guest sees the VM disk size and limits. `ColdStart` never uses source guest memory. `Restore` and `RestorePaused` use VM-local saved state and return an error instead of silently cold-booting. See the [warm-memory incident](../../../docs/incidents/2026-09-24-guest-disk-corruption.md).
 
 `RestorePausedFrom` validates the saved state identity and VM shape and loads it paused with the destination's user ID. Firecracker and KVM validate host compatibility during snapshot load. `HostCompatibility` supplies the startup facts for Atlas preflight checks. See [migration](../../../docs/compute/migration-engine.md) for the transfer and activation contract.
 
