@@ -336,6 +336,11 @@ func (manager *Manager) reconcileHardStop(
 
 // writeAppliedState records a complete state transition at the desired generations.
 func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *ObservedRecord, state State, sleepState SleepState) error {
+	if sleepState == SleepStateAwake && (state == StateRunning || state == StatePaused) {
+		if err := manager.removeSleepRecord(desired.ID); err != nil {
+			return err
+		}
+	}
 	observed.State = state
 	observed.SleepState = sleepState
 	observed.Generation = desired.Generation
