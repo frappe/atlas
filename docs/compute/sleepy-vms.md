@@ -137,6 +137,8 @@ Staging, compression, and uploads run in a separate pool of two background worke
 
 Atlas saves each object key and multipart upload ID before it sends the upload plan to Metal. After a new checkpoint replaces an old checkpoint, the sleep job aborts the retired uploads and deletes their objects. Migration preserves references instead of deleting the active checkpoint.
 
+After a successful wake, Metal removes its sleep checkpoint record. When Atlas observes a running or paused VM with no sleep checkpoint, the sleep job deletes all retained objects. Cleanup continues even if idle sleep is disabled. A failed deletion retains its reference for the next attempt.
+
 After Metal confirms VM termination, Atlas cleans all retained objects before it deletes the VM record. Cleanup runs before Frappe takes the document deletion lock. A failed abort or deletion keeps the reference and VM record for the next reconciliation attempt. Successful cleanup removes each reference separately. Use **Terminate** for a VM with retained objects; direct record deletion waits for cleanup.
 
 VM saves preserve the transfer owner's current references from Frappe's locked previous record. A stale form cannot erase these references or replace them with another object's key. Retrying a completed multipart upload uses an exact-size HEAD check, so a lost acknowledgment does not publish the object twice.
