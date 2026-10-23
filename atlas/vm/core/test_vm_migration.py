@@ -650,8 +650,10 @@ class TestMigrationTransfers(UnitTestCase):
 					{
 						"sequence": 2,
 						"finished_at": "2026-09-20T12:01:10Z",
+						"duration_seconds": 20,
 						"transferred_mib": 100,
 						"total_mib": 100,
+						"throughput_mibps": 64,
 						"completed": True,
 					},
 					{
@@ -670,6 +672,8 @@ class TestMigrationTransfers(UnitTestCase):
 		self.assertEqual(migration.transfers[0].finished_at, datetime(2026, 9, 20, 12, 0, 42, 26755))
 		self.assertEqual(migration.transfers[1].finished_at, datetime(2026, 9, 20, 12, 1, 10))
 		self.assertEqual(migration.transfers[1].transferred_mib, 100)
+		# The measured rate, not the throttle limit that Metal sends.
+		self.assertEqual(migration.transfers[1].throughput_mibps, 5)
 		self.assertTrue(migration.transfers[1].completed)
 		self.assertEqual(migration.transfers[2].transferred_mib, 512)
 		self.assertTrue(migration.transfers[2].completed)

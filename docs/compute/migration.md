@@ -194,7 +194,7 @@ The **Abort Migration** button sends the record name. The server reads the lates
 | `failed` | Migration fails. A transfer failure reaches this status after rollback. |
 | `aborted` | Cancellation and cleanup complete. |
 
-`progress_percent` estimates lifecycle progress. Use transfer rows for copied MiB. Each row identifies a `Disk` or `Memory` transfer. Bytes update at completion. Retries update the same sequence row.
+`progress_percent` estimates lifecycle progress. Use transfer rows for copied MiB. Each row identifies a `Disk` or `Memory` transfer. A disk row shows the bytes received so far while it copies, so a stalled copy shows a flat byte count. Throughput is the copied MiB divided by the time since the row started. Retries update the same sequence row.
 
 A memory row starts with the VM memory size. Its final total includes the verified state, memory, and metadata files.
 

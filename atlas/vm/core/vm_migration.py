@@ -652,8 +652,12 @@ class MigrationService:
 			row.duration_seconds = transfer.get("duration_seconds", 0)
 			row.transferred_mib = transfer.get("transferred_mib", 0)
 			row.total_mib = transfer.get("total_mib", 0)
-			row.throughput_mibps = transfer.get("throughput_mibps", 0)
 			row.completed = transfer.get("completed", False)
+			# Metal sends its source throttle limit, so Atlas measures throughput itself.
+			elapsed_seconds = row.duration_seconds or (
+				(now_datetime() - row.started_at).total_seconds() if row.started_at else 0
+			)
+			row.throughput_mibps = int(row.transferred_mib / elapsed_seconds) if elapsed_seconds > 0 else 0
 
 	@property
 	def has_target_shape(self) -> bool:
