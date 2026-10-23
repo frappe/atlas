@@ -40,6 +40,11 @@ MINIMUM_COPY_THROUGHPUT_MIBPS = 25
 COPY_TIMEOUT_MARGIN = timedelta(hours=1)
 COPY_STATUSES = frozenset({"preparing", "copying"})
 TERMINAL_STATUSES = frozenset({"completed", "failed", "aborted"})
+# An operator restores the source only after the destination host stayed silent this long.
+DESTINATION_LOST_AFTER = timedelta(minutes=15)
+DESTINATION_LOST_CODE = "destination_lost"
+# A lost destination that returns within this time still gets its migration discarded.
+LOST_DESTINATION_DISCARD_WINDOW = timedelta(days=30)
 
 
 class MigrationService:
@@ -287,9 +292,9 @@ class MigrationService:
 			return False
 		client = MetalClient(self.source_metal_server)
 		information = client.get_virtual_machine(virtual_machine.name)
-		if information.observed.sleep_state not in {"deep-sleeping", "comatose"}:
+		if information.observed.sleep_state not in {"deep-sleeping", "coma"}:
 			return False
-		VirtualMachineSleepService(virtual_machine).refresh_urls(information, client, force=True)
+		VirtualMachineSleepService(virtual_machine).refresh_urls(information, client)
 		return True
 
 	def validate_compatibility(
@@ -454,10 +459,16 @@ class MigrationService:
 			status, int(self.migration.progress_percent or 0)
 		)
 
-	def commit_destination(self) -> bool:
-		"""Commit the VM server, a resized shape, and finalizing status in one transaction."""
+	def commit_destination(self, *, is_rollback_refused: bool = False) -> bool:
+		"""Commit the VM server, a resized shape, and finalizing status in one transaction.
+
+		A canceling migration commits only when the destination refused rollback.
+		"""
 		virtual_machine, migration = self._lock_records()
-		if migration.status == "canceling" or migration.status in TERMINAL_STATUSES:
+		is_canceling = migration.status == "canceling" and (
+			not is_rollback_refused or migration.error_code == DESTINATION_LOST_CODE
+		)
+		if is_canceling or migration.status in TERMINAL_STATUSES:
 			self.migration = migration
 			frappe.db.commit()  # nosemgrep
 			return False
@@ -516,7 +527,7 @@ class MigrationService:
 			self.request_destination_abort()
 
 	def request_destination_abort(self) -> None:
-		"""Roll back before ownership changes; retry finish after the commit."""
+		"""Roll back before ownership changes; finish after the commit."""
 		try:
 			if (
 				frappe.db.get_value("Virtual Machine", self.migration.virtual_machine, "server")
@@ -524,9 +535,77 @@ class MigrationService:
 			):
 				self.finish()
 			else:
-				self.destination_client.abort_migration(self.migration.name)
+				self.abort_or_take_destination()
 		except MetalClientError as error:
 			self.record_error(error)
+
+	def abort_or_take_destination(self) -> None:
+		"""Ask for rollback. A destination that already ran the guest refuses it, so the VM moves there."""
+		if self.migration.error_code == DESTINATION_LOST_CODE:
+			self.destination_client.discard_migration(self.migration.name)
+			return
+		try:
+			self.destination_client.abort_migration(self.migration.name)
+		except MetalClientError as error:
+			if error.status != 409:
+				raise
+			if self.commit_destination(is_rollback_refused=True):
+				self.finish()
+
+	def restore_source(self) -> None:
+		"""Start the stopped source again after an operator confirmed that the destination host is lost.
+
+		The destination's writes since cutover are lost. A destination that returns later is discarded.
+		"""
+		virtual_machine, self.migration = self._lock_records()
+		if self.migration.status in TERMINAL_STATUSES:
+			frappe.throw(_("This migration is already finished."), exc=AtlasUserError)
+		if (
+			not self.migration.destination_metal_server
+			or virtual_machine.server == self.migration.destination_metal_server
+		):
+			frappe.throw(
+				_("This migration has no destination or has committed it. It cannot restore its source."),
+				exc=AtlasUserError,
+			)
+		if self.is_destination_reporting():
+			frappe.throw(
+				_(
+					"Metal Server {0} reported to Atlas in the last {1} minutes. Abort the migration instead."
+				).format(
+					self.migration.destination_metal_server, int(DESTINATION_LOST_AFTER.total_seconds() // 60)
+				),
+				exc=AtlasUserError,
+			)
+		self.update(
+			{
+				"status": "canceling",
+				"error_code": DESTINATION_LOST_CODE,
+				"error_message": "The destination host was lost. An operator restored the source.",
+				"error_at": now_datetime(),
+			},
+			commit=True,
+		)
+
+		try:
+			MetalClient(self.source_metal_server).restore_migration_source(
+				self.migration.name, self.migration.virtual_machine
+			)
+		except MetalClientError as error:
+			frappe.throw(_("The source host did not restore the VM: {0}. Retry.").format(str(error)))
+		self.settle("failed")
+
+	def is_destination_reporting(self) -> bool:
+		"""Return whether the destination host sent a capacity sample recently."""
+		return bool(
+			frappe.db.exists(
+				"Metal Server Usage",
+				{
+					"server": self.migration.destination_metal_server,
+					"creation": (">=", now_datetime() - DESTINATION_LOST_AFTER),
+				},
+			)
+		)
 
 	def fail(self, code: str, message: str) -> None:
 		"""Record an error and continue destination cleanup."""
@@ -641,8 +720,12 @@ class MigrationService:
 			row.duration_seconds = transfer.get("duration_seconds", 0)
 			row.transferred_mib = transfer.get("transferred_mib", 0)
 			row.total_mib = transfer.get("total_mib", 0)
-			row.throughput_mibps = transfer.get("throughput_mibps", 0)
 			row.completed = transfer.get("completed", False)
+			# Metal sends its source throttle limit, so Atlas measures throughput itself.
+			elapsed_seconds = row.duration_seconds or (
+				(now_datetime() - row.started_at).total_seconds() if row.started_at else 0
+			)
+			row.throughput_mibps = int(row.transferred_mib / elapsed_seconds) if elapsed_seconds > 0 else 0
 
 	@property
 	def has_target_shape(self) -> bool:
@@ -817,6 +900,30 @@ def reconcile_migrations() -> None:
 	"""Requeue every migration that still owns a VM action lock."""
 	for name in get_active_migrations():
 		reconcile_migration(name)
+	discard_returned_destinations()
+
+
+def discard_returned_destinations() -> None:
+	"""Discard the destination of a migration whose source an operator restored, once its host reports again."""
+	migrations = frappe.get_all(
+		"Virtual Machine Migration",
+		filters={
+			"status": "failed",
+			"error_code": DESTINATION_LOST_CODE,
+			"modified": (">=", now_datetime() - LOST_DESTINATION_DISCARD_WINDOW),
+		},
+		pluck="name",
+	)
+	for name in migrations:
+		service = MigrationService(frappe.get_doc("Virtual Machine Migration", name))
+		if not service.is_destination_reporting():
+			continue
+		try:
+			if service.destination_client.get_migration(name).get("status") != "aborted":
+				service.destination_client.discard_migration(name)
+		except MetalClientError as error:
+			if not error.is_not_found:
+				frappe.log_error(title=f"Discard of lost migration destination {name} failed")
 
 
 def get_active_migrations(server: str | None = None) -> list[str]:

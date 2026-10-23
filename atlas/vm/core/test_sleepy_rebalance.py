@@ -127,9 +127,7 @@ class TestSleepyRebalance(IntegrationTestCase):
 		).db_insert()
 
 	def test_85_percent_includes_every_sleep_state_but_not_running_or_paused(self) -> None:
-		sleepers = [
-			self.insert_vm(100, sleep_state=state) for state in ("sleeping", "deep-sleeping", "comatose")
-		]
+		sleepers = [self.insert_vm(100, sleep_state=state) for state in ("sleeping", "deep-sleeping", "coma")]
 		running = self.insert_vm(200, state="running")
 		paused = self.insert_vm(100, state="paused")
 		frappe.db.set_value("Virtual Machine", self.base, "memory_mib", 8200)

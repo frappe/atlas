@@ -77,9 +77,10 @@ func (m *Manager) ExpiredSourceVirtualMachineIDs(_ context.Context) ([]string, e
 		if !m.store.has(m.store.sourcePath(virtualMachineID)) {
 			continue
 		}
+		// An unreadable source record keeps its VM locked.
 		record, err := m.store.readSource(virtualMachineID)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if m.isSourceExpirable(record) {
 			expirable = append(expirable, virtualMachineID)
@@ -266,6 +267,28 @@ func (m *Manager) StartSourceRollback(ctx context.Context, migrationID, virtualM
 	return m.writeSourceContact(record)
 }
 
+// RestoreSource starts a stopped source again and unlocks it. Atlas calls it
+// before commit, when an operator confirmed that the destination host is lost.
+// A source that already began finish belongs to the destination and conflicts.
+func (m *Manager) RestoreSource(ctx context.Context, migrationID, virtualMachineID string) error {
+	record, err := m.store.readSource(virtualMachineID)
+	if errors.Is(err, vm.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if record.ID != migrationID || record.State == sourceRuntimeRemoved || record.State == sourceStorageRemoved {
+		return vm.ErrConflict
+	}
+	if record.State == sourceStopped || record.State == sourceDetached {
+		if err := m.StartSourceRollback(ctx, migrationID, virtualMachineID); err != nil {
+			return err
+		}
+	}
+	return m.UnlockSource(ctx, migrationID, virtualMachineID)
+}
+
 // DestroySource removes a stopped source and its migration state. It requires a
 // stopped, network-removed source with a final snapshot.
 func (m *Manager) DestroySource(ctx context.Context, migrationID, virtualMachineID string) error {
@@ -288,7 +311,7 @@ func (m *Manager) DestroySource(ctx context.Context, migrationID, virtualMachine
 	if record.State != sourceDetached && record.State != sourceRuntimeRemoved && record.State != sourceStorageRemoved {
 		return vm.ErrConflict
 	}
-	if record.FinalSequence < 1 && (record.Sleep == nil || record.Sleep.State != vm.SleepStateComatose) {
+	if record.FinalSequence < 1 && (record.Sleep == nil || record.Sleep.State != vm.SleepStateComa) {
 		return vm.ErrConflict
 	}
 	if err := m.stopSourceStream(ctx, virtualMachineID); err != nil {
@@ -355,7 +378,7 @@ func (m *Manager) NextSourceSnapshot(ctx context.Context, migrationID, virtualMa
 	if err != nil {
 		return SourceSnapshot{}, err
 	}
-	if record.State != sourceLocked || record.Sleep != nil {
+	if record.State != sourceLocked || (record.Sleep != nil && record.Sleep.State == vm.SleepStateComa) {
 		return SourceSnapshot{}, vm.ErrConflict
 	}
 	if receivedSequence < 0 || receivedSequence > record.Sequence {
@@ -412,6 +435,11 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 	}
 
 	if record.State == sourceLocked {
+		if record.Sleep != nil {
+			if err := m.assertSourceAsleep(virtualMachineID); err != nil {
+				return SourceSnapshot{}, err
+			}
+		}
 		if record.HasMemorySnapshot != nil && *record.HasMemorySnapshot != hasMemorySnapshot {
 			return SourceSnapshot{}, vm.ErrConflict
 		}
@@ -448,7 +476,7 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 			return SourceSnapshot{}, err
 		}
 	}
-	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComatose {
+	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComa {
 		return SourceSnapshot{}, nil
 	}
 	if record.FinalSequence == 0 {
@@ -468,6 +496,23 @@ func (m *Manager) StopSource(ctx context.Context, migrationID, virtualMachineID 
 		}
 	}
 	return m.describeSnapshot(ctx, virtualMachineID, migrationID, record.FinalSequence)
+}
+
+// assertSourceAsleep refuses to stop a sleeping source with a pending wake, so
+// the migration fails and the source can serve the traffic.
+func (m *Manager) assertSourceAsleep(virtualMachineID string) error {
+	desired, err := m.host.ReadDesired(virtualMachineID)
+	if err != nil {
+		return err
+	}
+	observed, err := m.host.ReadObserved(virtualMachineID)
+	if err != nil {
+		return err
+	}
+	if desired.Generation > observed.Generation {
+		return ErrSourceWoke
+	}
+	return nil
 }
 
 // StartSourceStream starts one mutual-TLS listener that sends the requested ZFS stream.
@@ -491,7 +536,7 @@ func (m *Manager) StartSourceStream(ctx context.Context, migrationID, virtualMac
 	if sequence != record.Sequence {
 		return vm.ErrConflict
 	}
-	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComatose {
+	if record.Sleep != nil && record.Sleep.State == vm.SleepStateComa {
 		return vm.ErrConflict
 	}
 	m.transfersMutex.Lock()

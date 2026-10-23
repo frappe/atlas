@@ -121,17 +121,22 @@ class VirtualMachineImageTransferService:
 		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		try:
 			self.advance(image)
-		except (
-			MetalClientError,
-			ObjectStorageError,
-			MultipartUploadError,
-			VirtualMachineImageTransferError,
-		) as error:
-			self.mark_failed(image, str(error))
-			frappe.log_error(
-				title=f"Machine image transfer failed for {image.name}",
-				message=frappe.get_traceback(),
-			)
+		except MetalClientError as error:
+			if not error.retryable:
+				self.fail(image, error)
+				return
+			# The pending-transfer job retries a host that is down or busy.
+			image.db_set("transfer_error", str(error)[:1000])
+		except (ObjectStorageError, MultipartUploadError, VirtualMachineImageTransferError) as error:
+			self.fail(image, error)
+
+	def fail(self, image: VirtualMachineImage, error: Exception) -> None:
+		"""Mark the transfer failed and log why."""
+		self.mark_failed(image, str(error))
+		frappe.log_error(
+			title=f"Machine image transfer failed for {image.name}",
+			message=frappe.get_traceback(),
+		)
 
 	def advance(self, image: VirtualMachineImage) -> None:
 		"""Move one Machine image transfer forward by one step."""

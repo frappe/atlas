@@ -33,7 +33,7 @@ machines/<id>/metrics/     seven days of daily VM usage files
 - A firewall change increases the specification generation.
 - `cpu_millicores` accepts 100 through 32000. Firecracker receives `ceil(cpu_millicores / 1000)` vCPUs.
 - A `sleep_after_idle_seconds` change does not change `SpecificationGeneration`.
-- The daemon validates every record at startup. It does not repair or remove an invalid record.
+- Every read and write validates a record. An unreadable record takes only its own VM out of management; `List` returns its identifier separately. metald does not repair or remove an invalid record.
 - A record format change ships a patch in `internal/patches`. See [Change stored state with a patch](../../../docs/develop/metal.md#change-stored-state-with-a-patch).
 
 ## Reconciliation
@@ -49,7 +49,7 @@ Idle behavior is in [Sleepy VMs](../../../docs/compute/sleepy-vms.md).
 
 `sleep_state.go` owns `machines/<id>/sleep-state.json`, a mode `0600` record for one upload checkpoint and its artifact URLs. `sleep_transfer.go` uploads artifacts through a separate two-worker reconciler and evicts local data only for the matching sleeping checkpoint. It persists the remote sleep state before eviction.
 
-A per-VM transfer lock serializes uploads. The operation lock protects staging and status updates, and is released while upload bytes move. Wake holds the operation lock through download and restore. Reconciliation skips a busy VM instead of waiting for its lock. `restoreSavedState` prepares remote artifacts for both deep sleep and comatose states before runtime restore. See [offloaded wake](../../../docs/compute/sleepy-vms.md#wake-an-offloaded-vm).
+A per-VM transfer lock serializes uploads. The operation lock protects staging and status updates, and is released while upload bytes move. Wake holds the operation lock through download and restore. Reconciliation skips a busy VM instead of waiting for its lock. `restoreSavedState` prepares remote artifacts for both deep sleep and coma before runtime restore. See [offloaded wake](../../../docs/compute/sleepy-vms.md#wake-an-offloaded-vm).
 
 `OffloadSleepArtifacts` runs under the daemon-owned upload pool. `RestoreSleepState` reconciles sleeping VMs in a separate two-worker pool. Normal VM reconciliation does not wait for either pool. Sleep reconciliation preserves upload phases while the checkpoint still matches. A stop, restart, shape change, or destruction can proceed without acquiring the transfer lock. A late upload failure cannot replace a wake or stop result.
 

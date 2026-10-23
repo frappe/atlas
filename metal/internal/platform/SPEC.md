@@ -18,6 +18,7 @@ Package `platform` is the Metal boundary to host files, commands, and systemd. M
 | `SystemdUnitUsage` | CPU time, memory, and root disk I/O read from a unit's cgroup. |
 | `Status`, `Result`, `Limits` | systemd state across the boundary. |
 | `FileDescriptorStore` | Open descriptors held by systemd across a restart. |
+| `RunWatchdog` | Pings the systemd watchdog while metald runs. |
 
 ## Host commands
 

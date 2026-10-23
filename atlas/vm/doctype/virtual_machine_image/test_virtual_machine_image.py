@@ -705,6 +705,32 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		self.assertEqual(image.status, "Failed")
 		self.assertEqual(image.transfer_error, "upload failed")
 
+	def test_a_retryable_metal_error_keeps_the_transfer_running(self) -> None:
+		for error, status in (
+			(MetalClientError("host unavailable", status=503, retryable=True), "Uploading"),
+			(MetalClientError("bad request", status=400), "Failed"),
+		):
+			image = SimpleNamespace(
+				name="image-1",
+				status="Uploading",
+				transfer_error=None,
+				save=Mock(),
+				db_set=Mock(),
+				creation=datetime(2026, 10, 14),
+			)
+			service = VirtualMachineImageTransferService()
+			with (
+				self.subTest(error=str(error)),
+				patch("atlas.vm.core.vm_image_transfer.frappe.get_doc", return_value=image),
+				patch("atlas.vm.core.vm_image_transfer.frappe.log_error"),
+				patch.object(service, "advance", side_effect=error),
+			):
+				service.transfer("image-1")
+
+			self.assertEqual(image.status, status)
+			if status == "Uploading":
+				image.db_set.assert_called_once_with("transfer_error", "host unavailable")
+
 	def test_upload_start_error_is_visible_and_keeps_retry_identifiers(self) -> None:
 		image = SimpleNamespace(
 			name="image-1",

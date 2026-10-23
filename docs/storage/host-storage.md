@@ -70,6 +70,10 @@ An existing VM clone can keep an image dataset in use after policy stops request
 
 Check free storage before downloads, staging, migration, or warm-artifact work. If a ZFS capacity check fails, Metal does not invent a capacity value.
 
+Metal reports available storage as the smaller of two values: the free pool space, and the usable pool size less the full size of every VM disk and incoming migration. A thin clone can grow to its full size, so placement never gives the same space to two VMs.
+
+The `<pool>/state` dataset has a 1 GiB ZFS reservation. Metal can still write its records when VM data fills the pool.
+
 Keep partial staging for retry. Before removing a dataset, confirm that no VM or staging clone still uses it.
 
 ## Experimental

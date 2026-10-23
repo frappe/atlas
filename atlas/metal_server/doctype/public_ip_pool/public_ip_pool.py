@@ -275,7 +275,9 @@ class PublicIPPool(Document):
 			)
 
 	def _delete_available_allocations(self) -> None:
-		if frappe.db.exists("Public IP Allocation", {"pool": self.name, "status": ["!=", "Available"]}):
+		if frappe.db.exists(
+			"Public IP Allocation", {"pool": self.name, "status": ["not in", ["Available", "Blocked"]]}
+		):
 			frappe.throw(_("Release or detach all allocations in use before you delete this pool."))
 		for name in frappe.get_all("Public IP Allocation", filters={"pool": self.name}, pluck="name"):
 			frappe.delete_doc("Public IP Allocation", name, ignore_permissions=True, delete_permanently=True)

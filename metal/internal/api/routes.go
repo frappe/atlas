@@ -44,6 +44,8 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	migrationRoutes.GET("/:id", s.getMigration)
 	migrationRoutes.POST("/:id/abort", s.abortMigration)
 	migrationRoutes.POST("/:id/finish", s.finishMigration)
+	migrationRoutes.POST("/:id/restore-source", s.restoreMigrationSource)
+	migrationRoutes.POST("/:id/discard", s.discardMigration)
 }
 
 // registerCoordinationRoutes binds the API that Metal nodes call with mutual TLS.

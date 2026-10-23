@@ -155,7 +155,16 @@ func (c *SourceClient) do(request *http.Request, client *http.Client) ([]byte, e
 		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrConflict)
 	}
 	if response.StatusCode == http.StatusUnprocessableEntity {
-		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, ErrNoMemoryToSave)
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		cause := ErrNoMemoryToSave
+		if json.Unmarshal(body, &failure) == nil && failure.Error.Code == "source_woke" {
+			cause = ErrSourceWoke
+		}
+		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, cause)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("source %s %s returned HTTP %d", request.Method, request.URL.Path, response.StatusCode)

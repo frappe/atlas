@@ -4,6 +4,7 @@ const statusIndicators = {
 	Attaching: "orange",
 	Attached: "green",
 	Detaching: "orange",
+	Blocked: "red",
 };
 
 frappe.listview_settings["Public IP Allocation"] = {

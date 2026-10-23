@@ -49,7 +49,7 @@ Before each host call, Metal saves the phase. On failure, it records a caller-sa
 
 Destruction saves separate runtime, network, and storage checkpoints. Later passes resume unfinished cleanup. VM records disappear only after all cleanup completes.
 
-**Invalid records stop manager startup.** This includes corrupt data, unknown fields, unsupported schema versions, and invalid generations. [Patches](../develop/metal.md#change-stored-state-with-a-patch) convert state from an older build before startup reads it.
+**An invalid record takes only its own VM out of management.** This includes corrupt data, unknown fields, unsupported schema versions, and invalid generations. metald still starts, logs the record path, and keeps managing every other VM. Host sync lists the VM in `invalid_virtual_machines`, and the host offers no capacity, so Atlas places nothing there until an operator repairs the record. User ID allocation refuses while any desired record is unreadable. metald also refuses to write a record that a later read would reject. [Patches](../develop/metal.md#change-stored-state-with-a-patch) convert state from an older build before startup reads it.
 
 ## Limits and recovery
 

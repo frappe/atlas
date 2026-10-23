@@ -25,13 +25,13 @@ type Snapshots interface {
 	StageSleepMemory(context.Context, string, string) error
 	StageSleepDisk(context.Context, SnapshotRequest, string) error
 	DeleteSnapshot(context.Context, string) error
-	UploadSleepMemory(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error)
-	UploadSleepDisk(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error)
-	DownloadSleepMemory(ctx context.Context, directory, source string, artifact SleepArtifact) error
-	RestoreSleepDisk(ctx context.Context, identifier, source string, artifact SleepArtifact) error
+	UploadSleepMemory(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error)
+	UploadSleepDisk(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error)
+	DownloadSleepMemory(ctx context.Context, directory string, sources []string, artifact SleepArtifact) error
+	RestoreSleepDisk(ctx context.Context, identifier string, sources []string, artifact SleepArtifact) error
 }
 
-// SleepUploadProgress counts compressed bytes read by the current HTTP attempt.
+// SleepUploadProgress counts artifact bytes read for compression and upload.
 type SleepUploadProgress struct {
 	UploadedBytes atomic.Int64
 	TotalBytes    atomic.Int64
@@ -42,6 +42,8 @@ type SleepArtifact struct {
 	SizeBytes       int64  `json:"size_bytes"`
 	StoredSizeBytes int64  `json:"stored_size_bytes"`
 	SHA256          string `json:"sha256"`
+	// PartCount is how many signed parts hold the artifact, or 0 for one object.
+	PartCount int `json:"part_count,omitempty"`
 }
 
 // SnapshotRequest identifies the virtual machine and kernel to stage.

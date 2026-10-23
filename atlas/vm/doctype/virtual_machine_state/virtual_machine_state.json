@@ -9,7 +9,13 @@
   "server",
   "virtual_machine",
   "column_break_state",
-  "synced_at"
+  "synced_at",
+  "section_break_sleep",
+  "sleep_state",
+  "last_request_at",
+  "column_break_sleep",
+  "sleep_checkpoint_id",
+  "download_urls_expire_at"
  ],
  "fields": [
   {
@@ -53,10 +59,45 @@
    "label": "Synced At",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "section_break_sleep",
+   "fieldtype": "Section Break",
+   "label": "Sleep"
+  },
+  {
+   "fieldname": "sleep_state",
+   "fieldtype": "Select",
+   "label": "Sleep State",
+   "options": "\nsleeping\ndeep-sleeping\ncoma",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_request_at",
+   "fieldtype": "Datetime",
+   "label": "Last Request At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sleep",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sleep_checkpoint_id",
+   "fieldtype": "Data",
+   "label": "Sleep Checkpoint",
+   "read_only": 1
+  },
+  {
+   "description": "When the URLs that Metal uses to download the sleep checkpoint expire",
+   "fieldname": "download_urls_expire_at",
+   "fieldtype": "Datetime",
+   "label": "Download URLs Expire At",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-29 15:35:02.858934",
+ "modified": "2026-10-23 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine State",

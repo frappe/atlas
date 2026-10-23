@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/klauspost/compress/zstd"
-
 	"github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
@@ -36,7 +34,7 @@ func (store *SnapshotStore) StageSleepDisk(ctx context.Context, request vm.Snaps
 }
 
 // UploadSleepMemory uploads the three saved-state files as one compressed tar.
-func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory, destination string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
+func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory string, destination vm.SleepArtifactTarget, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
 	archive, err := os.CreateTemp(directory, "memory-*.tar")
 	if err != nil {
 		return vm.SleepArtifact{}, err
@@ -83,7 +81,7 @@ func appendSleepFile(ctx context.Context, writer *tar.Writer, directory, name st
 }
 
 // UploadSleepDisk uploads the stable staging clone with the existing image encoding.
-func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, destination string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
+func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID string, destination vm.SleepArtifactTarget, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
 	lock := store.snapshotLock(snapshotID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -98,38 +96,40 @@ func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, des
 		destination, store.snapshotDirectory(snapshotID), progress)
 }
 
-func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string, sizeBytes int64, destination, directory string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
-	source, err := os.Open(path)
+// uploadSleepArtifact compresses the artifact into its signed parts as it reads,
+// so the host never holds a full compressed copy. One URL is a single part.
+func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string, sizeBytes int64, destination vm.SleepArtifactTarget, directory string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	defer source.Close()
-	compressed, err := os.CreateTemp(directory, "sleep-upload-*")
-	if err != nil {
-		return vm.SleepArtifact{}, err
+	defer file.Close()
+
+	request := SnapshotArtifactUpload{PartSizeBytes: maximumPartSizeBytes, Parts: []SnapshotUploadPart{{PartNumber: 1, URL: destination.UploadURL}}}
+	if len(destination.Parts) > 0 {
+		request = SnapshotArtifactUpload{PartSizeBytes: destination.PartSizeBytes}
+		for index, part := range destination.Parts {
+			request.Parts = append(request.Parts, SnapshotUploadPart{PartNumber: index + 1, URL: part.UploadURL})
+		}
 	}
-	defer os.Remove(compressed.Name())
-	defer compressed.Close()
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(snapshotEncoderConcurrency))
-	if err != nil {
-		return vm.SleepArtifact{}, err
-	}
-	encoder.ResetContentSize(compressed, sizeBytes)
-	reader := newSHA256Reader(&sleepArtifactReader{context: ctx, source: io.NewSectionReader(source, 0, sizeBytes)})
-	_, copyError := io.Copy(encoder, reader)
+	progress.TotalBytes.Store(sizeBytes)
+	reader := newSHA256Reader(&countingReader{
+		reader:  &sleepArtifactReader{context: ctx, source: io.NewSectionReader(file, 0, sizeBytes)},
+		counter: &progress.UploadedBytes,
+	})
+	chunker := &partChunker{directory: directory}
+	uploadError := store.compressParts(ctx, chunker, reader, sizeBytes, request)
+	// Call Sum before the error check, so the hash goroutine always exits.
 	digest := reader.Sum()
-	if err := errors.Join(copyError, encoder.Close()); err != nil {
-		return vm.SleepArtifact{}, err
+	if uploadError != nil {
+		return vm.SleepArtifact{}, uploadError
 	}
-	information, err := compressed.Stat()
-	if err != nil {
-		return vm.SleepArtifact{}, err
+
+	artifact := vm.SleepArtifact{SizeBytes: sizeBytes, StoredSizeBytes: chunker.storedBytes, SHA256: hex.EncodeToString(digest)}
+	if len(destination.Parts) > 0 {
+		artifact.PartCount = len(chunker.uploadedParts)
 	}
-	progress.TotalBytes.Store(information.Size())
-	if _, err := store.uploadPartWithRetry(ctx, SnapshotUploadPart{PartNumber: 1, URL: destination}, compressed, 0, information.Size(), &progress.UploadedBytes); err != nil {
-		return vm.SleepArtifact{}, err
-	}
-	return vm.SleepArtifact{SizeBytes: sizeBytes, StoredSizeBytes: information.Size(), SHA256: hex.EncodeToString(digest)}, nil
+	return artifact, nil
 }
 
 type sleepArtifactReader struct {
@@ -145,10 +145,10 @@ func (reader *sleepArtifactReader) Read(data []byte) (int, error) {
 }
 
 // DownloadSleepMemory verifies an archive and extracts only the three saved-state files.
-func (store *SnapshotStore) DownloadSleepMemory(ctx context.Context, directory, source string, artifact vm.SleepArtifact) error {
+func (store *SnapshotStore) DownloadSleepMemory(ctx context.Context, directory string, sources []string, artifact vm.SleepArtifact) error {
 	destination := &temporaryFileDestination{directory: directory}
 	defer destination.discard()
-	if err := download(ctx, store.httpClient, source, artifact.SHA256, destination, store.logger); err != nil {
+	if err := downloadParts(ctx, store.httpClient, sources, artifact.SHA256, destination, store.logger); err != nil {
 		return err
 	}
 	archive, err := os.Open(destination.file.Name())
@@ -193,7 +193,7 @@ func extractSleepMemory(ctx context.Context, source io.Reader, directory string)
 }
 
 // RestoreSleepDisk publishes a verified disk without replacing an existing VM disk.
-func (store *SnapshotStore) RestoreSleepDisk(ctx context.Context, identifier, source string, artifact vm.SleepArtifact) error {
+func (store *SnapshotStore) RestoreSleepDisk(ctx context.Context, identifier string, sources []string, artifact vm.SleepArtifact) error {
 	dataset := store.pool.virtualMachineDataset(identifier)
 	exists, err := datasetExists(ctx, dataset)
 	if err != nil || exists {
@@ -204,7 +204,7 @@ func (store *SnapshotStore) RestoreSleepDisk(ctx context.Context, identifier, so
 	// A crash can leave only the unpublished staging volume.
 	volume.destroy()
 	defer volume.destroy()
-	if err := download(ctx, store.httpClient, source, artifact.SHA256, volume, store.logger); err != nil {
+	if err := downloadParts(ctx, store.httpClient, sources, artifact.SHA256, volume, store.logger); err != nil {
 		return err
 	}
 	return platform.Run(ctx, "zfs", "rename", staging, dataset)

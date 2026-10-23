@@ -31,6 +31,12 @@ frappe.ui.form.on("Public IP Allocation", {
 				() => frm.call("retry_operation"),
 				["Attaching", "Detaching"].includes(frm.doc.status),
 			],
+			[__("Block"), () => blockPublicIP(frm), frm.doc.status === "Available"],
+			[
+				__("Unblock"),
+				() => frm.call("unblock").then(() => frm.reload_doc()),
+				frm.doc.status === "Blocked",
+			],
 		];
 
 		actions.forEach(([label, action, condition]) => {
@@ -82,5 +88,14 @@ function reservePublicIP(frm) {
 function releaseReservation(frm) {
 	frappe.confirm(__("Release {0} to its pool?", [frm.doc.prefix.bold()]), () =>
 		frm.call("release_reservation").then(() => frm.reload_doc())
+	);
+}
+
+function blockPublicIP(frm) {
+	frappe.confirm(
+		__("Block {0}? The pool will not allocate it until you unblock it.", [
+			frm.doc.prefix.bold(),
+		]),
+		() => frm.call("block").then(() => frm.reload_doc())
 	);
 }

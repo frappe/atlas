@@ -12,6 +12,9 @@ from atlas.vm.core.vm_service import VirtualMachineService
 if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
+# A host outage fails every pass, so a repeated failure is logged once an hour.
+FAILURE_REPEAT_SECONDS = 3600
+
 
 @run_as_admin
 def reconcile_stale_draft(name: str) -> None:
@@ -60,8 +63,16 @@ def delete_virtual_machine(virtual_machine: VirtualMachine, description: str) ->
 
 
 def log_failure(name: str, description: str) -> None:
-	"""Record why one virtual machine did not settle."""
+	"""Record why one virtual machine did not settle, once an hour."""
+	key = failure_key(name, description)
+	if frappe.cache.get_value(key):
+		return
+	frappe.cache.set_value(key, 1, expires_in_sec=FAILURE_REPEAT_SECONDS)
 	frappe.log_error(
 		message=frappe.get_traceback(),
 		title=f"Virtual Machine {name} {description} failed",
 	)
+
+
+def failure_key(name: str, description: str) -> str:
+	return f"atlas:reconciliation-failure:{description}:{name}"

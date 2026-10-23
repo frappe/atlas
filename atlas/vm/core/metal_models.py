@@ -179,25 +179,25 @@ class MetalOperationError:
 
 @dataclass(frozen=True, slots=True)
 class MetalSleepArtifact:
-	"""Store progress and completion of one sleep artifact upload."""
+	"""Store completion of one sleep artifact upload."""
 
 	uploaded: bool
-	upload_percent: int | None = None
 	object_key: str = ""
+	# part_count is how many objects hold an uploaded artifact, or 0 for one object.
+	part_count: int = 0
 
 	@classmethod
 	def from_dict(cls, value: object) -> MetalSleepArtifact:
-		"""Validate optional upload progress from Metal."""
+		"""Validate one sleep artifact status from Metal."""
 		artifact = object_value(value, "sleep artifact")
-		percent = None
-		if artifact.get("upload_percent") is not None:
-			percent = integer_field(artifact, "upload_percent")
-			if percent > 100:
-				raise ValueError("upload_percent must be between 0 and 100")
+		content = artifact.get("artifact")
+		part_count = (
+			integer_field(object_value(content, "artifact"), "part_count", default=0) if content else 0
+		)
 		return cls(
 			uploaded=boolean_field(artifact, "uploaded"),
-			upload_percent=percent,
 			object_key=string_field(artifact, "object_key", default=""),
+			part_count=part_count,
 		)
 
 
@@ -459,7 +459,7 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
-		sleep_state=string_field(value, "sleep_state", default=""),
+		sleep_state=sleep_state_field(value),
 		last_request_at=string_field(value, "last_request_at", default=""),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),
@@ -494,6 +494,12 @@ def string_field(value: dict[str, Any], field_name: str, *, default: str | None 
 	if not isinstance(field_value, str):
 		raise ValueError(f"{field_name} must be a string")
 	return field_value
+
+
+def sleep_state_field(value: dict[str, Any]) -> str:
+	"""Return the sleep state. A metald older than Atlas reports coma as comatose."""
+	sleep_state = string_field(value, "sleep_state", default="")
+	return "coma" if sleep_state == "comatose" else sleep_state
 
 
 def timestamp_field(value: dict[str, Any], field_name: str) -> datetime | None:

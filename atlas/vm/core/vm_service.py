@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Never, TypedDict, cast
 
 import frappe
 from frappe import _
+from frappe.utils.synchronization import LockTimeoutError, filelock
 
 from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
@@ -20,6 +22,7 @@ from atlas.vm.core.models import (
 	Route,
 	VirtualMachineCreateRequest,
 	parse_routes,
+	validate_sleep_times,
 )
 from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
@@ -28,6 +31,8 @@ if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
+
+NETWORK_LOCK_TIMEOUT_SECONDS = 10
 
 
 class MetalOperationError(frappe.ValidationError):
@@ -309,13 +314,25 @@ class VirtualMachineService:
 		size_mib = changes.get("size_mib", current_disk.size_mib)
 		if size_mib < current_disk.size_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
+		machine = self.virtual_machine
+		try:
+			validate_sleep_times(
+				machine.deep_sleep_after_idle_seconds or 0,
+				machine.coma_after_idle_seconds or 0,
+				machine.memory_mib,
+				size_mib,
+			)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
 
 		information = self.set_disk(
 			size_mib,
 			changes.get("throughput_mibps", current_disk.throughput_mibps),
 			changes.get("iops", current_disk.iops),
 		)
-		if size_mib != current_disk.size_mib:
+		# A retry after a lost response finds the size already applied in Metal, so compare
+		# with the stored size to repair it.
+		if size_mib != self.virtual_machine.disk_mib:
 			self.virtual_machine.db_set("disk_mib", size_mib)
 
 		return information
@@ -356,7 +373,10 @@ class VirtualMachineService:
 	def apply_network_changes(self, changes: dict[str, Any]) -> dict[str, Any]:
 		"""Validate and apply selected network changes."""
 		self.virtual_machine.validate_network_change()
-		self.lock_network()
+		with self.network_lock():
+			return self._apply_network_changes(changes)
+
+	def _apply_network_changes(self, changes: dict[str, Any]) -> dict[str, Any]:
 		if "ipv4_internet_access" in changes:
 			changes = {**changes}
 			changes["routes"] = self._routes_for_ipv4_internet_access(
@@ -390,14 +410,27 @@ class VirtualMachineService:
 			)
 		return self.get_routes_without(IPV4_INTERNET_DESTINATION)
 
-	def lock_network(self) -> None:
-		"""Serialize network changes. Each one reads and replaces the complete Metal network."""
-		frappe.db.get_value("Virtual Machine", self.virtual_machine.name, "name", for_update=True)
+	@contextmanager
+	def network_lock(self) -> Iterator[None]:
+		"""Serialize network changes. Each one reads and replaces the complete Metal network.
+
+		A file lock, not a row lock, so no database lock waits on the Metal calls.
+		"""
+		try:
+			with filelock(
+				f"atlas:vm-network:{self.virtual_machine.name}", timeout=NETWORK_LOCK_TIMEOUT_SECONDS
+			):
+				yield
+		except LockTimeoutError:
+			frappe.throw(
+				_("Another network change of this Virtual Machine is in progress. Retry later."),
+				exc=AtlasConflictError,
+			)
 
 	def set_routes(self, value: Any) -> dict[str, Any]:
 		"""Replace the complete route list. Metal owns the routes."""
-		self.lock_network()
-		return self.update_network({"routes": [route.as_dict() for route in self.validate_routes(value)]})
+		with self.network_lock():
+			return self.update_network({"routes": [route.as_dict() for route in self.validate_routes(value)]})
 
 	def validate_routes(self, value: Any) -> tuple[Route, ...]:
 		"""Parse a route list. An attached public IPv6 address owns the IPv6 Internet route."""

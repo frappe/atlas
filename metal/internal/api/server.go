@@ -53,7 +53,7 @@ type SerialBroker interface {
 type VirtualMachineManager interface {
 	Create(context.Context, string, vm.Specification) (vm.Information, error)
 	Information(context.Context, string) (vm.Information, error)
-	List(context.Context) ([]vm.Information, error)
+	List(context.Context) ([]vm.Information, []string, error)
 	SetPowerState(context.Context, string, vm.State) error
 	RequestRestart(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error
@@ -75,6 +75,8 @@ type MigrationManager interface {
 	DestinationStatus(ctx context.Context, migrationID string) (migration.DestinationProgress, error)
 	RequestFinish(ctx context.Context, migrationID string) error
 	AbortDestination(ctx context.Context, migrationID string) error
+	DiscardDestination(ctx context.Context, migrationID string) error
+	RestoreSource(ctx context.Context, migrationID, virtualMachineID string) error
 	LockSource(ctx context.Context, migrationID, virtualMachineID string, allowSleepState bool) (migration.SourceDescription, error)
 	NextSourceSnapshot(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
 	StartSourceStream(ctx context.Context, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
