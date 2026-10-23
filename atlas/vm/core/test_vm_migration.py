@@ -518,6 +518,45 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 				virtual_machine.db_set.assert_any_call("server", "metal-2")
 				migration.db_set.assert_any_call("status", "finalizing")
 
+	def restore(self, *, status: str = "canceling", server: str = "metal-1", is_reporting: bool = False):
+		"""Run the restore action against stubbed records and Metal clients."""
+		virtual_machine = SimpleNamespace(name="vm-00001", server=server)
+		service = MigrationService(migration_doc(status=status))
+		source_client = Mock()
+		with (
+			patch.object(service, "_lock_records", return_value=(virtual_machine, service.migration)),
+			patch.object(service, "is_destination_reporting", return_value=is_reporting),
+			patch.object(service, "update") as update,
+			patch.object(service, "settle") as settle,
+			patch.object(MigrationService, "source_metal_server", Mock()),
+			patch("atlas.vm.core.vm_migration.MetalClient", return_value=source_client),
+		):
+			service.restore_source()
+		return update, settle, source_client
+
+	def test_restore_marks_the_destination_lost_before_it_restarts_the_source(self) -> None:
+		update, settle, source_client = self.restore()
+
+		self.assertEqual(update.call_args.args[0]["error_code"], "destination_lost")
+		source_client.restore_migration_source.assert_called_once_with("mig-00001", "vm-00001")
+		settle.assert_called_once_with("failed")
+
+	def test_restore_is_refused_while_the_destination_can_still_own_the_vm(self) -> None:
+		for overrides in ({"is_reporting": True}, {"server": "metal-2"}, {"status": "completed"}):
+			with self.subTest(**overrides), self.assertRaises(AtlasUserError):
+				self.restore(**overrides)
+
+	def test_a_lost_destination_is_never_committed(self) -> None:
+		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
+		migration = migration_doc(status="canceling", error_code="destination_lost", db_set=Mock())
+		service = MigrationService(migration)
+		with (
+			patch.object(service, "_lock_records", return_value=(virtual_machine, migration)),
+			patch("atlas.vm.core.vm_migration.frappe.db.commit"),
+		):
+			self.assertFalse(service.commit_destination(is_rollback_refused=True))
+		virtual_machine.db_set.assert_not_called()
+
 	def test_scheduled_abort_does_not_contact_an_unreserved_destination(self) -> None:
 		service = MigrationService(migration_doc(status="scheduled", destination_metal_server="metal-2"))
 		service.settle = Mock()
