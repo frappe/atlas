@@ -33,10 +33,12 @@ from atlas.vm.core.models import (
 	IPV4_INTERNET_DESTINATION,
 	MAXIMUM_CPU_MILLICORES,
 	MAXIMUM_FIREWALL_PREFIXES,
+	MAXIMUM_SLEEP_OFFLOAD_SECONDS,
 	MINIMUM_CPU_MILLICORES,
 	FirewallConfiguration,
 	FirewallRule,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.placement.affinity import AffinityOperator, AffinityResource, AffinityRules
 
@@ -510,6 +512,20 @@ class CreateVirtualMachinePayload(StrictModel):
 	sleep_after_idle_seconds: int = Field(
 		default=0, ge=0, le=9_223_372_036, description="Idle time before automatic stop. Zero disables it."
 	)
+	deep_sleep_after_idle_seconds: int = Field(
+		default=0,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="Idle time before Atlas offloads saved memory. Zero disables it.",
+	)
+	coma_after_idle_seconds: int = Field(
+		default=0,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="Idle time before Atlas offloads the disk. Zero disables it.",
+	)
 	disk_throughput_mibps: int = Field(
 		default=0, ge=0, description="Disk throughput limit in MiB/s. Zero removes the limit."
 	)
@@ -541,6 +557,12 @@ class CreateVirtualMachinePayload(StrictModel):
 		AffinityRules.from_value([node.model_dump() for node in self.placement_rules])
 		return self
 
+	@model_validator(mode="after")
+	def validate_sleep_times(self) -> CreateVirtualMachinePayload:
+		"""Require a positive deep-sleep delay before coma."""
+		validate_sleep_times(self.deep_sleep_after_idle_seconds, self.coma_after_idle_seconds)
+		return self
+
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
 		"""Build the domain request for this API payload."""
 		return VirtualMachineCreateRequest(
@@ -557,6 +579,8 @@ class CreateVirtualMachinePayload(StrictModel):
 			is_privileged=self.is_privileged,
 			is_termination_protected=self.is_termination_protected,
 			sleep_after_idle_seconds=self.sleep_after_idle_seconds,
+			deep_sleep_after_idle_seconds=self.deep_sleep_after_idle_seconds,
+			coma_after_idle_seconds=self.coma_after_idle_seconds,
 			disk_throughput_mibps=self.disk_throughput_mibps,
 			disk_iops=self.disk_iops,
 			private_network_throughput_mibps=self.private_network_throughput_mibps,
@@ -585,6 +609,20 @@ class ResizePayload(PatchPayload):
 		ge=0,
 		le=9_223_372_036,
 		description="New idle time before automatic stop. Zero disables it.",
+	)
+	deep_sleep_after_idle_seconds: int | None = Field(
+		default=None,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="New idle time before Atlas offloads saved memory. Zero disables it.",
+	)
+	coma_after_idle_seconds: int | None = Field(
+		default=None,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="New idle time before Atlas offloads the disk. Zero disables it.",
 	)
 
 
@@ -739,6 +777,12 @@ class VirtualMachineResponse(BaseModel):
 	memory_mib: int = Field(description="Memory capacity in MiB.")
 	disk_mib: int = Field(description="Root disk capacity in MiB.")
 	sleep_after_idle_seconds: int = Field(description="Idle time before automatic stop. Zero disables it.")
+	deep_sleep_after_idle_seconds: int = Field(
+		default=0, description="Idle time before memory offload. Zero disables it."
+	)
+	coma_after_idle_seconds: int = Field(
+		default=0, description="Idle time before disk offload. Zero disables it."
+	)
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
@@ -760,6 +804,8 @@ class VirtualMachineResponse(BaseModel):
 			memory_mib=virtual_machine.memory_mib,
 			disk_mib=virtual_machine.disk_mib,
 			sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
+			deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
+			coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
@@ -809,6 +855,12 @@ class VirtualMachineCompute(BaseModel):
 	cpu_millicores: int = Field(description="CPU capacity in millicores.")
 	memory_mib: int = Field(description="Memory capacity in MiB.")
 	sleep_after_idle_seconds: int = Field(description="Idle time before automatic stop. Zero disables it.")
+	deep_sleep_after_idle_seconds: int = Field(
+		default=0, description="Idle time before memory offload. Zero disables it."
+	)
+	coma_after_idle_seconds: int = Field(
+		default=0, description="Idle time before disk offload. Zero disables it."
+	)
 
 
 class VirtualMachineDisk(BaseModel):
@@ -949,6 +1001,8 @@ class VirtualMachineDetailResponse(BaseModel):
 				cpu_millicores=virtual_machine.cpu_millicores,
 				memory_mib=virtual_machine.memory_mib,
 				sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
+				deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
+				coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
 			),
 			disk=VirtualMachineDisk(
 				size_mib=virtual_machine.disk_mib,

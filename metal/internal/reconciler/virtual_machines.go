@@ -25,6 +25,18 @@ type VirtualMachineManager interface {
 	Reconcile(ctx context.Context, id string) error
 }
 
+// SleepTransferManager offloads snapshots independently of VM reconciliation.
+type SleepTransferManager interface {
+	VirtualMachineManager
+	OffloadSleepArtifacts(ctx context.Context, id string) error
+}
+
+// SleepRestoreManager reconciles sleeping VMs independently of ordinary VM work.
+type SleepRestoreManager interface {
+	VirtualMachineManager
+	RestoreSleepState(ctx context.Context, id string) error
+}
+
 // VirtualMachineConfig controls reconciliation work within one pass.
 type VirtualMachineConfig struct {
 	// Telemetry counts passes and failures. It is required.
@@ -42,6 +54,7 @@ type VirtualMachineReconciler struct {
 	passScheduler
 
 	manager                 VirtualMachineManager
+	operation               func(context.Context, string) error
 	maxConcurrentOperations int
 	operationTimeout        time.Duration
 	logger                  *slog.Logger
@@ -67,11 +80,35 @@ func NewVirtualMachineReconciler(
 	return &VirtualMachineReconciler{
 		passScheduler:           newPassScheduler("virtual_machine", interval, configuration.Telemetry),
 		manager:                 manager,
+		operation:               manager.Reconcile,
 		maxConcurrentOperations: configuration.MaxConcurrentOperations,
 		operationTimeout:        configuration.OperationTimeout,
 		logger:                  configuration.Logger,
 		backoff:                 newBackoff(interval),
 	}
+}
+
+// NewSleepTransferReconciler runs sleep transfers in their own bounded worker pool.
+func NewSleepTransferReconciler(manager SleepTransferManager, interval time.Duration, configuration VirtualMachineConfig) *VirtualMachineReconciler {
+	if configuration.MaxConcurrentOperations <= 0 {
+		configuration.MaxConcurrentOperations = 2
+	}
+	reconciler := NewVirtualMachineReconciler(manager, interval, configuration)
+	reconciler.loop = "sleep_transfer"
+	reconciler.operation = manager.OffloadSleepArtifacts
+	return reconciler
+}
+
+// NewSleepRestoreReconciler gives wake downloads their own bounded worker pool.
+func NewSleepRestoreReconciler(manager SleepRestoreManager, interval time.Duration, configuration VirtualMachineConfig) *VirtualMachineReconciler {
+	if configuration.MaxConcurrentOperations <= 0 {
+		configuration.MaxConcurrentOperations = 2
+	}
+
+	reconciler := NewVirtualMachineReconciler(manager, interval, configuration)
+	reconciler.loop = "sleep_restore"
+	reconciler.operation = manager.RestoreSleepState
+	return reconciler
 }
 
 // Wake requests a pass and clears every backoff, so a request does not wait for a retry time.
@@ -138,7 +175,7 @@ func (r *VirtualMachineReconciler) reconcile(ctx context.Context, id string) {
 	defer cancel()
 
 	startedAt := r.backoff.now()
-	if err := r.manager.Reconcile(operationContext, id); err != nil {
+	if err := r.operation(operationContext, id); err != nil {
 		if ctx.Err() == nil {
 			r.backoff.fail(id, startedAt)
 		}

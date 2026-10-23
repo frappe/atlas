@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, convert_utc_to_system_timezone, flt, get_datetime, now_datetime
+from frappe.utils import add_days, cint, convert_utc_to_system_timezone, flt, get_datetime, now_datetime
 
 from atlas.service.core.proxy.configuration import push_configuration_to_active_proxies
 from atlas.service.core.warpgate.installation import install_warpgate_certificate

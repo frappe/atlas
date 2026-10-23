@@ -349,11 +349,27 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before Atlas offloads the disk. Zero disables it.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores. 1000 millicores equals one virtual CPU.",
             "maximum": 32000,
             "minimum": 100,
             "title": "Cpu Millicores",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before Atlas offloads saved memory. Zero disables it.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "disk_iops": {
@@ -1697,6 +1713,21 @@
         "additionalProperties": false,
         "description": "VM resource and idle shutdown changes.",
         "properties": {
+          "coma_after_idle_seconds": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New idle time before Atlas offloads the disk. Zero disables it.",
+            "title": "Coma After Idle Seconds"
+          },
           "cpu_millicores": {
             "anyOf": [
               {
@@ -1711,6 +1742,21 @@
             "default": null,
             "description": "New CPU capacity in millicores.",
             "title": "Cpu Millicores"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New idle time before Atlas offloads saved memory. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds"
           },
           "disk_mib": {
             "anyOf": [
@@ -1859,9 +1905,21 @@
       "VirtualMachineCompute": {
         "description": "The compute shape of one virtual machine.",
         "properties": {
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before disk offload. Zero disables it.",
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores.",
             "title": "Cpu Millicores",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before memory offload. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "memory_mib": {
@@ -2269,6 +2327,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before disk offload. Zero disables it.",
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores.",
             "title": "Cpu Millicores",
@@ -2278,6 +2342,12 @@
             "description": "Creation time as Unix seconds.",
             "minimum": 0,
             "title": "Created At",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before memory offload. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "disk_mib": {
@@ -2619,6 +2689,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before disk offload. Zero disables it.",
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores.",
             "title": "Cpu Millicores",
@@ -2628,6 +2704,12 @@
             "description": "Creation time as Unix seconds.",
             "minimum": 0,
             "title": "Created At",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before memory offload. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "disk_mib": {

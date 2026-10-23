@@ -152,6 +152,8 @@ def list_virtual_machines(query: ListQuery) -> Page[VirtualMachineListResponse]:
 			"memory_mib",
 			"disk_mib",
 			"sleep_after_idle_seconds",
+			"deep_sleep_after_idle_seconds",
+			"coma_after_idle_seconds",
 			"is_draft",
 			"is_terminating",
 			"is_termination_protected",

@@ -165,7 +165,8 @@ func (m *Manager) LockSource(ctx context.Context, migrationID, virtualMachineID 
 	if err != nil {
 		return SourceDescription{}, err
 	}
-	if observed.State == vm.StateFailed || observed.State == vm.StateUnknown {
+	if observed.State == vm.StateFailed || observed.State == vm.StateUnknown ||
+		observed.SleepState == vm.SleepStateDeepSleeping || observed.SleepState == vm.SleepStateComatose {
 		return SourceDescription{}, vm.ErrConflict
 	}
 

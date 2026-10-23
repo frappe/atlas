@@ -25,13 +25,18 @@ class ResizePayload:
     """ VM resource and idle shutdown changes.
 
         Attributes:
+            coma_after_idle_seconds (int | None | Unset): New idle time before Atlas offloads the disk. Zero disables it.
             cpu_millicores (int | None | Unset): New CPU capacity in millicores.
+            deep_sleep_after_idle_seconds (int | None | Unset): New idle time before Atlas offloads saved memory. Zero
+                disables it.
             disk_mib (int | None | Unset): New root disk capacity in MiB.
             memory_mib (int | None | Unset): New memory capacity in MiB.
             sleep_after_idle_seconds (int | None | Unset): New idle time before automatic stop. Zero disables it.
      """
 
+    coma_after_idle_seconds: int | None | Unset = UNSET
     cpu_millicores: int | None | Unset = UNSET
+    deep_sleep_after_idle_seconds: int | None | Unset = UNSET
     disk_mib: int | None | Unset = UNSET
     memory_mib: int | None | Unset = UNSET
     sleep_after_idle_seconds: int | None | Unset = UNSET
@@ -41,11 +46,23 @@ class ResizePayload:
 
 
     def to_dict(self) -> dict[str, Any]:
+        coma_after_idle_seconds: int | None | Unset
+        if isinstance(self.coma_after_idle_seconds, Unset):
+            coma_after_idle_seconds = UNSET
+        else:
+            coma_after_idle_seconds = self.coma_after_idle_seconds
+
         cpu_millicores: int | None | Unset
         if isinstance(self.cpu_millicores, Unset):
             cpu_millicores = UNSET
         else:
             cpu_millicores = self.cpu_millicores
+
+        deep_sleep_after_idle_seconds: int | None | Unset
+        if isinstance(self.deep_sleep_after_idle_seconds, Unset):
+            deep_sleep_after_idle_seconds = UNSET
+        else:
+            deep_sleep_after_idle_seconds = self.deep_sleep_after_idle_seconds
 
         disk_mib: int | None | Unset
         if isinstance(self.disk_mib, Unset):
@@ -70,8 +87,12 @@ class ResizePayload:
 
         field_dict.update({
         })
+        if coma_after_idle_seconds is not UNSET:
+            field_dict["coma_after_idle_seconds"] = coma_after_idle_seconds
         if cpu_millicores is not UNSET:
             field_dict["cpu_millicores"] = cpu_millicores
+        if deep_sleep_after_idle_seconds is not UNSET:
+            field_dict["deep_sleep_after_idle_seconds"] = deep_sleep_after_idle_seconds
         if disk_mib is not UNSET:
             field_dict["disk_mib"] = disk_mib
         if memory_mib is not UNSET:
@@ -86,6 +107,16 @@ class ResizePayload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        def _parse_coma_after_idle_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        coma_after_idle_seconds = _parse_coma_after_idle_seconds(d.pop("coma_after_idle_seconds", UNSET))
+
+
         def _parse_cpu_millicores(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -94,6 +125,16 @@ class ResizePayload:
             return cast(int | None | Unset, data)
 
         cpu_millicores = _parse_cpu_millicores(d.pop("cpu_millicores", UNSET))
+
+
+        def _parse_deep_sleep_after_idle_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        deep_sleep_after_idle_seconds = _parse_deep_sleep_after_idle_seconds(d.pop("deep_sleep_after_idle_seconds", UNSET))
 
 
         def _parse_disk_mib(data: object) -> int | None | Unset:
@@ -127,7 +168,9 @@ class ResizePayload:
 
 
         resize_payload = cls(
+            coma_after_idle_seconds=coma_after_idle_seconds,
             cpu_millicores=cpu_millicores,
+            deep_sleep_after_idle_seconds=deep_sleep_after_idle_seconds,
             disk_mib=disk_mib,
             memory_mib=memory_mib,
             sleep_after_idle_seconds=sleep_after_idle_seconds,

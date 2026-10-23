@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
 
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetricsSample, timestamp_field
+from atlas.vm.core.metal_models import (
+	MetalSleepArtifact,
+	MetalVirtualMachine,
+	MetalVirtualMachineMetricsSample,
+	timestamp_field,
+)
 
 SWAGGER_PATH = pathlib.Path(__file__).parents[3] / "metal" / "internal" / "api" / "swagger.json"
 
@@ -76,6 +81,7 @@ def complete_response() -> dict:
 			"generation": 3,
 			"restart_generation": 1,
 			"state": "running",
+			"last_request_at": "2026-09-06T09:59:30Z",
 			"updated_at": "2026-09-06T10:00:00Z",
 			"disk": {"used_mib": 1024},
 			"network": {"mac": "06:00:ac:10:00:02"},
@@ -143,6 +149,7 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertTrue(machine.desired.network.firewall.enabled)
 		self.assertEqual(machine.desired.network.firewall.inbound[0].ports, "22")
 		self.assertEqual(machine.observed.network.mac, "06:00:ac:10:00:02")
+		self.assertEqual(machine.observed.last_request_at, "2026-09-06T09:59:30Z")
 		self.assertEqual(machine.observed.error.message, "network failed")
 
 	def test_a_new_virtual_machine_parses_with_empty_values(self) -> None:
@@ -169,6 +176,34 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		machine = MetalVirtualMachine.from_dict(new_virtual_machine_response())
 
 		self.assertEqual(machine.observed.sleep_state, "")
+		self.assertIsNone(machine.observed.sleep_snapshot)
+
+	def test_sleep_snapshot_status_preserves_partial_uploads(self) -> None:
+		response = complete_response()
+		response["observed"]["sleep_snapshot"] = {
+			"id": "checkpoint-1",
+			"memory": {"uploaded": True},
+			"disk": {"uploaded": False},
+		}
+		machine = MetalVirtualMachine.from_dict(response)
+
+		self.assertEqual(machine.observed.sleep_snapshot.id, "checkpoint-1")
+		self.assertTrue(machine.observed.sleep_snapshot.memory.uploaded)
+		self.assertFalse(machine.observed.sleep_snapshot.disk.uploaded)
+		self.assertEqual(MetalVirtualMachine.from_dict(json.loads(json.dumps(machine.as_dict()))), machine)
+		response["observed"]["sleep_snapshot"]["disk"]["uploaded"] = "false"
+		with self.assertRaises(ValueError):
+			MetalVirtualMachine.from_dict(response)
+
+	def test_sleep_upload_progress_is_optional_and_bounded(self) -> None:
+		self.assertIsNone(MetalSleepArtifact.from_dict({"uploaded": False}).upload_percent)
+		for percent in (None, 0, 50, 99, 100):
+			with self.subTest(percent=percent):
+				artifact = MetalSleepArtifact.from_dict({"uploaded": False, "upload_percent": percent})
+				self.assertEqual(artifact.upload_percent, percent)
+		for percent in (-1, 101, True, 1.5, "50"):
+			with self.subTest(percent=percent), self.assertRaises(ValueError):
+				MetalSleepArtifact.from_dict({"uploaded": False, "upload_percent": percent})
 
 	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
 		"""A truncated response must fail loudly, not read as an empty VM."""
@@ -249,6 +284,8 @@ class TestMetalContract(UnitTestCase):
 				"restart_generation",
 				"state",
 				"sleep_state",
+				"sleep_snapshot",
+				"last_request_at",
 				"updated_at",
 				"disk",
 				"network",
@@ -280,6 +317,7 @@ class TestMetalContract(UnitTestCase):
 			"/v1/vms/{id}/ssh-keys",
 			"/v1/vms/{id}/metadata",
 			"/v1/vms/{id}/snapshots",
+			"/v1/vms/{id}/sleep-state",
 			"/v1/snapshots/{id}",
 			"/v1/snapshots/{id}/upload",
 		}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -18,12 +19,13 @@ from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
 from atlas.vm.core import reconciliation
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics, timestamp_field
 from atlas.vm.core.models import (
 	IPV6_INTERNET_DESTINATION,
 	ROUTE_VIA_HOST,
 	Route,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.vm_service import VirtualMachineService
 
@@ -50,7 +52,9 @@ class VirtualMachine(Document):
 
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
+		coma_after_idle_seconds: DF.Int
 		cpu_millicores: DF.Int
+		deep_sleep_after_idle_seconds: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
 		is_draft: DF.Check
@@ -64,6 +68,7 @@ class VirtualMachine(Document):
 		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int
+		sleep_state: DF.Literal["", "sleeping", "deep-sleeping", "comatose"]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		virtual_machine_image: DF.Data
@@ -103,6 +108,10 @@ class VirtualMachine(Document):
 		the address from the next whitelist and ends cross-tenant traffic.
 		"""
 		validate_tags(self)
+		try:
+			validate_sleep_times(self.deep_sleep_after_idle_seconds or 0, self.coma_after_idle_seconds or 0)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
 
 		if self.is_privileged and self.tenant_id != PRIVILEGED_TENANT_ID:
 			frappe.throw(_("A privileged Virtual Machine must use tenant {0}.").format(PRIVILEGED_TENANT_ID))
@@ -155,6 +164,36 @@ class VirtualMachine(Document):
 		"""Return where Metal keeps the saved state of a sleeping VM. An awake VM has none."""
 		information = self.get_metal_vm_info()
 		return (information.observed.sleep_state or None) if information else None
+
+	@property
+	def snapshot_upload_percent(self) -> str | None:
+		"""Return progress only while Metal uploads an artifact over HTTP."""
+		information = self.get_metal_vm_info()
+		if not information or information.observed.error:
+			return None
+
+		observed = information.observed
+		if not observed.sleep_snapshot:
+			return None
+
+		if observed.phase == "upload-sleep-memory":
+			artifact = observed.sleep_snapshot.memory
+		elif observed.phase == "upload-sleep-disk":
+			artifact = observed.sleep_snapshot.disk
+		else:
+			return None
+
+		if not artifact or artifact.uploaded or artifact.upload_percent is None:
+			return None
+
+		# A Data field preserves None; Frappe converts an empty Percent field to zero.
+		return str(artifact.upload_percent)
+
+	@property
+	def last_request_at(self) -> datetime | None:
+		"""Return when the VM last received a request, in the site timezone."""
+		information = self.get_metal_vm_info()
+		return timestamp_field(asdict(information.observed), "last_request_at") if information else None
 
 	@property
 	def error(self) -> str | None:
@@ -559,9 +598,10 @@ class VirtualMachine(Document):
 		memory_mib: int | None = None,
 		disk_mib: int | None = None,
 		sleep_after_idle_seconds: int | None = None,
+		deep_sleep_after_idle_seconds: int | None = None,
+		coma_after_idle_seconds: int | None = None,
 	) -> str | None:
-		"""Change CPU, memory, disk size, or idle shutdown delay. Return the migration name when the
-		current host cannot hold the new shape."""
+		"""Change resources or sleep delays. Return the migration name when the VM must move."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
@@ -576,6 +616,8 @@ class VirtualMachine(Document):
 			"memory_mib": memory_mib,
 			"disk_mib": disk_mib,
 			"sleep_after_idle_seconds": sleep_after_idle_seconds,
+			"deep_sleep_after_idle_seconds": deep_sleep_after_idle_seconds,
+			"coma_after_idle_seconds": coma_after_idle_seconds,
 		}
 		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)

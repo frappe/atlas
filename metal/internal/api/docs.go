@@ -9,7 +9,7 @@ import (
 
 // Generate swagger.json for the embedded API documentation.
 //
-//go:generate go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g main.go --dir ../../cmd/metald,. --parseInternal --outputTypes json -o .
+//go:generate go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g main.go --dir ../../cmd/metald,.,../vm --parseInternal --outputTypes json -o .
 //go:embed swagger.json
 var specification []byte
 

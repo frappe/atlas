@@ -298,7 +298,7 @@ func (store *ImageStore) StoreKernel(kernelSHA256 string, source io.Reader) erro
 // volume and snapshots it. Every failure destroys the volume, so no half-written
 // base image can be cloned.
 func (store *ImageStore) importRootFileSystem(ctx context.Context, imageReference, rootfsURL, expectedDigest string) error {
-	volume := &volumeDestination{store: store, imageReference: imageReference}
+	volume := &volumeDestination{dataset: store.pool.baseDataset(imageReference)}
 	if err := download(ctx, store.httpClient, rootfsURL, expectedDigest, volume, store.logger); err != nil {
 		return fmt.Errorf("download root file system: %w", err)
 	}
@@ -309,11 +309,10 @@ func (store *ImageStore) importRootFileSystem(ctx context.Context, imageReferenc
 	return nil
 }
 
-// volumeDestination downloads into a new ZFS volume for one image.
+// volumeDestination downloads into a new ZFS volume.
 type volumeDestination struct {
-	store          *ImageStore
-	imageReference string
-	device         *os.File
+	dataset string
+	device  *os.File
 }
 
 // imageVolumeSizeMiB is the smallest whole MiB that holds an image. The import writes only the image bytes.
@@ -322,11 +321,10 @@ func imageVolumeSizeMiB(sizeBytes int64) int64 {
 }
 
 func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64) (io.Writer, error) {
-	dataset := destination.store.pool.baseDataset(destination.imageReference)
-	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, dataset); err != nil {
+	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, destination.dataset); err != nil {
 		return nil, err
 	}
-	devicePath := destination.store.baseImageDevicePath(destination.imageReference)
+	devicePath := "/dev/zvol/" + destination.dataset
 	if _, err := waitForBlockDevice(devicePath); err != nil {
 		destination.destroy()
 		return nil, err
@@ -356,12 +354,7 @@ func (destination *volumeDestination) discard() {
 }
 
 func (destination *volumeDestination) destroy() {
-	_ = platform.Run(context.Background(), "zfs", "destroy", "-r", destination.store.pool.baseDataset(destination.imageReference))
-}
-
-// baseImageDevicePath is the block device of one base image volume.
-func (store *ImageStore) baseImageDevicePath(imageReference string) string {
-	return "/dev/zvol/" + store.pool.baseDataset(imageReference)
+	_ = platform.Run(context.Background(), "zfs", "destroy", "-r", destination.dataset)
 }
 
 // newImageHTTPClient returns a client with timeouts suited to large artifacts.

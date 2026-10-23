@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..models.virtual_machine_response_architecture import VirtualMachineResponseArchitecture
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ class VirtualMachineResponse:
             sleep_after_idle_seconds (int): Idle time before automatic stop. Zero disables it.
             tags (VirtualMachineResponseTags): Resource tags as key-value pairs.
             tenant_id (int): Tenant that owns the virtual machine.
+            coma_after_idle_seconds (int | Unset): Idle time before disk offload. Zero disables it. Default: 0.
+            deep_sleep_after_idle_seconds (int | Unset): Idle time before memory offload. Zero disables it. Default: 0.
      """
 
     architecture: VirtualMachineResponseArchitecture
@@ -56,6 +59,8 @@ class VirtualMachineResponse:
     sleep_after_idle_seconds: int
     tags: VirtualMachineResponseTags
     tenant_id: int
+    coma_after_idle_seconds: int | Unset = 0
+    deep_sleep_after_idle_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -99,6 +104,10 @@ class VirtualMachineResponse:
 
         tenant_id = self.tenant_id
 
+        coma_after_idle_seconds = self.coma_after_idle_seconds
+
+        deep_sleep_after_idle_seconds = self.deep_sleep_after_idle_seconds
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -117,6 +126,10 @@ class VirtualMachineResponse:
             "tags": tags,
             "tenant_id": tenant_id,
         })
+        if coma_after_idle_seconds is not UNSET:
+            field_dict["coma_after_idle_seconds"] = coma_after_idle_seconds
+        if deep_sleep_after_idle_seconds is not UNSET:
+            field_dict["deep_sleep_after_idle_seconds"] = deep_sleep_after_idle_seconds
 
         return field_dict
 
@@ -191,6 +204,10 @@ class VirtualMachineResponse:
 
         tenant_id = d.pop("tenant_id")
 
+        coma_after_idle_seconds = d.pop("coma_after_idle_seconds", UNSET)
+
+        deep_sleep_after_idle_seconds = d.pop("deep_sleep_after_idle_seconds", UNSET)
+
         virtual_machine_response = cls(
             architecture=architecture,
             cpu_millicores=cpu_millicores,
@@ -205,6 +222,8 @@ class VirtualMachineResponse:
             sleep_after_idle_seconds=sleep_after_idle_seconds,
             tags=tags,
             tenant_id=tenant_id,
+            coma_after_idle_seconds=coma_after_idle_seconds,
+            deep_sleep_after_idle_seconds=deep_sleep_after_idle_seconds,
         )
 
 

@@ -1,6 +1,8 @@
 package firecracker
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +12,35 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
+
+func TestInstallSavedStateChecksIdentityBeforePublishing(t *testing.T) {
+	runtime := &Runtime{configuration: Config{MachinesDir: t.TempDir(), FirecrackerBin: "/missing/firecracker"}}
+	machine := vm.RuntimeMachine{ID: "vm-1", UserID: 1001, SpecificationGeneration: 2, RestartGeneration: 3}
+	requirement := runtime.newMachine(machine).savedStateRequirement()
+	savedStateFixture(t, runtime.configuration, requirement)
+	published := runtime.configuration.savedStateDirectory(machine.ID)
+	directory := filepath.Join(runtime.configuration.vmDir(machine.ID), "downloaded")
+	if err := os.Rename(published, directory); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(metadata)
+	if err := runtime.InstallSavedState(t.Context(), machine, directory, "wrong-checkpoint"); err == nil {
+		t.Fatal("different checkpoint was installed")
+	}
+	if _, err := os.Stat(published); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid checkpoint was published: %v", err)
+	}
+	if err := runtime.InstallSavedState(t.Context(), machine, directory, hex.EncodeToString(digest[:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.configuration.loadSavedState(requirement); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func savedStateFixture(t *testing.T, configuration Config, requirement savedStateRequirement) savedStateMetadata {
 	t.Helper()

@@ -210,7 +210,7 @@ func (chunker *partChunker) uploadBufferedPart(buffered bufferedPart) error {
 		if _, err := buffered.file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		uploaded, err := chunker.store.uploadPartWithRetry(chunker.ctx, part, buffered.file, 0, buffered.length)
+		uploaded, err := chunker.store.uploadPartWithRetry(chunker.ctx, part, buffered.file, 0, buffered.length, nil)
 		if err != nil {
 			return err
 		}

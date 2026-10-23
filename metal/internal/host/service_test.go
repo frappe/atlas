@@ -27,7 +27,7 @@ func TestMissingCompatibilityPreservesHostSync(t *testing.T) {
 	if err != nil || result.Compatibility != nil {
 		t.Fatalf("sync result = %+v, error = %v", result, err)
 	}
-	if result.Capacity.TotalStorageMiB != 4096 || result.VirtualMachineStates["vm-1"] != vm.StateRunning || dependencies.wakeCount != 1 {
+	if result.Capacity.TotalStorageMiB != 4096 || result.VirtualMachines["vm-1"].State != vm.StateRunning || dependencies.wakeCount != 1 {
 		t.Fatalf("probe failure interrupted host sync: %+v", result)
 	}
 }
@@ -118,8 +118,8 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 	if capacity.AvailableCPUMillicores != max(runtime.NumCPU()*1000-1500, 0) || capacity.TotalStorageMiB != 4096 || capacity.AvailableStorageMiB != 3072 {
 		t.Fatalf("capacity = %+v", capacity)
 	}
-	if result.VirtualMachineStates["vm-00001"] != vm.StateRunning {
-		t.Fatalf("virtual machine states = %+v", result.VirtualMachineStates)
+	if result.VirtualMachines["vm-00001"].State != vm.StateRunning {
+		t.Fatalf("virtual machines = %+v", result.VirtualMachines)
 	}
 	if result.Compatibility == nil || *result.Compatibility != compatibility {
 		t.Fatalf("compatibility = %+v", result.Compatibility)
