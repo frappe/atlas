@@ -292,7 +292,11 @@ func (manager *Manager) saveAndStop(ctx context.Context, machine RuntimeMachine)
 	if err := manager.runtime.SaveAndStop(ctx, machine); err != nil {
 		return err
 	}
-	err := os.Remove(filepath.Join(manager.store.virtualMachineDirectory(machine.ID), "sleep-state.json"))
+	return manager.removeSleepRecord(machine.ID)
+}
+
+func (manager *Manager) removeSleepRecord(identifier string) error {
+	err := os.Remove(filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-state.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

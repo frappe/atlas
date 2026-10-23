@@ -373,7 +373,14 @@ func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *Obser
 	observed.SpecificationGeneration = desired.SpecificationGeneration
 	observed.RestartGeneration = desired.RestartGeneration
 	observed.completeOperation()
-	return manager.store.writeObserved(desired.ID, *observed)
+	if err := manager.store.writeObserved(desired.ID, *observed); err != nil {
+		return err
+	}
+	if sleepState == SleepStateAwake {
+		// An awake VM no longer needs its checkpoint, so Metal stops reporting it.
+		return manager.removeSleepRecord(desired.ID)
+	}
+	return nil
 }
 
 // inspect reads runtime state and stores StateUnknown on failure.

@@ -59,8 +59,9 @@ func TestBlockedSleepUploadsDoNotBlockStopOrReplaceItsResult(t *testing.T) {
 			release <- struct{}{}
 			select {
 			case err := <-finished:
-				if !errors.Is(err, uploadError) {
-					t.Fatalf("upload failure was hidden: %v", err)
+				// The stop discarded the checkpoint, so the late result has nothing to report.
+				if err != nil {
+					t.Fatalf("a discarded upload reported %v", err)
 				}
 			case <-time.After(time.Second):
 				t.Fatal("upload did not finish")

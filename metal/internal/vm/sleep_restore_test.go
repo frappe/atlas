@@ -160,3 +160,14 @@ func TestANewSaveOfAPausedGuestReplacesTheRemoteCheckpoint(t *testing.T) {
 		t.Fatalf("the guest resumed the older remote checkpoint: runtime=%+v downloads=%v", runtime, snapshots.downloads)
 	}
 }
+
+func TestAWakeForgetsTheCheckpoint(t *testing.T) {
+	manager, _, _, _ := sleepRestoreManager(t, SleepStateComa)
+	if err := wakeTestSleep(t.Context(), manager); err != nil {
+		t.Fatal(err)
+	}
+	information, err := manager.Information(t.Context(), "vm-1")
+	if err != nil || information.SleepState != SleepStateAwake || information.SleepSnapshot != nil {
+		t.Fatalf("an awake VM still reports its checkpoint: %+v, %v", information, err)
+	}
+}
