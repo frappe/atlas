@@ -103,6 +103,11 @@ class VirtualMachine(Document):
 		if not getattr(self.flags, "created_by_virtual_machine_api", False):
 			frappe.throw(_("Create Virtual Machines from the Virtual Machine list."))
 
+	def before_validate(self) -> None:
+		"""Keep cleanup references under the sleep object owner's control."""
+		previous = self.get_doc_before_save()
+		self.sleep_snapshot_objects = previous.sleep_snapshot_objects if previous else None
+
 	def validate(self) -> None:
 		"""A privileged VM must use tenant 0. Tenant 0 alone is not privileged.
 
