@@ -10,6 +10,8 @@ from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.object_storage import ObjectStorageError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine, timestamp_field
+from atlas.vm.core.multipart_upload import MultipartUpload, bytes_to_mib
+from atlas.vm.core.sleep_snapshot_objects import SleepSnapshotObjects
 from atlas.vm.core.vm_service import VirtualMachineService
 
 if TYPE_CHECKING:
@@ -62,14 +64,25 @@ class VirtualMachineSleepService:
 		self, information: MetalVirtualMachine, client: MetalClient, force: bool = False
 	) -> None:
 		"""Refresh each artifact at its original key, also across host migrations."""
+		with SleepSnapshotObjects(self.virtual_machine).lock():
+			SleepSnapshotObjects(self.virtual_machine).remember(information)
+			self._refresh_urls(information, client, force)
+
+	def _refresh_urls(
+		self, information: MetalVirtualMachine, client: MetalClient, force: bool = False
+	) -> MetalVirtualMachine:
 		snapshot = information.observed.sleep_snapshot
 		if snapshot is None:
-			return
+			return information
 		machine = self.virtual_machine
 		cache = frappe.cache()
 		refresh_key = f"atlas:vm-sleep-urls:{machine.name}:{snapshot.id}"
-		if not force and cache.get_value(refresh_key, use_local_cache=False):
-			return
+		pending = any(
+			artifact is not None and artifact.pending is not None
+			for artifact in (snapshot.memory, snapshot.disk)
+		)
+		if not force and not pending and cache.get_value(refresh_key, use_local_cache=False):
+			return information
 		storage = frappe.get_cached_doc("Atlas Settings").get_object_storage_client()
 		prefix = f"sleep/{frappe.local.site}/{machine.server}/{machine.name}"
 		refresh = {}
@@ -78,8 +91,20 @@ class VirtualMachineSleepService:
 			if artifact is not None:
 				key = artifact.object_key or f"{prefix}/{name}"
 				refresh[name] = {"object_key": key, "download_url": storage.object_url(key)}
-		client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
+				if artifact.pending is not None:
+					if not artifact.upload_id:
+						raise ValueError("Pending sleep upload has no multipart ID")
+					MultipartUpload(storage).complete_upload(
+						key,
+						artifact.upload_id,
+						bytes_to_mib(artifact.pending.stored_size_bytes),
+						artifact.pending.parts,
+						size_bytes=artifact.pending.stored_size_bytes,
+					)
+					refresh[name]["completed_upload_id"] = artifact.upload_id
+		information = client.refresh_sleep_state(machine.name, {"snapshot_id": snapshot.id, **refresh})
 		cache.set_value(refresh_key, True, expires_in_sec=3600)
+		return information
 
 	@staticmethod
 	def artifacts_to_offload(
