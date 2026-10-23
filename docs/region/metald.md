@@ -76,6 +76,10 @@ The [Atlas to Metal contract](../interfaces/metal-contract.md) defines request, 
 
 Metal hides command output and secrets in public errors. Read host logs and the VM's observed phase when an accepted request does not finish. The [console guide](../compute/console.md) explains the browser's WebSocket path and the difference between serial and SSH sessions.
 
+## Restart after a failure
+
+systemd restarts `metal.service` 5 seconds after a failure, with no start limit, so `metald` recovers by itself when its cause goes away. VMs keep running during the restart.
+
 ## What shutdown stops
 
 Shutdown stops listeners and workers, cancels uploads and migration streams, and closes owned connections within a bounded wait. It closes console WebSockets with code `1012` so Atlas can reconnect. It does not stop VM units. Preserved console handles keep guests running.

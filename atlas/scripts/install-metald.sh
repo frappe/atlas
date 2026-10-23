@@ -311,12 +311,13 @@ Description=metal daemon
 Wants=network-online.target wg-quick@$wireguard_interface.service
 After=network-online.target wg-quick@$wireguard_interface.service
 RequiresMountsFor=$base_dir
+StartLimitIntervalSec=0
 
 [Service]
 ExecStartPre=/usr/local/lib/metal/network-setup
 ExecStart=/usr/bin/metald serve --config $config_file
 Restart=on-failure
-RestartSec=1
+RestartSec=5
 # Keep PTY masters across a metald restart or stop.
 NotifyAccess=main
 FileDescriptorStoreMax=1024
