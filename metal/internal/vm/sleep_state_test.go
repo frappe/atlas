@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,18 +24,19 @@ type sleepSnapshots struct {
 	downloads      []string
 	downloadError  error
 	diskPresent    bool
+	partCount      int
 }
 
-func (snapshots *sleepSnapshots) DownloadSleepMemory(_ context.Context, _, source string, _ SleepArtifact) error {
-	snapshots.downloads = append(snapshots.downloads, "memory:"+source)
+func (snapshots *sleepSnapshots) DownloadSleepMemory(_ context.Context, _ string, sources []string, _ SleepArtifact) error {
+	snapshots.downloads = append(snapshots.downloads, "memory:"+strings.Join(sources, ","))
 	return snapshots.downloadError
 }
 
-func (snapshots *sleepSnapshots) RestoreSleepDisk(_ context.Context, _, source string, _ SleepArtifact) error {
+func (snapshots *sleepSnapshots) RestoreSleepDisk(_ context.Context, _ string, sources []string, _ SleepArtifact) error {
 	if snapshots.diskPresent {
 		return nil
 	}
-	snapshots.downloads = append(snapshots.downloads, "disk:"+source)
+	snapshots.downloads = append(snapshots.downloads, "disk:"+strings.Join(sources, ","))
 	if snapshots.downloadError != nil {
 		return snapshots.downloadError
 	}
@@ -52,7 +55,7 @@ func (snapshots *sleepSnapshots) StageSleepDisk(ctx context.Context, _ SnapshotR
 	return snapshots.StageSleepMemory(ctx, directory, directory)
 }
 
-func (snapshots *sleepSnapshots) UploadSleepMemory(_ context.Context, _, _ string, progress *SleepUploadProgress) (SleepArtifact, error) {
+func (snapshots *sleepSnapshots) UploadSleepMemory(_ context.Context, _ string, _ SleepArtifactTarget, progress *SleepUploadProgress) (SleepArtifact, error) {
 	snapshots.uploads++
 	if snapshots.duringProgress != nil {
 		snapshots.duringProgress(progress)
@@ -60,11 +63,11 @@ func (snapshots *sleepSnapshots) UploadSleepMemory(_ context.Context, _, _ strin
 	if snapshots.duringUpload != nil {
 		snapshots.duringUpload()
 	}
-	return SleepArtifact{SizeBytes: 512, StoredSizeBytes: 128, SHA256: strings.Repeat("a", 64)}, snapshots.uploadError
+	return SleepArtifact{SizeBytes: 512, StoredSizeBytes: 128, SHA256: strings.Repeat("a", 64), PartCount: snapshots.partCount}, snapshots.uploadError
 }
 
-func (snapshots *sleepSnapshots) UploadSleepDisk(ctx context.Context, identifier, url string, progress *SleepUploadProgress) (SleepArtifact, error) {
-	return snapshots.UploadSleepMemory(ctx, identifier, url, progress)
+func (snapshots *sleepSnapshots) UploadSleepDisk(ctx context.Context, identifier string, target SleepArtifactTarget, progress *SleepUploadProgress) (SleepArtifact, error) {
+	return snapshots.UploadSleepMemory(ctx, identifier, target, progress)
 }
 
 func sleepyManager(t *testing.T) (*Manager, *fakeRuntime, *fakeStorage, *sleepSnapshots) {
@@ -368,6 +371,42 @@ func TestSleepURLRefreshPersistsWithoutTransferAfterRestart(t *testing.T) {
 	}
 	if snapshots.uploads != 2 || runtime.restores != 0 || runtime.starts != 0 {
 		t.Fatal("URL refresh or restart started another transfer or woke the VM")
+	}
+}
+
+func sleepParts(count int, signature string) *SleepArtifactTarget {
+	target := &SleepArtifactTarget{PartSizeBytes: minimumSleepPartSizeBytes}
+	for index := range count {
+		url := fmt.Sprintf("https://objects.example/memory.%d?", index+1)
+		target.Parts = append(target.Parts, SleepArtifactPart{UploadURL: url + "put=" + signature, DownloadURL: url + "get=" + signature})
+	}
+	return target
+}
+
+func TestSleepPartsRefreshOnlyTheUsedParts(t *testing.T) {
+	manager, _, _, snapshots := sleepyManager(t)
+	snapshots.partCount = 2
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepParts(3, "first")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.readSleepRecord("vm-1")
+	if err != nil || len(record.Memory.Parts) != 2 {
+		t.Fatalf("stored parts = %+v, %v; want the 2 used parts", record, err)
+	}
+
+	refresh := sleepParts(3, "fresh").withoutUploadURLs()
+	if err := manager.RefreshSleepState(t.Context(), "vm-1", SleepStateRequest{SnapshotID: record.ID, Memory: &refresh}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("refresh of unused parts = %v", err)
+	}
+	refresh.Parts = refresh.Parts[:2]
+	if err := manager.RefreshSleepState(t.Context(), "vm-1", SleepStateRequest{SnapshotID: record.ID, Memory: &refresh}); err != nil {
+		t.Fatal(err)
+	}
+	if record, err = manager.readSleepRecord("vm-1"); err != nil || !slices.Equal(record.Memory.DownloadURLs(), refresh.DownloadURLs()) {
+		t.Fatalf("refreshed parts = %+v, %v", record, err)
 	}
 }
 

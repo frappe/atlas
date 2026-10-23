@@ -87,6 +87,20 @@ After each successful upload, Metal removes the matching local artifact to free 
 }
 ```
 
+An object store limits one PUT to 5 GiB. For a larger artifact, send `part_size_bytes` and a `parts` list instead of the two URLs. Each part has its own `upload_url` and `download_url`. Metal compresses the artifact into consecutive parts of that size as it reads, so it never holds a full compressed copy on the host. Sign enough parts for the uncompressed size. Metal uses only the parts it needs, reports their number in `artifact.part_count`, and forgets the rest.
+
+```json
+{
+  "disk": {
+    "part_size_bytes": 536870912,
+    "parts": [
+      {"upload_url": "https://objects.example/sleep/checkpoint/disk.1?signature=...", "download_url": "https://objects.example/sleep/checkpoint/disk.1?signature=..."},
+      {"upload_url": "https://objects.example/sleep/checkpoint/disk.2?signature=...", "download_url": "https://objects.example/sleep/checkpoint/disk.2?signature=..."}
+    ]
+  }
+}
+```
+
 Each upload URL must accept a complete object with HTTP PUT. Memory is a zstd-compressed tar archive of `state`, `memory`, and `metadata.json`. Disk uses the zstd-compressed raw image format. Metal records each artifact's SHA-256 digest and size. The digest covers the uncompressed content, including the tar headers for memory.
 
 The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again.
@@ -104,7 +118,7 @@ Atlas can store refreshed GET URLs with `PATCH /v1/vms/{id}/sleep-state`:
 }
 ```
 
-An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint and keep each URL's scheme, host, and object path. It cannot supply an upload URL. This request stores URLs only. It does not download artifacts or wake the VM.
+An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint and keep each URL's scheme, host, and object path. A split artifact needs one `download_url` for each of its `part_count` parts, in order. It cannot supply an upload URL. This request stores URLs only. It does not download artifacts or wake the VM.
 
 Artifact status includes `object_key` when stored. Set it with the optional `object_key` field in an upload or URL refresh request. A nonempty key cannot change within a checkpoint. Atlas fills missing keys before migration. Older hosts ignore this optional request field.
 

@@ -190,7 +190,7 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		delete(manager.sleepUploads, record.ID)
 		manager.sleepUploadsMutex.Unlock()
 	}()
-	destination := target.UploadURL
+	destination := target.SleepArtifactTarget
 	unlock()
 
 	// The upload reads only staging, so wake does not wait for its network transfer.
@@ -225,7 +225,12 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })
 	}
-	current.target(memory).Artifact = &artifact
+	stored := current.target(memory)
+	stored.Artifact = &artifact
+	if artifact.PartCount > 0 {
+		// Only the used parts stay, so a URL refresh signs exactly these objects.
+		stored.Parts = stored.Parts[:artifact.PartCount]
+	}
 	if err := manager.writeSleepRecord(identifier, current); err != nil {
 		return err
 	}

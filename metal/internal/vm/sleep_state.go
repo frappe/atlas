@@ -13,9 +13,25 @@ import (
 	"github.com/frappe/atlas/metal/internal/platform"
 )
 
-// SleepArtifactTarget supplies object storage access for one sleep artifact.
+// Part sizes follow the object storage limits for one upload.
+const (
+	minimumSleepPartSizeBytes = 5 << 20
+	maximumSleepPartSizeBytes = 5 << 30
+	maximumSleepParts         = 1000
+)
+
+// SleepArtifactTarget supplies object storage access for one sleep artifact:
+// either one object, or Parts of PartSizeBytes for an artifact larger than one upload.
 type SleepArtifactTarget struct {
-	ObjectKey   string `json:"object_key,omitempty"`
+	ObjectKey     string              `json:"object_key,omitempty"`
+	UploadURL     string              `json:"upload_url,omitempty"`
+	DownloadURL   string              `json:"download_url,omitempty"`
+	PartSizeBytes int64               `json:"part_size_bytes,omitempty"`
+	Parts         []SleepArtifactPart `json:"parts,omitempty"`
+}
+
+// SleepArtifactPart signs one consecutive object of an artifact.
+type SleepArtifactPart struct {
 	UploadURL   string `json:"upload_url,omitempty"`
 	DownloadURL string `json:"download_url"`
 }
@@ -70,18 +86,104 @@ func (request SleepStateRequest) Validate(refresh bool) error {
 		if target == nil {
 			continue
 		}
-		if !validSleepURL(target.DownloadURL) {
-			return fmt.Errorf("download_url must be an absolute HTTP or HTTPS URL without credentials or a fragment")
-		}
-		if refresh {
-			if target.UploadURL != "" {
-				return fmt.Errorf("a URL refresh cannot supply upload_url")
-			}
-		} else if !validSleepURL(target.UploadURL) {
-			return fmt.Errorf("upload_url must be an absolute HTTP or HTTPS URL without credentials or a fragment")
+		if err := target.validate(refresh); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (target SleepArtifactTarget) validate(refresh bool) error {
+	if len(target.Parts) == 0 {
+		return validateSleepURLs(target.UploadURL, target.DownloadURL, refresh)
+	}
+	if target.UploadURL != "" || target.DownloadURL != "" {
+		return fmt.Errorf("parts replace upload_url and download_url")
+	}
+	if len(target.Parts) > maximumSleepParts {
+		return fmt.Errorf("an artifact can have at most %d parts", maximumSleepParts)
+	}
+	if !refresh && (target.PartSizeBytes < minimumSleepPartSizeBytes || target.PartSizeBytes > maximumSleepPartSizeBytes) {
+		return fmt.Errorf("part_size_bytes must be from 5 MiB to 5 GiB")
+	}
+	for _, part := range target.Parts {
+		if err := validateSleepURLs(part.UploadURL, part.DownloadURL, refresh); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSleepURLs(uploadURL, downloadURL string, refresh bool) error {
+	if !validSleepURL(downloadURL) {
+		return fmt.Errorf("download_url must be an absolute HTTP or HTTPS URL without credentials or a fragment")
+	}
+	if refresh {
+		if uploadURL != "" {
+			return fmt.Errorf("a URL refresh cannot supply upload_url")
+		}
+	} else if !validSleepURL(uploadURL) {
+		return fmt.Errorf("upload_url must be an absolute HTTP or HTTPS URL without credentials or a fragment")
+	}
+	return nil
+}
+
+// sameObjects reports whether target signs the objects already stored. Signatures
+// can rotate; a checkpoint cannot change object identity.
+func (stored SleepArtifactTarget) sameObjects(target SleepArtifactTarget, refresh bool) bool {
+	if len(stored.Parts) != len(target.Parts) || (!refresh && stored.PartSizeBytes != target.PartSizeBytes) {
+		return false
+	}
+	if len(stored.Parts) == 0 {
+		return sameSleepObject(stored.DownloadURL, target.DownloadURL) && (refresh || sameSleepObject(stored.UploadURL, target.UploadURL))
+	}
+	for index, part := range stored.Parts {
+		if !sameSleepObject(part.DownloadURL, target.Parts[index].DownloadURL) ||
+			(!refresh && !sameSleepObject(part.UploadURL, target.Parts[index].UploadURL)) {
+			return false
+		}
+	}
+	return true
+}
+
+// replaceURLs stores new signatures for the same objects.
+func (stored *SleepArtifactTarget) replaceURLs(target SleepArtifactTarget, refresh bool) {
+	stored.DownloadURL = target.DownloadURL
+	if !refresh {
+		stored.UploadURL = target.UploadURL
+	}
+	for index := range stored.Parts {
+		stored.Parts[index].DownloadURL = target.Parts[index].DownloadURL
+		if !refresh {
+			stored.Parts[index].UploadURL = target.Parts[index].UploadURL
+		}
+	}
+}
+
+// DownloadURLs returns the URLs that read the artifact, in order.
+func (target SleepArtifactTarget) DownloadURLs() []string {
+	if len(target.Parts) == 0 {
+		return []string{target.DownloadURL}
+	}
+	urls := make([]string, len(target.Parts))
+	for index, part := range target.Parts {
+		urls[index] = part.DownloadURL
+	}
+	return urls
+}
+
+// withoutUploadURLs returns a copy that can only read the artifact.
+func (target SleepArtifactTarget) withoutUploadURLs() SleepArtifactTarget {
+	target.UploadURL = ""
+	parts := make([]SleepArtifactPart, len(target.Parts))
+	for index, part := range target.Parts {
+		parts[index] = SleepArtifactPart{DownloadURL: part.DownloadURL}
+	}
+	if len(parts) == 0 {
+		parts = nil
+	}
+	target.Parts = parts
+	return target
 }
 
 func validSleepURL(value string) bool {
@@ -159,20 +261,15 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			*pair.stored = &sleepArtifactRecord{SleepArtifactTarget: *pair.target}
 			continue
 		}
-		// Signatures can rotate; a checkpoint cannot change object identity.
-		if !sameSleepObject((*pair.stored).DownloadURL, pair.target.DownloadURL) ||
-			(!refresh && !sameSleepObject((*pair.stored).UploadURL, pair.target.UploadURL)) {
+		if !(*pair.stored).sameObjects(*pair.target, refresh) {
 			return ErrConflict
 		}
-		(*pair.stored).DownloadURL = pair.target.DownloadURL
+		(*pair.stored).replaceURLs(*pair.target, refresh)
 		if pair.target.ObjectKey != "" {
 			if (*pair.stored).ObjectKey != "" && (*pair.stored).ObjectKey != pair.target.ObjectKey {
 				return ErrConflict
 			}
 			(*pair.stored).ObjectKey = pair.target.ObjectKey
-		}
-		if !refresh {
-			(*pair.stored).UploadURL = pair.target.UploadURL
 		}
 	}
 	return manager.writeSleepRecord(identifier, record)
@@ -219,7 +316,8 @@ func (artifact sleepArtifactRecord) validateContent() error {
 		return nil
 	}
 	digest, err := hex.DecodeString(artifact.Artifact.SHA256)
-	if err != nil || len(digest) != 32 || artifact.Artifact.SizeBytes <= 0 || artifact.Artifact.StoredSizeBytes <= 0 {
+	if err != nil || len(digest) != 32 || artifact.Artifact.SizeBytes <= 0 || artifact.Artifact.StoredSizeBytes <= 0 ||
+		artifact.Artifact.PartCount != len(artifact.Parts) {
 		return fmt.Errorf("invalid sleep artifact content")
 	}
 	return nil
@@ -310,7 +408,7 @@ func (manager *Manager) restoreSleepArtifacts(ctx context.Context, desired Desir
 		return err
 	}
 	defer os.RemoveAll(directory)
-	if err := manager.snapshots.DownloadSleepMemory(ctx, directory, record.Memory.DownloadURL, *record.Memory.Artifact); err != nil {
+	if err := manager.snapshots.DownloadSleepMemory(ctx, directory, record.Memory.DownloadURLs(), *record.Memory.Artifact); err != nil {
 		return fmt.Errorf("restore sleep memory: %w", err)
 	}
 	machine.SavedStateSourceUserID = record.SourceUserID
@@ -321,7 +419,7 @@ func (manager *Manager) restoreSleepDisk(ctx context.Context, identifier string,
 	if record == nil || record.Disk == nil || record.Disk.Artifact == nil {
 		return fmt.Errorf("sleep disk checkpoint is missing")
 	}
-	if err := manager.snapshots.RestoreSleepDisk(ctx, identifier, record.Disk.DownloadURL, *record.Disk.Artifact); err != nil {
+	if err := manager.snapshots.RestoreSleepDisk(ctx, identifier, record.Disk.DownloadURLs(), *record.Disk.Artifact); err != nil {
 		return fmt.Errorf("restore sleep disk: %w", err)
 	}
 	return nil

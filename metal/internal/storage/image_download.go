@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -48,15 +47,26 @@ type downloadDestination interface {
 // download fetches one artifact into destination. Retries use exponential backoff,
 // and the URL is redacted in logs because it carries a signature.
 func download(ctx context.Context, client *http.Client, source, expectedDigest string, destination downloadDestination, loggers ...*slog.Logger) error {
+	return downloadParts(ctx, client, []string{source}, expectedDigest, destination, loggers...)
+}
+
+// downloadParts fetches one artifact stored as consecutive objects. An object
+// store limits the size of one upload, so a large artifact has several parts.
+func downloadParts(ctx context.Context, client *http.Client, sources []string, expectedDigest string, destination downloadDestination, loggers ...*slog.Logger) error {
 	logger := slog.Default()
 	if len(loggers) > 0 && loggers[0] != nil {
 		logger = loggers[0]
 	}
-	if _, err := parseImageURL(source); err != nil {
-		return err
+	if len(sources) == 0 {
+		return fmt.Errorf("no artifact URL")
+	}
+	for _, source := range sources {
+		if _, err := parseImageURL(source); err != nil {
+			return err
+		}
 	}
 
-	redactedSource := redactURL(source)
+	redactedSource := redactURL(sources[0])
 
 	var lastError error
 	for attempt := 1; attempt <= downloadAttempts; attempt++ {
@@ -69,7 +79,7 @@ func download(ctx context.Context, client *http.Client, source, expectedDigest s
 			case <-time.After(delay):
 			}
 		}
-		err := downloadOnce(ctx, client, source, expectedDigest, destination)
+		err := downloadOnce(ctx, client, sources, expectedDigest, destination)
 		if err == nil {
 			return nil
 		}
@@ -83,30 +93,18 @@ func download(ctx context.Context, client *http.Client, source, expectedDigest s
 }
 
 // downloadOnce makes one attempt and verifies the digest as it writes.
-func downloadOnce(ctx context.Context, client *http.Client, source, expectedDigest string, destination downloadDestination) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+func downloadOnce(ctx context.Context, client *http.Client, sources []string, expectedDigest string, destination downloadDestination) error {
+	parts := &partsBody{ctx: ctx, client: client, sources: sources}
+	defer parts.close()
+	contentLength, err := parts.openNext()
 	if err != nil {
-		return fmt.Errorf("create request")
+		return err
 	}
-	result, err := client.Do(request)
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("%w: request failed", errRetryableDownload)
-	}
-	defer result.Body.Close()
-	if result.StatusCode != http.StatusOK {
-		statusError := fmt.Errorf("HTTP status %d", result.StatusCode)
-		if result.StatusCode == http.StatusRequestTimeout || result.StatusCode == http.StatusTooManyRequests || result.StatusCode >= 500 {
-			return fmt.Errorf("%w: %v", errRetryableDownload, statusError)
-		}
-		return statusError
+	if len(sources) > 1 {
+		contentLength = -1
 	}
 
-	// Count wire bytes. Compression makes them differ from bytes on disk.
-	transferred := &countingReader{reader: result.Body, counter: new(atomic.Int64)}
-	body, sizeBytes, closeBody, err := decompressedBody(transferred, result.ContentLength)
+	body, sizeBytes, closeBody, err := decompressedBody(parts, contentLength)
 	if err != nil {
 		return err
 	}
@@ -122,9 +120,6 @@ func downloadOnce(ctx context.Context, client *http.Client, source, expectedDige
 	if err != nil {
 		return err
 	}
-	if result.ContentLength >= 0 && transferred.counter.Load() != result.ContentLength {
-		return fmt.Errorf("truncated response")
-	}
 	if reader.readBytes != sizeBytes {
 		return fmt.Errorf("%w: decoded %d of %d artifact bytes", ErrImageIntegrity, reader.readBytes, sizeBytes)
 	}
@@ -132,6 +127,76 @@ func downloadOnce(ctx context.Context, client *http.Client, source, expectedDige
 		return fmt.Errorf("%w: SHA-256 digest mismatch", ErrImageIntegrity)
 	}
 	return destination.commit()
+}
+
+// partsBody reads the objects of one artifact in order as one stream.
+type partsBody struct {
+	ctx     context.Context
+	client  *http.Client
+	sources []string
+	current io.ReadCloser
+	// remaining counts the bytes the current object still owes, or is -1 when unknown.
+	remaining int64
+}
+
+func (body *partsBody) openNext() (int64, error) {
+	request, err := http.NewRequestWithContext(body.ctx, http.MethodGet, body.sources[0], nil)
+	if err != nil {
+		return 0, fmt.Errorf("create request")
+	}
+	result, err := body.client.Do(request)
+	if err != nil {
+		if body.ctx.Err() != nil {
+			return 0, body.ctx.Err()
+		}
+		return 0, fmt.Errorf("%w: request failed", errRetryableDownload)
+	}
+	if result.StatusCode != http.StatusOK {
+		result.Body.Close()
+		statusError := fmt.Errorf("HTTP status %d", result.StatusCode)
+		if result.StatusCode == http.StatusRequestTimeout || result.StatusCode == http.StatusTooManyRequests || result.StatusCode >= 500 {
+			return 0, fmt.Errorf("%w: %v", errRetryableDownload, statusError)
+		}
+		return 0, statusError
+	}
+	body.sources = body.sources[1:]
+	body.current = result.Body
+	body.remaining = result.ContentLength
+	return result.ContentLength, nil
+}
+
+func (body *partsBody) Read(buffer []byte) (int, error) {
+	for {
+		if body.current == nil {
+			if len(body.sources) == 0 {
+				return 0, io.EOF
+			}
+			if _, err := body.openNext(); err != nil {
+				return 0, err
+			}
+		}
+		read, err := body.current.Read(buffer)
+		if body.remaining >= 0 {
+			body.remaining -= int64(read)
+		}
+		if !errors.Is(err, io.EOF) {
+			return read, err
+		}
+		if body.remaining > 0 {
+			return read, fmt.Errorf("truncated response")
+		}
+		body.close()
+		if read > 0 {
+			return read, nil
+		}
+	}
+}
+
+func (body *partsBody) close() {
+	if body.current != nil {
+		body.current.Close()
+		body.current = nil
+	}
 }
 
 // copyInFullBuffers writes whole downloadBufferSize chunks, so a ZFS volume gets

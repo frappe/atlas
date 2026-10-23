@@ -67,7 +67,7 @@ type sleepAPISnapshots struct {
 	diskRestores int
 }
 
-func (snapshots *sleepAPISnapshots) RestoreSleepDisk(context.Context, string, string, vm.SleepArtifact) error {
+func (snapshots *sleepAPISnapshots) RestoreSleepDisk(context.Context, string, []string, vm.SleepArtifact) error {
 	snapshots.diskRestores++
 	return nil
 }
