@@ -30,13 +30,12 @@ class SleepSnapshotObjects:
 		return cache.lock(cache.make_key(f"vm-sleep:{self.machine.name}"), timeout=600, blocking_timeout=10)
 
 	def load(self) -> list[SleepSnapshotObject]:
-		"""Read the current references instead of saving a stale VM document."""
-		return (
-			frappe.parse_json(
-				frappe.db.get_value("Virtual Machine", self.machine.name, "sleep_snapshot_objects")
-			)
-			or []
+		"""Read current references and release the row before any remote call."""
+		value = frappe.db.get_value(
+			"Virtual Machine", self.machine.name, "sleep_snapshot_objects", for_update=True
 		)
+		frappe.db.commit()  # nosemgrep
+		return frappe.parse_json(value) or []
 
 	def save(self, objects: list[SleepSnapshotObject]) -> None:
 		"""Commit references before a remote operation can consume them."""
@@ -78,6 +77,36 @@ class SleepSnapshotObjects:
 				changed = True
 		if changed:
 			self.save(objects)
+
+	def prepare_upload(self, artifact: str, checkpoint_id: str, object_key: str = "") -> SleepSnapshotObject:
+		"""Retain a repeatable upload plan before sending it to Metal."""
+		objects = self.load()
+		stored = next(
+			(
+				item
+				for item in objects
+				if item["artifact"] == artifact and item["checkpoint_id"] == checkpoint_id
+			),
+			None,
+		)
+		if stored is None:
+			key = (
+				object_key
+				or f"sleep/{frappe.local.site}/{self.machine.name}/{frappe.generate_hash(length=20)}/{artifact}"
+			)
+			stored = {
+				"object_key": key,
+				"upload_id": "",
+				"checkpoint_id": checkpoint_id,
+				"artifact": artifact,
+			}
+			objects.append(stored)
+			self.save(objects)
+		if not stored["upload_id"]:
+			storage = frappe.get_cached_doc("Atlas Settings").get_object_storage_client()
+			stored["upload_id"] = storage.create_multipart_upload(stored["object_key"])
+			self.save(objects)
+		return stored
 
 	def delete(self, *, keep_checkpoint: str | None = None) -> None:
 		"""Abort retired uploads before deleting objects, retaining failures for retry."""
