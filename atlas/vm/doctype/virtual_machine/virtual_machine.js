@@ -37,6 +37,12 @@ frappe.ui.form.on("Virtual Machine", {
 			[__("Resize Disk"), () => showResizeDiskDialog(frm), true, ACTIONS],
 			[__("Edit Disk Limits"), () => showEditDiskLimitsDialog(frm), true, ACTIONS],
 			[__("Resize VM"), () => showResizeDialog(frm), true, ACTIONS],
+			[
+				__("Edit Sleep Configuration"),
+				() => showEditSleepConfigurationDialog(frm),
+				true,
+				ACTIONS,
+			],
 			[__("Edit SSH Keys"), () => showEditSSHKeysDialog(frm), true, ACTIONS],
 			[__("Edit Metadata"), () => showEditMetadataDialog(frm), true, ACTIONS],
 			[__("Edit Network Throughput"), () => showEditThroughputDialog(frm), true, ACTIONS],
@@ -452,6 +458,33 @@ function showResizeDialog(frm) {
 				default: frm.doc.disk_mib,
 				description: __("The disk can only grow."),
 			},
+		],
+		(values) =>
+			frm
+				.call({
+					method: "resize",
+					doc: frm.doc,
+					args: getChangedValues(frm, values),
+					freeze: true,
+					freeze_message: __("Resizing..."),
+				})
+				.then((response) => {
+					if (response.message) {
+						frappe.show_alert({
+							message: __("The host has no room. Moving the VM to another host."),
+							indicator: "blue",
+						});
+					}
+					frm.reload_doc();
+				}),
+		__("Resize VM"),
+		__("Resize")
+	);
+}
+
+function showEditSleepConfigurationDialog(frm) {
+	frappe.prompt(
+		[
 			{
 				fieldname: "sleep_after_idle_seconds",
 				fieldtype: "Int",
@@ -474,31 +507,24 @@ function showResizeDialog(frm) {
 				description: __("Must exceed Deep Sleep After Idle. 0 disables coma."),
 			},
 		],
-		(values) => {
-			const changes = {};
-			Object.entries(values).forEach(([field, value]) => {
-				if (value !== frm.doc[field]) changes[field] = value;
-			});
-			return frm
+		(values) =>
+			frm
 				.call({
 					method: "resize",
 					doc: frm.doc,
-					args: changes,
+					args: getChangedValues(frm, values),
 					freeze: true,
-					freeze_message: __("Resizing..."),
+					freeze_message: __("Saving..."),
 				})
-				.then((response) => {
-					if (response.message) {
-						frappe.show_alert({
-							message: __("The host has no room. Moving the VM to another host."),
-							indicator: "blue",
-						});
-					}
-					frm.reload_doc();
-				});
-		},
-		__("Resize VM"),
-		__("Resize")
+				.then(() => frm.reload_doc()),
+		__("Edit Sleep Configuration"),
+		__("Save")
+	);
+}
+
+function getChangedValues(frm, values) {
+	return Object.fromEntries(
+		Object.entries(values).filter(([field, value]) => value !== frm.doc[field])
 	);
 }
 
