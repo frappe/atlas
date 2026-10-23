@@ -275,6 +275,7 @@ func (manager *Manager) restoreSavedState(
 		if err := restore(ctx, machine); err != nil {
 			return manager.recoverSleepRestore(ctx, machine, observed, resultState, err)
 		}
+		manager.clearRestoreFailures(desired.ID)
 		return nil
 	}); err != nil {
 		if resultState == StateRunning && manager.traffic != nil && desired.Specification.SleepAfterIdleSeconds > 0 {
@@ -289,8 +290,23 @@ func (manager *Manager) restoreSavedState(
 	return manager.writeAppliedState(desired, observed, resultState, SleepStateAwake)
 }
 
+// maximumRestoreAttempts is how many times a wake tries the saved state before it cold boots the disk.
+const maximumRestoreAttempts = 3
+
 func (manager *Manager) recoverSleepRestore(ctx context.Context, machine RuntimeMachine, observed *ObservedRecord, resultState State, cause error) error {
 	if ctx.Err() != nil || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return cause
+	}
+	status, err := manager.runtime.Inspect(ctx, machine)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	if status.State == resultState {
+		manager.clearRestoreFailures(machine.ID)
+		return nil
+	}
+	// A transient runtime error must not discard guest memory that a retry could restore.
+	if manager.countRestoreFailure(machine.ID) < maximumRestoreAttempts {
 		return cause
 	}
 	hasDisk, err := manager.storage.HasDisk(ctx, machine.ID)
@@ -306,8 +322,24 @@ func (manager *Manager) recoverSleepRestore(ctx context.Context, machine Runtime
 	if err := manager.store.writeObserved(machine.ID, *observed); err != nil {
 		return errors.Join(cause, err)
 	}
-	_, err = manager.recoverFailedRestore(ctx, resultState, machine, cause)
+	_, err = manager.coldRestartForState(ctx, resultState, machine, cause)
+	if err == nil {
+		manager.clearRestoreFailures(machine.ID)
+	}
 	return err
+}
+
+func (manager *Manager) countRestoreFailure(identifier string) int {
+	manager.restoreFailuresMutex.Lock()
+	defer manager.restoreFailuresMutex.Unlock()
+	manager.restoreFailures[identifier]++
+	return manager.restoreFailures[identifier]
+}
+
+func (manager *Manager) clearRestoreFailures(identifier string) {
+	manager.restoreFailuresMutex.Lock()
+	defer manager.restoreFailuresMutex.Unlock()
+	delete(manager.restoreFailures, identifier)
 }
 
 // reconcileHardStop stops the runtime and applies all stopped-state changes.

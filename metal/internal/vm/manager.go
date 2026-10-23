@@ -73,6 +73,10 @@ type Manager struct {
 	requests      map[string]notedRequest
 
 	availability availabilityTracker
+
+	// restoreFailures counts failed restores of each VM's saved state since the daemon started.
+	restoreFailuresMutex sync.Mutex
+	restoreFailures      map[string]int
 }
 
 // notedRequest is one API request and the desired generations it wrote.
@@ -112,6 +116,7 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		telemetry:            dependencies.Telemetry,
 		sleepUploads:         make(map[string]*sleepUpload),
 		requests:             make(map[string]notedRequest),
+		restoreFailures:      make(map[string]int),
 		availability:         newAvailabilityTracker(),
 		temporaryUserIDs:     make(map[uint32]bool),
 		temporaryIdentifiers: make(map[string]bool),

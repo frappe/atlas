@@ -120,7 +120,7 @@ Start returns `202` after it saves the wake request. Normal VM reconciliation re
 
 A download or artifact validation failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed wake and retries pending requests. If a GET URL expires, Atlas refreshes it with PATCH. PATCH stores URLs only. It does not create a wake request, but a pending wake uses the new URLs on retry.
 
-If runtime restore fails after artifact preparation, Metal checks whether the guest already reached the requested state. If not, it removes the failed runtime and saved memory, then cold-boots the existing disk. This keeps the disk but loses processes and unsaved memory. A comatose VM must recover its disk first.
+If runtime restore fails after artifact preparation, Metal checks whether the guest already reached the requested state. If not, it keeps the saved memory and tries again. After 3 failed attempts since metald started, it removes the failed runtime and saved memory, then cold-boots the existing disk. This keeps the disk but loses processes and unsaved memory. A comatose VM must recover its disk first.
 
 Cancellation and timeout errors retry without a cold boot. Metal logs the fallback and prevents later retries from loading the old remote memory. Cleanup and cold-boot failures report `observed.error`.
 
