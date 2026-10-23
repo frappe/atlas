@@ -444,6 +444,24 @@ func TestRequestFinishConflictsWithAbort(t *testing.T) {
 	}
 }
 
+func TestAbortConflictsAfterTheDestinationBooted(t *testing.T) {
+	migrationManager, machines, _ := newMigrationManager(t)
+	store := writeReadyDestination(t, machines, nil)
+
+	if err := migrationManager.AbortDestination(t.Context(), "mig-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("abort of a booted destination = %v, want ErrConflict", err)
+	}
+	if record, _ := store.readDestination("vm-1"); record.State != destinationReady {
+		t.Fatalf("state = %s, want ready", record.State)
+	}
+
+	// A paused memory restore has not run the guest, so it can still roll back.
+	writeReadyDestination(t, machines, func(r *destinationRecord) { r.HasMemorySnapshot = true })
+	if err := migrationManager.AbortDestination(t.Context(), "mig-1"); err != nil {
+		t.Fatalf("abort of a paused destination = %v", err)
+	}
+}
+
 func TestRunTransferAbortsBeforeStop(t *testing.T) {
 	migrationManager, machines, source := newMigrationManager(t)
 	transfer := migrationManager.disks.(*fakeMigrationStorage)

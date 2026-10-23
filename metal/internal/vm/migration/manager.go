@@ -363,6 +363,10 @@ func (m *Manager) requestAbort(ctx context.Context, virtualMachineID string) err
 	if record.State == destinationFinishing || record.State == destinationCompleted {
 		return vm.ErrConflict
 	}
+	// A cold-booted destination guest has written to its disk, and rollback would lose those writes.
+	if record.State == destinationReady && !record.usesMemorySnapshot() {
+		return vm.ErrConflict
+	}
 	if record.State == destinationRemovingRuntime || record.State == destinationRemovingStorage ||
 		record.State == destinationRestoringSource || record.State == destinationUnlockingSource {
 		return nil
