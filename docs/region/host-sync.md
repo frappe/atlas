@@ -50,7 +50,8 @@ The Atlas `Virtual Machine State` record remains a **cache**. Its `server` field
 | --- | --- |
 | Invalid or failed sync | Atlas writes no new capacity sample. It logs the first failure, then at most once an hour until the host syncs again. |
 | Compatibility probe or report fails | Capacity and VM-state sync continue. Compatibility facts are cleared; new memory snapshot migrations are blocked. Disk-only migrations can proceed. |
-| Sample older than 2 minutes | Placement excludes the host. |
+| Sample older than 2 minutes | Placement excludes the host and does not queue a new host. |
+| A host runs a VM that has no Atlas record | Atlas logs the VM IDs in Error Log, at most once an hour for each host. |
 | Policy partly applied | The next full sync can apply it again. |
 | Atlas unavailable | Metal continues VM, image, and migration reconciliation. |
 | Metal restarts | It reads its saved records. Guests survive only if systemd preserved their console descriptors. |

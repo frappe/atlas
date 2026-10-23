@@ -37,6 +37,7 @@ class TestVirtualMachineState(UnitTestCase):
 			patch.object(vm_state.frappe, "get_doc", side_effect=make_document),
 			patch.object(vm_state.frappe, "new_doc", side_effect=make_document),
 			patch.object(vm_state.frappe, "log_error"),
+			patch.object(vm_state, "report_unknown_virtual_machines"),
 			patch.object(vm_state.frappe, "qb", MagicMock()) as query_builder,
 			patch.object(vm_state.frappe.db, "commit") as commit,
 		):
@@ -94,10 +95,26 @@ class TestVirtualMachineState(UnitTestCase):
 	def test_a_host_without_virtual_machines_reads_nothing_more(self) -> None:
 		get_all = MagicMock(side_effect=[[]])
 
-		with patch.object(vm_state.frappe, "get_all", get_all):
+		with (
+			patch.object(vm_state.frappe, "get_all", get_all),
+			patch.object(vm_state, "report_unknown_virtual_machines"),
+		):
 			vm_state.store_reported_states("metal-1", {})
 
 		get_all.assert_called_once()
+
+	def test_a_vm_without_an_atlas_record_is_logged_once(self) -> None:
+		frappe.cache.delete_value("atlas:unknown-virtual-machines:metal-1")
+		with (
+			patch.object(vm_state.frappe, "get_all", return_value=["vm-00001"]),
+			patch.object(vm_state.frappe, "log_error") as log_error,
+		):
+			vm_state.report_unknown_virtual_machines("metal-1", ["vm-00001", "vm-00009"])
+			vm_state.report_unknown_virtual_machines("metal-1", ["vm-00001", "vm-00009"])
+
+		log_error.assert_called_once()
+		self.assertIn("vm-00009", log_error.call_args.args[0])
+		self.assertNotIn("vm-00001", log_error.call_args.args[0])
 
 	def test_an_invalid_response_is_rejected(self) -> None:
 		for reported in ([], {"vm-00001": "running"}, {"vm-00001": {"status": ""}}, {"vm-00001": {}}):

@@ -6,6 +6,7 @@ import frappe
 from frappe.utils import now_datetime
 
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
+UNKNOWN_REPORT_REPEAT_SECONDS = 3600
 
 
 def store_reported_states(server_name: str, reported: object) -> None:
@@ -15,6 +16,7 @@ def store_reported_states(server_name: str, reported: object) -> None:
 	state needs only its sync time, so all of them share one update.
 	"""
 	statuses = get_reported_statuses(reported)
+	report_unknown_virtual_machines(server_name, list(statuses))
 	names = frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name")
 	if not names:
 		return
@@ -60,6 +62,23 @@ def store_reported_states(server_name: str, reported: object) -> None:
 			state_table.name.isin(unchanged)
 		).run()
 		frappe.db.commit()  # nosemgrep
+
+
+def report_unknown_virtual_machines(server_name: str, reported_names: list[str]) -> None:
+	"""Log, once an hour, the VMs a host runs that have no Atlas record."""
+	if not reported_names:
+		return
+	known = set(frappe.get_all("Virtual Machine", filters={"name": ["in", reported_names]}, pluck="name"))
+	unknown = sorted(set(reported_names) - known)
+	key = f"atlas:unknown-virtual-machines:{server_name}"
+	if not unknown or frappe.cache.get_value(key):
+		return
+
+	frappe.cache.set_value(key, 1, expires_in_sec=UNKNOWN_REPORT_REPEAT_SECONDS)
+	frappe.log_error(
+		"Atlas has no Virtual Machine record for: " + ", ".join(unknown),
+		f"Server {server_name} runs unknown Virtual Machines",
+	)
 
 
 def get_reported_statuses(reported: object) -> dict[str, str]:
