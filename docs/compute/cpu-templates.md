@@ -54,7 +54,7 @@ Shared warm images and VM saved state include the selected template digest in th
 
 A common instruction baseline reduces differences between hosts. It does not guarantee memory snapshot migration between arbitrary CPU models. Intel-to-AMD and cross-architecture snapshot restores are unsupported. x86 hosts need compatible TSC frequencies or TSC scaling. ARM hosts need compatible CPU and interrupt-controller state. Use disk-only migration within one architecture when memory snapshot migration is unsupported.
 
-For each supported CPU, kernel, and Firecracker combination, use the [Firecracker CPU template helper](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/cpu_templates/cpu-template-helper.md) to dump and verify the guest configuration. Verification checks that the template is applied; it does not prove that a guest will boot or migrate correctly. Test guest boot and memory snapshot migration in both directions before adding hosts to a migration group.
+For each supported CPU, kernel, and Firecracker combination, use the [Firecracker CPU template helper](https://github.com/firecracker-microvm/firecracker/blob/v1.17.0/docs/cpu_templates/cpu-template-helper.md) to dump and verify the guest configuration. Verification checks that the template is applied; it does not prove that a guest will boot or migrate correctly. Test guest boot and memory snapshot migration in both directions before adding hosts to a migration group.
 
 ```sh
 cpu-template-helper template verify \
@@ -63,4 +63,4 @@ cpu-template-helper template verify \
 
 The built-in profiles have unit checks for selection, baseline preservation, and optional feature masks. The Intel x86 profile passed a real guest CPUID check on Intel hardware with Firecracker v1.10.1. Helper verification, snapshot resume, and AMD and ARM hardware validation are required before deployment.
 
-See [VM runtime](runtime.md#common-cpu-configuration), [migration engine](migration-engine.md#copy-the-disk), and [Firecracker snapshot compatibility](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/snapshotting/versioning.md#cpu-model).
+See [VM runtime](runtime.md#common-cpu-configuration), [migration engine](migration-engine.md#copy-the-disk), and [Firecracker snapshot compatibility](https://github.com/firecracker-microvm/firecracker/blob/v1.17.0/docs/snapshotting/versioning.md#cpu-model).
