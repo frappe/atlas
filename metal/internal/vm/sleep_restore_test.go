@@ -54,6 +54,19 @@ func TestSleepRestoreFailureColdBootsTheExistingDisk(t *testing.T) {
 	}
 }
 
+func TestNewPausedSaveReplacesRemoteCheckpointBeforeRestore(t *testing.T) {
+	manager, runtime, _, snapshots := sleepRestoreManager(t, SleepStateDeepSleeping)
+	runtime.state = StatePaused
+	runtime.hasSavedState = true
+	runtime.savedIdentity = "new-paused-checkpoint"
+	if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.state != StateRunning || runtime.restores != 1 || len(snapshots.downloads) != 0 {
+		t.Fatal("new local saved state did not replace the remote checkpoint")
+	}
+}
+
 func TestSleepRestoreKeepsAGuestThatResumedDespiteAnError(t *testing.T) {
 	manager, runtime, _, _ := sleepRestoreManager(t, SleepStateDeepSleeping)
 	runtime.restoreError = errors.New("saved state cleanup failed")
