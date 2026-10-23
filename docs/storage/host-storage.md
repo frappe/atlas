@@ -6,6 +6,8 @@ Metal stores VM disks in ZFS and keeps records and artifacts under `/var/lib/met
 
 Every VM disk is a copy-on-write clone of an image, so creating a disk is almost instant and costs no space until the VM writes.
 
+A writable VM disk accepts discard, so a guest trim such as `fstrim` frees blocks in the clone.
+
 ```mermaid
 flowchart LR
     Base["Base image @ready"] -->|clone| VM1["VM 1 disk"]
