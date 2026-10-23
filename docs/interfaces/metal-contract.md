@@ -84,5 +84,6 @@ Every error is `{"error": {"code", "message", "retryable", "request_id"}}`. `ret
 | `500` | `internal_error` | Metal failed and hides the host detail. |
 | `501` | `not_implemented` | The runtime does not support the operation. |
 | `503` | `unavailable` | Metal cannot serve the request now. Retry. |
+| `507` | `host_storage_full` | Metal cannot write its state because host storage is full. Retry after an operator frees space. |
 
 A transport failure after a write leaves the result unknown. Read the resource before you retry with different values.

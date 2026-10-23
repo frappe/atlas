@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -882,6 +883,7 @@ func TestPublicAPIErrorMapsUploadAndShutdownErrors(t *testing.T) {
 	}{
 		{name: "invalid upload", err: storage.ErrInvalidUpload, status: http.StatusBadRequest, code: "invalid_request"},
 		{name: "shutdown", err: storage.ErrShuttingDown, status: http.StatusServiceUnavailable, code: "unavailable"},
+		{name: "full host storage", err: fmt.Errorf("write record: %w", &os.PathError{Op: "write", Path: "config.json", Err: syscall.ENOSPC}), status: http.StatusInsufficientStorage, code: "host_storage_full"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			apiError := publicAPIError(testCase.err)
