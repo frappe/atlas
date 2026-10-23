@@ -19,7 +19,7 @@ class SleepSnapshotObject(TypedDict):
 
 
 class SleepSnapshotObjects:
-	"""Retain remote objects until their checkpoint is replaced or the VM is deleted."""
+	"""Retain remote objects until their checkpoint is no longer needed."""
 
 	def __init__(self, machine: VirtualMachine) -> None:
 		self.machine = machine
@@ -43,7 +43,7 @@ class SleepSnapshotObjects:
 			"Virtual Machine",
 			self.machine.name,
 			"sleep_snapshot_objects",
-			frappe.as_json(objects),
+			frappe.as_json(objects) if objects else None,
 			update_modified=False,
 		)
 		frappe.db.commit()  # nosemgrep

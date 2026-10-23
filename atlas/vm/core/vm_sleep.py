@@ -39,6 +39,8 @@ class VirtualMachineSleepService:
 		objects = SleepSnapshotObjects(machine)
 		objects.remember(information)
 		if information.observed.state != "stopped":
+			if information.observed.state in {"running", "paused"} and information.observed.sleep_snapshot is None:
+				objects.delete()
 			return
 		if information.observed.sleep_state not in {"sleeping", "deep-sleeping", "comatose"}:
 			return
@@ -152,7 +154,8 @@ def enqueue_sleep_state_reconciliation() -> None:
 	"""Queue one policy check and URL refresh for each sleepy VM."""
 	for name in frappe.get_all(
 		"Virtual Machine",
-		filters={"is_draft": 0, "is_terminating": 0, "sleep_after_idle_seconds": [">", 0]},
+		filters={"is_draft": 0, "is_terminating": 0},
+		or_filters={"sleep_after_idle_seconds": [">", 0], "sleep_snapshot_objects": ["is", "set"]},
 		pluck="name",
 	):
 		frappe.enqueue(
