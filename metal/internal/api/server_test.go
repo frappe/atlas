@@ -85,9 +85,9 @@ func (manager *fakeVirtualMachineManager) Information(_ context.Context, id stri
 	return virtualMachine.info, nil
 }
 
-func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Information, error) {
+func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Information, []string, error) {
 	if manager.listError != nil {
-		return nil, manager.listError
+		return nil, nil, manager.listError
 	}
 
 	virtualMachines := make([]vm.Information, 0, len(manager.virtualMachines))
@@ -95,7 +95,7 @@ func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Informatio
 		virtualMachines = append(virtualMachines, virtualMachine.info)
 	}
 
-	return virtualMachines, nil
+	return virtualMachines, nil, nil
 }
 
 func (manager *fakeVirtualMachineManager) SetPowerState(_ context.Context, id string, state vm.State) error {

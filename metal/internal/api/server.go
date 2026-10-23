@@ -53,7 +53,7 @@ type SerialBroker interface {
 type VirtualMachineManager interface {
 	Create(context.Context, string, vm.Specification) (vm.Information, error)
 	Information(context.Context, string) (vm.Information, error)
-	List(context.Context) ([]vm.Information, error)
+	List(context.Context) ([]vm.Information, []string, error)
 	SetPowerState(context.Context, string, vm.State) error
 	RequestRestart(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error

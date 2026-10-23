@@ -116,9 +116,6 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		temporaryUserIDs:     make(map[uint32]bool),
 		temporaryIdentifiers: make(map[string]bool),
 	}
-	if err := manager.store.validateAll(); err != nil {
-		return nil, fmt.Errorf("validate VM records: %w", err)
-	}
 	if err := manager.loadWireGuardGatewayRoutes(); err != nil {
 		return nil, fmt.Errorf("load WireGuard gateway routes: %w", err)
 	}
@@ -214,15 +211,17 @@ func (manager *Manager) Information(_ context.Context, identifier string) (Infor
 	return manager.information(identifier)
 }
 
-// List returns all valid virtual machine records. A directory without both
-// records is skipped, because a VM that is created or destroyed now must not
-// fail the whole list.
-func (manager *Manager) List(ctx context.Context) ([]Information, error) {
+// List returns all valid virtual machine records, and the identifiers whose
+// records cannot be read. A directory without both records is skipped, because
+// a VM that is created or destroyed now must not fail the whole list. An
+// unreadable record affects only its own VM.
+func (manager *Manager) List(ctx context.Context) ([]Information, []string, error) {
 	identifiers, err := manager.store.listIDs()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	information := make([]Information, 0, len(identifiers))
+	var invalid []string
 	for _, identifier := range identifiers {
 		// Hide incoming migration destinations from the VM list.
 		if manager.isDestinationReserved(identifier) {
@@ -235,11 +234,14 @@ func (manager *Manager) List(ctx context.Context) ([]Information, error) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			manager.logger.ErrorContext(ctx, "skipped unreadable virtual machine records",
+				"virtual_machine_id", identifier, "error", err)
+			invalid = append(invalid, identifier)
+			continue
 		}
 		information = append(information, current)
 	}
-	return information, nil
+	return information, invalid, nil
 }
 
 // KernelSHA256s returns the kernel of every VM record on this host. Unlike

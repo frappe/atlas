@@ -426,7 +426,7 @@ func newMigrationManager(t *testing.T) (*Manager, *fakeMigrationHost, *fakeSourc
 	return migrationManager, machines, source
 }
 
-func TestNewManagerRejectsACorruptRecord(t *testing.T) {
+func TestACorruptSourceRecordKeepsOnlyItsVirtualMachineLocked(t *testing.T) {
 	machines := newFakeMigrationHost(t)
 	store := newMigrationStore(machines.VirtualMachineRecordsDirectory())
 	migrationDirectory := store.migrationDirectory("vm-1")
@@ -437,8 +437,16 @@ func TestNewManagerRejectsACorruptRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, &fakeKernelStore{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil)); err == nil {
-		t.Fatal("manager started with a corrupt record")
+	manager, err := newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, &fakeKernelStore{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
+	if err != nil {
+		t.Fatalf("startup with a corrupt record = %v", err)
+	}
+	// The VM stays locked, because the record may describe a stopped source.
+	if !manager.IsSourceLocked("vm-1") {
+		t.Fatal("a corrupt source record released its VM")
+	}
+	if expired, err := manager.ExpiredSourceVirtualMachineIDs(t.Context()); err != nil || len(expired) != 0 {
+		t.Fatalf("expired sources = %v, %v", expired, err)
 	}
 	if !store.has(store.sourcePath("vm-1")) {
 		t.Fatal("manager removed the corrupt source record")

@@ -28,7 +28,7 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 - A rollback failure keeps both records, locks, and the source disk. The source ends an active stream before unlock or destruction. Two hosts must never own one disk.
 - A source lock expires only before the source stops. Its `expired` tombstone rejects the same migration ID. A `ready` destination does not expire.
 - A terminal or failed destination reserves no capacity. A new migration replaces an aborted record only after its VM, lock, and dataset records are gone. The migration reconciler removes such a clean aborted record after 7 days.
-- A record decode error stops daemon startup.
+- An unreadable record affects only its own VM: it stays locked or reserved, and a lookup by migration ID cannot report it absent.
 
 ## Extension points
 

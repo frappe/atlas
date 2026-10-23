@@ -77,9 +77,10 @@ func (m *Manager) ExpiredSourceVirtualMachineIDs(_ context.Context) ([]string, e
 		if !m.store.has(m.store.sourcePath(virtualMachineID)) {
 			continue
 		}
+		// An unreadable source record keeps its VM locked.
 		record, err := m.store.readSource(virtualMachineID)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if m.isSourceExpirable(record) {
 			expirable = append(expirable, virtualMachineID)

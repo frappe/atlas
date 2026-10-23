@@ -64,7 +64,7 @@ The Atlas app sends signed multipart URLs and an `upload_id` for each artifact. 
 
 ## Host sync
 
-`POST /v1/sync` replaces the complete WireGuard peer, cached image, and privileged VM sets. An empty array removes all managed values. Each peer needs a public IPv4 address and a private network MAC address. Invalid peer data returns `400`.
+`POST /v1/sync` replaces the complete WireGuard peer, cached image, and privileged VM sets. An empty array removes all managed values. The optional `invalid_virtual_machines` list in the response names VMs whose records metald cannot read. Each peer needs a public IPv4 address and a private network MAC address. Invalid peer data returns `400`.
 
 The response reports capacity and each VM's last observed status. CPU values rank hosts. They do not block the capacity check. The status is as fresh as the last reconcile pass.
 

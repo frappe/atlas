@@ -175,9 +175,6 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 		finalDeltaMiB = defaultFinalDeltaMiB
 	}
 	store := newMigrationStore(host.VirtualMachineRecordsDirectory())
-	if err := store.validate(); err != nil {
-		return nil, fmt.Errorf("validate migration records: %w", err)
-	}
 	rootContext, rootCancel := context.WithCancel(context.Background())
 	return &Manager{
 		host:           host,

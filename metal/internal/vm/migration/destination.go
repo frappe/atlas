@@ -131,11 +131,9 @@ func (m *Manager) ActiveDestinationVirtualMachineIDs(_ context.Context) ([]strin
 		if !m.store.has(m.store.destinationPath(virtualMachineID)) {
 			continue
 		}
+		// An unreadable record stays active, so each pass reports its error.
 		record, err := m.store.readDestination(virtualMachineID)
-		if err != nil {
-			return nil, err
-		}
-		if !record.State.terminal() {
+		if err != nil || !record.State.terminal() {
 			active = append(active, virtualMachineID)
 		}
 	}

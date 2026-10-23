@@ -36,7 +36,7 @@ This is the central idea: **save the request, make the host match it, and check 
 | Keep requests separate from reports | Atlas stores requests and host assignments. Its `Virtual Machine State` record caches the last host report, which can be old. |
 | Save the requested state | Callers send the full VM state they want. Metal stores it before it changes the host. |
 | Make retries safe | Use stable IDs and check saved state before repeating a step after a timeout. |
-| Fail loudly | A corrupt record stops Metal instead of being ignored. An uncertain result stays visible until its owner confirms it. |
+| Fail loudly | A corrupt record stops management of its VM and is reported, instead of being ignored. An uncertain result stays visible until its owner confirms it. |
 
 ## Where Atlas fits in Frappe Cloud
 

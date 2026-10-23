@@ -43,7 +43,7 @@ The diagram shows public phases. Durable records divide these phases into smalle
 | `storage_removed` | Record storage release before VM record removal. |
 | `expired` | Keep a tombstone. Reject the same migration ID. Permit a new migration to replace it. |
 
-Metal validates records at startup. Malformed records stop startup and report their path. Unreadable records keep source locks and destination reservations active.
+An unreadable migration record does not stop metald. It keeps its source lock and destination reservation active, and each migration pass logs its path. A lookup by migration ID answers with an error, not `404`, while an unreadable record could hold that migration. Host sync fails until an operator repairs the record, because the record's capacity reservation is unknown.
 
 The startup patch `initialize_memory_migration_flags` fills missing memory flags and preserves checkpoints. Destination records default to disk-only mode. Source records keep their mode unset until cutover. See [host patches](../develop/metal.md#change-stored-state-with-a-patch).
 

@@ -43,7 +43,7 @@ Atlas creates Cargo, proxy, and router VMs through the same VM service used for 
 | State | Stored in | After a crash |
 | --- | --- | --- |
 | Regional requests and assignments | Atlas DocTypes in MariaDB | Atlas jobs resume from committed records. Redis supports jobs and temporary data. |
-| Host VM requests and progress | Metal `config.json` and `status.json` | Metal resumes unfinished work. Invalid records stop manager startup. |
+| Host VM requests and progress | Metal `config.json` and `status.json` | Metal resumes unfinished work. An invalid record takes only its own VM out of management. |
 | Guest disks and local artifacts | ZFS and Metal files | Metal resumes storage work. Object storage holds source image artifacts. |
 | Private networking | Host links, WireGuard, and WG Mesh maps | Host sync restores policy. Metal restores VM links. WG Mesh learns locations again. |
 | Public route maps | Each proxy node's snapshot and generation | The proxy cluster elects a leader and repairs stale nodes. |

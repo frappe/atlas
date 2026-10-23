@@ -39,6 +39,7 @@ type testHostDependencies struct {
 	peerSyncs           int
 	images              []vm.Image
 	virtualMachines     []vm.Information
+	invalid             []string
 	gatewayRoutes       []vm.Route
 	wakeCount           int
 }
@@ -70,8 +71,8 @@ func (dependencies *testHostDependencies) PrivateNetworkMAC() (string, error) {
 	return "02:00:00:00:00:01", nil
 }
 
-func (dependencies *testHostDependencies) List(context.Context) ([]vm.Information, error) {
-	return append([]vm.Information(nil), dependencies.virtualMachines...), nil
+func (dependencies *testHostDependencies) List(context.Context) ([]vm.Information, []string, error) {
+	return append([]vm.Information(nil), dependencies.virtualMachines...), dependencies.invalid, nil
 }
 
 func (dependencies *testHostDependencies) SetWireGuardGatewayRoutes(_ context.Context, routes []vm.Route) error {
@@ -147,6 +148,33 @@ func TestCapacityCountsProvisionedDisks(t *testing.T) {
 	// The thin disk uses little pool space now, but it can grow to 3072 MiB.
 	if capacity.AvailableStorageMiB != 4096-3072 {
 		t.Fatalf("available storage = %d, want 1024", capacity.AvailableStorageMiB)
+	}
+}
+
+func TestAnUnreadableRecordStopsPlacementButNotSync(t *testing.T) {
+	dependencies := &testHostDependencies{
+		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning}},
+		invalid:         []string{"vm-00002"},
+	}
+	service, err := NewService(Dependencies{
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		VirtualMachines: dependencies, Storage: dependencies, Wake: func() {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.Synchronize(t.Context(), DesiredState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The unreadable VM holds an unknown shape, so the host offers no capacity.
+	capacity := result.Capacity
+	if capacity.AvailableCPUMillicores != 0 || capacity.AvailableMemoryMiB != 0 || capacity.AvailableStorageMiB != 0 {
+		t.Fatalf("capacity = %+v", capacity)
+	}
+	if result.VirtualMachines["vm-00001"].State != vm.StateRunning || len(result.InvalidVirtualMachineIDs) != 1 {
+		t.Fatalf("sync result = %+v", result)
 	}
 }
 

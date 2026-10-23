@@ -45,6 +45,8 @@ type syncResponse struct {
 	Capacity          capacityResponse           `json:"capacity"`
 	// VirtualMachines maps a VM identifier to its last observed state.
 	VirtualMachines map[string]virtualMachineStateResponse `json:"virtual_machines"`
+	// InvalidVirtualMachines lists the VMs whose records metald cannot read. They are left out of virtual_machines.
+	InvalidVirtualMachines []string `json:"invalid_virtual_machines,omitempty"`
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string `json:"private_network_mac_address,omitempty"`
 }
@@ -131,10 +133,11 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 		return synchronizationFailure(err)
 	}
 	return c.JSON(http.StatusOK, syncResponse{
-		HostCompatibility: (*hostCompatibilityResponse)(result.Compatibility),
-		Capacity:          capacityResponseFromHost(result.Capacity),
-		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachines),
-		PrivateNetworkMAC: result.PrivateNetworkMAC,
+		HostCompatibility:      (*hostCompatibilityResponse)(result.Compatibility),
+		Capacity:               capacityResponseFromHost(result.Capacity),
+		VirtualMachines:        virtualMachineStateResponses(result.VirtualMachines),
+		InvalidVirtualMachines: result.InvalidVirtualMachineIDs,
+		PrivateNetworkMAC:      result.PrivateNetworkMAC,
 	})
 }
 

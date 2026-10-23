@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -534,7 +535,7 @@ func TestSetComputeConflictsWithADestroyedVirtualMachine(t *testing.T) {
 	}
 }
 
-func TestNewManagerRejectsUnknownAndTrailingRecordData(t *testing.T) {
+func TestReadRejectsUnknownAndTrailingRecordData(t *testing.T) {
 	for _, data := range []string{
 		`{"schema_version":1,"id":"machine-1","unknown":true}`,
 		`{"schema_version":1,"id":"machine-1"} {}`,
@@ -548,12 +549,8 @@ func TestNewManagerRejectsUnknownAndTrailingRecordData(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(machineDirectory, "config.json"), []byte(data), 0o640); err != nil {
 			t.Fatal(err)
 		}
-		_, err := NewManager(
-			ManagerConfig{MachinesDirectory: directory},
-			ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil)},
-		)
-		if err == nil {
-			t.Fatalf("NewManager accepted record %s", data)
+		if _, err := newRecordStore(directory).readDesired("machine-1"); err == nil {
+			t.Fatalf("read accepted record %s", data)
 		}
 	}
 }
@@ -574,27 +571,90 @@ func TestListSkipsIncompleteRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	information, err := manager.List(context.Background())
+	information, invalid, err := manager.List(context.Background())
 	if err != nil {
 		t.Fatalf("List = %v", err)
 	}
-	if len(information) != 1 || information[0].ID != "machine-1" {
+	if len(information) != 1 || information[0].ID != "machine-1" || len(invalid) != 0 {
 		t.Fatalf("information = %+v", information)
 	}
 }
 
-// A record that is present but corrupt is a host fault, not a VM in flux.
-func TestListReportsCorruptRecords(t *testing.T) {
+// A corrupt record takes only its own VM out of management. Every other VM
+// stays listed, and the daemon still starts.
+func TestACorruptRecordAffectsOnlyItsVirtualMachine(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
-	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
-		t.Fatal(err)
+	for _, identifier := range []string{"machine-1", "machine-2"} {
+		if _, err := manager.Create(context.Background(), identifier, testSpecification()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(manager.store.observedPath("machine-1"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := manager.List(context.Background()); err == nil {
-		t.Fatal("List accepted a corrupt record")
+	information, invalid, err := manager.List(context.Background())
+	if err != nil || len(information) != 1 || information[0].ID != "machine-2" || len(invalid) != 1 || invalid[0] != "machine-1" {
+		t.Fatalf("List = %+v, %v, %v", information, invalid, err)
+	}
+	if _, err := NewManager(manager.configuration, ManagerDependencies{
+		Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{},
+		Telemetry: telemetry.NewRegistry(nil),
+	}); err != nil {
+		t.Fatalf("startup with a corrupt record = %v", err)
+	}
+}
+
+// A desired record that cannot be read may hold a user ID, so no new VM gets one.
+func TestAllocationWaitsForAnUnreadableDesiredRecord(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manager.store.desiredPath("machine-1"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.Create(context.Background(), "machine-2", testSpecification()); err == nil {
+		t.Fatal("a VM was created while an unreadable record could hold its user ID")
+	}
+}
+
+func TestAnInvalidRecordIsNotWritten(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(manager.store.observedPath("machine-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.store.writeObserved("machine-1", ObservedRecord{State: StateRunning}); err == nil {
+		t.Fatal("an observed record without an update time was written")
+	}
+	after, err := os.ReadFile(manager.store.observedPath("machine-1"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("the stored record changed: %v", err)
+	}
+}
+
+func TestAnObservedGenerationAheadOfDesiredFailsOnlyItsVirtualMachine(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.Generation = 99
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.Information(context.Background(), "machine-1"); err == nil {
+		t.Fatal("Information accepted an observed generation ahead of desired")
 	}
 }
 
@@ -781,9 +841,6 @@ func TestNewManagerStartsWithLeftoverTemporaryDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := manager.store.validateAll(); err != nil {
-		t.Fatalf("validateAll = %v", err)
-	}
 	identifiers, err := manager.store.listIDs()
 	if err != nil {
 		t.Fatal(err)

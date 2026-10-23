@@ -339,26 +339,6 @@ func newMigrationStore(recordsDirectory string) *migrationStore {
 	return &migrationStore{recordsDirectory: recordsDirectory}
 }
 
-func (store *migrationStore) validate() error {
-	virtualMachineIDs, err := store.listVirtualMachineIDs()
-	if err != nil {
-		return err
-	}
-	for _, virtualMachineID := range virtualMachineIDs {
-		if store.has(store.destinationPath(virtualMachineID)) {
-			if _, err := store.readDestination(virtualMachineID); err != nil {
-				return err
-			}
-		}
-		if store.has(store.sourcePath(virtualMachineID)) {
-			if _, err := store.readSource(virtualMachineID); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func writeMigrationRecord(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -418,17 +398,23 @@ func (store *migrationStore) findDestination(migrationID string) (string, destin
 	if err != nil {
 		return "", destinationRecord{}, err
 	}
+	var unreadable []error
 	for _, virtualMachineID := range virtualMachineIDs {
 		if !store.has(store.destinationPath(virtualMachineID)) {
 			continue
 		}
 		record, err := store.readDestination(virtualMachineID)
 		if err != nil {
-			return "", destinationRecord{}, err
+			unreadable = append(unreadable, err)
+			continue
 		}
 		if record.ID == migrationID {
 			return virtualMachineID, record, nil
 		}
+	}
+	// An unreadable record can hold this migration, so it is not proven absent.
+	if len(unreadable) > 0 {
+		return "", destinationRecord{}, fmt.Errorf("find migration %s: %w", migrationID, errors.Join(unreadable...))
 	}
 	return "", destinationRecord{}, fmt.Errorf("find migration %s: %w", migrationID, vm.ErrNotFound)
 }
