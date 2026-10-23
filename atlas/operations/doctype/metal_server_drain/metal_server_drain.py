@@ -52,6 +52,7 @@ class MetalServerDrain(Document):
 		error_message: DF.SmallText | None
 		finished_at: DF.Datetime | None
 		has_memory_snapshot: DF.Check
+		is_sleepy_rebalance: DF.Check
 		migrations: DF.Table[MetalServerDrainMigration]
 		move_only_selected_vms: DF.Check
 		parallel_migrations: DF.Int

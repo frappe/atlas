@@ -7,6 +7,7 @@
  "field_order": [
   "section_break_overview",
   "source_metal_server",
+  "is_sleepy_rebalance",
   "has_memory_snapshot",
   "allow_disk_only_fallback",
   "retry_failed_migrations",
@@ -46,6 +47,15 @@
    "options": "Metal Server",
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_sleepy_rebalance",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Sleepy Rebalance",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "default": "0",
@@ -218,7 +228,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-23 00:00:00.000000",
+ "modified": "2026-10-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",
