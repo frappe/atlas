@@ -126,6 +126,28 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 	}
 }
 
+func TestCapacityCountsProvisionedDisks(t *testing.T) {
+	dependencies := &testHostDependencies{
+		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning, DiskMiB: 3072}},
+	}
+	service, err := NewService(Dependencies{
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		VirtualMachines: dependencies, Storage: dependencies, Wake: func() {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	capacity, err := service.Capacity(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The thin disk uses little pool space now, but it can grow to 3072 MiB.
+	if capacity.AvailableStorageMiB != 4096-3072 {
+		t.Fatalf("available storage = %d, want 1024", capacity.AvailableStorageMiB)
+	}
+}
+
 func TestCapacitySubtractsMigrationReservations(t *testing.T) {
 	dependencies := &testHostDependencies{
 		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning, CPUMillicores: 1500}},

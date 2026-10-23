@@ -183,7 +183,9 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 }
 
 // Capacity returns current host capacity and valid VM reservations. CPU is
-// reported against reservations, while memory and storage are read from the host.
+// reported against reservations and memory is read from the host. Storage is
+// the smaller of free pool space and the pool size less every provisioned disk,
+// because thin disks can grow to their full size.
 func (service *Service) Capacity(ctx context.Context) (Capacity, error) {
 	virtualMachines, err := service.virtualMachines.List(ctx)
 	if err != nil {
@@ -196,9 +198,10 @@ func (service *Service) Capacity(ctx context.Context) (Capacity, error) {
 // capacityOf reports capacity against reservations the caller already listed.
 // Incoming destinations reserve capacity before their data arrives.
 func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Information) (Capacity, error) {
-	reservedCPUMillicores := 0
+	reservedCPUMillicores, provisionedStorageMiB := 0, 0
 	for _, information := range virtualMachines {
 		reservedCPUMillicores += information.CPUMillicores
+		provisionedStorageMiB += information.DiskMiB
 	}
 
 	reservedMemoryMiB, reservedStorageMiB := 0, 0
@@ -225,6 +228,8 @@ func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Inf
 	}
 
 	totalCPUMillicores := runtime.NumCPU() * 1000
+	totalStorageMiB := int(storageCapacity.TotalMiB)
+	availableStorageMiB := min(int(storageCapacity.AvailableMiB), totalStorageMiB-provisionedStorageMiB) - reservedStorageMiB
 
 	return Capacity{
 		TotalCPUMillicores:     totalCPUMillicores,
@@ -232,7 +237,7 @@ func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Inf
 		VirtualMachineCount:    len(virtualMachines),
 		TotalMemoryMiB:         totalMemoryMiB,
 		AvailableMemoryMiB:     max(availableMemoryMiB-reservedMemoryMiB, 0),
-		TotalStorageMiB:        int(storageCapacity.TotalMiB),
-		AvailableStorageMiB:    max(int(storageCapacity.AvailableMiB)-reservedStorageMiB, 0),
+		TotalStorageMiB:        totalStorageMiB,
+		AvailableStorageMiB:    max(availableStorageMiB, 0),
 	}, nil
 }

@@ -341,7 +341,7 @@ func (manager *fakeWireGuardManager) Apply(_ context.Context, peers []network.Wi
 type fakeCapacityProvider struct{}
 
 func (fakeCapacityProvider) Capacity(context.Context) (storage.Capacity, error) {
-	return storage.Capacity{TotalMiB: 1000, AvailableMiB: 750}, nil
+	return storage.Capacity{TotalMiB: 2000, AvailableMiB: 750}, nil
 }
 
 func newTestServer(t *testing.T) http.Handler {
@@ -973,7 +973,7 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Capacity.TotalStorageMiB != 1000 || response.Capacity.AvailableStorageMiB != 750 {
+	if response.Capacity.TotalStorageMiB != 2000 || response.Capacity.AvailableStorageMiB != 750 {
 		t.Fatalf("storage capacity = %d/%d", response.Capacity.TotalStorageMiB, response.Capacity.AvailableStorageMiB)
 	}
 	if strings.Contains(recorder.Body.String(), "\"host_compatibility\"") {

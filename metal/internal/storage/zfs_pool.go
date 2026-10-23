@@ -15,16 +15,16 @@ const bytesToMiBShift = 20
 // readySnapshotSuffix marks the snapshot a clone boots from.
 const readySnapshotSuffix = "@ready"
 
-// Capacity describes total and available pool space in MiB.
+// Capacity describes usable and available pool space in MiB.
 type Capacity struct {
 	TotalMiB     uint64
 	AvailableMiB uint64
 }
 
-// Capacity returns the storage pool capacity. The -Hp flags ask zpool for exact
-// byte values in a script-readable form.
+// Capacity returns the space datasets can use. ZFS keeps a slop reserve that
+// `zpool list` counts as free, so used plus available is the usable size.
 func (pool *ZFSPool) Capacity(ctx context.Context) (Capacity, error) {
-	output, err := platform.Output(ctx, "zpool", "list", "-Hp", "-o", "size,free", pool.name)
+	output, err := platform.Output(ctx, "zfs", "get", "-Hp", "-o", "value", "used,available", pool.name)
 	if err != nil {
 		return Capacity{}, fmt.Errorf("read storage pool capacity: %w", err)
 	}
@@ -34,16 +34,16 @@ func (pool *ZFSPool) Capacity(ctx context.Context) (Capacity, error) {
 		return Capacity{}, fmt.Errorf("storage pool returned invalid capacity data")
 	}
 
-	total, err := strconv.ParseUint(fields[0], 10, 64)
+	used, err := strconv.ParseUint(fields[0], 10, 64)
 	if err != nil {
-		return Capacity{}, fmt.Errorf("parse storage pool size: %w", err)
+		return Capacity{}, fmt.Errorf("parse storage pool used space: %w", err)
 	}
 	available, err := strconv.ParseUint(fields[1], 10, 64)
 	if err != nil {
-		return Capacity{}, fmt.Errorf("parse storage pool free space: %w", err)
+		return Capacity{}, fmt.Errorf("parse storage pool available space: %w", err)
 	}
 
-	return Capacity{TotalMiB: total >> bytesToMiBShift, AvailableMiB: available >> bytesToMiBShift}, nil
+	return Capacity{TotalMiB: (used + available) >> bytesToMiBShift, AvailableMiB: available >> bytesToMiBShift}, nil
 }
 
 // imagesDataset is the parent of every base image.
