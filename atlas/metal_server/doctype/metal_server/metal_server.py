@@ -366,7 +366,7 @@ class MetalServer(Document):
 		destinations: list[str] | None = None,
 		has_memory_snapshot: bool = False,
 		allow_disk_only_fallback: bool = True,
-		retry_failed_migrations: bool = False,
+		retry_failed_migrations: bool = True,
 		parallel_migrations: int = 1,
 	) -> str:
 		"""Start moving every VM off this server, and return the new Metal Server Drain."""

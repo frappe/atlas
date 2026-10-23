@@ -202,6 +202,9 @@ class MigrationService:
 
 	def select_destination_metal_server(self) -> bool:
 		"""Reserve the requested or an eligible destination. Return False to retry later."""
+		if not self._rebalance_source_is_eligible():
+			self.settle("aborted")
+			return False
 		virtual_machine: VirtualMachine = frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
 		shape = self.destination_shape(virtual_machine)
 		has_sleep_checkpoint = self._prepare_sleep_migration(virtual_machine)
@@ -778,11 +781,32 @@ class MigrationService:
 		"""Return the source Metal Server record."""
 		return frappe.get_doc("Metal Server", self.migration.source_metal_server)
 
+	def _rebalance_source_is_eligible(self) -> bool:
+		"""Release an automatic move if its source policy changed while it was queued."""
+		if not self.migration.metal_server_drain or not frappe.db.get_value(
+			"Metal Server Drain", self.migration.metal_server_drain, "is_sleepy_rebalance"
+		):
+			return True
+		from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
+
+		policy = SleepyHostRebalance(self.migration.source_metal_server)
+		return policy.is_eligible(
+			MetalClient(policy.server).get_virtual_machine(self.migration.virtual_machine)
+		)
+
 	def _load_allowed_destinations(self) -> set[str] | None:
 		"""Return the destinations of the drain that owns this migration, or None for any."""
 		if not self.migration.metal_server_drain:
 			return None
 		drain: MetalServerDrain = frappe.get_doc("Metal Server Drain", self.migration.metal_server_drain)
+		if drain.is_sleepy_rebalance:
+			from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
+
+			machine = frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
+			policy = SleepyHostRebalance(
+				self.migration.source_metal_server, allowed_destinations=drain.allowed_destinations
+			)
+			return {host.name for host in policy.destinations(machine)}
 		return drain.allowed_destinations
 
 	@staticmethod

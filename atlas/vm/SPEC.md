@@ -12,6 +12,7 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/vm_service.py` | Changes that span an Atlas record and a Metal host. |
 | `core/reconciliation.py` | Draft and termination checks after an uncertain Metal result. |
 | `core/vm_sleep.py` | Scheduled idle-threshold checks, offload requests, and recovery URL refresh. |
+| `core/sleepy_rebalance.py` | Automatic pressure checks, VM migration priority, and selected-only drain planning. |
 | `core/placement/` | Host selection, capacity reservations, and placement strategies. |
 | `core/placement/affinity.py` | Affinity rule types, their validation, and their stored JSON form. |
 | `core/vm_migration.py` and `core/vm_resize.py` | Host moves and shape changes. |
@@ -31,6 +32,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - `snapshot_upload_percent` is a read-only virtual field that uses the request-cached Metal response. It is absent outside an active HTTP upload. See [upload progress in Desk](../../docs/compute/sleepy-vms.md#upload-saved-snapshots).
 - `VirtualMachineSleepService` reads the VM's stored offload thresholds and Metal's request time. `VirtualMachineResize` stores offload-only changes without a Metal call and merges partial changes under a VM row lock after host work. These thresholds are not part of `VirtualMachineShape`. See [automatic offload](../../docs/compute/sleepy-vms.md#configure-automatic-offload).
 - The URL-refresh cache is site-scoped and keyed by VM and checkpoint. Populate it only after Metal accepts the refresh. It must not suppress offload requests or retries after a failed refresh.
+- Sleepy rebalances use fresh host-matched reports and normal placement admission. Their source maintenance flag is not changed. See [automatic host rebalancing](../../docs/compute/sleepy-vms.md#automatic-host-rebalancing).
 - Each sleep artifact retains its original `object_key` across host moves. `refresh_urls` signs that key and fills missing keys on the source before migration.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
