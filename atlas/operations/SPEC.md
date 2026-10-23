@@ -2,7 +2,7 @@
 
 [Atlas app specification](../SPEC.md)
 
-Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a-build) and [run a script on many hosts](../../docs/region/hosts-and-providers.md#run-a-script-on-many-hosts).
+Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a-build), [run a script on many hosts](../../docs/region/hosts-and-providers.md#run-a-script-on-many-hosts), and [drain a host](../../docs/compute/migration.md#drain-a-host).
 
 ## Types
 
@@ -15,6 +15,8 @@ Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a
 | `MetalServerConsole` (Single DocType) | Desk form that starts a Metal Server Console Log. It does not save. |
 | `MetalServerConsoleLog` (DocType) | One script run as root on many Metal Servers, its servers, and their results. |
 | `ServerRun` | The run on one server. Its thread writes only to this object. |
+| `MetalServerDrain` (DocType) | Source host, optional VM selection, destination limits, migration attempts, and drain progress. |
+| `MetalServerDrainVirtualMachine` (Child DocType) | One VM selected for a drain. |
 
 ## Invariants
 
@@ -23,3 +25,4 @@ Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a
 - Metal Server stores no version. Versions come from `MetalClient.get_versions`, and a `404` means that the server needs the build.
 - Atlas keeps each File that an update links, so a duplicate can roll the servers back.
 - A Metal Server Console Log runs one thread per server in one `long` job. Only the job thread writes to the database.
+- A drain uses its VM selection only when `move_only_selected_vms` is set. Candidate selection, completion, and progress use the same scope.
