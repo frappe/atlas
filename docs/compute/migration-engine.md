@@ -30,7 +30,7 @@ The diagram shows public phases. Durable records divide these phases into smalle
 | `removing_storage` | Remove memory staging, abort the disk receive, and remove destination VM records. |
 | `restoring_source` | Restore the source before unlock. |
 | `unlocking_source` | Remove source migration snapshots and release its lock. |
-| `completed` or `aborted` | Keep a terminal record. Release the destination reservation. |
+| `completed` or `aborted` | Keep a terminal record. Release the destination reservation. Remove an aborted record after 7 days when it holds no VM, source lock, or dataset. A completed record stays until the VM leaves the host. |
 | `failed` | Keep transfer data and the destination reservation until abort cleanup. |
 
 | Source checkpoint | Saved work and next action |

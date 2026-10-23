@@ -90,6 +90,10 @@ const reservationTimeout = 10 * time.Minute
 // acts when Atlas has already given the migration up.
 const destinationIdleTimeout = 15 * time.Minute
 
+// abortedRecordRetention keeps an aborted destination record, so a late Atlas
+// retry still reads the result instead of starting a new migration.
+const abortedRecordRetention = 7 * 24 * time.Hour
+
 // destinationControlWriteInterval bounds how often a poll rewrites the record.
 const destinationControlWriteInterval = time.Minute
 
@@ -395,6 +399,47 @@ func (m *Manager) DestinationReservations(_ context.Context) ([]DestinationReser
 		})
 	}
 	return reservations, nil
+}
+
+// RemoveAbortedDestinations removes aborted destination remnants older than the
+// retention time. A completed record stays with its VM until the VM leaves the host.
+func (m *Manager) RemoveAbortedDestinations(ctx context.Context) error {
+	virtualMachineIDs, err := m.store.listVirtualMachineIDs()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, virtualMachineID := range virtualMachineIDs {
+		errs = append(errs, m.removeAbortedDestination(ctx, virtualMachineID))
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) removeAbortedDestination(ctx context.Context, virtualMachineID string) error {
+	unlock, err := m.locks.Lock(ctx, virtualMachineID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	record, err := m.store.readDestination(virtualMachineID)
+	if errors.Is(err, vm.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if record.State != destinationAborted || m.now().Sub(record.FinishedAt) < abortedRecordRetention {
+		return nil
+	}
+	// A remnant that still holds a VM, a source lock, or a dataset needs an operator.
+	if err := m.assertReplaceableAborted(ctx, virtualMachineID); errors.Is(err, vm.ErrConflict) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	// Abort cleanup leaves the empty jail directory, so the whole VM directory goes.
+	return os.RemoveAll(filepath.Dir(m.store.migrationDirectory(virtualMachineID)))
 }
 
 // assertReplaceableAborted confirms an aborted remnant left no VM, source lock,

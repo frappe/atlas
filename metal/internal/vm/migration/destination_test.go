@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -670,6 +672,37 @@ func TestCreateDestinationReplacesACleanAbortedRemnant(t *testing.T) {
 	}
 	if record.ID != "mig-2" || record.Status != StatusRunning || record.Phase != PhasePreparing {
 		t.Fatalf("record = %+v", record)
+	}
+}
+
+func TestRemoveAbortedDestinationsKeepsRecentAndCompletedRecords(t *testing.T) {
+	migrationManager, machines, _ := newMigrationManager(t)
+	store := writeTerminalDestination(t, machines, destinationAborted)
+	if err := migrationManager.RemoveAbortedDestinations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.has(store.destinationPath("vm-1")) {
+		t.Fatal("a recent aborted record was removed")
+	}
+
+	jail := filepath.Join(filepath.Dir(store.migrationDirectory("vm-1")), "firecracker")
+	if err := os.Mkdir(jail, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	migrationManager.now = func() time.Time { return time.Now().Add(abortedRecordRetention + time.Hour) }
+	if err := migrationManager.RemoveAbortedDestinations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if store.has(filepath.Dir(store.migrationDirectory("vm-1"))) {
+		t.Fatal("an old aborted remnant was kept")
+	}
+
+	writeTerminalDestination(t, machines, destinationCompleted)
+	if err := migrationManager.RemoveAbortedDestinations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.has(store.destinationPath("vm-1")) {
+		t.Fatal("a completed record was removed")
 	}
 }
 
