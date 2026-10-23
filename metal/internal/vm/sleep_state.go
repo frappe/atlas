@@ -82,6 +82,9 @@ func (request SleepStateRequest) Validate(refresh bool) error {
 	if refresh && request.SnapshotID == "" {
 		return fmt.Errorf("snapshot_id is required when refreshing download URLs")
 	}
+	if request.SnapshotID != "" && !validIdentifier(request.SnapshotID) {
+		return fmt.Errorf("snapshot_id is not a valid identifier")
+	}
 	for _, target := range []*SleepArtifactTarget{request.Memory, request.Disk} {
 		if target == nil {
 			continue
@@ -230,10 +233,12 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			record = nil
 		}
 		if record == nil {
-			if request.SnapshotID != "" {
-				return ErrConflict
+			// The controller can name a new checkpoint, so it can name its objects after it.
+			identifier := request.SnapshotID
+			if identifier == "" {
+				identifier = newOperationID()
 			}
-			record = &SleepCheckpoint{ID: newOperationID(), Identity: saved.Identity,
+			record = &SleepCheckpoint{ID: identifier, Identity: saved.Identity,
 				SpecificationGeneration: desired.SpecificationGeneration, RestartGeneration: desired.RestartGeneration}
 		}
 	}

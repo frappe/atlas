@@ -115,7 +115,7 @@ An object store limits one PUT to 5 GiB. For a larger artifact, send `part_size_
 
 Each upload URL must accept a complete object with HTTP PUT. Memory is a zstd-compressed tar archive of `state`, `memory`, and `metadata.json`. Disk uses the zstd-compressed raw image format. Metal records each artifact's SHA-256 digest and size. The digest covers the uncompressed content, including the tar headers for memory.
 
-The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again.
+The request returns `202` and the VM response. Poll `observed.sleep_snapshot` for the checkpoint ID, artifact details, and `uploaded` flags. `observed.phase` reports upload work and `observed.error` reports a failure. Signed URLs stay out of responses and logs. A repeated request for the same checkpoint does not upload a completed artifact again. The first request for a new checkpoint can set `snapshot_id`, so the controller can name its objects after the checkpoint. Without it, Metal chooses the ID. A later request for the same checkpoint must use the same ID.
 
 In Desk, each **Virtual Machine State** shows the **Sleep State**, **Last Request At**, and **Sleep Snapshot ID** that the host reported in its last sync. It also shows the snapshot whose URLs Atlas signed last and when those URLs expire. Atlas does not store upload progress. Read `observed.phase` from Metal for that.
 

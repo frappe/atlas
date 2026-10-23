@@ -383,6 +383,23 @@ func sleepParts(count int, signature string) *SleepArtifactTarget {
 	return target
 }
 
+func TestTheControllerNamesANewCheckpoint(t *testing.T) {
+	if (SleepStateRequest{SnapshotID: "../escape", Memory: sleepTarget()}).Validate(false) == nil {
+		t.Fatal("an unsafe checkpoint name was accepted")
+	}
+	manager, _, _, _ := sleepyManager(t)
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{SnapshotID: "checkpoint-a", Memory: sleepTarget()}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.readSleepRecord("vm-1")
+	if err != nil || record.ID != "checkpoint-a" {
+		t.Fatalf("checkpoint = %+v, %v", record, err)
+	}
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{SnapshotID: "checkpoint-b", Memory: sleepTarget()}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a second name for the same checkpoint = %v", err)
+	}
+}
+
 func TestSleepUploadRemovesStagingOfOlderCheckpoints(t *testing.T) {
 	manager, _, _, _ := sleepyManager(t)
 	stale := filepath.Join(manager.store.virtualMachineDirectory("vm-1"), "sleep-transfer", "old-checkpoint")
