@@ -13,9 +13,11 @@ Metal inspects systemd first: an inactive unit has no live Firecracker API.
 
 ### Cold and warm starts
 
-**Shared warm memory works only for a first boot from a fresh disk clone, with the exact VM shape.** Later starts cold-boot the existing disk.
+**Shared warm memory works only for a first boot from a fresh disk clone, with the exact vCPU count and memory and a disk at least as large as the warm disk.** Later starts cold-boot the existing disk.
 
 This rule prevents the [warm-memory disk corruption incident](../incidents/2026-09-24-guest-disk-corruption.md).
+
+A warm start grows the clone to the VM disk size before the snapshot loads. Before resume, Metal refreshes the drive, so the guest sees the larger disk and gets its disk limits. The guest image grows its file system when the disk grows.
 
 ### Resource limits
 
