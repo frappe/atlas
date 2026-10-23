@@ -178,12 +178,32 @@ class MetalOperationError:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalSleepUpload:
+	"""Store multipart results that still require object-store completion."""
+
+	stored_size_bytes: int
+	parts: list[dict[str, Any]]
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepUpload:
+		"""Validate the completion result at the Metal boundary."""
+		content = object_value(value, "pending sleep upload")
+		size = integer_field(content, "stored_size_bytes")
+		parts = content.get("parts")
+		if size <= 0 or not isinstance(parts, list) or not parts:
+			raise ValueError("Pending sleep upload requires a stored size and parts")
+		return cls(stored_size_bytes=size, parts=[object_value(part, "upload part") for part in parts])
+
+
+@dataclass(frozen=True, slots=True)
 class MetalSleepArtifact:
 	"""Store progress and completion of one sleep artifact upload."""
 
 	uploaded: bool
 	upload_percent: int | None = None
 	object_key: str = ""
+	upload_id: str = ""
+	pending: MetalSleepUpload | None = None
 
 	@classmethod
 	def from_dict(cls, value: object) -> MetalSleepArtifact:
@@ -198,6 +218,10 @@ class MetalSleepArtifact:
 			uploaded=boolean_field(artifact, "uploaded"),
 			upload_percent=percent,
 			object_key=string_field(artifact, "object_key", default=""),
+			upload_id=string_field(artifact, "upload_id", default=""),
+			pending=MetalSleepUpload.from_dict(artifact["pending"])
+			if artifact.get("pending") is not None
+			else None,
 		)
 
 
