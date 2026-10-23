@@ -161,6 +161,9 @@ func TestSleepMultipartResumesPartsAndBoundsTemporaryDisk(t *testing.T) {
 	rand.New(rand.NewSource(7)).Read(contents)
 	store, _, _ := uploadFixture(t, contents)
 	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "part-interrupted"), []byte("stale compressed data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	stored := make(map[int][]byte)
 	attempts := make(map[int]int)
 	fail := true
