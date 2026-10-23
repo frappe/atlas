@@ -9,22 +9,37 @@ LIVE_STATES = frozenset({"running", "stopped", "paused"})
 
 
 def store_reported_states(server_name: str, reported: object) -> None:
-	"""Store the reported virtual machine states of one host."""
+	"""Store the reported virtual machine states of one host.
+
+	A new or changed state is saved as a document, so its webhook runs. An unchanged
+	state needs only its sync time, so all of them share one update.
+	"""
 	statuses = get_reported_statuses(reported)
 	names = frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name")
 	if not names:
 		return
 
-	stored = set(frappe.get_all("Virtual Machine State", filters={"name": ["in", names]}, pluck="name"))
+	stored = {
+		row.name: row
+		for row in frappe.get_all(
+			"Virtual Machine State", filters={"name": ["in", names]}, fields=["name", "status", "server"]
+		)
+	}
 	synced_at = now_datetime()
+	unchanged = []
 
 	for name in names:
 		status = statuses.get(name)
 		if status is None:
 			continue
 
+		row = stored.get(name)
+		if row and row.status == status and row.server == server_name:
+			unchanged.append(name)
+			continue
+
 		try:
-			if name in stored:
+			if row:
 				state = frappe.get_doc("Virtual Machine State", name)
 			else:
 				state = frappe.new_doc("Virtual Machine State")
@@ -38,6 +53,13 @@ def store_reported_states(server_name: str, reported: object) -> None:
 		except Exception:
 			frappe.db.rollback()
 			frappe.log_error(f"Virtual Machine State write failed: {name}")
+
+	if unchanged:
+		state_table = frappe.qb.DocType("Virtual Machine State")
+		frappe.qb.update(state_table).set(state_table.synced_at, synced_at).where(
+			state_table.name.isin(unchanged)
+		).run()
+		frappe.db.commit()  # nosemgrep
 
 
 def get_reported_statuses(reported: object) -> dict[str, str]:

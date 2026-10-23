@@ -10,9 +10,17 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 from atlas.vm.core import vm_state
 
 
+def stored_row(name: str, status: str = "stopped", server: str = "metal-1") -> frappe._dict:
+	return frappe._dict(name=name, status=status, server=server)
+
+
 class TestVirtualMachineState(UnitTestCase):
 	def store(
-		self, names: list[str], stored: list[str], reported: dict, save_error: Exception | None = None
+		self,
+		names: list[str],
+		stored: list[frappe._dict],
+		reported: dict,
+		save_error: Exception | None = None,
 	) -> dict:
 		"""Store one reported state set against a stubbed database."""
 		saved = []
@@ -29,16 +37,18 @@ class TestVirtualMachineState(UnitTestCase):
 			patch.object(vm_state.frappe, "get_doc", side_effect=make_document),
 			patch.object(vm_state.frappe, "new_doc", side_effect=make_document),
 			patch.object(vm_state.frappe, "log_error"),
+			patch.object(vm_state.frappe, "qb", MagicMock()) as query_builder,
 			patch.object(vm_state.frappe.db, "commit") as commit,
 		):
 			vm_state.store_reported_states("metal-1", reported)
 
-		return {"saved": saved, "commit": commit}
+		update = query_builder.update.return_value.set.return_value.where
+		return {"saved": saved, "commit": commit, "query_builder": query_builder, "update": update}
 
-	def test_a_first_report_inserts_and_a_later_report_updates(self) -> None:
+	def test_a_first_report_inserts_and_a_changed_report_updates(self) -> None:
 		calls = self.store(
 			names=["vm-00001", "vm-00002"],
-			stored=["vm-00002"],
+			stored=[stored_row("vm-00002")],
 			reported={"vm-00001": {"status": "running"}, "vm-00002": {"status": "running"}},
 		)
 
@@ -49,10 +59,14 @@ class TestVirtualMachineState(UnitTestCase):
 		self.assertEqual(updated.status, "running")
 		self.assertEqual(updated.synced_at, datetime(2026, 9, 9, 10, 0))
 
-	def test_every_reported_virtual_machine_is_saved_as_a_document(self) -> None:
+	def test_an_unchanged_state_only_moves_its_sync_time(self) -> None:
 		calls = self.store(
 			names=["vm-00001", "vm-00002", "vm-00003"],
-			stored=["vm-00001", "vm-00002", "vm-00003"],
+			stored=[
+				stored_row("vm-00001", "running"),
+				stored_row("vm-00002", "running", server="metal-2"),
+				stored_row("vm-00003", "running"),
+			],
 			reported={
 				"vm-00001": {"status": "running"},
 				"vm-00002": {"status": "running"},
@@ -60,17 +74,22 @@ class TestVirtualMachineState(UnitTestCase):
 			},
 		)
 
-		self.assertEqual([document.status for document in calls["saved"]], ["running", "running", "stopped"])
+		# A moved VM and a new status are saved as documents, so their webhooks run.
+		self.assertEqual([document.server for document in calls["saved"]], ["metal-1", "metal-1"])
+		self.assertEqual([document.status for document in calls["saved"]], ["running", "stopped"])
+		calls["query_builder"].update.assert_called_once()
+		calls["update"].assert_called_once()
 		self.assertEqual(calls["commit"].call_count, 3)
 
 	def test_an_unreported_virtual_machine_keeps_its_stored_state(self) -> None:
 		calls = self.store(
 			names=["vm-00001", "vm-00002"],
-			stored=["vm-00001", "vm-00002"],
+			stored=[stored_row("vm-00001"), stored_row("vm-00002")],
 			reported={"vm-00001": {"status": "running"}},
 		)
 
 		self.assertEqual(len(calls["saved"]), 1)
+		calls["query_builder"].update.assert_not_called()
 
 	def test_a_host_without_virtual_machines_reads_nothing_more(self) -> None:
 		get_all = MagicMock(side_effect=[[]])
@@ -88,7 +107,7 @@ class TestVirtualMachineState(UnitTestCase):
 	def test_one_failed_write_does_not_stop_the_other_writes(self) -> None:
 		calls = self.store(
 			names=["vm-00001", "vm-00002"],
-			stored=["vm-00001", "vm-00002"],
+			stored=[stored_row("vm-00001"), stored_row("vm-00002")],
 			reported={"vm-00001": {"status": "running"}, "vm-00002": {"status": "running"}},
 			save_error=ValueError("boom"),
 		)

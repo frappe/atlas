@@ -24,7 +24,7 @@ sequenceDiagram
     Atlas->>Records: Store capacity and state cache
 ```
 
-Metal replaces its managed policy sets and wakes the relevant reconcilers. Atlas stores a capacity sample and updates its VM state cache.
+Metal replaces its managed policy sets and wakes the relevant reconcilers. Atlas stores a capacity sample and updates its VM state cache. A new or changed VM state is saved as a document and sends the state webhook. An unchanged state only gets a new sync time, in one update for the host.
 
 When Metal starts, the Firecracker runtime captures architecture, configured CPU profile, CPU vendor/model/features, and x86 clock frequency and scaling support. Its runtime fingerprint hashes Firecracker binary contents, architecture, and the host kernel release.
 
