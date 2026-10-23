@@ -22,6 +22,12 @@ type sleepSnapshots struct {
 	downloads      []string
 	downloadError  error
 	diskPresent    bool
+	deleted        []string
+}
+
+func (snapshots *sleepSnapshots) DeleteSnapshot(_ context.Context, identifier string) error {
+	snapshots.deleted = append(snapshots.deleted, identifier)
+	return nil
 }
 
 func (snapshots *sleepSnapshots) DownloadSleepMemory(_ context.Context, _, source string, _ SleepArtifact) error {
@@ -98,6 +104,48 @@ func sleepyManager(t *testing.T) (*Manager, *fakeRuntime, *fakeStorage, *sleepSn
 func sleepTarget() *SleepArtifactTarget {
 	return &SleepArtifactTarget{Multipart: &SleepMultipartUpload{UploadID: "upload-1", PartSizeMiB: 5,
 		Parts: []SleepUploadPart{{PartNumber: 1, URL: "https://objects.example/snapshot?put=secret"}}}, DownloadURL: "https://objects.example/snapshot?get=secret"}
+}
+
+func TestObsoleteSleepStagingIsRemovedAfterFailedUpload(t *testing.T) {
+	for _, action := range []string{"wake", "replace"} {
+		t.Run(action, func(t *testing.T) {
+			manager, runtime, _, snapshots := sleepyManager(t)
+			snapshots.uploadError = errors.New("interrupted upload")
+			if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.OffloadSleepArtifacts(t.Context(), "vm-1"); err == nil {
+				t.Fatal("upload failure was hidden")
+			}
+			record, err := manager.readSleepRecord("vm-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			directory := filepath.Join(manager.store.virtualMachineDirectory("vm-1"), "sleep-transfer", record.ID)
+			if err := os.WriteFile(filepath.Join(directory, "memory"), []byte("staged memory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if action == "wake" {
+				if err := wakeTestSleep(t.Context(), manager); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := manager.removeSleepRecord("vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("retained obsolete staging: %v", err)
+			}
+			if len(snapshots.deleted) != 1 || snapshots.deleted[0] != record.ID {
+				t.Fatalf("retained obsolete disk staging: %v", snapshots.deleted)
+			}
+			if _, err := os.Stat(runtime.savedDirectory); err != nil {
+				t.Fatalf("removed live saved state: %v", err)
+			}
+		})
+	}
 }
 
 func TestSleepMultipartWaitsForAcknowledgmentAcrossRestart(t *testing.T) {
