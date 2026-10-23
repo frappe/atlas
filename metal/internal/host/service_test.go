@@ -43,6 +43,8 @@ type testHostDependencies struct {
 	wakeCount           int
 }
 
+func (*testHostDependencies) EnsureHooks(context.Context) error { return nil }
+
 func (dependencies *testHostDependencies) ApplyPrivilegedAddresses(_ context.Context, addresses []string) error {
 	dependencies.privilegedAddresses = append([]string(nil), addresses...)
 	return nil

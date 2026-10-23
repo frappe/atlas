@@ -45,6 +45,7 @@ type Capacity struct {
 
 // Mesh applies controller-owned mesh state and reports the MAC of the mesh uplink.
 type Mesh interface {
+	EnsureHooks(context.Context) error
 	ApplyPrivilegedAddresses(context.Context, []string) error
 	SyncPeerState(ctx context.Context, unicast bool) error
 	PrivateNetworkMAC() (string, error)
@@ -139,6 +140,9 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 	}
 	// The mesh reads the peer state that WireGuard.Apply just wrote.
 	if service.mesh != nil {
+		if err := service.mesh.EnsureHooks(ctx); err != nil {
+			return SyncResult{}, fmt.Errorf("attach Atlas WG Mesh hooks: %w", err)
+		}
 		if err := service.mesh.ApplyPrivilegedAddresses(ctx, desired.PrivilegedVirtualMachineAddresses); err != nil {
 			return SyncResult{}, fmt.Errorf("apply privileged virtual machine addresses: %w", err)
 		}

@@ -261,6 +261,8 @@ func (services *fakeRuntimeServices) SetWireGuardGatewayRoutes(_ context.Context
 	return nil
 }
 
+func (*fakeRuntimeServices) EnsureHooks(context.Context) error { return nil }
+
 func (services *fakeRuntimeServices) ApplyPrivilegedAddresses(
 	_ context.Context,
 	addresses []string,
