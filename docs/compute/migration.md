@@ -80,6 +80,8 @@ After you change a profile or replace Firecracker, cold-boot existing VMs before
 
 Use the normal migration action for a VM in deep sleep or coma. Atlas requires memory-compatible hosts and disables disk-only fallback for this move, regardless of the dialog choices. A resize is not allowed. Upgrade both Metal hosts before the move. Older destinations cannot lock an offloaded source.
 
+A VM in deep sleep or coma cannot fall back to a disk-only move. To move it between hosts with a different Firecracker binary or kernel, start the VM first. The running VM then uses the normal disk-only fallback and cold-boots on the destination, so it loses its memory state.
+
 | Source sleep state | Transfer |
 | --- | --- |
 | `deep-sleeping` | The full disk copies before the source stops, while its network stays connected. Only a small final snapshot copies after stop. The remote memory checkpoint stays in object storage. |
