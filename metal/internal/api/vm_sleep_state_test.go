@@ -168,7 +168,7 @@ func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
 				t.Fatal(err)
 			}
 			acknowledged := sleepAPIRequest(t, client, server.URL, http.MethodGet, "/v1/vms/vm1", "")
-			if acknowledged.Observed.SleepState != string(vm.SleepStateDeepSleeping) || *acknowledged.Observed.SleepSnapshot.Memory.UploadPercent != 100 {
+			if acknowledged.Observed.SleepState != string(vm.SleepStateDeepSleeping) || *acknowledged.Observed.SleepSnapshot.Memory.UploadPercent != 100 || len(acknowledged.Observed.SleepSnapshot.Memory.Artifact.Parts) != 0 {
 				t.Fatalf("acknowledged multipart object did not evict memory: %+v", acknowledged.Observed)
 			}
 			select {
