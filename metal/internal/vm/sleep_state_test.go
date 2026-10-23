@@ -577,6 +577,9 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 				if err != nil || information.SleepState != SleepStateAwake || information.State != StateRunning || runtime.restores != 1 || runtime.starts != 0 {
 					t.Fatalf("wake failed: %+v, %v; runtime=%+v", information, err, runtime)
 				}
+				if information.SleepSnapshot != nil {
+					t.Fatalf("completed wake retained its checkpoint: %+v", information.SleepSnapshot)
+				}
 				wantDownloads := 0
 				if sleepState == SleepStateDeepSleeping {
 					wantDownloads = 1
