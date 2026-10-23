@@ -22,13 +22,16 @@
   "section_break_compute_and_storage",
   "cpu_millicores",
   "memory_mib",
-  "sleep_after_idle_seconds",
-  "deep_sleep_after_idle_seconds",
-  "coma_after_idle_seconds",
   "column_break_compute",
   "disk_mib",
   "disk_throughput_mibps",
   "disk_iops",
+  "sleepy_configuration_section",
+  "sleep_after_idle_seconds",
+  "column_break_azga",
+  "deep_sleep_after_idle_seconds",
+  "column_break_mhiq",
+  "coma_after_idle_seconds",
   "section_break_network",
   "mac",
   "public_ipv4",
@@ -377,6 +380,19 @@
    "label": "Tags",
    "options": "Atlas Tag",
    "show_description_on_click": 1
+  },
+  {
+   "fieldname": "sleepy_configuration_section",
+   "fieldtype": "Section Break",
+   "label": "Sleepy Configuration"
+  },
+  {
+   "fieldname": "column_break_azga",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_mhiq",
+   "fieldtype": "Column Break"
   }
  ],
  "in_create": 1,
@@ -398,7 +414,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-23 00:00:00.000000",
+ "modified": "2026-10-23 14:39:56.831096",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
