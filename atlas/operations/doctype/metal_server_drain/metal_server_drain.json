@@ -73,7 +73,7 @@
    "show_description_on_click": 1
   },
   {
-   "default": "0",
+   "default": "1",
    "description": "Migrates a failed VM again after the other VMs, up to 3 attempts.",
    "fieldname": "retry_failed_migrations",
    "fieldtype": "Check",
@@ -228,7 +228,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-23 12:00:00.000000",
+ "modified": "2026-10-23 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",

@@ -322,7 +322,7 @@ class MetalServerDrain(Document):
 		destinations: list[str] | None = None,
 		has_memory_snapshot: bool = False,
 		allow_disk_only_fallback: bool = True,
-		retry_failed_migrations: bool = False,
+		retry_failed_migrations: bool = True,
 		parallel_migrations: int = 1,
 	) -> MetalServerDrain:
 		"""Create and submit a drain of one Metal Server. No destinations means any destination."""
