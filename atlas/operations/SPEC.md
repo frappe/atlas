@@ -26,3 +26,4 @@ Behavior: [Roll out a build](../../docs/region/hosts-and-providers.md#roll-out-a
 - Atlas keeps each File that an update links, so a duplicate can roll the servers back.
 - A Metal Server Console Log runs one thread per server in one `long` job. Only the job thread writes to the database.
 - A drain uses its VM selection only when `move_only_selected_vms` is set. Candidate selection, completion, and progress use the same scope.
+- `is_sleepy_rebalance` identifies automatic drains. They preserve source maintenance and recheck eligibility in the [rebalance policy](../vm/core/sleepy_rebalance.py). Manual drains retain their normal ordering and completion rules.
