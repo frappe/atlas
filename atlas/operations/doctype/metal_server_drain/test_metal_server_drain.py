@@ -80,6 +80,18 @@ class TestMetalServerDrain(IntegrationTestCase):
 		drain.allow_any_destination = 1
 		drain.insert()
 
+	def test_new_drains_retry_failed_migrations_by_default(self) -> None:
+		self.assertEqual(self.new_drain([self.destination]).insert().retry_failed_migrations, 1)
+		self.assertEqual(MetalServerDrain.start(self.source).retry_failed_migrations, 1)
+		name = frappe.get_doc("Metal Server", self.destination).drain()
+		self.assertEqual(frappe.get_doc("Metal Server Drain", name).retry_failed_migrations, 1)
+
+	def test_new_drains_can_disable_failed_migration_retries(self) -> None:
+		drain = MetalServerDrain.start(self.source, retry_failed_migrations=False)
+		self.assertEqual(drain.retry_failed_migrations, 0)
+		name = frappe.get_doc("Metal Server", self.destination).drain(retry_failed_migrations=False)
+		self.assertEqual(frappe.get_doc("Metal Server Drain", name).retry_failed_migrations, 0)
+
 
 class TestMetalServerDrainSteps(IntegrationTestCase):
 	def setUp(self) -> None:

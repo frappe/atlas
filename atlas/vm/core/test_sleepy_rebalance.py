@@ -266,6 +266,7 @@ class TestSleepyRebalance(IntegrationTestCase):
 			(drain.status, drain.is_sleepy_rebalance, drain.parallel_migrations), ("Running", 1, 4)
 		)
 		self.assertEqual((drain.has_memory_snapshot, drain.allow_disk_only_fallback), (1, 0))
+		self.assertEqual(drain.retry_failed_migrations, 1)
 		self.assertEqual([row.virtual_machine for row in drain.virtual_machines], [machine])
 		self.assertEqual(frappe.db.get_value("Metal Server", self.source, "is_in_maintenance"), 1)
 
