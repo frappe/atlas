@@ -560,7 +560,9 @@ class CreateVirtualMachinePayload(StrictModel):
 	@model_validator(mode="after")
 	def validate_sleep_times(self) -> CreateVirtualMachinePayload:
 		"""Require a positive deep-sleep delay before coma."""
-		validate_sleep_times(self.deep_sleep_after_idle_seconds, self.coma_after_idle_seconds)
+		validate_sleep_times(
+			self.deep_sleep_after_idle_seconds, self.coma_after_idle_seconds, self.memory_mib, self.disk_mib
+		)
 		return self
 
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:

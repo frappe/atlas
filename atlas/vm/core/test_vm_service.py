@@ -241,7 +241,13 @@ class TestVirtualMachineDisk(UnitTestCase):
 	def build_service(self, size_mib: int = 20480) -> tuple[VirtualMachineService, Mock]:
 		"""Return a service whose host reports one desired disk."""
 		virtual_machine = SimpleNamespace(
-			name="VM-00001", sleep_after_idle_seconds=0, disk_mib=20480, db_set=Mock()
+			name="VM-00001",
+			sleep_after_idle_seconds=0,
+			deep_sleep_after_idle_seconds=0,
+			coma_after_idle_seconds=0,
+			memory_mib=2048,
+			disk_mib=20480,
+			db_set=Mock(),
 		)
 		service = VirtualMachineService(virtual_machine)
 		information = SimpleNamespace(

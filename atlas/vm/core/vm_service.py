@@ -22,6 +22,7 @@ from atlas.vm.core.models import (
 	Route,
 	VirtualMachineCreateRequest,
 	parse_routes,
+	validate_sleep_times,
 )
 from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
@@ -313,6 +314,16 @@ class VirtualMachineService:
 		size_mib = changes.get("size_mib", current_disk.size_mib)
 		if size_mib < current_disk.size_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
+		machine = self.virtual_machine
+		try:
+			validate_sleep_times(
+				machine.deep_sleep_after_idle_seconds or 0,
+				machine.coma_after_idle_seconds or 0,
+				machine.memory_mib,
+				size_mib,
+			)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
 
 		information = self.set_disk(
 			size_mib,

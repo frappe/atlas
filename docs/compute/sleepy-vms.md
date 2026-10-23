@@ -58,6 +58,8 @@ The saved state belongs to one VM. It is not the shared [warm artifact](../stora
 
 Atlas checks sleepy VMs every minute. It compares Metal's `observed.last_request_at` with **Deep Sleep After Idle (Seconds)** and **Coma After Idle (Seconds)** on each Virtual Machine. Both times start at the last request, not when the VM entered sleep. `0` disables that transition. Coma requires a shorter, nonzero deep-sleep threshold.
 
+Deep sleep and coma are allowed only for a VM with at most 4 GiB of memory and 50 GiB of disk. Atlas rejects a create, resize, or disk resize that sets a threshold on a larger VM, or that makes a VM with a threshold larger.
+
 Set the delays in the create API request or with **Actions → Resize VM**. New VMs default both offload delays to `0`. Atlas stores these two values locally and does not include them in Metal compute or resize requests. An offload-only update does not contact Metal or wake the VM.
 
 At the deep-sleep threshold, Atlas supplies signed memory upload and download URLs. At the coma threshold, it also supplies disk URLs. If both thresholds have passed, it requests both artifacts together. Atlas skips awake, draft, terminating, and migrating VMs. Missing request timestamps do not trigger an upload.

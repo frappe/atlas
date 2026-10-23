@@ -107,7 +107,12 @@ class VirtualMachine(Document):
 		"""
 		validate_tags(self)
 		try:
-			validate_sleep_times(self.deep_sleep_after_idle_seconds or 0, self.coma_after_idle_seconds or 0)
+			validate_sleep_times(
+				self.deep_sleep_after_idle_seconds or 0,
+				self.coma_after_idle_seconds or 0,
+				self.memory_mib,
+				self.disk_mib,
+			)
 		except ValueError as error:
 			frappe.throw(_(str(error)), exc=AtlasUserError)
 
