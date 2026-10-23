@@ -91,7 +91,7 @@ class SleepyHostRebalance:
 		):
 			return False
 		if information.observed.state == "stopped":
-			return information.observed.sleep_state in {"sleeping", "deep-sleeping", "comatose"}
+			return information.observed.sleep_state in {"sleeping", "deep-sleeping", "coma"}
 		return (
 			information.observed.state == "running"
 			and report.awake_memory_mib * 100 > report.total_memory_mib * 90

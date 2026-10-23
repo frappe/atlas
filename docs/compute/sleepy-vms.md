@@ -158,7 +158,7 @@ An explicit stop, restart, or shape change recovers an offloaded disk before it 
 
 Every minute, Atlas checks ready sleepy hosts, including hosts in maintenance. It adds the configured memory of running and paused VMs and compares the sum with host memory. It does not use guest RSS or discount the sum by the sleepy overcommit factor.
 
-At 85% or more, Atlas selects sleepy VMs that are sleeping, deep-sleeping, or comatose. Above 90%, it also selects running sleepy VMs. Paused VMs count toward pressure but do not move automatically.
+At 85% or more, Atlas selects sleepy VMs that are sleeping, deep-sleeping, or in coma. Above 90%, it also selects running sleepy VMs. Paused VMs count toward pressure but do not move automatically.
 
 Running candidates rank by the fewest completed migrations in the last 24 hours, then largest memory, then VM name. Atlas selects enough running candidates to bring projected source pressure toward 85%. Sleeping candidates follow, largest memory first. There is no fixed VM-count cap.
 
@@ -172,7 +172,7 @@ Automatic drains recheck eligibility before starting migrations. A queued migrat
 
 Follow automatic moves in Metal Server Drain and Virtual Machine Migration. The hidden `is_sleepy_rebalance` field identifies automatic drains. Pausing VM migrations also pauses new rebalance drains and migration starts.
 
-Ordinary sleeping VMs resume on the destination. Deep-sleeping and comatose VMs stay asleep until a later wake. Moving sleepers reduces future wake demand, not the current running-memory sum.
+Ordinary sleeping VMs resume on the destination. VMs in deep sleep or coma stay asleep until a later wake. Moving sleepers reduces future wake demand, not the current running-memory sum.
 
 ## Placement
 
