@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 )
@@ -25,6 +26,9 @@ type sleepSnapshots struct {
 	downloadError  error
 	diskPresent    bool
 	partCount      int
+	// blockUntilCancel holds an upload until its context ends, after it closes uploadStarted.
+	blockUntilCancel bool
+	uploadStarted    chan struct{}
 }
 
 func (snapshots *sleepSnapshots) DownloadSleepMemory(_ context.Context, _ string, sources []string, _ SleepArtifact) error {
@@ -55,8 +59,13 @@ func (snapshots *sleepSnapshots) StageSleepDisk(ctx context.Context, _ SnapshotR
 	return snapshots.StageSleepMemory(ctx, directory, directory)
 }
 
-func (snapshots *sleepSnapshots) UploadSleepMemory(_ context.Context, _ string, _ SleepArtifactTarget, progress *SleepUploadProgress) (SleepArtifact, error) {
+func (snapshots *sleepSnapshots) UploadSleepMemory(ctx context.Context, _ string, _ SleepArtifactTarget, progress *SleepUploadProgress) (SleepArtifact, error) {
 	snapshots.uploads++
+	if snapshots.blockUntilCancel {
+		close(snapshots.uploadStarted)
+		<-ctx.Done()
+		return SleepArtifact{}, ctx.Err()
+	}
 	if snapshots.duringProgress != nil {
 		snapshots.duringProgress(progress)
 	}
@@ -397,6 +406,39 @@ func TestTheControllerNamesANewCheckpoint(t *testing.T) {
 	}
 	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{SnapshotID: "checkpoint-b", Memory: sleepTarget()}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("a second name for the same checkpoint = %v", err)
+	}
+}
+
+func TestAWakeCancelsTheRunningSleepUpload(t *testing.T) {
+	manager, _, _, snapshots := sleepyManager(t)
+	snapshots.blockUntilCancel = true
+	snapshots.uploadStarted = make(chan struct{})
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget()}); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- manager.OffloadSleepArtifacts(t.Context(), "vm-1") }()
+	select {
+	case <-snapshots.uploadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upload did not start")
+	}
+
+	if err := manager.SetPowerState(t.Context(), "vm-1", StateRunning); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("a cancelled upload reported %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the wake did not cancel the upload")
+	}
+	record, err := manager.readSleepRecord("vm-1")
+	if err != nil || record.Memory.Artifact != nil {
+		t.Fatalf("a cancelled upload completed its artifact: %+v, %v", record, err)
 	}
 }
 

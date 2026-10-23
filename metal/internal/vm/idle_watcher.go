@@ -42,7 +42,11 @@ func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.E
 		return nil
 	}
 	desired.Generation++
-	return manager.store.writeDesired(desired)
+	if err := manager.store.writeDesired(desired); err != nil {
+		return err
+	}
+	manager.stopSleepUpload(desired.ID)
+	return nil
 }
 
 // stopAfterIdle saves and stops a Sleepy VM when network traffic remains idle.

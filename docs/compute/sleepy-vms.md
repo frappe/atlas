@@ -136,7 +136,7 @@ An omitted artifact keeps its GET URL. A refresh must name the stored checkpoint
 
 Artifact status includes `object_key` when stored. Set it with the optional `object_key` field in an upload or URL refresh request. A nonempty key cannot change within a checkpoint. Atlas fills missing keys before migration. Older hosts ignore this optional request field.
 
-Uploads use stable staging data, so a wake can proceed during upload. Upload completion does not evict data if the VM has already woken. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
+Uploads use stable staging data, so a wake can proceed during upload. A wake, or any other change to the VM, cancels a running upload, because the VM no longer needs its checkpoint. No part reaches object storage after Atlas deletes the checkpoint objects. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
 
 Staging, compression, and uploads run in a separate pool of two background workers. Slow object storage does not consume normal VM reconciliation workers. The daemon cancels and waits for upload workers during shutdown. A later pass retries incomplete transfers after restart.
 

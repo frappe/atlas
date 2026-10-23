@@ -12,8 +12,10 @@ import (
 )
 
 type sleepUpload struct {
-	memory   bool
-	progress SleepUploadProgress
+	virtualMachineID string
+	memory           bool
+	progress         SleepUploadProgress
+	cancel           context.CancelFunc
 }
 
 // OffloadSleepArtifacts serializes transfers for one VM without occupying its reconciler.
@@ -60,6 +62,19 @@ func (upload *sleepUpload) phase() string {
 		return phase + "memory"
 	}
 	return phase + "disk"
+}
+
+// stopSleepUpload cancels the running sleep upload of a VM. A change to the desired
+// record makes its checkpoint stale, and a part sent after the controller removes
+// the checkpoint objects would stay in object storage.
+func (manager *Manager) stopSleepUpload(identifier string) {
+	manager.sleepUploadsMutex.Lock()
+	defer manager.sleepUploadsMutex.Unlock()
+	for _, upload := range manager.sleepUploads {
+		if upload.virtualMachineID == identifier {
+			upload.cancel()
+		}
+	}
 }
 
 func (manager *Manager) applySleepUpload(snapshotID string, information *Information) {
@@ -186,7 +201,9 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return err
 	}
-	upload := &sleepUpload{memory: memory}
+	uploadContext, cancelUpload := context.WithCancel(ctx)
+	defer cancelUpload()
+	upload := &sleepUpload{virtualMachineID: identifier, memory: memory, cancel: cancelUpload}
 	manager.sleepUploadsMutex.Lock()
 	manager.sleepUploads[record.ID] = upload
 	manager.sleepUploadsMutex.Unlock()
@@ -201,9 +218,9 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 	// The upload reads only staging, so wake does not wait for its network transfer.
 	var artifact SleepArtifact
 	if memory {
-		artifact, err = manager.snapshots.UploadSleepMemory(ctx, directory, destination, &upload.progress)
+		artifact, err = manager.snapshots.UploadSleepMemory(uploadContext, directory, destination, &upload.progress)
 	} else {
-		artifact, err = manager.snapshots.UploadSleepDisk(ctx, record.ID, destination, &upload.progress)
+		artifact, err = manager.snapshots.UploadSleepDisk(uploadContext, record.ID, destination, &upload.progress)
 	}
 	return manager.finishSleepUpload(ctx, identifier, record.ID, memory, artifact, upload.phase(), err)
 }
@@ -226,6 +243,10 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 	}
 	if uploadError != nil {
 		if !current.canUpload(desired, observed) {
+			if errors.Is(uploadError, context.Canceled) && ctx.Err() == nil {
+				// stopSleepUpload cancelled an upload that the VM no longer needs.
+				return nil
+			}
 			return uploadError
 		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })
