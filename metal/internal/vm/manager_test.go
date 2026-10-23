@@ -259,10 +259,10 @@ func (fakeSnapshots) Stage(context.Context, SnapshotRequest) (StagedSnapshot, er
 func (fakeSnapshots) StageSleepMemory(context.Context, string, string) error        { return nil }
 func (fakeSnapshots) StageSleepDisk(context.Context, SnapshotRequest, string) error { return nil }
 func (fakeSnapshots) DeleteSnapshot(context.Context, string) error                  { return nil }
-func (fakeSnapshots) UploadSleepMemory(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error) {
+func (fakeSnapshots) UploadSleepMemory(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error) {
 	return SleepArtifact{}, nil
 }
-func (fakeSnapshots) UploadSleepDisk(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error) {
+func (fakeSnapshots) UploadSleepDisk(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error) {
 	return SleepArtifact{}, nil
 }
 

@@ -35,7 +35,7 @@ func (record SleepCheckpoint) validateMigrationArtifacts() error {
 		if artifact == nil {
 			continue
 		}
-		if artifact.Artifact == nil || artifact.ObjectKey == "" || artifact.UploadURL != "" || !validSleepURL(artifact.DownloadURL) {
+		if artifact.Artifact == nil || artifact.ObjectKey == "" || artifact.Multipart != nil || !validSleepURL(artifact.DownloadURL) {
 			return fmt.Errorf("migration sleep artifact is not acknowledged or has no object key")
 		}
 	}
@@ -68,7 +68,8 @@ func (record SleepCheckpoint) forMigration(userID uint32) SleepCheckpoint {
 	}
 	for _, artifact := range []*sleepArtifactRecord{record.Memory, record.Disk} {
 		if artifact != nil {
-			artifact.UploadURL = ""
+			artifact.Multipart = nil
+			artifact.Pending = nil
 		}
 	}
 	if record.SourceUserID == 0 {

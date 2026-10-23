@@ -25,8 +25,8 @@ type Snapshots interface {
 	StageSleepMemory(context.Context, string, string) error
 	StageSleepDisk(context.Context, SnapshotRequest, string) error
 	DeleteSnapshot(context.Context, string) error
-	UploadSleepMemory(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error)
-	UploadSleepDisk(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error)
+	UploadSleepMemory(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error)
+	UploadSleepDisk(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error)
 	DownloadSleepMemory(ctx context.Context, directory, source string, artifact SleepArtifact) error
 	RestoreSleepDisk(ctx context.Context, identifier, source string, artifact SleepArtifact) error
 }

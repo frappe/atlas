@@ -17,7 +17,7 @@ func sleepRestoreManager(t *testing.T, state SleepState) (*Manager, *fakeRuntime
 		if err := manager.OffloadSleepState(t.Context(), "vm-1", request); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		if err := completeSleepUploads(t.Context(), manager); err != nil {
 			t.Fatal(err)
 		}
 	}

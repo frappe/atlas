@@ -2,15 +2,15 @@ package storage
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-
-	"github.com/klauspost/compress/zstd"
 
 	"github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -36,27 +36,46 @@ func (store *SnapshotStore) StageSleepDisk(ctx context.Context, request vm.Snaps
 }
 
 // UploadSleepMemory uploads the three saved-state files as one compressed tar.
-func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory, destination string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
-	archive, err := os.CreateTemp(directory, "memory-*.tar")
+func (store *SnapshotStore) UploadSleepMemory(ctx context.Context, directory string, target vm.SleepArtifactTarget, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
+	sizeBytes, err := sleepArchiveSize(directory)
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	defer os.Remove(archive.Name())
-	defer archive.Close()
-	writer := tar.NewWriter(archive)
-	for _, name := range []string{"state", "memory", "metadata.json"} {
-		if err := appendSleepFile(ctx, writer, directory, name); err != nil {
-			return vm.SleepArtifact{}, err
+	reader, writer := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		archive := tar.NewWriter(writer)
+		for _, name := range []string{"state", "memory", "metadata.json"} {
+			if err := appendSleepFile(ctx, archive, directory, name); err != nil {
+				writer.CloseWithError(err)
+				return
+			}
 		}
+		writer.CloseWithError(archive.Close())
+	}()
+	defer func() { reader.Close(); <-done }()
+	return store.uploadSleepArtifact(ctx, reader, sizeBytes, target, directory, progress)
+}
+
+func sleepArchiveSize(directory string) (int64, error) {
+	size := int64(1024) // tar end markers
+	for _, name := range []string{"state", "memory", "metadata.json"} {
+		information, err := os.Stat(filepath.Join(directory, name))
+		if err != nil {
+			return 0, err
+		}
+		if !information.Mode().IsRegular() || information.Size() <= 0 {
+			return 0, fmt.Errorf("invalid saved-state file %s", name)
+		}
+		// Let archive/tar account for extended headers on large memory files.
+		var header bytes.Buffer
+		if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: information.Size()}); err != nil {
+			return 0, err
+		}
+		size += int64(header.Len()) + (information.Size()+511)/512*512
 	}
-	if err := writer.Close(); err != nil {
-		return vm.SleepArtifact{}, err
-	}
-	information, err := archive.Stat()
-	if err != nil {
-		return vm.SleepArtifact{}, err
-	}
-	return store.uploadSleepArtifact(ctx, archive.Name(), information.Size(), destination, directory, progress)
+	return size, nil
 }
 
 func appendSleepFile(ctx context.Context, writer *tar.Writer, directory, name string) error {
@@ -83,7 +102,7 @@ func appendSleepFile(ctx context.Context, writer *tar.Writer, directory, name st
 }
 
 // UploadSleepDisk uploads the stable staging clone with the existing image encoding.
-func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, destination string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
+func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID string, target vm.SleepArtifactTarget, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
 	lock := store.snapshotLock(snapshotID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -94,42 +113,50 @@ func (store *SnapshotStore) UploadSleepDisk(ctx context.Context, snapshotID, des
 	if !found {
 		return vm.SleepArtifact{}, ErrNotFound
 	}
-	return store.uploadSleepArtifact(ctx, store.pool.stagingDevicePath(snapshotID), metadata.RootfsSizeBytes,
-		destination, store.snapshotDirectory(snapshotID), progress)
-}
-
-func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, path string, sizeBytes int64, destination, directory string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
-	source, err := os.Open(path)
+	source, err := os.Open(store.pool.stagingDevicePath(snapshotID))
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
 	defer source.Close()
-	compressed, err := os.CreateTemp(directory, "sleep-upload-*")
-	if err != nil {
+	return store.uploadSleepArtifact(ctx, io.NewSectionReader(source, 0, metadata.RootfsSizeBytes), metadata.RootfsSizeBytes,
+		target, store.snapshotDirectory(snapshotID), progress)
+}
+
+func (store *SnapshotStore) uploadSleepArtifact(ctx context.Context, source io.Reader, sizeBytes int64, target vm.SleepArtifactTarget, directory string, progress *vm.SleepUploadProgress) (vm.SleepArtifact, error) {
+	if target.Multipart == nil {
+		return vm.SleepArtifact{}, ErrInvalidUpload
+	}
+	plan := target.Multipart
+	request := SnapshotArtifactUpload{UploadID: plan.UploadID, PartSizeBytes: plan.PartSizeMiB << 20}
+	for _, part := range plan.Parts {
+		request.Parts = append(request.Parts, SnapshotUploadPart{PartNumber: part.PartNumber, URL: part.URL})
+	}
+	if err := validateUploadParts(request, sizeBytes); err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	defer os.Remove(compressed.Name())
-	defer compressed.Close()
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(snapshotEncoderConcurrency))
-	if err != nil {
+	path := filepath.Join(directory, "sleep-parts.json")
+	var saved artifactProgress
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(data, &saved); err != nil {
+			return vm.SleepArtifact{}, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return vm.SleepArtifact{}, err
 	}
-	encoder.ResetContentSize(compressed, sizeBytes)
-	reader := newSHA256Reader(&sleepArtifactReader{context: ctx, source: io.NewSectionReader(source, 0, sizeBytes)})
-	_, copyError := io.Copy(encoder, reader)
+	reader := newSHA256Reader(&sleepArtifactReader{context: ctx, source: source})
+	storedBytes, parts, err := store.compressArtifact(ctx, reader, sizeBytes, request, directory, saved.storedParts(plan.UploadID), func(parts []storedPart) error {
+		data, err := json.Marshal(artifactProgress{UploadID: plan.UploadID, Parts: parts})
+		if err != nil {
+			return err
+		}
+		return platform.WriteFile(path, data, 0o600)
+	}, progress)
 	digest := reader.Sum()
-	if err := errors.Join(copyError, encoder.Close()); err != nil {
-		return vm.SleepArtifact{}, err
-	}
-	information, err := compressed.Stat()
 	if err != nil {
 		return vm.SleepArtifact{}, err
 	}
-	progress.TotalBytes.Store(information.Size())
-	if _, err := store.uploadPartWithRetry(ctx, SnapshotUploadPart{PartNumber: 1, URL: destination}, compressed, 0, information.Size(), &progress.UploadedBytes); err != nil {
-		return vm.SleepArtifact{}, err
-	}
-	return vm.SleepArtifact{SizeBytes: sizeBytes, StoredSizeBytes: information.Size(), SHA256: hex.EncodeToString(digest)}, nil
+	return vm.SleepArtifact{SizeBytes: sizeBytes, StoredSizeBytes: storedBytes, SHA256: hex.EncodeToString(digest), Parts: parts}, nil
 }
 
 type sleepArtifactReader struct {

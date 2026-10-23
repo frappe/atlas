@@ -28,7 +28,7 @@ func (transport sleepUploadTransport) RoundTrip(request *http.Request) (*http.Re
 
 func TestSleepUploadCountsCompressedHTTPAttempts(t *testing.T) {
 	contents := bytes.Repeat([]byte("compressible snapshot"), 1<<16)
-	store, _, path := uploadFixture(t, contents)
+	store, _, _ := uploadFixture(t, contents)
 	progress := &vm.SleepUploadProgress{}
 	attempts := 0
 	store.httpClient = &http.Client{Transport: sleepUploadTransport(func(request *http.Request) (*http.Response, error) {
@@ -57,7 +57,7 @@ func TestSleepUploadCountsCompressedHTTPAttempts(t *testing.T) {
 		}
 		return response, nil
 	})}
-	artifact, err := store.uploadSleepArtifact(t.Context(), path, int64(len(contents)), "https://objects.example/upload", t.TempDir(), progress)
+	artifact, err := store.uploadSleepArtifact(t.Context(), bytes.NewReader(contents), int64(len(contents)), sleepMultipartTarget("https://objects.example/upload"), t.TempDir(), progress)
 	if err != nil || attempts != 2 || artifact.StoredSizeBytes != progress.TotalBytes.Load() {
 		t.Fatalf("upload after retry: %+v, attempts=%d, error=%v", artifact, attempts, err)
 	}
@@ -93,7 +93,7 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "state"), []byte("changed after wake"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := store.UploadSleepMemory(t.Context(), staged, server.URL+"?put=secret", &vm.SleepUploadProgress{})
+	artifact, err := store.UploadSleepMemory(t.Context(), staged, sleepMultipartTarget(server.URL+"?put=secret"), &vm.SleepUploadProgress{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +148,11 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("failed download left files: %v, %v", entries, err)
 	}
+}
+
+func sleepMultipartTarget(destination string) vm.SleepArtifactTarget {
+	return vm.SleepArtifactTarget{Multipart: &vm.SleepMultipartUpload{UploadID: "sleep-upload", PartSizeMiB: 5,
+		Parts: []vm.SleepUploadPart{{PartNumber: 1, URL: destination}}}}
 }
 
 func TestSleepMemoryArchiveRejectsPathsAndLinks(t *testing.T) {

@@ -53,7 +53,7 @@ func (manager *Manager) maintainSleepTransfer(ctx context.Context, desired Desir
 
 func (upload *sleepUpload) phase() string {
 	phase := "compress-sleep-"
-	if upload.progress.TotalBytes.Load() > 0 {
+	if upload.progress.Uploading.Load() || upload.progress.TotalBytes.Load() > 0 {
 		phase = "upload-sleep-"
 	}
 	if upload.memory {
@@ -76,7 +76,7 @@ func (manager *Manager) applySleepUpload(snapshotID string, information *Informa
 	if !status.Uploaded {
 		if total := upload.progress.TotalBytes.Load(); total > 0 {
 			// Reading the complete body is not an object-store acknowledgment.
-			percent := int(min(99, upload.progress.UploadedBytes.Load()*100/total))
+			percent := int(min(99, (upload.progress.CompletedBytes.Load()+upload.progress.UploadedBytes.Load())*100/total))
 			status.UploadPercent = &percent
 		}
 	}
@@ -130,9 +130,13 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		}
 		return manager.snapshots.DeleteSnapshot(ctx, record.ID)
 	}
-	if !memory && record.Memory.Artifact == nil {
+	if target.Pending != nil {
 		unlock()
-		return ErrConflict
+		return nil
+	}
+	if !memory && record.Memory.Artifact == nil && record.Memory.Pending == nil {
+		unlock()
+		return nil
 	}
 	machine := runtimeMachine(desired, observed.NetworkInterface)
 	status, err := manager.runtime.Inspect(ctx, machine)
@@ -153,9 +157,17 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return err
 	}
-	defer os.RemoveAll(directory)
+	uploadSucceeded := false
+	defer func() {
+		if uploadSucceeded {
+			os.RemoveAll(directory)
+		}
+	}()
 	if !memory {
 		defer func() {
+			if !uploadSucceeded {
+				return
+			}
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if err := manager.snapshots.DeleteSnapshot(cleanup, record.ID); err != nil {
@@ -190,7 +202,7 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		delete(manager.sleepUploads, record.ID)
 		manager.sleepUploadsMutex.Unlock()
 	}()
-	destination := target.UploadURL
+	destination := target.SleepArtifactTarget
 	unlock()
 
 	// The upload reads only staging, so wake does not wait for its network transfer.
@@ -200,6 +212,7 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 	} else {
 		artifact, err = manager.snapshots.UploadSleepDisk(ctx, record.ID, destination, &upload.progress)
 	}
+	uploadSucceeded = err == nil
 	return manager.finishSleepUpload(ctx, identifier, record.ID, memory, artifact, upload.phase(), err)
 }
 
@@ -225,11 +238,9 @@ func (manager *Manager) finishSleepUpload(ctx context.Context, identifier, snaps
 		}
 		return manager.runOperation(completion, identifier, &observed, current.ID, phase, func() error { return uploadError })
 	}
-	current.target(memory).Artifact = &artifact
+	target := current.target(memory)
+	target.Pending = &artifact
 	if err := manager.writeSleepRecord(identifier, current); err != nil {
-		return err
-	}
-	if err := manager.evictSleepArtifacts(completion, desired, &observed, current); err != nil {
 		return err
 	}
 	if observed.OperationID == snapshotID {

@@ -15,7 +15,7 @@ import (
 // @Accept json
 // @Produce json
 // @Param id path string true "Virtual machine identifier"
-// @Param request body vm.SleepStateRequest true "Presigned PUT and GET URLs for memory, disk, or both"
+// @Param request body vm.SleepStateRequest true "Multipart upload plans and GET URLs for memory, disk, or both"
 // @Success 202 {object} virtualMachineResponse
 // @Failure 400 {object} errorResponse
 // @Failure 401 {object} errorResponse
@@ -49,7 +49,7 @@ func (s *Server) offloadVirtualMachineSleepState(c echo.Context) error {
 // @Accept json
 // @Produce json
 // @Param id path string true "Virtual machine identifier"
-// @Param request body vm.SleepStateRequest true "Snapshot identifier and refreshed GET URLs; upload_url is not allowed"
+// @Param request body vm.SleepStateRequest true "Snapshot identifier, refreshed GET URLs, and optional completed upload IDs"
 // @Success 202 {object} virtualMachineResponse
 // @Failure 400 {object} errorResponse
 // @Failure 401 {object} errorResponse
@@ -72,5 +72,6 @@ func (s *Server) refreshVirtualMachineSleepState(c echo.Context) error {
 	if err := s.virtualMachineManager.RefreshSleepState(c.Request().Context(), identifier, request); err != nil {
 		return err
 	}
+	s.wakeReconciler()
 	return s.respondWithCurrentVirtualMachine(c, http.StatusAccepted)
 }

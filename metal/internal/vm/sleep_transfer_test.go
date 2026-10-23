@@ -34,7 +34,7 @@ func TestBlockedSleepUploadsDoNotBlockStopOrReplaceItsResult(t *testing.T) {
 				}
 			}
 			finished := make(chan error, 1)
-			go func() { finished <- manager.OffloadSleepArtifacts(t.Context(), "vm-1") }()
+			go func() { finished <- completeSleepUploads(t.Context(), manager) }()
 			select {
 			case <-started:
 			case <-time.After(time.Second):
@@ -96,7 +96,7 @@ func TestSleepUploadProgressIsPerArtifactAndTransient(t *testing.T) {
 		status := information.SleepSnapshot.Memory
 		if name == "disk" {
 			status = information.SleepSnapshot.Disk
-			if memory := information.SleepSnapshot.Memory; !memory.Uploaded || memory.UploadPercent == nil || *memory.UploadPercent != 100 {
+			if memory := information.SleepSnapshot.Memory; memory.Pending == nil || memory.UploadPercent == nil || *memory.UploadPercent != 99 {
 				t.Fatalf("memory completion lost during disk upload: %+v", memory)
 			}
 		}
@@ -132,7 +132,7 @@ func TestSleepUploadProgressIsPerArtifactAndTransient(t *testing.T) {
 			}
 		}
 	}
-	if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+	if err := completeSleepUploads(t.Context(), manager); err != nil {
 		t.Fatal(err)
 	}
 	information, err := manager.Information(t.Context(), "vm-1")
@@ -163,7 +163,7 @@ func TestQueuedWakePreventsSleepEviction(t *testing.T) {
 					}
 				}
 			}
-			if err := manager.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+			if err := completeSleepUploads(t.Context(), manager); err != nil {
 				t.Fatal(err)
 			}
 			if storage.releases != 0 || runtime.restores != 0 || snapshots.uploads != selected {

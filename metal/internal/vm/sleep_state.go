@@ -16,7 +16,6 @@ import (
 // SleepArtifactTarget supplies object storage access for one sleep artifact.
 type SleepArtifactTarget struct {
 	ObjectKey         string                `json:"object_key,omitempty"`
-	UploadURL         string                `json:"upload_url,omitempty"`
 	DownloadURL       string                `json:"download_url"`
 	Multipart         *SleepMultipartUpload `json:"multipart,omitempty"`
 	CompletedUploadID string                `json:"completed_upload_id,omitempty"`
@@ -92,11 +91,30 @@ func (request SleepStateRequest) Validate(refresh bool) error {
 			return fmt.Errorf("download_url must be an absolute HTTP or HTTPS URL without credentials or a fragment")
 		}
 		if refresh {
-			if target.UploadURL != "" {
-				return fmt.Errorf("a URL refresh cannot supply upload_url")
+			if target.Multipart != nil {
+				return fmt.Errorf("a URL refresh cannot supply upload destinations")
 			}
-		} else if !validSleepURL(target.UploadURL) {
-			return fmt.Errorf("upload_url must be an absolute HTTP or HTTPS URL without credentials or a fragment")
+		} else if target.Multipart != nil {
+			if target.CompletedUploadID != "" {
+				return fmt.Errorf("multipart cannot be combined with completed_upload_id")
+			}
+			if err := target.Multipart.validate(); err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("multipart is required for an upload")
+		}
+	}
+	return nil
+}
+
+func (upload SleepMultipartUpload) validate() error {
+	if upload.UploadID == "" || upload.PartSizeMiB < 5 || upload.PartSizeMiB > 5120 || len(upload.Parts) == 0 || len(upload.Parts) > 10000 {
+		return fmt.Errorf("invalid multipart upload plan")
+	}
+	for index, part := range upload.Parts {
+		if part.PartNumber != index+1 || !validSleepURL(part.URL) {
+			return fmt.Errorf("multipart parts must be consecutive signed HTTP URLs")
 		}
 	}
 	return nil
@@ -179,7 +197,8 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 		}
 		// Signatures can rotate; a checkpoint cannot change object identity.
 		if !sameSleepObject((*pair.stored).DownloadURL, pair.target.DownloadURL) ||
-			(!refresh && !sameSleepObject((*pair.stored).UploadURL, pair.target.UploadURL)) {
+			(!refresh && ((*pair.stored).Multipart == nil) != (pair.target.Multipart == nil)) ||
+			(!refresh && pair.target.Multipart != nil && (*pair.stored).Multipart.UploadID != pair.target.Multipart.UploadID) {
 			return ErrConflict
 		}
 		(*pair.stored).DownloadURL = pair.target.DownloadURL
@@ -190,10 +209,28 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			(*pair.stored).ObjectKey = pair.target.ObjectKey
 		}
 		if !refresh {
-			(*pair.stored).UploadURL = pair.target.UploadURL
+			(*pair.stored).Multipart = pair.target.Multipart
+		}
+		if pair.target.CompletedUploadID != "" {
+			stored := *pair.stored
+			if stored.Multipart == nil || stored.Multipart.UploadID != pair.target.CompletedUploadID || (stored.Pending == nil && stored.Artifact == nil) {
+				return ErrConflict
+			}
+			if stored.Pending != nil {
+				stored.Artifact = stored.Pending
+				stored.Pending = nil
+			}
 		}
 	}
-	return manager.writeSleepRecord(identifier, record)
+	if err := manager.writeSleepRecord(identifier, record); err != nil {
+		return err
+	}
+	if record.canUpload(desired, observed) && ((request.Memory != nil && request.Memory.CompletedUploadID != "") || (request.Disk != nil && request.Disk.CompletedUploadID != "")) {
+		observed.OperationID = record.ID
+		observed.Phase = "evict-sleep-artifacts"
+		return manager.store.writeObserved(identifier, observed)
+	}
+	return nil
 }
 
 func sameSleepObject(first, second string) bool {
@@ -233,12 +270,14 @@ func (record SleepCheckpoint) validate() error {
 }
 
 func (artifact sleepArtifactRecord) validateContent() error {
-	if artifact.Artifact == nil {
-		return nil
-	}
-	digest, err := hex.DecodeString(artifact.Artifact.SHA256)
-	if err != nil || len(digest) != 32 || artifact.Artifact.SizeBytes <= 0 || artifact.Artifact.StoredSizeBytes <= 0 {
-		return fmt.Errorf("invalid sleep artifact content")
+	for _, content := range []*SleepArtifact{artifact.Artifact, artifact.Pending} {
+		if content == nil {
+			continue
+		}
+		digest, err := hex.DecodeString(content.SHA256)
+		if err != nil || len(digest) != 32 || content.SizeBytes <= 0 || content.StoredSizeBytes <= 0 {
+			return fmt.Errorf("invalid sleep artifact content")
+		}
 	}
 	return nil
 }
@@ -288,6 +327,19 @@ func (record *SleepCheckpoint) status() *SleepSnapshotStatus {
 		if artifact != nil && artifact.Uploaded {
 			percent := 100
 			artifact.UploadPercent = &percent
+		}
+	}
+	for _, pair := range []struct {
+		record *sleepArtifactRecord
+		status *SleepArtifactStatus
+	}{{record.Memory, status.Memory}, {record.Disk, status.Disk}} {
+		if pair.record != nil && pair.record.Multipart != nil {
+			pair.status.UploadID = pair.record.Multipart.UploadID
+			pair.status.Pending = pair.record.Pending
+			if pair.record.Pending != nil {
+				percent := 99
+				pair.status.UploadPercent = &percent
+			}
 		}
 	}
 	return status

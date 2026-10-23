@@ -130,7 +130,8 @@ func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
 			observed := vm.ObservedRecord{SchemaVersion: 1, Generation: 1, SpecificationGeneration: 1,
 				State: vm.StateStopped, SleepState: vm.SleepStateSleeping, UpdatedAt: time.Now().UTC()}
 			writeSleepAPIRecord(t, statusPath, observed)
-			target := &vm.SleepArtifactTarget{UploadURL: objects.URL + "/memory?put=secret", DownloadURL: objects.URL + "/memory?get=secret"}
+			target := &vm.SleepArtifactTarget{Multipart: &vm.SleepMultipartUpload{UploadID: "sleep-upload", PartSizeMiB: 5,
+				Parts: []vm.SleepUploadPart{{PartNumber: 1, URL: objects.URL + "/memory?put=secret"}}}, DownloadURL: objects.URL + "/memory?get=secret"}
 			body, err := json.Marshal(vm.SleepStateRequest{Memory: target})
 			if err != nil {
 				t.Fatal(err)
@@ -151,17 +152,24 @@ func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
 			release <- struct{}{}
 			waitSleepAPIResult(t, finished)
 			uploaded := sleepAPIRequest(t, client, server.URL, http.MethodGet, "/v1/vms/vm1", "")
-			if uploaded.Observed.SleepState != string(vm.SleepStateDeepSleeping) || *uploaded.Observed.SleepSnapshot.Memory.UploadPercent != 100 {
-				t.Fatalf("upload did not complete: %+v", uploaded.Observed)
+			if uploaded.Observed.SleepState != string(vm.SleepStateSleeping) || uploaded.Observed.SleepSnapshot.Memory.Uploaded || *uploaded.Observed.SleepSnapshot.Memory.UploadPercent != 99 || !runtime.state.HasSavedState {
+				t.Fatalf("uncompleted multipart object evicted memory: %+v", uploaded.Observed)
 			}
 			refresh, err := json.Marshal(vm.SleepStateRequest{SnapshotID: uploaded.Observed.SleepSnapshot.ID,
-				Memory: &vm.SleepArtifactTarget{ObjectKey: "sleep/source/vm1/memory", DownloadURL: objects.URL + "/memory?get=refreshed"}})
+				Memory: &vm.SleepArtifactTarget{ObjectKey: "sleep/source/vm1/memory", DownloadURL: objects.URL + "/memory?get=refreshed", CompletedUploadID: "sleep-upload"}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			refreshed := sleepAPIRequest(t, client, server.URL, http.MethodPatch, "/v1/vms/vm1/sleep-state", string(refresh))
 			if refreshed.Observed.SleepSnapshot.Memory.ObjectKey != "sleep/source/vm1/memory" {
 				t.Fatal("URL refresh did not persist the original object key")
+			}
+			if err := manager.OffloadSleepArtifacts(ctx, "vm1"); err != nil {
+				t.Fatal(err)
+			}
+			acknowledged := sleepAPIRequest(t, client, server.URL, http.MethodGet, "/v1/vms/vm1", "")
+			if acknowledged.Observed.SleepState != string(vm.SleepStateDeepSleeping) || *acknowledged.Observed.SleepSnapshot.Memory.UploadPercent != 100 {
+				t.Fatalf("acknowledged multipart object did not evict memory: %+v", acknowledged.Observed)
 			}
 			select {
 			case method := <-started:
