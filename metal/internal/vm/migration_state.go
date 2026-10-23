@@ -242,7 +242,7 @@ func (manager *Manager) recordMigrationRuntimeState(ctx context.Context, desired
 	if status.State != state {
 		return fmt.Errorf("migrated VM %s is %s, want %s", desired.ID, status.State, state)
 	}
-	return manager.writeAppliedState(desired, observed, state)
+	return manager.writeAppliedState(desired, observed, state, SleepStateAwake)
 }
 
 // RemoveMigratedRuntime removes migration runtime, jail, and network. Repeats

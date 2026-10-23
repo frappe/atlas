@@ -221,6 +221,16 @@ func (monitor *Monitor) Sample(target Target) (Sample, error) {
 	return Sample{IdleFor: time.Duration(now - lastActivity), PacketSequence: packetTime}, nil
 }
 
+// LastRequestAt returns the wall time of the last request. Before the first
+// request, it returns the time of the attach or the last idle reset.
+func (monitor *Monitor) LastRequestAt(target Target) (time.Time, error) {
+	sample, err := monitor.Sample(target)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Now().Add(-sample.IdleFor), nil
+}
+
 // ReadTrafficCounters returns cumulative received and sent traffic for one VM.
 func (monitor *Monitor) ReadTrafficCounters(target Target) (received TrafficCounters, sent SentCounters, err error) {
 	monitor.mutex.RLock()

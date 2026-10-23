@@ -178,12 +178,57 @@ class MetalOperationError:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalSleepArtifact:
+	"""Store progress and completion of one sleep artifact upload."""
+
+	uploaded: bool
+	upload_percent: int | None = None
+	object_key: str = ""
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepArtifact:
+		"""Validate optional upload progress from Metal."""
+		artifact = object_value(value, "sleep artifact")
+		percent = None
+		if artifact.get("upload_percent") is not None:
+			percent = integer_field(artifact, "upload_percent")
+			if percent > 100:
+				raise ValueError("upload_percent must be between 0 and 100")
+		return cls(
+			uploaded=boolean_field(artifact, "uploaded"),
+			upload_percent=percent,
+			object_key=string_field(artifact, "object_key", default=""),
+		)
+
+
+@dataclass(frozen=True, slots=True)
+class MetalSleepSnapshot:
+	"""Identify a sleep checkpoint and its selected artifacts."""
+
+	id: str
+	memory: MetalSleepArtifact | None
+	disk: MetalSleepArtifact | None
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepSnapshot:
+		"""Validate sleep snapshot status at the Metal boundary."""
+		snapshot = object_value(value, "sleep_snapshot")
+		artifacts = {}
+		for name in ("memory", "disk"):
+			artifact = snapshot.get(name)
+			artifacts[name] = MetalSleepArtifact.from_dict(artifact) if artifact is not None else None
+		return cls(id=string_field(snapshot, "id"), **artifacts)
+
+
+@dataclass(frozen=True, slots=True)
 class MetalObservedState:
 	"""Store one observed virtual machine state."""
 
 	generation: int
 	restart_generation: int
 	state: str
+	sleep_state: str
+	last_request_at: str
 	phase: str
 	operation_id: str
 	operation_started_at: str
@@ -191,6 +236,7 @@ class MetalObservedState:
 	disk: MetalObservedDisk
 	network: MetalObservedNetwork
 	error: MetalOperationError | None
+	sleep_snapshot: MetalSleepSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +459,8 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
+		sleep_state=string_field(value, "sleep_state", default=""),
+		last_request_at=string_field(value, "last_request_at", default=""),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),
 		operation_started_at=string_field(value, "operation_started_at", default=""),
@@ -420,6 +468,11 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		disk=MetalObservedDisk(used_mib=integer_field(object_field(value, "disk"), "used_mib")),
 		network=MetalObservedNetwork(mac=string_field(object_field(value, "network"), "mac", default="")),
 		error=operation_error,
+		sleep_snapshot=(
+			MetalSleepSnapshot.from_dict(value["sleep_snapshot"])
+			if value.get("sleep_snapshot") is not None
+			else None
+		),
 	)
 
 

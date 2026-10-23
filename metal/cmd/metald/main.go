@@ -352,6 +352,16 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		reconcileInterval,
 		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
+	sleepTransferReconciler := reconciler.NewSleepTransferReconciler(
+		virtualMachineManager,
+		reconcileInterval,
+		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
+	)
+	sleepRestoreReconciler := reconciler.NewSleepRestoreReconciler(
+		virtualMachineManager,
+		reconcileInterval,
+		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
+	)
 	guestChecker := reconciler.NewGuestChecker(virtualMachineManager, guestCheckInterval, registry, logger)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
@@ -365,6 +375,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	var migrationManager *migration.Manager
 	notifyReconcilers := func() {
 		virtualMachineReconciler.Wake()
+		sleepTransferReconciler.Wake()
+		sleepRestoreReconciler.Wake()
 		imageReconciler.Wake()
 		if migrationReconciler != nil {
 			migrationReconciler.Wake()
@@ -474,6 +486,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
 	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	daemon.StartWorker(virtualMachineReconciler.Run)
+	daemon.StartWorker(sleepTransferReconciler.Run)
+	daemon.StartWorker(sleepRestoreReconciler.Run)
 	daemon.StartWorker(guestChecker.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
@@ -482,7 +496,13 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
 	}).Run)
 	if trafficMonitor != nil {
-		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
+		daemon.StartTrafficListener(trafficMonitor.Events(), func(ctx context.Context, event traffic.Event) error {
+			if err := virtualMachineManager.RestoreAfterTraffic(ctx, event); err != nil {
+				return err
+			}
+			sleepRestoreReconciler.Wake()
+			return nil
+		})
 	}
 	if err := descriptorStore.SetStatus("ready " + version); err != nil {
 		logger.Warn("could not set the service status", "error", err)

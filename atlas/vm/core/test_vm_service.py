@@ -62,7 +62,13 @@ class TestVirtualMachineCreation(UnitTestCase):
 		image = SimpleNamespace(name="image-1", architecture="amd64")
 		for placement_rules in (AFFINITY_RULES, []):
 			request = VirtualMachineCreateRequest.from_value(
-				{**self.request(), "tags": {"role": "cargo-server"}, "placement_rules": placement_rules}
+				{
+					**self.request(),
+					"tags": {"role": "cargo-server"},
+					"placement_rules": placement_rules,
+					"deep_sleep_after_idle_seconds": 3600,
+					"coma_after_idle_seconds": 86400,
+				}
 			)
 			with (
 				self.subTest(placement_rules=placement_rules),
@@ -72,6 +78,8 @@ class TestVirtualMachineCreation(UnitTestCase):
 
 				values = get_doc.call_args.args[0]
 				self.assertEqual(values["tags"], [{"key": "role", "value": "cargo-server"}])
+				self.assertEqual(values["deep_sleep_after_idle_seconds"], 3600)
+				self.assertEqual(values["coma_after_idle_seconds"], 86400)
 				# A VM without rules stores nothing.
 				stored_rules = values["placement_rules"]
 				self.assertEqual(json.loads(stored_rules) if stored_rules else [], placement_rules)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 import boto3
 from boto3.s3.transfer import S3UploadFailedError
@@ -49,11 +50,13 @@ class ObjectStorageClient:
 		except (BotoCoreError, ClientError, S3UploadFailedError) as error:
 			raise self._error("upload an object", key, error) from error
 
-	def object_url(self, key: str, *, expiry_seconds: int | None = None) -> str:
-		"""Return a signed object URL."""
+	def object_url(
+		self, key: str, *, expiry_seconds: int | None = None, method: Literal["GET", "PUT"] = "GET"
+	) -> str:
+		"""Return a signed download or upload URL."""
 		try:
 			return self._client.generate_presigned_url(
-				"get_object",
+				"put_object" if method == "PUT" else "get_object",
 				Params={"Bucket": self.bucket, "Key": key},
 				ExpiresIn=expiry_seconds or self.signed_url_expiry,
 			)

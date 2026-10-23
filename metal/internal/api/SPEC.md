@@ -39,7 +39,9 @@ The generated [Metal API reference](/api/metal/) lists each route. Rules:
 - Use PUT when a request replaces desired state, so a repeat is safe.
 - Use POST only for an action that runs on each call, such as a restart, or to create a resource.
 - The network PUT requires the complete network object, including `firewall`.
+- `vm_sleep_state.go` owns POST and PATCH `/v1/vms/:id/sleep-state`. POST accepts artifact PUT and GET URLs. PATCH accepts the snapshot ID and replacement GET URLs. See [sleep snapshot uploads](../../../docs/compute/sleepy-vms.md#upload-saved-snapshots).
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.
+- Source preparation accepts optional `sleep_state=true` from destinations that preserve offloaded checkpoints. See [asleep migration](../../../docs/compute/migration.md#move-an-offloaded-vm).
 - The coordination stop route is idempotent. It returns the final snapshot.
 - The coordination memory snapshot route streams one memory snapshot file for the final sequence with a SHA-256 trailer. The migration manager checks the source lock and file name.
 - The coordination kernel route streams the kernel of the locked source VM with zstd. A source without the kernel returns 404.

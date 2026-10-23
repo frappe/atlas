@@ -58,6 +58,8 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"memory_mib": 2048,
 		"disk_mib": 20480,
 		"sleep_after_idle_seconds": 0,
+		"deep_sleep_after_idle_seconds": 0,
+		"coma_after_idle_seconds": 0,
 		"is_privileged": 0,
 		"is_termination_protected": 0,
 		"is_draft": 0,
@@ -353,6 +355,30 @@ class TestCreateVirtualMachine(UnitTestCase):
 			self.assertEqual(status, 400)
 			self.assertEqual([item["name"] for item in body["error"]["fields"]], ["sleep_after_idle_seconds"])
 
+	def test_create_accepts_vm_offload_times_and_rejects_invalid_pairs(self) -> None:
+		status, _, create = self.create(
+			{
+				**CREATE_BODY,
+				"deep_sleep_after_idle_seconds": 3600,
+				"coma_after_idle_seconds": 86400,
+			}
+		)
+		self.assertEqual(status, 202)
+		request = create.call_args.args[0]
+		self.assertEqual(
+			(request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (3600, 86400)
+		)
+		for deep, coma in ((-1, 0), (2**31, 0), (True, 0), (1.5, 0), (0, 3600), (3600, 3600)):
+			status, _, create = self.create(
+				{
+					**CREATE_BODY,
+					"deep_sleep_after_idle_seconds": deep,
+					"coma_after_idle_seconds": coma,
+				}
+			)
+			self.assertEqual(status, 400)
+			create.assert_not_called()
+
 
 class TestReadVirtualMachines(UnitTestCase):
 	def test_list_filters_by_tenant_and_pages(self) -> None:
@@ -630,6 +656,11 @@ class TestVirtualMachineConfiguration(UnitTestCase):
 
 		self.assertEqual(status, 202)
 		virtual_machine.resize.assert_called_once_with(sleep_after_idle_seconds=1800)
+
+	def test_resize_accepts_an_offload_change_alone(self) -> None:
+		status, _, virtual_machine = self.resize({"deep_sleep_after_idle_seconds": 3600})
+		self.assertEqual(status, 202)
+		virtual_machine.resize.assert_called_once_with(deep_sleep_after_idle_seconds=3600)
 
 	def test_resize_rejects_an_invalid_body(self) -> None:
 		for json in ({}, {"cpu_millicores": 99}, {"disk_mib": 0}, {"is_sleepy": 1}):

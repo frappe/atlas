@@ -241,6 +241,8 @@ scheduler_events = {
 			"atlas.metal_server.core.public_ip_service.replenish_direct_allocations",
 			"atlas.atlas.doctype.ssh_task.ssh_task.mark_timed_out_ssh_tasks",
 			"atlas.vm.core.vm_migration.reconcile_migrations",
+			"atlas.vm.core.vm_sleep.enqueue_sleep_state_reconciliation",
+			"atlas.vm.core.sleepy_rebalance.enqueue_sleepy_host_rebalances",
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_stale_drafts",
 			"atlas.service.doctype.cargo_server.cargo_server.enqueue_pending_cargo_provisioning",
 			"atlas.service.core.cargo.bucket.enqueue_pending_bucket_provisioning",

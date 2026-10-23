@@ -456,7 +456,7 @@ func TestLockSourceReturnsVirtualMachineDefinitionAndLocks(t *testing.T) {
 	machines.create("vm-1", testSpecification())
 	setObservedState(t, machines, "vm-1", vm.StateRunning)
 
-	description, err := migrationManager.LockSource(ctx, "mig-1", "vm-1")
+	description, err := migrationManager.LockSource(ctx, "mig-1", "vm-1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,8 +474,24 @@ func TestLockSourceReturnsVirtualMachineDefinitionAndLocks(t *testing.T) {
 
 func TestLockSourceRejectsAMissingVirtualMachine(t *testing.T) {
 	migrationManager, _, _ := newMigrationManager(t)
-	if _, err := migrationManager.LockSource(context.Background(), "mig-1", "vm-1"); !errors.Is(err, vm.ErrNotFound) {
+	if _, err := migrationManager.LockSource(context.Background(), "mig-1", "vm-1", false); !errors.Is(err, vm.ErrNotFound) {
 		t.Fatalf("missing VM = %v, want ErrNotFound", err)
+	}
+}
+
+func TestLockSourceRequiresOffloadedVMToWakeFirst(t *testing.T) {
+	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComatose} {
+		manager, machines, _ := newMigrationManager(t)
+		machines.create("vm-1", testSpecification())
+		if err := machines.WriteObserved("vm-1", vm.ObservedRecord{State: vm.StateStopped, SleepState: state}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", false); !errors.Is(err, vm.ErrConflict) {
+			t.Fatalf("offloaded VM migration = %v", err)
+		}
+		if manager.IsSourceLocked("vm-1") {
+			t.Fatal("offloaded VM was locked before waking")
+		}
 	}
 }
 
@@ -485,12 +501,12 @@ func TestLockSourceRejectsFailedOrUnknownStates(t *testing.T) {
 	machines.create("vm-1", testSpecification())
 
 	// A fresh VM reports unknown state.
-	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1", false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("unknown state = %v, want ErrConflict", err)
 	}
 
 	setObservedState(t, machines, "vm-1", vm.StateFailed)
-	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1", false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("failed state = %v, want ErrConflict", err)
 	}
 }
@@ -500,14 +516,14 @@ func TestLockSourceIsIdempotentForOneMigration(t *testing.T) {
 	ctx := context.Background()
 	machines.create("vm-1", testSpecification())
 	setObservedState(t, machines, "vm-1", vm.StateRunning)
-	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1"); err != nil {
+	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1", false); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1"); err != nil {
+	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1", false); err != nil {
 		t.Fatalf("repeat lock = %v, want nil", err)
 	}
-	if _, err := migrationManager.LockSource(ctx, "mig-2", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+	if _, err := migrationManager.LockSource(ctx, "mig-2", "vm-1", false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("second migration = %v, want ErrConflict", err)
 	}
 }
@@ -517,7 +533,7 @@ func TestUnlockSourceClearsTheLock(t *testing.T) {
 	ctx := context.Background()
 	machines.create("vm-1", testSpecification())
 	setObservedState(t, machines, "vm-1", vm.StateRunning)
-	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1"); err != nil {
+	if _, err := migrationManager.LockSource(ctx, "mig-1", "vm-1", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -606,10 +622,10 @@ func TestAbortAfterSourceExpiryKeepsTheTombstoneAndAllowsANewMigration(t *testin
 	if err := manager.UnlockSource(t.Context(), record.ID, "vm-1"); err != nil {
 		t.Fatalf("abort an expired migration: %v", err)
 	}
-	if _, err := manager.LockSource(t.Context(), record.ID, "vm-1"); !errors.Is(err, vm.ErrConflict) {
+	if _, err := manager.LockSource(t.Context(), record.ID, "vm-1", false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("expired migration revived: %v", err)
 	}
-	if _, err := manager.LockSource(t.Context(), "mig-new", "vm-1"); err != nil {
+	if _, err := manager.LockSource(t.Context(), "mig-new", "vm-1", false); err != nil {
 		t.Fatalf("start a new migration: %v", err)
 	}
 }
@@ -660,7 +676,7 @@ func TestATombstoneRefusesItsOwnMigrationAndAcceptsANewOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := manager.LockSource(context.Background(), "mig-idle", "vm-1"); !errors.Is(err, vm.ErrConflict) {
+	if _, err := manager.LockSource(context.Background(), "mig-idle", "vm-1", false); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("resurrecting the expired migration = %v, want a conflict", err)
 	}
 	if _, err := manager.StopSource(context.Background(), "mig-idle", "vm-1", 0, false); !errors.Is(err, vm.ErrConflict) {
@@ -674,7 +690,7 @@ func TestATombstoneRefusesItsOwnMigrationAndAcceptsANewOne(t *testing.T) {
 		t.Fatalf("unlock removed the tombstone: %+v, %v", tombstone, err)
 	}
 
-	if _, err := manager.LockSource(context.Background(), "mig-new", "vm-1"); err != nil {
+	if _, err := manager.LockSource(context.Background(), "mig-new", "vm-1", false); err != nil {
 		t.Fatalf("a new migration must replace the tombstone: %v", err)
 	}
 	stored, err := manager.store.readSource("vm-1")

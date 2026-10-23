@@ -29,6 +29,8 @@ type Runtime interface {
 	// RestorePausedFrom loads a transferred memory snapshot with the guest paused.
 	RestorePausedFrom(ctx context.Context, machine RuntimeMachine, directory string) error
 	DeleteSavedState(context.Context, RuntimeMachine) error
+	SavedState(context.Context, RuntimeMachine) (SavedState, error)
+	InstallSavedState(ctx context.Context, machine RuntimeMachine, directory, identity string) error
 	Pause(context.Context, RuntimeMachine) error
 	Resume(context.Context, RuntimeMachine) error
 	Remove(context.Context, RuntimeMachine) error
@@ -66,10 +68,18 @@ type RuntimeMachine struct {
 	// checked before the snapshot loads.
 	SpecificationGeneration uint64
 	RestartGeneration       uint64
+	// SavedStateSourceUserID validates an imported checkpoint before local installation.
+	SavedStateSourceUserID uint32
 }
 
 // RuntimeStatus contains the observed runtime state.
 type RuntimeStatus struct {
 	State         State
 	HasSavedState bool
+}
+
+// SavedState identifies the immutable files of one sleep checkpoint.
+type SavedState struct {
+	Directory string
+	Identity  string
 }

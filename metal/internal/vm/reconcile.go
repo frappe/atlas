@@ -37,10 +37,22 @@ func isRoutinePhase(phase string) bool {
 
 // Reconcile moves observed VM state toward the latest desired record.
 func (manager *Manager) Reconcile(ctx context.Context, identifier string) error {
-	virtualMachine := manager.newVirtualMachine(identifier)
-	unlock, err := virtualMachine.lock(ctx)
-	if err != nil {
+	return manager.reconcile(ctx, identifier, false)
+}
+
+// RestoreSleepState reconciles sleeping VMs outside the normal VM worker pool.
+func (manager *Manager) RestoreSleepState(ctx context.Context, identifier string) error {
+	return manager.reconcile(ctx, identifier, true)
+}
+
+func (manager *Manager) reconcile(ctx context.Context, identifier string, sleeping bool) error {
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	virtualMachine := manager.newVirtualMachine(identifier)
+	unlock, acquired := manager.operationLocks.TryLock(identifier)
+	if !acquired {
+		return nil
 	}
 	defer unlock()
 
@@ -53,9 +65,22 @@ func (manager *Manager) Reconcile(ctx context.Context, identifier string) error 
 	if err != nil {
 		return err
 	}
-	operationID := newOperationID()
-	acceptedAt := manager.desiredWrittenAt(identifier)
+	if (observed.SleepState != SleepStateAwake) != sleeping {
+		return nil
+	}
+	return manager.reconcileRecords(ctx, desired, observed)
+}
 
+func (manager *Manager) reconcileRecords(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
+	if pending, err := manager.hasPendingSleepTransfer(desired, observed); err != nil {
+		return err
+	} else if pending {
+		return manager.maintainSleepTransfer(ctx, desired, observed)
+	}
+	operationID := newOperationID()
+	acceptedAt := manager.desiredWrittenAt(desired.ID)
+
+	var err error
 	if desired.State == StateDestroyed {
 		err = manager.reconcileDestroyed(ctx, desired, observed, operationID)
 	} else {
@@ -86,6 +111,19 @@ func (manager *Manager) reconcileActive(
 
 	observed.NetworkInterface = networkInterface
 	machine := runtimeMachine(desired, networkInterface)
+	discardSavedState := desired.State == StateStopped || desired.SpecificationGeneration > observed.SpecificationGeneration ||
+		desired.RestartGeneration > observed.RestartGeneration
+	if discardSavedState && observed.SleepState == SleepStateComatose {
+		if err := manager.runOperation(ctx, desired.ID, &observed, operationID, phaseStorage, func() error {
+			record, err := manager.readSleepRecord(desired.ID)
+			if err != nil {
+				return err
+			}
+			return manager.restoreSleepDisk(ctx, desired.ID, record)
+		}); err != nil {
+			return err
+		}
+	}
 
 	if desired.State == StateStopped {
 		return manager.reconcileHardStop(ctx, desired, machine, &observed, operationID)
@@ -146,6 +184,7 @@ func (manager *Manager) reconcileActive(
 	}
 
 	observed.State = status.State
+	observed.SleepState = SleepStateAwake
 	observed.completeOperation()
 
 	return manager.store.writeObserved(desired.ID, observed)
@@ -160,7 +199,9 @@ func (manager *Manager) reconcileSavedState(
 	operationID string,
 	status RuntimeStatus,
 ) (RuntimeStatus, bool, error) {
-	if !status.HasSavedState {
+	hasRemoteState := observed.hasRemoteSleepState() &&
+		desired.SpecificationGeneration == observed.SpecificationGeneration && desired.RestartGeneration == observed.RestartGeneration
+	if !status.HasSavedState && !hasRemoteState {
 		return status, false, nil
 	}
 
@@ -188,12 +229,16 @@ func (manager *Manager) reconcileSavedState(
 
 	switch desired.State {
 	case StateRunning:
-		if desired.Specification.SleepAfterIdleSeconds > 0 && manager.traffic != nil {
+		if desired.Specification.SleepAfterIdleSeconds > 0 && manager.traffic != nil && desired.Generation == observed.Generation {
 			target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
 			if err := manager.traffic.StartWatching(target); err != nil {
 				return status, false, fmt.Errorf("watch traffic for VM %s: %w", desired.ID, err)
 			}
-			return status, true, manager.writeAppliedState(desired, observed, StateStopped)
+			sleepState := observed.SleepState
+			if !hasRemoteState {
+				sleepState = SleepStateSleeping
+			}
+			return status, true, manager.writeAppliedState(desired, observed, StateStopped, sleepState)
 		}
 		if err := manager.restoreSavedState(ctx, desired, machine, observed, operationID, StateRunning); err != nil {
 			return status, false, err
@@ -223,12 +268,45 @@ func (manager *Manager) restoreSavedState(
 		restore = manager.runtime.RestorePaused
 	}
 	if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseRestoreState, func() error {
-		return restore(ctx, machine)
+		if err := manager.restoreSleepArtifacts(ctx, desired, machine, *observed); err != nil {
+			return err
+		}
+		if err := restore(ctx, machine); err != nil {
+			return manager.recoverSleepRestore(ctx, machine, observed, resultState, err)
+		}
+		return nil
 	}); err != nil {
+		if resultState == StateRunning && manager.traffic != nil && desired.Specification.SleepAfterIdleSeconds > 0 {
+			err = errors.Join(err, manager.traffic.StartWatching(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}))
+		}
 		return err
 	}
+	if resultState == StateRunning {
+		manager.resetIdle(desired)
+	}
 	manager.stopTrafficWatch(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
-	return manager.writeAppliedState(desired, observed, resultState)
+	return manager.writeAppliedState(desired, observed, resultState, SleepStateAwake)
+}
+
+func (manager *Manager) recoverSleepRestore(ctx context.Context, machine RuntimeMachine, observed *ObservedRecord, resultState State, cause error) error {
+	if ctx.Err() != nil || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return cause
+	}
+	hasDisk, err := manager.storage.HasDisk(ctx, machine.ID)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	if !hasDisk {
+		return fmt.Errorf("cannot cold boot VM %s without its disk: %w", machine.ID, cause)
+	}
+
+	// A failed cold boot must not retry remote memory over a disk the guest may have changed.
+	observed.SleepState = SleepStateAwake
+	if err := manager.store.writeObserved(machine.ID, *observed); err != nil {
+		return errors.Join(cause, err)
+	}
+	_, err = manager.recoverFailedRestore(ctx, resultState, machine, cause)
+	return err
 }
 
 // reconcileHardStop stops the runtime and applies all stopped-state changes.
@@ -248,12 +326,13 @@ func (manager *Manager) reconcileHardStop(
 	if err := manager.applyDesiredSpecification(ctx, desired, machine, RuntimeStatus{State: StateStopped}, observed, operationID); err != nil {
 		return err
 	}
-	return manager.writeAppliedState(desired, observed, StateStopped)
+	return manager.writeAppliedState(desired, observed, StateStopped, SleepStateAwake)
 }
 
 // writeAppliedState records a complete state transition at the desired generations.
-func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *ObservedRecord, state State) error {
+func (manager *Manager) writeAppliedState(desired DesiredRecord, observed *ObservedRecord, state State, sleepState SleepState) error {
 	observed.State = state
+	observed.SleepState = sleepState
 	observed.Generation = desired.Generation
 	observed.SpecificationGeneration = desired.SpecificationGeneration
 	observed.RestartGeneration = desired.RestartGeneration

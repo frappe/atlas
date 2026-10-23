@@ -7,6 +7,7 @@
  "field_order": [
   "section_break_overview",
   "source_metal_server",
+  "is_sleepy_rebalance",
   "has_memory_snapshot",
   "allow_disk_only_fallback",
   "retry_failed_migrations",
@@ -15,6 +16,9 @@
   "status",
   "progress_percent",
   "amended_from",
+  "section_break_virtual_machines",
+  "move_only_selected_vms",
+  "virtual_machines",
   "section_break_destinations",
   "allow_any_destination",
   "destinations",
@@ -46,6 +50,15 @@
   },
   {
    "default": "0",
+   "fieldname": "is_sleepy_rebalance",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Sleepy Rebalance",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
    "fieldname": "has_memory_snapshot",
    "fieldtype": "Check",
    "label": "Memory Snapshot"
@@ -60,7 +73,7 @@
    "show_description_on_click": 1
   },
   {
-   "default": "0",
+   "default": "1",
    "description": "Migrates a failed VM again after the other VMs, up to 3 attempts.",
    "fieldname": "retry_failed_migrations",
    "fieldtype": "Check",
@@ -111,6 +124,25 @@
    "print_hide": 1,
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "section_break_virtual_machines",
+   "fieldtype": "Section Break",
+   "label": "Virtual Machines"
+  },
+  {
+   "default": "0",
+   "fieldname": "move_only_selected_vms",
+   "fieldtype": "Check",
+   "label": "Move Only Selected VMs"
+  },
+  {
+   "depends_on": "eval:doc.move_only_selected_vms",
+   "fieldname": "virtual_machines",
+   "fieldtype": "Table",
+   "label": "Virtual Machines",
+   "mandatory_depends_on": "eval:doc.move_only_selected_vms",
+   "options": "Metal Server Drain Virtual Machine"
   },
   {
    "fieldname": "section_break_destinations",
@@ -196,7 +228,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-19 21:00:00.000000",
+ "modified": "2026-10-23 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Drain",

@@ -32,7 +32,7 @@ func (m *Manager) OpenSourceMemorySnapshotFile(ctx context.Context, migrationID,
 	if err != nil {
 		return nil, err
 	}
-	if record.State != sourceDetached || record.HasMemorySnapshot == nil || !*record.HasMemorySnapshot || sequence < 1 || sequence != record.FinalSequence {
+	if record.Sleep != nil || record.State != sourceDetached || record.HasMemorySnapshot == nil || !*record.HasMemorySnapshot || sequence < 1 || sequence != record.FinalSequence {
 		return nil, vm.ErrConflict
 	}
 	path := filepath.Join(m.host.VirtualMachineRecordsDirectory(), virtualMachineID, "saved-state", name)
@@ -102,7 +102,7 @@ func (c *SourceClient) receiveMemorySnapshotFile(ctx context.Context, address, m
 }
 
 func (m *Manager) receiveFinalSnapshots(ctx context.Context, record destinationRecord, final SourceSnapshot) error {
-	if !record.HasMemorySnapshot {
+	if !record.HasMemorySnapshot || record.hasSleepCheckpoint() {
 		return m.receiveSnapshot(ctx, record, final, 0)
 	}
 	// Reserve the final disk row before the parallel memory row becomes visible.

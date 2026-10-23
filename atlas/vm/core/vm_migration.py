@@ -17,6 +17,7 @@ from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
 from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import AffinityRules, PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
+from atlas.vm.core.vm_sleep import VirtualMachineSleepService
 from atlas.vm.core.vm_state import LIVE_STATES
 
 if TYPE_CHECKING:
@@ -196,8 +197,12 @@ class MigrationService:
 
 	def select_destination_metal_server(self) -> bool:
 		"""Reserve the requested or an eligible destination. Return False to retry later."""
+		if not self._rebalance_source_is_eligible():
+			self.settle("aborted")
+			return False
 		virtual_machine: VirtualMachine = frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
 		shape = self.destination_shape(virtual_machine)
+		has_sleep_checkpoint = self._prepare_sleep_migration(virtual_machine)
 		requested_destination = self.migration.destination_metal_server
 		# A destination that the operator names is not limited by the affinity rules.
 		placement_rules = (
@@ -252,13 +257,16 @@ class MigrationService:
 			"destination_metal_server_selection_message": None,
 			"progress_percent": 5,
 		}
+		if has_sleep_checkpoint:
+			values["has_memory_snapshot"] = 1
+			values["allow_disk_only_fallback"] = 0
 		try:
 			# A sleeping VM wants to run and keeps its saved memory; a stopped VM has none.
 			if self.migration.has_memory_snapshot and virtual_machine.desired_state == "stopped":
 				raise AtlasUserError(_("A stopped VM has no memory to move."))
-			self.validate_compatibility(destination, virtual_machine.architecture)
+			self.validate_compatibility(destination, virtual_machine.architecture, has_sleep_checkpoint)
 		except AtlasUserError as error:
-			if not self.migration.allow_disk_only_fallback:
+			if has_sleep_checkpoint or not self.migration.allow_disk_only_fallback:
 				self.update(
 					{
 						"error_code": "migration_incompatible",
@@ -274,9 +282,21 @@ class MigrationService:
 		self.update(values)
 		return self.migration.status not in TERMINAL_STATUSES and not self.is_canceling
 
-	def validate_compatibility(self, destination: str, architecture: str) -> None:
+	def _prepare_sleep_migration(self, virtual_machine: VirtualMachine) -> bool:
+		if virtual_machine.sleep_after_idle_seconds <= 0:
+			return False
+		client = MetalClient(self.source_metal_server)
+		information = client.get_virtual_machine(virtual_machine.name)
+		if information.observed.sleep_state not in {"deep-sleeping", "comatose"}:
+			return False
+		VirtualMachineSleepService(virtual_machine).refresh_urls(information, client, force=True)
+		return True
+
+	def validate_compatibility(
+		self, destination: str, architecture: str, has_sleep_checkpoint: bool = False
+	) -> None:
 		"""Check synced host facts before a memory snapshot migration."""
-		if not self.migration.has_memory_snapshot:
+		if not self.migration.has_memory_snapshot and not has_sleep_checkpoint:
 			return
 		if self.has_target_shape:
 			raise AtlasUserError(_("A memory snapshot migration cannot resize the VM."))
@@ -678,11 +698,32 @@ class MigrationService:
 		"""Return the source Metal Server record."""
 		return frappe.get_doc("Metal Server", self.migration.source_metal_server)
 
+	def _rebalance_source_is_eligible(self) -> bool:
+		"""Release an automatic move if its source policy changed while it was queued."""
+		if not self.migration.metal_server_drain or not frappe.db.get_value(
+			"Metal Server Drain", self.migration.metal_server_drain, "is_sleepy_rebalance"
+		):
+			return True
+		from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
+
+		policy = SleepyHostRebalance(self.migration.source_metal_server)
+		return policy.is_eligible(
+			MetalClient(policy.server).get_virtual_machine(self.migration.virtual_machine)
+		)
+
 	def _load_allowed_destinations(self) -> set[str] | None:
 		"""Return the destinations of the drain that owns this migration, or None for any."""
 		if not self.migration.metal_server_drain:
 			return None
 		drain: MetalServerDrain = frappe.get_doc("Metal Server Drain", self.migration.metal_server_drain)
+		if drain.is_sleepy_rebalance:
+			from atlas.vm.core.sleepy_rebalance import SleepyHostRebalance
+
+			machine = frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
+			policy = SleepyHostRebalance(
+				self.migration.source_metal_server, allowed_destinations=drain.allowed_destinations
+			)
+			return {host.name for host in policy.destinations(machine)}
 		return drain.allowed_destinations
 
 	@staticmethod

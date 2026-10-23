@@ -146,6 +146,27 @@ func TestMonitorSamplesTrafficAndPublishesAnEvent(t *testing.T) {
 	}
 }
 
+func TestMonitorReportsTheLastRequestAsWallTime(t *testing.T) {
+	monitor, hooks := newTestMonitor(t)
+	target := Target{VirtualMachineID: "vm-1", UserID: 1001}
+	if err := monitor.Attach(AttachmentRequest{Target: target, NamespacePath: "/run/netns/vm-1", InterfaceName: "tap0"}); err != nil {
+		t.Fatal(err)
+	}
+	hooks.packetTimes[target.UserID] = uint64(7 * time.Second)
+
+	lastRequestAt, err := monitor.LastRequestAt(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if age := time.Since(lastRequestAt); age < 3*time.Second || age > 4*time.Second {
+		t.Fatalf("last request was %s ago, want 3 seconds", age)
+	}
+
+	if _, err := monitor.LastRequestAt(Target{VirtualMachineID: "vm-2", UserID: 1002}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("an unattached VM returned %v, want ErrNotFound", err)
+	}
+}
+
 func TestMonitorResetIdleStartsTheIdleTimeAgain(t *testing.T) {
 	monitor, hooks := newTestMonitor(t)
 	target := Target{VirtualMachineID: "vm-1", UserID: 1001}

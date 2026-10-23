@@ -26,29 +26,41 @@ A stopped VM also moves when a resize cannot fit on its host. Atlas stores `targ
 
 The option does not recover every memory transfer failure. The scenario table identifies the failures that require rollback.
 
-## How do I move every VM off a host? {#drain-a-host}
+## How do I move VMs off a host? {#drain-a-host}
 
-Use a **Metal Server Drain**. It migrates the VMs of one source Metal Server, oldest VM first. **Parallel Migrations** sets how many migrations run at the same time.
+Use a **Metal Server Drain**. By default, it migrates all VMs of one source Metal Server, oldest VM first. **Parallel Migrations** sets how many migrations run at the same time.
 
 | Step | Action |
 | --- | --- |
 | 1 | Open **Dangerous Actions → Drain Server** on the Metal Server form. Or create a Metal Server Drain and select the **Source Metal Server**. |
 | 2 | Keep **Allow Any Destination**, or clear it and add the destination Metal Servers. In the dialog, leave **Destination Metal Servers** empty for any destination. |
 | 3 | Set **Memory Snapshot** and **Allow Disk-Only Fallback**. They apply to each migration. |
-| 4 | Optionally select **Retry Failed Migrations**. Set **Parallel Migrations**. The default is 1. |
+| 4 | Keep **Retry Failed Migrations**, or clear it to disable retries. Set **Parallel Migrations**. The default is 1. |
 | 5 | Select **Drain** in the dialog, or submit the drain. Follow the **Migrations** table. |
+
+To move only selected VMs, create a Metal Server Drain directly. Select **Move Only Selected VMs** and add VMs to the **Virtual Machines** table before you submit. Select VMs on the source that are not drafts or terminating.
+
+Each VM can appear only once. When the option is clear, the table is hidden and its rows do not limit the drain.
 
 A source can have one running drain. Submit sets **In Maintenance** on the source, so placement puts no new VM there. The flag stays set after the drain. Clear it on the Metal Server when the host can take VMs again.
 
-Each migration writes its status, progress, and destination into its row when they change, also after the drain is cancelled. Every 5 seconds, the drain starts migrations until **Parallel Migrations** run. A VM that cannot start ends that run, so its retry waits for the next one. It starts no migration while VM migrations are paused. It does not finish while another migration moves a VM off the source.
+Each migration writes its status, progress, and destination into its row when they change, also after the drain is cancelled.
 
-A failed migration does not stop the drain. With **Retry Failed Migrations**, the drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried. A VM that cannot start a migration gets a `failed` row without a migration. The **Error** column of a row shows why its migration failed or could not start. A completed row shows no error.
+Every 5 seconds, the drain starts migrations until **Parallel Migrations** run. A VM that cannot start ends that run, so its retry waits for the next one. It starts no migration while VM migrations are paused. It does not finish while another migration moves a VM in its scope off the source.
 
-When the last migration has finished, the drain copies each migration into its row again. The drain is then **Completed** when no VM is left on the source. Otherwise it is **Failed**, and its **Error** section lists each VM that is still on the source, with each failure reason and the number of attempts that failed with it. **Progress (%)** shows the share of VMs that the drain moved. Cancel stops new migrations. The active migrations continue.
+A failed migration does not stop the drain. **Retry Failed Migrations** is selected by default. The drain migrates a failed VM again after all other VMs, up to 3 attempts. Each attempt adds a row. An aborted migration is not retried.
+
+A VM that cannot start a migration gets a `failed` row without a migration. The **Error** column of a row shows why its migration failed or could not start. A completed row shows no error.
+
+When the last migration has finished, the drain copies each migration into its row again. The drain is **Completed** when no VM in its scope is left on the source. For a selected-only drain, other VMs can stay on the source.
+
+Otherwise it is **Failed**, and its **Error** section lists each VM in its scope that is still on the source, with each failure reason and the number of attempts that failed with it.
+
+**Progress (%)** shows the share of VMs that the drain moved. For a selected-only drain, unselected VMs do not count. Cancel stops new migrations. The active migrations continue.
 
 ## Which compatibility checks apply? {#compatibility-before-transfer}
 
-Atlas checks memory compatibility after destination selection, before its first Metal request. It uses reports from [host sync](../region/host-sync.md). Missing reports, a desired state of `stopped`, and a resize each fail this check. Disk-only migrations skip the memory compatibility check.
+Atlas checks memory compatibility after destination selection, before requesting destination migration. It uses reports from [host sync](../region/host-sync.md). Missing reports, a desired state of `stopped`, and a resize each fail this check. Disk-only migrations of VMs without offloaded memory skip the memory compatibility check.
 
 | Memory snapshot migration check | Required compatibility |
 | --- | --- |
@@ -63,6 +75,21 @@ Atlas compares configured CPU profiles. Raw host features do not gate migration 
 A successful load does not prove compatibility for every guest instruction. Use a validated common CPU profile before the guest first boots.
 
 After you change a profile or replace Firecracker, cold-boot existing VMs before their memory migration. Atlas does not inspect each guest's captured CPU configuration. Validate custom profiles on each host combination. See [CPU templates](cpu-templates.md#migration-validation).
+
+## How do I move an offloaded VM? {#move-an-offloaded-vm}
+
+Use the normal migration action for a deep-sleeping or comatose VM. Atlas requires memory-compatible hosts and disables disk-only fallback for this move, regardless of the dialog choices. A resize is not allowed. Upgrade both Metal hosts before the move. Older destinations cannot lock an offloaded source.
+
+| Source sleep state | Transfer |
+| --- | --- |
+| `deep-sleeping` | The local disk uses the normal ZFS transfer. The remote memory checkpoint stays in object storage. |
+| `comatose` | Configuration and remote memory and disk references move. No memory or disk snapshots transfer. |
+
+Neither host downloads remote snapshots or starts Firecracker during migration. The destination copies a missing kernel through the existing kernel transfer. The source removes its network before destination network setup. The destination stays stopped with its original sleep state through `ready` and `finish`.
+
+Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
+
+For direct Metal calls, use `has_memory_snapshot: true` after checking host compatibility. Supply each artifact's original `object_key` through the sleep-state URL refresh before migration. A disk-only request rejects an offloaded checkpoint rather than cold-booting it.
 
 ## What happens in each migration scenario?
 

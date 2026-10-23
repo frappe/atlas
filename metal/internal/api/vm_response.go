@@ -32,6 +32,9 @@ type observedVirtualMachineResponse struct {
 	Generation        uint64                  `json:"generation"`
 	RestartGeneration uint64                  `json:"restart_generation"`
 	State             string                  `json:"state"`
+	SleepState        string                  `json:"sleep_state,omitempty"`
+	SleepSnapshot     *vm.SleepSnapshotStatus `json:"sleep_snapshot,omitempty"`
+	LastRequestAt     string                  `json:"last_request_at,omitempty"`
 	Phase             string                  `json:"phase,omitempty"`
 	OperationID       string                  `json:"operation_id,omitempty"`
 	OperationStarted  string                  `json:"operation_started_at,omitempty"`
@@ -184,6 +187,9 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			Generation:        information.ObservedGeneration,
 			RestartGeneration: information.ObservedRestartGeneration,
 			State:             string(information.State),
+			SleepState:        string(information.SleepState),
+			SleepSnapshot:     information.SleepSnapshot,
+			LastRequestAt:     formatRFC3339(information.LastRequestAt),
 			Phase:             information.Phase,
 			OperationID:       information.OperationID,
 			OperationStarted:  formatRFC3339(information.OperationStartedAt),

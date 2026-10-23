@@ -51,6 +51,22 @@ type fakeRuntime struct {
 	diskError          error
 	guestCheckError    error
 	guestChecks        int
+	savedDirectory     string
+	savedIdentity      string
+}
+
+func (runtime *fakeRuntime) SavedState(context.Context, RuntimeMachine) (SavedState, error) {
+	if !runtime.hasSavedState {
+		return SavedState{}, ErrNotFound
+	}
+	return SavedState{Directory: runtime.savedDirectory, Identity: runtime.savedIdentity}, nil
+}
+
+func (runtime *fakeRuntime) InstallSavedState(_ context.Context, _ RuntimeMachine, directory, identity string) error {
+	runtime.hasSavedState = true
+	runtime.savedDirectory = directory
+	runtime.savedIdentity = identity
+	return nil
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
@@ -207,9 +223,14 @@ func (network *fakeNetwork) Release(context.Context, NetworkReleaseRequest) erro
 }
 
 type fakeStorage struct {
+	hasDisk      bool
 	resizes      int
 	releases     int
 	releaseError error
+}
+
+func (storage *fakeStorage) HasDisk(context.Context, string) (bool, error) {
+	return storage.hasDisk, nil
 }
 
 func (storage *fakeStorage) DiskUsage(context.Context, string) (DiskUsage, error) {
@@ -223,6 +244,9 @@ func (storage *fakeStorage) ResizeDisk(context.Context, string, int) error {
 
 func (storage *fakeStorage) Release(context.Context, string) error {
 	storage.releases++
+	if storage.releaseError == nil {
+		storage.hasDisk = false
+	}
 	return storage.releaseError
 }
 
@@ -232,11 +256,29 @@ func (fakeSnapshots) Stage(context.Context, SnapshotRequest) (StagedSnapshot, er
 	return StagedSnapshot{}, nil
 }
 
+func (fakeSnapshots) StageSleepMemory(context.Context, string, string) error        { return nil }
+func (fakeSnapshots) StageSleepDisk(context.Context, SnapshotRequest, string) error { return nil }
+func (fakeSnapshots) DeleteSnapshot(context.Context, string) error                  { return nil }
+func (fakeSnapshots) UploadSleepMemory(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error) {
+	return SleepArtifact{}, nil
+}
+func (fakeSnapshots) UploadSleepDisk(context.Context, string, string, *SleepUploadProgress) (SleepArtifact, error) {
+	return SleepArtifact{}, nil
+}
+
+func (fakeSnapshots) DownloadSleepMemory(context.Context, string, string, SleepArtifact) error {
+	return nil
+}
+
+func (fakeSnapshots) RestoreSleepDisk(context.Context, string, string, SleepArtifact) error {
+	return nil
+}
+
 func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeStorage) {
 	t.Helper()
 	runtime := &fakeRuntime{state: StateStopped}
 	network := &fakeNetwork{}
-	storage := &fakeStorage{}
+	storage := &fakeStorage{hasDisk: true}
 	manager, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir(), UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
 		ManagerDependencies{
@@ -786,12 +828,36 @@ func TestStartWakesASleepingVirtualMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.hasSavedState = true
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.writeAppliedState(desired, &observed, StateStopped, SleepStateSleeping); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := manager.SetPowerState(context.Background(), "machine-1", StateRunning); err != nil {
 		t.Fatal(err)
 	}
+	if runtime.restores != 0 {
+		t.Fatal("start restored synchronously")
+	}
+	if err := manager.RestoreSleepState(t.Context(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
 	if runtime.restores != 1 || runtime.state != StateRunning {
 		t.Fatalf("restores = %d, state = %s, want one restore to running", runtime.restores, runtime.state)
+	}
+	information, err := manager.Information(context.Background(), "machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if information.SleepState != SleepStateAwake {
+		t.Fatalf("sleep state = %q, want awake", information.SleepState)
 	}
 }
 

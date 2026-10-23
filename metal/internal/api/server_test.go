@@ -38,6 +38,14 @@ type fakeVirtualMachineManager struct {
 	sshSession      vm.SSHSession
 }
 
+func (manager *fakeVirtualMachineManager) OffloadSleepState(context.Context, string, vm.SleepStateRequest) error {
+	return vm.ErrConflict
+}
+
+func (manager *fakeVirtualMachineManager) RefreshSleepState(context.Context, string, vm.SleepStateRequest) error {
+	return vm.ErrConflict
+}
+
 func (manager *fakeVirtualMachineManager) Create(_ context.Context, id string, specification vm.Specification) (vm.Information, error) {
 	if existing, found := manager.virtualMachines[id]; found {
 		return existing.info, nil

@@ -17,7 +17,7 @@ flowchart LR
 | --- | --- |
 | `<pool>/images/<image-ref>` | Base volume with a `@ready` snapshot, the source of VM disks. |
 | `<pool>/vms/<vm-id>` | One VM disk clone. The VM ID matches `machines/<vm-id>`. |
-| `<pool>/staging/<snapshot-id>` | Read-only Machine image upload source. |
+| `<pool>/staging/<snapshot-id>` | Read-only image or sleep disk upload source. |
 | `<pool>/warm/<key>@ready` | Warm boot disk for one image and exact VM shape. |
 | `<pool>/state` | File system mounted at `/var/lib/metal`. Downloads, warm memory, and saved state use pool space, not the root disk. |
 

@@ -431,8 +431,7 @@ func (store *SnapshotStore) uploadArtifact(ctx context.Context, snapshotID, arti
 	}, nil
 }
 
-// countingReader reports progress against the uncompressed artifact, which is
-// the size the controller shows.
+// countingReader counts bytes read from its source.
 type countingReader struct {
 	reader  io.Reader
 	counter *atomic.Int64
@@ -449,9 +448,10 @@ func (reader *countingReader) Read(buffer []byte) (int, error) {
 // uploadPartWithRetry sends one part, repeating a failure the object store may
 // recover from. Each attempt reads the part again, so a partial body never
 // reaches the next attempt.
-func (store *SnapshotStore) uploadPartWithRetry(ctx context.Context, part SnapshotUploadPart, file *os.File, offset, length int64) (string, error) {
+func (store *SnapshotStore) uploadPartWithRetry(ctx context.Context, part SnapshotUploadPart, file *os.File, offset, length int64, uploaded *atomic.Int64) (string, error) {
 	var lastError error
 	for attempt := range uploadPartAttempts {
+		body := uploadPartReader(file, offset, length, uploaded)
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -459,7 +459,7 @@ func (store *SnapshotStore) uploadPartWithRetry(ctx context.Context, part Snapsh
 			case <-time.After(time.Duration(attempt) * uploadRetryDelay):
 			}
 		}
-		etag, err := store.uploadPart(ctx, part, io.NewSectionReader(file, offset, length), length)
+		etag, err := store.uploadPart(ctx, part, body, length)
 		if err == nil {
 			return etag, nil
 		}
@@ -469,6 +469,15 @@ func (store *SnapshotStore) uploadPartWithRetry(ctx context.Context, part Snapsh
 		lastError = err
 	}
 	return "", lastError
+}
+
+func uploadPartReader(file *os.File, offset, length int64, uploaded *atomic.Int64) io.Reader {
+	body := io.NewSectionReader(file, offset, length)
+	if uploaded == nil {
+		return body
+	}
+	uploaded.Store(0)
+	return &countingReader{reader: body, counter: uploaded}
 }
 
 // uploadPart sends one part and returns the ETag the destination reports.

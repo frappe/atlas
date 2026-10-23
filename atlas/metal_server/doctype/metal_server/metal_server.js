@@ -240,7 +240,7 @@ function show_drain_dialog(frm) {
 				description: __(
 					"Migrates a failed VM again after the other VMs, up to 3 attempts."
 				),
-				default: 0,
+				default: 1,
 			},
 		],
 		primary_action_label: __("Drain"),
