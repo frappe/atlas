@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -329,7 +330,10 @@ func (m *Manager) streamInterval(ctx context.Context, record destinationRecord, 
 	); err != nil {
 		return 0, err
 	}
-	if err := m.disks.ReceiveSnapshotTLS(ctx, record.VirtualMachineID, record.Source); err != nil {
+	received := new(atomic.Int64)
+	m.receivedBytes.Store(record.VirtualMachineID, received)
+	defer m.receivedBytes.Delete(record.VirtualMachineID)
+	if err := m.disks.ReceiveSnapshotTLS(ctx, record.VirtualMachineID, record.Source, received); err != nil {
 		return 0, err
 	}
 	return snapshot.SizeBytes, nil

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,27 @@ func writeCopyingDestination(t *testing.T, machines *fakeMigrationHost, sourceSt
 	}
 	machines.desired["vm-1"] = vm.DesiredRecord{ID: "vm-1", Specification: testSpecification()}
 	return store
+}
+
+func TestDestinationStatusShowsBytesOfTheIntervalInFlight(t *testing.T) {
+	migrationManager, machines, _ := newMigrationManager(t)
+	store := writeCopyingDestination(t, machines, vm.StateRunning)
+	record, _ := store.readDestination("vm-1")
+	record.Intervals = []TransferProgress{{Sequence: 1, Completed: true, BytesTransferred: 10}, {Sequence: 2}}
+	if err := store.writeDestination(record); err != nil {
+		t.Fatal(err)
+	}
+	received := new(atomic.Int64)
+	received.Store(4096)
+	migrationManager.receivedBytes.Store("vm-1", received)
+
+	progress, err := migrationManager.DestinationStatus(t.Context(), "mig-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.Intervals[0].BytesTransferred != 10 || progress.Intervals[1].BytesTransferred != 4096 {
+		t.Fatalf("intervals = %+v", progress.Intervals)
+	}
 }
 
 // seedDestinationVM writes reconstructed destination records in the original state.

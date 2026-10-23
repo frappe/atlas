@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -49,7 +50,7 @@ type migrationStorage interface {
 	DestinationDatasetExists(ctx context.Context, virtualMachineID string) (bool, error)
 	ReceiveResumeToken(ctx context.Context, virtualMachineID string) (string, error)
 	StartSnapshotServer(ctx context.Context, virtualMachineID, snapshotName, baseSnapshotName, resumeToken string) (storage.SourceStream, error)
-	ReceiveSnapshotTLS(ctx context.Context, virtualMachineID, sourceAddress string) error
+	ReceiveSnapshotTLS(ctx context.Context, virtualMachineID, sourceAddress string, received *atomic.Int64) error
 	AbortReceive(ctx context.Context, virtualMachineID string) error
 }
 
@@ -146,6 +147,9 @@ type Manager struct {
 	sourceStreamsMutex     sync.Mutex
 	sourceStreams          map[string]*backgroundOperation
 	sourceStreamsWaitGroup sync.WaitGroup
+
+	// receivedBytes maps a VM to the byte count of its interval in flight.
+	receivedBytes sync.Map
 
 	// downtimeStarts maps a migration to when its source was asked to stop.
 	downtimeMutex  sync.Mutex
@@ -285,7 +289,13 @@ func (m *Manager) DestinationStatus(ctx context.Context, migrationID string) (De
 		return DestinationProgress{}, err
 	}
 	m.noteDestinationControl(ctx, virtualMachineID, record)
-	return record.progress(), nil
+	progress := record.progress()
+	if received, ok := m.receivedBytes.Load(virtualMachineID); ok {
+		if last := len(progress.Intervals) - 1; last >= 0 && !progress.Intervals[last].Completed {
+			progress.Intervals[last].BytesTransferred = received.(*atomic.Int64).Load()
+		}
+	}
+	return progress, nil
 }
 
 // noteDestinationControl records that Atlas called about this migration. It writes

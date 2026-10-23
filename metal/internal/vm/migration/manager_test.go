@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -298,7 +299,7 @@ func (f *fakeMigrationStorage) StartSnapshotServer(ctx context.Context, _, name,
 	return stream, nil
 }
 
-func (f *fakeMigrationStorage) ReceiveSnapshotTLS(ctx context.Context, _ string, _ string) error {
+func (f *fakeMigrationStorage) ReceiveSnapshotTLS(ctx context.Context, _ string, _ string, _ *atomic.Int64) error {
 	f.received++
 	if f.receive != nil {
 		return f.receive(ctx)
