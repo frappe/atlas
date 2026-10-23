@@ -501,6 +501,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 			if err := virtualMachineManager.RestoreAfterTraffic(ctx, event); err != nil {
 				return err
 			}
+			virtualMachineReconciler.Wake()
 			sleepRestoreReconciler.Wake()
 			return nil
 		})

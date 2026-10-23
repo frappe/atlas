@@ -42,7 +42,7 @@ func TestBlockedSleepUploadsDoNotBlockStopOrReplaceItsResult(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if err := manager.RestoreSleepState(ctx, "vm-1"); err != nil {
+			if err := reconcileSleeping(ctx, manager, "vm-1"); err != nil {
 				t.Fatalf("ordinary reconciliation waited for upload: %v", err)
 			}
 			information, err := manager.Information(ctx, "vm-1")
@@ -52,7 +52,7 @@ func TestBlockedSleepUploadsDoNotBlockStopOrReplaceItsResult(t *testing.T) {
 			if err := manager.SetPowerState(ctx, "vm-1", StateStopped); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.RestoreSleepState(ctx, "vm-1"); err != nil {
+			if err := reconcileSleeping(ctx, manager, "vm-1"); err != nil {
 				t.Fatalf("stop waited for upload: %v", err)
 			}
 			// The deferred close also releases the upload when an assertion fails.
@@ -172,7 +172,7 @@ func TestQueuedWakePreventsSleepEviction(t *testing.T) {
 			if selected == 1 && !runtime.hasSavedState {
 				t.Fatal("memory was evicted after wake was accepted")
 			}
-			if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+			if err := reconcileSleeping(t.Context(), manager, "vm-1"); err != nil {
 				t.Fatal(err)
 			}
 			information, err := manager.Information(t.Context(), "vm-1")

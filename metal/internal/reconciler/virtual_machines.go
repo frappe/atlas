@@ -31,7 +31,7 @@ type SleepTransferManager interface {
 	OffloadSleepArtifacts(ctx context.Context, id string) error
 }
 
-// SleepRestoreManager reconciles sleeping VMs independently of ordinary VM work.
+// SleepRestoreManager reconciles VMs with remote sleep state independently of ordinary VM work.
 type SleepRestoreManager interface {
 	VirtualMachineManager
 	RestoreSleepState(ctx context.Context, id string) error

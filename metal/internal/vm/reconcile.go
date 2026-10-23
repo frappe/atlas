@@ -40,12 +40,13 @@ func (manager *Manager) Reconcile(ctx context.Context, identifier string) error 
 	return manager.reconcile(ctx, identifier, false)
 }
 
-// RestoreSleepState reconciles sleeping VMs outside the normal VM worker pool.
+// RestoreSleepState reconciles VMs whose sleep state is in object storage, so a
+// slow download does not hold a normal VM worker.
 func (manager *Manager) RestoreSleepState(ctx context.Context, identifier string) error {
 	return manager.reconcile(ctx, identifier, true)
 }
 
-func (manager *Manager) reconcile(ctx context.Context, identifier string, sleeping bool) error {
+func (manager *Manager) reconcile(ctx context.Context, identifier string, remote bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func (manager *Manager) reconcile(ctx context.Context, identifier string, sleepi
 	if err != nil {
 		return err
 	}
-	if (observed.SleepState != SleepStateAwake) != sleeping {
+	if observed.hasRemoteSleepState() != remote {
 		return nil
 	}
 	return manager.reconcileRecords(ctx, desired, observed)

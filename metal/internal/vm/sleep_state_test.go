@@ -148,7 +148,7 @@ func TestSleepMigrationDefersDownloadsUntilDestinationWake(t *testing.T) {
 			if err := destination.SetPowerState(t.Context(), "vm-1", StateRunning); !errors.Is(err, ErrConflict) {
 				t.Fatalf("migration accepted a wake request: %v", err)
 			}
-			if err := destination.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+			if err := reconcileSleeping(t.Context(), destination, "vm-1"); err != nil {
 				t.Fatal(err)
 			}
 			if err := destination.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
@@ -172,11 +172,20 @@ func TestSleepMigrationDefersDownloadsUntilDestinationWake(t *testing.T) {
 	}
 }
 
+// reconcileSleeping runs the pass that owns the VM's sleep state: the normal
+// reconciler for local saved state, the restore pool for remote state.
+func reconcileSleeping(ctx context.Context, manager *Manager, identifier string) error {
+	if err := manager.Reconcile(ctx, identifier); err != nil {
+		return err
+	}
+	return manager.RestoreSleepState(ctx, identifier)
+}
+
 func wakeTestSleep(ctx context.Context, manager *Manager) error {
 	if err := manager.SetPowerState(ctx, "vm-1", StateRunning); err != nil {
 		return err
 	}
-	return manager.RestoreSleepState(ctx, "vm-1")
+	return reconcileSleeping(ctx, manager, "vm-1")
 }
 
 func TestSleepUploadsEvictUploadedArtifacts(t *testing.T) {
@@ -406,7 +415,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 				if request == "waiting" {
 					manager.traffic = &traffic.Monitor{}
 					// The fixture has no TAP hook. Rearming, not downloading, must fail.
-					if err := manager.RestoreSleepState(t.Context(), "vm-1"); !errors.Is(err, traffic.ErrNotFound) {
+					if err := reconcileSleeping(t.Context(), manager, "vm-1"); !errors.Is(err, traffic.ErrNotFound) {
 						t.Fatalf("expected a missing traffic hook, got %v", err)
 					}
 					information, err := manager.Information(t.Context(), "vm-1")
@@ -416,7 +425,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 					return
 				}
 				if request == "reconcile" {
-					err = manager.RestoreSleepState(t.Context(), "vm-1")
+					err = reconcileSleeping(t.Context(), manager, "vm-1")
 				} else {
 					manager.traffic = &traffic.Monitor{}
 					if request == "traffic" {
@@ -432,7 +441,7 @@ func TestSleepRequestsShareOneWakePath(t *testing.T) {
 					if runtime.restores != 0 {
 						t.Fatal("wake request restored synchronously")
 					}
-					if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+					if err := reconcileSleeping(t.Context(), manager, "vm-1"); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -565,7 +574,7 @@ func TestComatosePowerChangesPreserveDisk(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+			if err := reconcileSleeping(t.Context(), manager, "vm-1"); err != nil {
 				t.Fatal(err)
 			}
 			if len(snapshots.downloads) != 1 || !strings.HasPrefix(snapshots.downloads[0], "disk:") || runtime.restores != 0 {

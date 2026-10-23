@@ -932,7 +932,7 @@ func TestStartWakesASleepingVirtualMachine(t *testing.T) {
 	if runtime.restores != 0 {
 		t.Fatal("start restored synchronously")
 	}
-	if err := manager.RestoreSleepState(t.Context(), "machine-1"); err != nil {
+	if err := reconcileSleeping(t.Context(), manager, "machine-1"); err != nil {
 		t.Fatal(err)
 	}
 	if runtime.restores != 1 || runtime.state != StateRunning {

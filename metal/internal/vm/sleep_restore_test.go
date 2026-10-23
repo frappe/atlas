@@ -36,7 +36,7 @@ func TestSleepRestoreFailureColdBootsTheExistingDisk(t *testing.T) {
 				if err := manager.SetPowerState(t.Context(), "vm-1", resultState); err != nil {
 					t.Fatal(err)
 				}
-				if err := manager.RestoreSleepState(t.Context(), "vm-1"); err != nil {
+				if err := reconcileSleeping(t.Context(), manager, "vm-1"); err != nil {
 					t.Fatal(err)
 				}
 				if err := manager.Reconcile(t.Context(), "vm-1"); err != nil {
