@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -153,6 +154,69 @@ func TestSleepMemoryUploadPreservesCheckpointAndChecksum(t *testing.T) {
 func sleepMultipartTarget(destination string) vm.SleepArtifactTarget {
 	return vm.SleepArtifactTarget{Multipart: &vm.SleepMultipartUpload{UploadID: "sleep-upload", PartSizeMiB: 5,
 		Parts: []vm.SleepUploadPart{{PartNumber: 1, URL: destination}}}}
+}
+
+func TestSleepMultipartResumesPartsAndBoundsTemporaryDisk(t *testing.T) {
+	contents := make([]byte, 12<<20)
+	rand.New(rand.NewSource(7)).Read(contents)
+	store, _, _ := uploadFixture(t, contents)
+	directory := t.TempDir()
+	stored := make(map[int][]byte)
+	attempts := make(map[int]int)
+	fail := true
+	store.httpClient = &http.Client{Transport: sleepUploadTransport(func(request *http.Request) (*http.Response, error) {
+		var number int
+		fmt.Sscanf(request.URL.Path, "/part/%d", &number)
+		attempts[number]++
+		buffers, _ := filepath.Glob(filepath.Join(directory, "part-*"))
+		if len(buffers) > 2 {
+			t.Errorf("buffered %d parts", len(buffers))
+		}
+		data, err := io.ReadAll(request.Body)
+		request.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}
+		response.Header.Set("ETag", fmt.Sprintf("part-%d", number))
+		if number == 2 && fail {
+			response.StatusCode = http.StatusBadRequest
+		} else {
+			stored[number] = data
+		}
+		return response, nil
+	})}
+	target := sleepMultipartTarget("https://objects.example/part/1")
+	for number := 2; number <= 3; number++ {
+		target.Multipart.Parts = append(target.Multipart.Parts, vm.SleepUploadPart{PartNumber: number, URL: fmt.Sprintf("https://objects.example/part/%d", number)})
+	}
+	if _, err := store.uploadSleepArtifact(t.Context(), bytes.NewReader(contents), int64(len(contents)), target, directory, &vm.SleepUploadProgress{}); err == nil {
+		t.Fatal("part failure was hidden")
+	}
+	fail = false
+	artifact, err := store.uploadSleepArtifact(t.Context(), bytes.NewReader(contents), int64(len(contents)), target, directory, &vm.SleepUploadProgress{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts[1] != 1 || attempts[2] != 2 || attempts[3] != 1 || len(artifact.Parts) != 3 {
+		t.Fatalf("did not resume uploaded parts: %v, %+v", attempts, artifact)
+	}
+	var compressed bytes.Buffer
+	for number := 1; number <= 3; number++ {
+		compressed.Write(stored[number])
+	}
+	decoder, err := zstd.NewReader(&compressed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	actual, err := io.ReadAll(decoder)
+	if err != nil || !bytes.Equal(actual, contents) {
+		t.Fatalf("multipart round trip differs: %v", err)
+	}
+	if buffers, _ := filepath.Glob(filepath.Join(directory, "part-*")); len(buffers) != 0 {
+		t.Fatalf("left buffers: %v", buffers)
+	}
 }
 
 func TestSleepMemoryArchiveRejectsPathsAndLinks(t *testing.T) {
