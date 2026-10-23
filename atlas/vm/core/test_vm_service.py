@@ -240,7 +240,9 @@ class TestVirtualMachineInformation(UnitTestCase):
 class TestVirtualMachineDisk(UnitTestCase):
 	def build_service(self, size_mib: int = 20480) -> tuple[VirtualMachineService, Mock]:
 		"""Return a service whose host reports one desired disk."""
-		virtual_machine = SimpleNamespace(name="VM-00001", sleep_after_idle_seconds=0, db_set=Mock())
+		virtual_machine = SimpleNamespace(
+			name="VM-00001", sleep_after_idle_seconds=0, disk_mib=20480, db_set=Mock()
+		)
 		service = VirtualMachineService(virtual_machine)
 		information = SimpleNamespace(
 			desired=SimpleNamespace(disk=SimpleNamespace(size_mib=size_mib, throughput_mibps=50, iops=2000))
@@ -269,6 +271,17 @@ class TestVirtualMachineDisk(UnitTestCase):
 			service.update_disk({"size_mib": 40960})
 
 		set_disk.assert_called_once_with(40960, 50, 2000)
+		service.virtual_machine.db_set.assert_called_once_with("disk_mib", 40960)
+
+	def test_a_retry_after_a_lost_response_repairs_the_stored_size(self) -> None:
+		service, information = self.build_service(size_mib=40960)
+
+		with (
+			patch.object(service, "require_information", return_value=information),
+			patch.object(service, "set_disk", return_value={}),
+		):
+			service.update_disk({"size_mib": 40960})
+
 		service.virtual_machine.db_set.assert_called_once_with("disk_mib", 40960)
 
 	def test_a_full_host_tells_the_caller_to_stop_and_resize(self) -> None:

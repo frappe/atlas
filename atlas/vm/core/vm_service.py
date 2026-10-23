@@ -319,7 +319,9 @@ class VirtualMachineService:
 			changes.get("throughput_mibps", current_disk.throughput_mibps),
 			changes.get("iops", current_disk.iops),
 		)
-		if size_mib != current_disk.size_mib:
+		# A retry after a lost response finds the size already applied in Metal, so compare
+		# with the stored size to repair it.
+		if size_mib != self.virtual_machine.disk_mib:
 			self.virtual_machine.db_set("disk_mib", size_mib)
 
 		return information
