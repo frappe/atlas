@@ -68,6 +68,9 @@ type hostCompatibilityResponse struct {
 type virtualMachineStateResponse struct {
 	Status        string `json:"status"`
 	LastRequestAt string `json:"last_request_at,omitempty"`
+	// SleepState is empty for an awake VM.
+	SleepState      string `json:"sleep_state,omitempty"`
+	SleepSnapshotID string `json:"sleep_snapshot_id,omitempty"`
 }
 
 // capacityResponse is what the controller needs to place the next VM.
@@ -224,10 +227,15 @@ func capacityResponseFromHost(capacity host.Capacity) capacityResponse {
 func virtualMachineStateResponses(virtualMachines map[string]vm.Information) map[string]virtualMachineStateResponse {
 	responses := make(map[string]virtualMachineStateResponse, len(virtualMachines))
 	for identifier, information := range virtualMachines {
-		responses[identifier] = virtualMachineStateResponse{
+		response := virtualMachineStateResponse{
 			Status:        string(information.State),
 			LastRequestAt: formatRFC3339(information.LastRequestAt),
+			SleepState:    string(information.SleepState),
 		}
+		if information.SleepSnapshot != nil {
+			response.SleepSnapshotID = information.SleepSnapshot.ID
+		}
+		responses[identifier] = response
 	}
 	return responses
 }
