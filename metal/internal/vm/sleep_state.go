@@ -181,6 +181,7 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 	if request.Disk != nil && record.Memory == nil && request.Memory == nil {
 		return ErrConflict
 	}
+	acknowledged := false
 	for _, pair := range []struct {
 		target *SleepArtifactTarget
 		stored **sleepArtifactRecord
@@ -219,13 +220,14 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 			if stored.Pending != nil {
 				stored.Artifact = stored.Pending
 				stored.Pending = nil
+				acknowledged = true
 			}
 		}
 	}
 	if err := manager.writeSleepRecord(identifier, record); err != nil {
 		return err
 	}
-	if record.canUpload(desired, observed) && ((request.Memory != nil && request.Memory.CompletedUploadID != "") || (request.Disk != nil && request.Disk.CompletedUploadID != "")) {
+	if acknowledged && record.canUpload(desired, observed) {
 		observed.OperationID = record.ID
 		observed.Phase = "evict-sleep-artifacts"
 		return manager.store.writeObserved(identifier, observed)

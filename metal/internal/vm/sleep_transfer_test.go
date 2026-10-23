@@ -96,7 +96,7 @@ func TestSleepUploadProgressIsPerArtifactAndTransient(t *testing.T) {
 		status := information.SleepSnapshot.Memory
 		if name == "disk" {
 			status = information.SleepSnapshot.Disk
-			if memory := information.SleepSnapshot.Memory; memory.Pending == nil || memory.UploadPercent == nil || *memory.UploadPercent != 99 {
+			if memory := information.SleepSnapshot.Memory; !memory.Uploaded || memory.UploadPercent == nil || *memory.UploadPercent != 100 {
 				t.Fatalf("memory completion lost during disk upload: %+v", memory)
 			}
 		}

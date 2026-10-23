@@ -134,7 +134,7 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return nil
 	}
-	if !memory && record.Memory.Artifact == nil && record.Memory.Pending == nil {
+	if !memory && record.Memory.Artifact == nil {
 		unlock()
 		return nil
 	}

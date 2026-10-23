@@ -101,28 +101,31 @@ func sleepTarget() *SleepArtifactTarget {
 }
 
 func completeSleepUploads(ctx context.Context, manager *Manager) error {
-	if err := manager.offloadSleepArtifacts(ctx, "vm-1"); err != nil {
-		return err
-	}
-	record, err := manager.readSleepRecord("vm-1")
-	if err != nil || record == nil {
-		return err
-	}
-	request := SleepStateRequest{SnapshotID: record.ID}
-	for _, pair := range []struct {
-		stored *sleepArtifactRecord
-		target **SleepArtifactTarget
-	}{{record.Memory, &request.Memory}, {record.Disk, &request.Disk}} {
-		if pair.stored != nil && pair.stored.Pending != nil {
-			*pair.target = &SleepArtifactTarget{DownloadURL: pair.stored.DownloadURL, CompletedUploadID: pair.stored.Multipart.UploadID}
+	for range 3 {
+		if err := manager.offloadSleepArtifacts(ctx, "vm-1"); err != nil {
+			return err
 		}
-	}
-	if request.Memory != nil || request.Disk != nil {
+		record, err := manager.readSleepRecord("vm-1")
+		if err != nil || record == nil {
+			return err
+		}
+		request := SleepStateRequest{SnapshotID: record.ID}
+		for _, pair := range []struct {
+			stored *sleepArtifactRecord
+			target **SleepArtifactTarget
+		}{{record.Memory, &request.Memory}, {record.Disk, &request.Disk}} {
+			if pair.stored != nil && pair.stored.Pending != nil {
+				*pair.target = &SleepArtifactTarget{DownloadURL: pair.stored.DownloadURL, CompletedUploadID: pair.stored.Multipart.UploadID}
+			}
+		}
+		if request.Memory == nil && request.Disk == nil {
+			return nil
+		}
 		if err := manager.RefreshSleepState(ctx, "vm-1", request); err != nil {
 			return err
 		}
 	}
-	return manager.offloadSleepArtifacts(ctx, "vm-1")
+	return nil
 }
 
 func TestSleepMigrationDefersDownloadsUntilDestinationWake(t *testing.T) {
@@ -342,7 +345,7 @@ func TestWakeDuringUploadDoesNotEvictLiveState(t *testing.T) {
 		if err := <-result; err != nil {
 			t.Fatal(err)
 		}
-		if wakeError != nil || runtime.restores != 1 || runtime.deletes != 0 || storage.releases != 0 || snapshots.uploads != upload {
+		if wakeError != nil || runtime.restores != 1 || runtime.deletes != upload-1 || storage.releases != 0 || snapshots.uploads != upload {
 			t.Fatalf("wake raced with eviction: %v, runtime=%+v storage=%+v uploads=%d", wakeError, runtime, storage, snapshots.uploads)
 		}
 		if informationError != nil || information.Phase != "" {
