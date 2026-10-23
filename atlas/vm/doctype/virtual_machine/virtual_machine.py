@@ -414,7 +414,12 @@ class VirtualMachine(Document):
 	def ensure_not_migrating(self) -> None:
 		"""Reject a mutable action while a migration owns this VM."""
 		if self.active_migration:
-			frappe.throw(_("Virtual Machine {0} is migrating.").format(self.name), exc=AtlasUserError)
+			frappe.throw(
+				_(
+					"Virtual Machine {0} is locked by an internal operation. Try again after it finishes."
+				).format(self.name),
+				exc=AtlasUserError,
+			)
 
 	@frappe.whitelist(methods=["POST"])
 	def create_machine_image(
