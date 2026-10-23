@@ -592,7 +592,7 @@ class MigrationService:
 				self.migration.name, self.migration.virtual_machine
 			)
 		except MetalClientError as error:
-			frappe.throw(_("The source host did not restore the VM: {0}. Retry.").format(error))
+			frappe.throw(_("The source host did not restore the VM: {0}. Retry.").format(str(error)))
 		self.settle("failed")
 
 	def is_destination_reporting(self) -> bool:
