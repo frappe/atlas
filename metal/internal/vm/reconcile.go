@@ -224,6 +224,8 @@ func (manager *Manager) reconcileSavedState(
 			return status, false, err
 		}
 		status.State = StateStopped
+		hasRemoteState = false
+		observed.SleepState = SleepStateSleeping
 	}
 
 	if status.State != StateStopped {
