@@ -119,7 +119,12 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return nil
 	}
-	directory := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer", record.ID)
+	transfers := filepath.Join(manager.store.virtualMachineDirectory(identifier), "sleep-transfer")
+	directory := filepath.Join(transfers, record.ID)
+	if err := removeOtherSleepTransfers(transfers, record.ID); err != nil {
+		unlock()
+		return err
+	}
 	if target.Artifact != nil {
 		defer unlock()
 		if memory {
@@ -286,4 +291,24 @@ func (manager *Manager) evictSleepArtifacts(ctx context.Context, desired Desired
 	}
 	observed.completeOperation()
 	return manager.store.writeObserved(desired.ID, *observed)
+}
+
+// removeOtherSleepTransfers deletes the staging of older checkpoints, which a
+// metald restart during an upload leaves behind.
+func removeOtherSleepTransfers(transfers, snapshotID string) error {
+	entries, err := os.ReadDir(transfers)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != snapshotID {
+			if err := os.RemoveAll(filepath.Join(transfers, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

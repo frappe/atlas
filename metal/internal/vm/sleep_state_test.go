@@ -383,6 +383,23 @@ func sleepParts(count int, signature string) *SleepArtifactTarget {
 	return target
 }
 
+func TestSleepUploadRemovesStagingOfOlderCheckpoints(t *testing.T) {
+	manager, _, _, _ := sleepyManager(t)
+	stale := filepath.Join(manager.store.virtualMachineDirectory("vm-1"), "sleep-transfer", "old-checkpoint")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.offloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale staging remains: %v", err)
+	}
+}
+
 func TestSleepPartsRefreshOnlyTheUsedParts(t *testing.T) {
 	manager, _, _, snapshots := sleepyManager(t)
 	snapshots.partCount = 2
