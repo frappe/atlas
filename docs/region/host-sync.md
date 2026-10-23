@@ -48,7 +48,7 @@ The Atlas `Virtual Machine State` record remains a **cache**. Its `server` field
 
 | Failure | Result |
 | --- | --- |
-| Invalid or failed sync | Atlas logs the failure and writes no new capacity sample. |
+| Invalid or failed sync | Atlas writes no new capacity sample. It logs the first failure, then at most once an hour until the host syncs again. |
 | Compatibility probe or report fails | Capacity and VM-state sync continue. Compatibility facts are cleared; new memory snapshot migrations are blocked. Disk-only migrations can proceed. |
 | Sample older than 2 minutes | Placement excludes the host. |
 | Policy partly applied | The next full sync can apply it again. |
