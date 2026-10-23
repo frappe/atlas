@@ -59,7 +59,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Available\nReserved\nAttaching\nAttached\nDetaching",
+   "options": "Available\nReserved\nAttaching\nAttached\nDetaching\nBlocked",
    "read_only": 1,
    "reqd": 1
   },
@@ -150,7 +150,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-24 04:29:46.015008",
+ "modified": "2026-10-23 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Metal Server",
  "name": "Public IP Allocation",
