@@ -100,6 +100,66 @@ func sleepTarget() *SleepArtifactTarget {
 		Parts: []SleepUploadPart{{PartNumber: 1, URL: "https://objects.example/snapshot?put=secret"}}}, DownloadURL: "https://objects.example/snapshot?get=secret"}
 }
 
+func TestSleepMultipartWaitsForAcknowledgmentAcrossRestart(t *testing.T) {
+	manager, runtime, storage, snapshots := sleepyManager(t)
+	if err := manager.OffloadSleepState(t.Context(), "vm-1", SleepStateRequest{Memory: sleepTarget(), Disk: sleepTarget()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.readSleepRecord("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Memory.Pending == nil || record.Memory.Artifact != nil || !runtime.hasSavedState || storage.releases != 0 || snapshots.uploads != 1 {
+		t.Fatal("parts were treated as a completed object")
+	}
+	restarted, err := NewManager(manager.configuration, ManagerDependencies{Runtime: runtime, Network: manager.network, Storage: storage, Snapshots: snapshots, Telemetry: manager.telemetry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots.uploads != 1 {
+		t.Fatal("restart reuploaded pending parts")
+	}
+	acknowledgment := SleepStateRequest{SnapshotID: record.ID, Memory: &SleepArtifactTarget{DownloadURL: record.Memory.DownloadURL, CompletedUploadID: "wrong-upload"}}
+	if err := restarted.RefreshSleepState(t.Context(), "vm-1", acknowledgment); !errors.Is(err, ErrConflict) {
+		t.Fatalf("accepted wrong upload ID: %v", err)
+	}
+	acknowledgment.Memory.CompletedUploadID = record.Memory.Multipart.UploadID
+	if err := restarted.RefreshSleepState(t.Context(), "vm-1", acknowledgment); err != nil {
+		t.Fatal(err)
+	}
+	snapshots.duringUpload = func() {
+		if runtime.hasSavedState {
+			t.Fatal("disk upload began before memory eviction")
+		}
+		before, _ := restarted.Information(t.Context(), "vm-1")
+		if err := restarted.RefreshSleepState(t.Context(), "vm-1", acknowledgment); err != nil {
+			t.Fatal(err)
+		}
+		after, _ := restarted.Information(t.Context(), "vm-1")
+		if before.Phase != after.Phase {
+			t.Fatalf("repeated memory acknowledgment replaced disk phase: %q -> %q", before.Phase, after.Phase)
+		}
+	}
+	if err := restarted.OffloadSleepArtifacts(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.hasSavedState || storage.releases != 0 || snapshots.uploads != 2 {
+		t.Fatal("disk was evicted without completion acknowledgment")
+	}
+	if err := completeSleepUploads(t.Context(), restarted); err != nil {
+		t.Fatal(err)
+	}
+	if storage.releases != 1 {
+		t.Fatal("acknowledged disk was not evicted")
+	}
+}
+
 func completeSleepUploads(ctx context.Context, manager *Manager) error {
 	for range 3 {
 		if err := manager.offloadSleepArtifacts(ctx, "vm-1"); err != nil {
