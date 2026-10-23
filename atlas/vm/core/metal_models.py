@@ -183,6 +183,7 @@ class MetalSleepArtifact:
 
 	uploaded: bool
 	upload_percent: int | None = None
+	object_key: str = ""
 
 	@classmethod
 	def from_dict(cls, value: object) -> MetalSleepArtifact:
@@ -193,7 +194,11 @@ class MetalSleepArtifact:
 			percent = integer_field(artifact, "upload_percent")
 			if percent > 100:
 				raise ValueError("upload_percent must be between 0 and 100")
-		return cls(uploaded=boolean_field(artifact, "uploaded"), upload_percent=percent)
+		return cls(
+			uploaded=boolean_field(artifact, "uploaded"),
+			upload_percent=percent,
+			object_key=string_field(artifact, "object_key", default=""),
+		)
 
 
 @dataclass(frozen=True, slots=True)

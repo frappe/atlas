@@ -155,11 +155,14 @@ func TestSleepAPIUploadsAndRestoresWithoutBlockingRequests(t *testing.T) {
 				t.Fatalf("upload did not complete: %+v", uploaded.Observed)
 			}
 			refresh, err := json.Marshal(vm.SleepStateRequest{SnapshotID: uploaded.Observed.SleepSnapshot.ID,
-				Memory: &vm.SleepArtifactTarget{DownloadURL: objects.URL + "/memory?get=refreshed"}})
+				Memory: &vm.SleepArtifactTarget{ObjectKey: "sleep/source/vm1/memory", DownloadURL: objects.URL + "/memory?get=refreshed"}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			sleepAPIRequest(t, client, server.URL, http.MethodPatch, "/v1/vms/vm1/sleep-state", string(refresh))
+			refreshed := sleepAPIRequest(t, client, server.URL, http.MethodPatch, "/v1/vms/vm1/sleep-state", string(refresh))
+			if refreshed.Observed.SleepSnapshot.Memory.ObjectKey != "sleep/source/vm1/memory" {
+				t.Fatal("URL refresh did not persist the original object key")
+			}
 			select {
 			case method := <-started:
 				t.Fatalf("URL refresh started a %s transfer", method)

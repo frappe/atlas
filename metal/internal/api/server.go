@@ -75,7 +75,7 @@ type MigrationManager interface {
 	DestinationStatus(ctx context.Context, migrationID string) (migration.DestinationProgress, error)
 	RequestFinish(ctx context.Context, migrationID string) error
 	AbortDestination(ctx context.Context, migrationID string) error
-	LockSource(ctx context.Context, migrationID, virtualMachineID string) (migration.SourceDescription, error)
+	LockSource(ctx context.Context, migrationID, virtualMachineID string, allowSleepState bool) (migration.SourceDescription, error)
 	NextSourceSnapshot(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
 	StartSourceStream(ctx context.Context, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
 	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (migration.SourceSnapshot, error)

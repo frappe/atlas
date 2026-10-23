@@ -16,6 +16,32 @@ from atlas.vm.core.vm_sleep import VirtualMachineSleepService
 
 
 class TestVirtualMachineSleepPolicy(UnitTestCase):
+	def test_refresh_after_migration_keeps_each_artifact_on_its_original_host(self) -> None:
+		storage = ObjectStorageClient(
+			bucket="snapshots",
+			access_key_id="test-access",
+			secret_access_key="test-secret",
+			endpoint_url="https://objects.example",
+			region="test-region",
+		)
+		machine = SimpleNamespace(name="vm-moved", server="host-c")
+		response = complete_response()
+		response["observed"]["sleep_snapshot"] = {
+			"id": "checkpoint-moved",
+			"memory": {"uploaded": True, "object_key": "sleep/test.local/host-a/vm-moved/memory"},
+			"disk": {"uploaded": True, "object_key": "sleep/test.local/host-b/vm-moved/disk"},
+		}
+		information = MetalVirtualMachine.from_dict(response)
+		client = Mock(spec=MetalClient)
+		settings = SimpleNamespace(get_object_storage_client=lambda: storage)
+		with patch("atlas.vm.core.vm_sleep.frappe.get_cached_doc", return_value=settings):
+			VirtualMachineSleepService(machine).refresh_urls(information, client, force=True)
+		request = client.refresh_sleep_state.call_args.args[1]
+		for name, host in (("memory", "host-a"), ("disk", "host-b")):
+			key = f"sleep/test.local/{host}/vm-moved/{name}"
+			self.assertEqual(request[name]["object_key"], key)
+			self.assertTrue(urlsplit(request[name]["download_url"]).path.endswith(key))
+
 	def test_each_vm_controls_offload_without_disabling_recovery_url_refresh(self) -> None:
 		storage = ObjectStorageClient(
 			bucket="snapshots",
@@ -78,7 +104,8 @@ class TestVirtualMachineSleepPolicy(UnitTestCase):
 			self.assertEqual(request.pop("snapshot_id"), "checkpoint-1")
 			self.assertEqual(set(request), set(artifacts))
 			for name, target in request.items():
-				self.assertEqual(set(target), {"download_url"})
+				self.assertEqual(set(target), {"download_url", "object_key"})
+				self.assertTrue(target["object_key"].endswith(f"/host-1/vm-1/{name}"))
 				self.assertTrue(urlsplit(target["download_url"]).path.endswith(f"/host-1/vm-1/{name}"))
 
 	def test_hourly_refresh_does_not_delay_offload_or_failed_refresh_retries(self) -> None:

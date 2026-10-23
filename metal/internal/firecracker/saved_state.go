@@ -42,6 +42,7 @@ type savedStateRequirement struct {
 }
 
 type savedStateMetadata struct {
+	OriginIdentity           string                          `json:"origin_identity,omitempty"`
 	VirtualMachineID         string                          `json:"virtual_machine_id"`
 	UserID                   uint32                          `json:"user_id"`
 	SpecificationGeneration  uint64                          `json:"specification_generation"`
@@ -64,10 +65,14 @@ type savedState struct {
 
 // SavedState validates and identifies the current VM-local sleep checkpoint.
 func (runtime *Runtime) SavedState(_ context.Context, machine vm.RuntimeMachine) (vm.SavedState, error) {
-	if _, err := runtime.configuration.loadSavedState(runtime.newMachine(machine).savedStateRequirement()); err != nil {
+	state, err := runtime.configuration.loadSavedState(runtime.newMachine(machine).savedStateRequirement())
+	if err != nil {
 		return vm.SavedState{}, err
 	}
 	directory := runtime.configuration.savedStateDirectory(machine.ID)
+	if state.Metadata.OriginIdentity != "" {
+		return vm.SavedState{Directory: directory, Identity: state.Metadata.OriginIdentity}, nil
+	}
 	metadata, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
 	if err != nil {
 		return vm.SavedState{}, err
@@ -81,7 +86,16 @@ func (runtime *Runtime) InstallSavedState(ctx context.Context, machine vm.Runtim
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := loadSavedState(directory, runtime.newMachine(machine).savedStateRequirement()); err != nil {
+	requirement := runtime.newMachine(machine).savedStateRequirement()
+	if machine.SavedStateSourceUserID != 0 {
+		requirement.MigratedShape = &vm.MemorySnapshotConfiguration{
+			VirtualCPUCount: machine.Specification.VirtualCPUCount(),
+			MemoryMiB:       machine.Specification.MemoryMiB,
+			DiskMiB:         machine.Specification.DiskMiB,
+		}
+	}
+	state, err := loadSavedState(directory, requirement)
+	if err != nil {
 		return err
 	}
 	metadata, err := os.ReadFile(filepath.Join(directory, savedStateMetadataFileName))
@@ -92,7 +106,27 @@ func (runtime *Runtime) InstallSavedState(ctx context.Context, machine vm.Runtim
 	if hex.EncodeToString(digest[:]) != identity {
 		return errors.New("downloaded sleep checkpoint identity mismatch")
 	}
+	if machine.SavedStateSourceUserID != 0 {
+		if err := runtime.writeMigratedMetadata(machine, directory, identity, state.Metadata); err != nil {
+			return err
+		}
+	}
 	return os.Rename(directory, runtime.configuration.savedStateDirectory(machine.ID))
+}
+
+func (runtime *Runtime) writeMigratedMetadata(machine vm.RuntimeMachine, directory, identity string, metadata savedStateMetadata) error {
+	if metadata.UserID != machine.SavedStateSourceUserID {
+		return errors.New("downloaded sleep checkpoint source user ID mismatch")
+	}
+	// Keep the remote identity across retries while making local validation host-specific.
+	metadata.OriginIdentity = identity
+	metadata.UserID = machine.UserID
+	metadata.FirecrackerCompatibility = runtime.firecrackerCompatibility()
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return platform.WriteFile(filepath.Join(directory, savedStateMetadataFileName), data, 0o640)
 }
 
 func (snapshot savedState) restoreNetwork(ctx context.Context, networkInterface vm.NetworkInterface) error {

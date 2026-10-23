@@ -271,7 +271,10 @@ func (manager *Manager) restoreSavedState(
 		if err := manager.restoreSleepArtifacts(ctx, desired, machine, *observed); err != nil {
 			return err
 		}
-		return restore(ctx, machine)
+		if err := restore(ctx, machine); err != nil {
+			return manager.recoverSleepRestore(ctx, machine, observed, resultState, err)
+		}
+		return nil
 	}); err != nil {
 		if resultState == StateRunning && manager.traffic != nil && desired.Specification.SleepAfterIdleSeconds > 0 {
 			err = errors.Join(err, manager.traffic.StartWatching(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}))
@@ -283,6 +286,27 @@ func (manager *Manager) restoreSavedState(
 	}
 	manager.stopTrafficWatch(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
 	return manager.writeAppliedState(desired, observed, resultState, SleepStateAwake)
+}
+
+func (manager *Manager) recoverSleepRestore(ctx context.Context, machine RuntimeMachine, observed *ObservedRecord, resultState State, cause error) error {
+	if ctx.Err() != nil || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return cause
+	}
+	hasDisk, err := manager.storage.HasDisk(ctx, machine.ID)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	if !hasDisk {
+		return fmt.Errorf("cannot cold boot VM %s without its disk: %w", machine.ID, cause)
+	}
+
+	// A failed cold boot must not retry remote memory over a disk the guest may have changed.
+	observed.SleepState = SleepStateAwake
+	if err := manager.store.writeObserved(machine.ID, *observed); err != nil {
+		return errors.Join(cause, err)
+	}
+	_, err = manager.recoverFailedRestore(ctx, resultState, machine, cause)
+	return err
 }
 
 // reconcileHardStop stops the runtime and applies all stopped-state changes.

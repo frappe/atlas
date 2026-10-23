@@ -68,6 +68,8 @@ type RuntimeMachine struct {
 	// checked before the snapshot loads.
 	SpecificationGeneration uint64
 	RestartGeneration       uint64
+	// SavedStateSourceUserID validates an imported checkpoint before local installation.
+	SavedStateSourceUserID uint32
 }
 
 // RuntimeStatus contains the observed runtime state.

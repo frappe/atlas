@@ -16,6 +16,9 @@ import (
 func TestPrepareSourceReadsTheDescription(t *testing.T) {
 	var gotVirtualMachineID, gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("sleep_state") != "true" {
+			t.Error("destination did not advertise asleep migration support")
+		}
 		gotVirtualMachineID = r.URL.Query().Get("virtual_machine_id")
 		gotPath = r.Method + " " + r.URL.Path
 		_, _ = w.Write([]byte(`{"config":{"virtual_machine_id":"vm-1","specification":{"memory_mib":2048}},"observed_state":"running"}`))

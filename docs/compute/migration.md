@@ -48,7 +48,7 @@ When the last migration has finished, the drain copies each migration into its r
 
 ## Which compatibility checks apply? {#compatibility-before-transfer}
 
-Atlas checks memory compatibility after destination selection, before its first Metal request. It uses reports from [host sync](../region/host-sync.md). Missing reports, a desired state of `stopped`, and a resize each fail this check. Disk-only migrations skip the memory compatibility check.
+Atlas checks memory compatibility after destination selection, before requesting destination migration. It uses reports from [host sync](../region/host-sync.md). Missing reports, a desired state of `stopped`, and a resize each fail this check. Disk-only migrations of VMs without offloaded memory skip the memory compatibility check.
 
 | Memory snapshot migration check | Required compatibility |
 | --- | --- |
@@ -63,6 +63,21 @@ Atlas compares configured CPU profiles. Raw host features do not gate migration 
 A successful load does not prove compatibility for every guest instruction. Use a validated common CPU profile before the guest first boots.
 
 After you change a profile or replace Firecracker, cold-boot existing VMs before their memory migration. Atlas does not inspect each guest's captured CPU configuration. Validate custom profiles on each host combination. See [CPU templates](cpu-templates.md#migration-validation).
+
+## How do I move an offloaded VM? {#move-an-offloaded-vm}
+
+Use the normal migration action for a deep-sleeping or comatose VM. Atlas requires memory-compatible hosts and disables disk-only fallback for this move, regardless of the dialog choices. A resize is not allowed. Upgrade both Metal hosts before the move. Older destinations cannot lock an offloaded source.
+
+| Source sleep state | Transfer |
+| --- | --- |
+| `deep-sleeping` | The local disk uses the normal ZFS transfer. The remote memory checkpoint stays in object storage. |
+| `comatose` | Configuration and remote memory and disk references move. No memory or disk snapshots transfer. |
+
+Neither host downloads remote snapshots or starts Firecracker during migration. The destination copies a missing kernel through the existing kernel transfer. The source removes its network before destination network setup. The destination stays stopped with its original sleep state through `ready` and `finish`.
+
+Finish releases the destination for normal traffic wake. Only a subsequent wake downloads missing artifacts. Abort removes destination resources and reconnects the source network without restoring the source guest. Keep the original object storage objects available after the source host is removed.
+
+For direct Metal calls, use `has_memory_snapshot: true` after checking host compatibility. Supply each artifact's original `object_key` through the sleep-state URL refresh before migration. A disk-only request rejects an offloaded checkpoint rather than cold-booting it.
 
 ## What happens in each migration scenario?
 

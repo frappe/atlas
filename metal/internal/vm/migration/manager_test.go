@@ -20,6 +20,7 @@ import (
 
 // fakeMigrationHost implements migrationHost with in-memory records and call counters.
 type fakeMigrationHost struct {
+	sleep    *vm.SleepMigration
 	dir      string
 	desired  map[string]vm.DesiredRecord
 	observed map[string]vm.ObservedRecord
@@ -101,6 +102,23 @@ func (f *fakeMigrationHost) WriteDesired(record vm.DesiredRecord) error {
 
 func (f *fakeMigrationHost) WriteObserved(virtualMachineID string, record vm.ObservedRecord) error {
 	f.observed[virtualMachineID] = record
+	return nil
+}
+
+func (f *fakeMigrationHost) ReadSleepMigration(identifier string) (*vm.SleepMigration, error) {
+	state := f.observed[identifier].SleepState
+	if (state == vm.SleepStateComatose || state == vm.SleepStateDeepSleeping) && f.sleep == nil {
+		return nil, vm.ErrConflict
+	}
+	return f.sleep, nil
+}
+
+func (f *fakeMigrationHost) ApplySleepMigration(identifier string, sleep *vm.SleepMigration) error {
+	f.sleep = sleep
+	observed := f.observed[identifier]
+	observed.State, observed.SleepState = vm.StateStopped, sleep.State
+	observed.Generation = f.desired[identifier].Generation
+	f.observed[identifier] = observed
 	return nil
 }
 
