@@ -105,7 +105,7 @@ Every guest routes `::/0` through the host. The VM namespace routes decide which
 
 The guest's `atlas-metadata.service` reads Firecracker's metadata service, MMDS, every **250 ms**. It reads `meta-data/mesh-ipv6` and `meta-data/host-routes`, then writes a systemd-networkd drop-in.
 
-This updates the address after warm resume. The image contains no per-VM network values.
+This updates the address after warm resume. The image contains no per-VM network values. The same agent also steps the guest clock after a memory restore. See [guest clock after a memory restore](../compute/runtime.md#guest-clock-after-a-memory-restore).
 
 ## Limits and recovery
 

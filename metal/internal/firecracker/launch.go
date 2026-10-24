@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -160,6 +161,7 @@ func (runtime *Runtime) launchMemorySnapshot(
 		return err
 	}
 	if metadata != nil {
+		vm.SetMetadataHostTime(metadata, time.Now())
 		if err := client.PutMMDS(ctx, metadata); err != nil {
 			return fmt.Errorf("refresh snapshot metadata: %w", err)
 		}
