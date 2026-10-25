@@ -472,3 +472,48 @@ func TestWarmLaunchRefreshesTheDriveBeforeResume(t *testing.T) {
 		t.Fatalf("requests = %s", got)
 	}
 }
+
+func TestMetadataRefreshKeepsTheHostTime(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fc-metadata-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	configuration := Config{MachinesDir: root, SocketsDir: filepath.Join(root, "sockets"), FirecrackerBin: filepath.Join(root, "binary")}
+	units := &migrationUnits{configuration: configuration, testing: t}
+	images := &fakeImages{}
+	runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil, telemetry.NewRegistry(nil))
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid())}
+	documents := make(chan map[string]any, 1)
+	units.handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/":
+			json.NewEncoder(writer).Encode(api.InstanceInfo{ID: "vm-1", State: "Running"})
+			return
+		case "/mmds":
+			var document map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&document); err != nil {
+				t.Error(err)
+			}
+			documents <- document
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := units.Start(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configuration.SocketsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(configuration.chrootSocketPath("vm-1"), configuration.socketPath("vm-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.RefreshMetadata(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	metadata := (<-documents)["latest"].(map[string]any)["meta-data"].(map[string]any)
+	if _, ok := metadata["host-time-unix-ms"]; !ok {
+		t.Fatalf("metadata = %v", metadata)
+	}
+}
