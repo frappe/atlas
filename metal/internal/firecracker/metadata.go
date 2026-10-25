@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -16,9 +17,12 @@ func (runtime *Runtime) RefreshMetadata(ctx context.Context, input vm.RuntimeMac
 	if status.State != vm.StateRunning && status.State != vm.StatePaused {
 		return nil
 	}
-	return api.New(runtime.configuration.socketPath(input.ID)).PutMMDS(ctx, input.Specification.MetadataServiceData(
+	metadata := input.Specification.MetadataServiceData(
 		input.ID,
 		input.NetworkInterface.GuestIPAddress,
 		input.NetworkInterface.MACAddress,
-	))
+	)
+	// A refresh right after a memory restore replaces the document that carried the host time.
+	vm.SetMetadataHostTime(metadata, time.Now())
+	return api.New(runtime.configuration.socketPath(input.ID)).PutMMDS(ctx, metadata)
 }

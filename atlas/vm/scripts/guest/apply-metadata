@@ -12,6 +12,8 @@ MESH_GATEWAY = "fe80::1"
 TOKEN_TTL_SECONDS = "21600"
 POLL_SECONDS = 0.25
 TIMEOUT_SECONDS = 3
+# A smaller gap is left to time sync, which slews the clock instead of stepping it.
+CLOCK_STEP_THRESHOLD_SECONDS = 2
 
 
 def content_length(head):
@@ -69,6 +71,20 @@ def get_token():
 
 def read(path, token):
     return request("GET", path, {"X-metadata-token": token})
+
+
+def apply_host_time(value):
+    """Step the clock forward to the host time that Metal sets before a memory restore.
+
+    A restored guest keeps the clock of its snapshot until time sync reaches a server. The
+    clock never steps back, so a value that is older than the guest clock does nothing.
+    """
+    try:
+        host_time = int(value) / 1000
+    except ValueError:
+        return
+    if host_time - time.time() > CLOCK_STEP_THRESHOLD_SECONDS:
+        time.clock_settime(time.CLOCK_REALTIME, host_time)
 
 
 def apply_hostname(hostname):
@@ -136,6 +152,10 @@ def main():
             if not hostname and not address:
                 token = ""
             else:
+                # First, so the network services that the identity change restarts read the right time.
+                host_time = read("meta-data/host-time-unix-ms", token)
+                if host_time:
+                    apply_host_time(host_time)
                 if hostname:
                     apply_hostname(hostname)
                 routes = read("meta-data/host-routes", token)
