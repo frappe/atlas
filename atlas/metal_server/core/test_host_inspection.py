@@ -112,7 +112,7 @@ class TestHostReport(UnitTestCase):
 					"fstype": "ext4",
 					"mountpoint": "/",
 				},
-				{"name": "/dev/md0p2", "type": "part", "size": 6900 * 1024**3},
+				{"name": "/dev/md0p2", "type": "part", "size": 6900 * 1024**3, "pttype": "gpt"},
 			],
 		}
 		devices = [
