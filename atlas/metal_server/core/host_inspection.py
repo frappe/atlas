@@ -210,9 +210,10 @@ class HostReport:
 
 	@staticmethod
 	def _busy_reason(device: Mapping[str, Any]) -> str:
+		# lsblk can report the parent's partition table on an empty partition.
 		checks = (
 			(device.get("children"), "has partitions or holders"),
-			(device.get("pttype"), "has a partition table"),
+			(device.get("pttype") and device.get("type") != "part", "has a partition table"),
 			(device.get("fstype"), "has a file system or signature"),
 			(device.get("mountpoint"), "is mounted"),
 			(device.get("ro") in (True, "1"), "is read-only"),
