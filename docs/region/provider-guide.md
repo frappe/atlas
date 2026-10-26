@@ -94,6 +94,8 @@ The host check fails in these conditions:
 
 Atlas accepts a disk only when it has no partitions, holders, partition table, signature, or mount. The disk must not be read-only or removable. Atlas also lists an empty partition or RAID array inside a disk, such as `/dev/md0p4` on a mirrored root disk pair. A disk image must be a regular file with no signature. Atlas does not use loop devices as storage disks.
 
+For a partition, inspection ignores the parent partition table type that `lsblk` can report. Before pool creation, the installer uses `blkid --probe` to check the selected device directly for file system signatures and partition tables.
+
 Atlas creates the Metal Server Size and Metal Server Image when they do not exist:
 
 | Record | Name | Example |

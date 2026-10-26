@@ -41,11 +41,11 @@ is_empty_storage_pool_device() {
 	*) return 1 ;;
 	esac
 	[ "$(lsblk --raw --noheadings --output NAME "$STORAGE_POOL_DEVICE" | wc -l)" -eq 1 ] || return 1
-	[ -z "$(lsblk --raw --noheadings --output FSTYPE,PTTYPE,MOUNTPOINT "$STORAGE_POOL_DEVICE" | tr -d '[:space:]')" ] || return 1
+	[ -z "$(lsblk --raw --noheadings --output FSTYPE,MOUNTPOINT "$STORAGE_POOL_DEVICE" | tr -d '[:space:]')" ] || return 1
 	[ "$(lsblk --raw --noheadings --output RO "$STORAGE_POOL_DEVICE")" = 0 ] || return 1
 	[ "$(lsblk --raw --noheadings --output RM "$STORAGE_POOL_DEVICE")" = 0 ] || return 1
-	# A partition always reports its PART_ENTRY_* tags, so check only for a signature type.
-	[ -z "$(blkid --probe --output value --match-tag TYPE "$STORAGE_POOL_DEVICE" 2>/dev/null)" ]
+	# Probe the device directly: lsblk can report the parent's partition table on a partition.
+	[ -z "$(blkid --probe --output value --match-tag TYPE --match-tag PTTYPE "$STORAGE_POOL_DEVICE" 2>/dev/null)" ]
 }
 
 
