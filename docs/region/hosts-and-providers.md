@@ -17,7 +17,9 @@ Atlas commits a `Pending` record before contacting the provider. The stable reco
 
 Setup prepares provider resources, SSH, networking, WireGuard, and Metal. It saves completed phases in MariaDB and marks the host `Running` only after completion. See the [provisioning sequence](index.md).
 
-Select **Set hostname to server name** before setup to set the host's operating system hostname to its Metal Server title, such as `metal-bom-1`. The option is off by default and is available on the server form, the **Add Server** review step, and **Import Server**. Setup retries apply the saved option. Cloud-init preserves the hostname across restarts.
+Select **Set hostname to server name** before setup to set the host's operating system hostname to its Metal Server title, such as `metal-bom-1`. The option is off by default and is available on the server form, the **Add Server** review step, and **Import Server**.
+
+The field is read-only after provisioning completes. Setup retries apply the saved option. Cloud-init preserves the hostname across restarts.
 
 ### Import a provider server
 
