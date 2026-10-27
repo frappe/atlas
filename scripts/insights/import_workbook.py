@@ -35,7 +35,8 @@ def import_alerts(alerts: list[dict]) -> None:
 		target.update({**alert, "frequency": "Cron", "channel": "Webhook", "custom_condition": 1})
 		if url:
 			target.webhook_url = url
-			target.webhook_token = os.environ["ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN"]
+			# The URL carries the receiver's secret. A Frappe receiver refuses a bearer token it did not issue.
+			target.webhook_token = None
 			target.disabled = 0
 		elif not name:
 			target.disabled = 1
