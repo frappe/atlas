@@ -22,6 +22,16 @@ from workbook import (
 
 # One row per complete minute for the fleet. Each host pushes twice a minute and
 # Atlas once, so the current minute is left out until every push has landed.
+PUBLIC_IPV4 = ", ".join(
+	f"""sumIf(value, metric = 'atlas_public_ip_{kind}' AND labels['version'] = '{version}'{status})
+      / greatest(uniqExactIf(ts, metric = 'atlas_public_ip_{kind}'), 1) AS ipv{version}_{name}"""
+	for version in (4,)
+	for name, kind, status in (
+		("total", "capacity", ""),
+		("attached", "allocations", " AND labels['status'] != 'Available'"),
+	)
+)
+
 FLEET_TREND = f"""WITH
 host_minutes AS (
   SELECT toStartOfMinute(ts) AS minute, resource_id,
@@ -58,17 +68,7 @@ atlas AS (
       / nullIf(sumIf(value, metric = 'atlas_host_memory_bytes' AND labels['kind'] = 'total'), 0)) * 100 AS memory_allocated,
     (1 - sumIf(value, metric = 'atlas_host_storage_bytes' AND labels['kind'] = 'available')
       / nullIf(sumIf(value, metric = 'atlas_host_storage_bytes' AND labels['kind'] = 'total'), 0)) * 100 AS storage_allocated,
-    {
-	", ".join(
-		f"""sumIf(value, metric = 'atlas_public_ip_{kind}' AND labels['version'] = '{version}'{status})
-      / greatest(uniqExactIf(ts, metric = 'atlas_public_ip_{kind}'), 1) AS ipv{version}_{name}"""
-		for version in (4,)
-		for name, kind, status in (
-			("total", "capacity", ""),
-			("attached", "allocations", " AND labels['status'] != 'Available'"),
-		)
-	)
-}
+    {PUBLIC_IPV4}
   FROM samples
   WHERE resource_id LIKE 'atlas-%' AND ts > now() - {LOOKBACK}
     AND metric IN ('atlas_error_logs_last_minute', 'atlas_job_failed', 'atlas_job_queue_length',
