@@ -1,4 +1,4 @@
-from workbook import HOST, LOOKBACK, TITLES, gauge_sql, rate_sql
+from workbook import HOST, LOOKBACK, METAL_HOST_IDS, TITLES, gauge_sql, rate_sql
 
 # Insights orders series by name, so "Busy ..." stacks below "Idle" as in Grafana.
 BASIC_CPU_MODE = """multiIf(s.labels['mode'] = 'idle', 'Idle', s.labels['mode'] = 'user', 'Busy User',
@@ -13,6 +13,7 @@ SELECT s.ts AS ts, {HOST.format(alias="s")} AS host, s.labels['mountpoint'] AS s
   1 - sumIf(s.value, s.metric = 'system_filesystem_available_bytes') / nullIf(sumIf(s.value, s.metric = 'system_filesystem_size_bytes'), 0) AS value
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
 WHERE s.metric IN ('system_filesystem_available_bytes', 'system_filesystem_size_bytes') AND s.ts > now() - {LOOKBACK}
+  AND s.resource_id IN ({METAL_HOST_IDS})
 GROUP BY ts, host, series"""
 
 
@@ -50,7 +51,8 @@ pivot AS (
   SELECT ts, resource_id,
     {columns}
   FROM samples
-  WHERE metric = '{metric}' AND labels['field'] IN ({quoted}) AND ts > now() - {LOOKBACK} {where}
+  WHERE metric = '{metric}' AND labels['field'] IN ({quoted}) AND ts > now() - {LOOKBACK}
+    AND resource_id IN ({METAL_HOST_IDS}) {where}
   GROUP BY ts, resource_id
 )
 SELECT p.ts AS ts, {HOST.format(alias="p")} AS host, pair.1 AS series, pair.2 AS value
@@ -65,7 +67,7 @@ deltas AS (
   SELECT ts, resource_id, metric, {series} AS series,
     greatest(value - lagInFrame(value, 1, value) OVER w, 0) AS increase
   FROM samples
-  WHERE metric IN ('{numerator}', '{denominator}') AND ts > now() - {LOOKBACK}
+  WHERE metric IN ('{numerator}', '{denominator}') AND ts > now() - {LOOKBACK} AND resource_id IN ({METAL_HOST_IDS})
   WINDOW w AS (PARTITION BY resource_id, metric, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
 )
 SELECT d.ts AS ts, {HOST.format(alias="d")} AS host, d.series AS series,
@@ -103,4 +105,5 @@ SELECT s.ts AS ts, {HOST.format(alias="s")} AS host, s.labels['mountpoint'] AS s
   sumIf(s.value, s.metric = 'system_filesystem_size_bytes') - sumIf(s.value, s.metric = 'system_filesystem_available_bytes') AS value
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
 WHERE s.metric IN ('system_filesystem_size_bytes', 'system_filesystem_available_bytes') AND s.ts > now() - {LOOKBACK}
+  AND s.resource_id IN ({METAL_HOST_IDS})
 GROUP BY ts, host, series"""

@@ -2,6 +2,8 @@
 
 The Atlas workbook in Insights shows the health of one region from the [telemetry](telemetry.md) in Datum. It is for Atlas engineers and operators. Generate and import it with the scripts in [scripts/insights](../../scripts/insights/README.md).
 
+Host charts and tables read only the Metal servers that Atlas lists in `atlas_metal_server_info`. Other resources, such as Pilot servers, push to the same Datum and do not show.
+
 | Dashboard | Answers |
 | --- | --- |
 | Atlas - Region | Is something wrong in the region now, and where? |

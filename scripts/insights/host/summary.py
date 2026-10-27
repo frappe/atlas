@@ -1,4 +1,4 @@
-from workbook import HOST, LOOKBACK, TITLES, UNHEALTHY_DISKS
+from workbook import HOST, LOOKBACK, METAL_HOST_IDS, TITLES, UNHEALTHY_DISKS
 
 HOST_QUICK = f"""WITH {TITLES},
 latest AS (
@@ -21,7 +21,7 @@ latest AS (
     argMaxIf(value, ts, metric = 'system_zfs_pool_size_bytes') AS pool_size,
     argMaxIf(value, ts, metric = 'system_systemd_failed_units') AS failed_units
   FROM samples
-  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id NOT LIKE 'atlas-%'
+  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY resource_id
   HAVING countIf(metric = 'system_cpu_count') > 0
 ),
@@ -60,7 +60,7 @@ latest AS (
       OR (metric = 'system_nvme_smart' AND labels['field'] = 'media_errors')) AS uncorrectable,
     argMaxIfOrNull(value, ts, metric = 'system_disk_scsi_timeouts_total') AS io_timeouts
   FROM samples
-  WHERE ts > now() - INTERVAL 1 HOUR AND resource_id NOT LIKE 'atlas-%' AND labels['device'] != ''
+  WHERE ts > now() - INTERVAL 1 HOUR AND resource_id IN ({METAL_HOST_IDS}) AND labels['device'] != ''
     AND (metric LIKE 'system_smart_%' OR metric LIKE 'system_nvme_%' OR metric LIKE 'system_disk_scsi_%')
   GROUP BY resource_id, device
 )
@@ -81,7 +81,7 @@ pools AS (
     argMaxIf(value, ts, metric = 'system_zfs_scan_errors' AND labels['function'] = 'scrub') AS scrub_errors,
     argMaxIf(value, ts, metric = 'system_zfs_scan_repaired_bytes' AND labels['function'] = 'scrub') / 1048576 AS repaired_mib
   FROM samples
-  WHERE ts > now() - INTERVAL 15 MINUTE AND metric LIKE 'system_zfs_%' AND labels['pool'] != ''
+  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS}) AND metric LIKE 'system_zfs_%' AND labels['pool'] != ''
   GROUP BY resource_id, name
 ),
 arrays AS (
@@ -92,7 +92,7 @@ arrays AS (
     concat(argMaxIf(labels['action'], ts, metric = 'system_md_sync_action'), if(argMaxIf(value, ts, metric = 'system_md_degraded') > 0, ' degraded', '')) AS scan,
     CAST(NULL, 'Nullable(Float64)') AS scrub_age_days, CAST(NULL, 'Nullable(Float64)') AS scrub_errors, CAST(NULL, 'Nullable(Float64)') AS repaired_mib
   FROM samples
-  WHERE ts > now() - INTERVAL 15 MINUTE AND metric LIKE 'system_md_%' AND labels['device'] != ''
+  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS}) AND metric LIKE 'system_md_%' AND labels['device'] != ''
   GROUP BY resource_id, name
 )
 SELECT {HOST.format(alias="p")} AS host, p.name AS name, p.state AS state, p.data_errors AS data_errors, p.device_errors AS device_errors,
@@ -115,7 +115,7 @@ pushes AS (
   FROM samples
   WHERE metric IN ('system_cpu_usage_percent', 'system_memory_usage_percent', 'system_zfs_pool_capacity_percent',
       'system_disk_usage_percent', 'system_load_average', 'system_cpu_count', 'metal_vm_count')
-    AND ts > now() - {LOOKBACK} AND resource_id NOT LIKE 'atlas-%'
+    AND ts > now() - {LOOKBACK} AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY ts, resource_id
   HAVING countIf(metric = 'system_cpu_usage_percent') > 0
 ),
@@ -127,7 +127,7 @@ disks AS (
       greatest(value - lagInFrame(value, 1, value) OVER w, 0)
         / nullIf(dateDiff('millisecond', lagInFrame(ts, 1, ts) OVER w, ts) / 1000, 0) * 100 AS busy
     FROM samples
-    WHERE metric = 'system_disk_io_time_seconds_total' AND ts > now() - {LOOKBACK} AND resource_id NOT LIKE 'atlas-%'
+    WHERE metric = 'system_disk_io_time_seconds_total' AND ts > now() - {LOOKBACK} AND resource_id IN ({METAL_HOST_IDS})
     WINDOW w AS (PARTITION BY resource_id, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
   )
   GROUP BY ts, resource_id
@@ -153,7 +153,7 @@ VMS_NOW = f"""WITH {TITLES},
 pushes AS (
   SELECT resource_id, max(ts) AS last_ts
   FROM samples
-  WHERE metric = 'metal_vm_pending' AND ts > now() - INTERVAL 15 MINUTE
+  WHERE metric = 'metal_vm_pending' AND ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY resource_id
 ),
 counts AS (
@@ -200,4 +200,5 @@ SELECT {HOST.format(alias="s")} AS host, s.labels['loop'] AS loop,
   dateDiff('second', toDateTime(argMax(s.value, s.ts)), now()) AS since_last_pass_seconds
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
 WHERE s.metric = 'metal_reconciler_last_pass_timestamp_seconds' AND s.ts > now() - INTERVAL 15 MINUTE
+  AND s.resource_id IN ({METAL_HOST_IDS})
 GROUP BY host, loop"""
