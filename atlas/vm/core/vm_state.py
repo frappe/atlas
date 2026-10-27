@@ -8,6 +8,7 @@ from frappe.query_builder import Case
 from frappe.utils import now_datetime
 
 from atlas.vm.core.metal_models import sleep_state_field, timestamp_field
+from atlas.vm.core.placement.transaction import use_read_committed
 
 LIVE_STATES = frozenset({"running", "stopped", "paused"})
 SLEEP_STATES = ("sleeping", "deep-sleeping", "coma")
@@ -16,11 +17,13 @@ REPORTED_FIELDS = ("sleep_state", "sleep_checkpoint_id", "last_request_at")
 HOST_REPORT_REPEAT_SECONDS = 3600
 
 
+@use_read_committed
 def store_reported_states(server_name: str, reported: object) -> None:
 	"""Store the reported virtual machine states of one host.
 
 	A new or changed status is saved as a document, so its webhook runs. The other
 	reported values change often, so all rows with an unchanged status share one update.
+	READ COMMITTED lets the update write rows that the sleep job changed during the Metal call.
 	"""
 	states = get_reported_states(reported)
 	report_unknown_virtual_machines(server_name, list(states))
