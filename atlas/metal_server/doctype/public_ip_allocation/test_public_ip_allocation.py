@@ -63,7 +63,7 @@ class TestPublicIPAllocation(IntegrationTestCase):
 	def insert_attached_allocation(self, pool_prefix: str) -> str:
 		pool = insert_pool(pool_prefix, 32)
 		generate_available_allocations(pool.name, 1)
-		name = frappe.get_value("Public IP Allocation", {"pool": pool.name})
+		name = frappe.db.get_value("Public IP Allocation", {"pool": pool.name})
 		frappe.db.set_value(
 			"Public IP Allocation",
 			name,
