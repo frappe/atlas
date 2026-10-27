@@ -127,7 +127,7 @@ Act freely in development. Ask the user before each write in staging. Never act 
 ### Commits
 
 - Use a short Conventional Commit subject: `type(scope): Sentence case`.
-- Use one of `feat`, `fix`, `refactor`, `test`, `docs`, `build`, or `chore`. Use a component as the scope: `atlas`, `metal`, `http-proxy`, `ipv6-router`, `wg-mesh` or `wireguard-gateway`.
+- Use one of `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, or `chore`. Use a component as the scope: `atlas`, `metal`, `http-proxy`, `ipv6-router`, `wg-mesh` or `wireguard-gateway`.
 - Do not add an AI co-author, session data, or agent data.
 - When an external document explains the change (official docs, an RFC, an upstream issue or a good technical blog post), add its link on a `Refs:` line at the end of the body. Do not link private documents.
 
