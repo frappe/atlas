@@ -56,7 +56,13 @@ def main() -> None:
 	parser.add_argument(
 		"--source", type=Path, help="use this scripts/insights folder instead of downloading one"
 	)
+	parser.add_argument(
+		"--alert-webhook-url",
+		help="send the alerts to this https URL; set the token in ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN",
+	)
 	arguments = parser.parse_args()
+	if arguments.alert_webhook_url and not os.environ.get("ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN"):
+		sys.exit("error: --alert-webhook-url needs ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN")
 
 	bench = find_bench(arguments.site)
 	with tempfile.TemporaryDirectory() as temporary:
@@ -71,6 +77,7 @@ def main() -> None:
 		environment = {
 			**os.environ,
 			"ATLAS_INSIGHTS_DEFAULT_HOST": arguments.default_host,
+			"ATLAS_INSIGHTS_ALERT_WEBHOOK_URL": arguments.alert_webhook_url or "",
 			"PYTHONDONTWRITEBYTECODE": "1",
 		}
 		with workbook.open("w") as output:

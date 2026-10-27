@@ -10,6 +10,7 @@ Host charts and tables read only the Metal servers that Atlas lists in `atlas_me
 | Atlas - Host | What does one host do? Pick the host in the Host filter. |
 | Atlas - Host BMC | What hardware health and events does one host's [BMC](telemetry.md#bmc-hardware) report? |
 | Atlas - Platform Services | Are the proxy, WireGuard gateway, IPv6 router, and Cargo nodes up? |
+| Atlas - Service Nodes | How busy is each proxy, WireGuard gateway, and IPv6 router node, and how does proxy traffic look? Pick nodes in the Node filter. |
 | Atlas - Uptime | Which hosts and VMs have the least uptime? |
 | Atlas - SLA and SLOs | Are the SLA and the SLOs met, and how much error budget is left? |
 | Atlas - Errors | Which Atlas and host errors happen, and how often? |
@@ -56,3 +57,28 @@ Each minute, Atlas probes the readiness URL of each active proxy and WireGuard g
 The IPv6 router has no readiness URL, so its uptime is the uptime of its VM. A VM whose host stopped reporting for 2 minutes counts as down now.
 
 Atlas - Platform Services shows each node's uptime this month. The Platform Services row on Atlas - Region shows the share of nodes that are ready now.
+
+## Alerts
+
+The workbook has 4 Insights Alerts. Each alert runs one query from the Alerts folder and posts the failing checks to a webhook as Markdown. The checks and their limits are in [alerts.py](../../scripts/insights/alerts.py).
+
+| Alert | Runs | Checks |
+| --- | --- | --- |
+| 🔴 Atlas P1 Critical | Every 5 minutes | Hosts, service nodes, or Atlas not reporting, host sync, unavailable or failing VMs, storage at risk, host, service node, or Atlas disk under 10% free, stalled reconcilers, stuck VM changes, service nodes not ready, uncorrected ECC errors, critical BMC events, API 5xx |
+| 🟠 Atlas P2 Hosts | Every hour | Host disk under 25% free, hardware faults, host stress, failed units, clock sync, BMC problems, BMC warning events, repeated host and service node errors, dropped telemetry, RAM allocation |
+| 🟠 Atlas P2 Platform | Every hour | Atlas or service node disk under 25% free, service node memory and OOM kills, proxy 5xx over 5%, new or bursting Atlas errors, migrations, jobs, Metal calls, free IPv4 addresses |
+| 🔵 Atlas P3 Report | Every 6 hours | SLA and SLO budgets, fleet allocation, pool use, metald version drift, BMC temperature and clock, scrub age, disk wear, old VM drafts |
+
+P1 and P2 check only hosts that Atlas reports as Running, and only active service nodes. A service node that never sent telemetry does not alert as not reporting. P2 is two alerts, because one query is over the Insights SQL size limit. An alert posts when its query returns a row, and posts again on each run while the problem stays.
+
+P1 shows critical BMC events of the last 15 minutes, so one event can post up to 3 times. P2 posts each BMC warning event once.
+
+P3 always posts. Its first line is a heartbeat with the number of hosts that report, so a missing report means that telemetry or alerts are broken.
+
+A new alert stays disabled until the update sets a webhook:
+
+```sh
+ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN=<token> python3 update_workbook.py <insights site> --alert-webhook-url https://<receiver>
+```
+
+Insights sends the token as `Authorization: Bearer <token>`. It posts only to a public `https` URL. A later update without `--alert-webhook-url` keeps the webhook and the enabled state of each alert.

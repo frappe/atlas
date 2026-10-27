@@ -9,8 +9,10 @@ Generate and import the Atlas workbook for [Insights](https://github.com/frappe/
 | `*_dashboard.py`, `region_tables.py` | Dashboard queries and layouts |
 | `uptime_queries.py` | Uptime SQL and charts that the Uptime, SLA and SLOs, and Platform Services dashboards share |
 | `host/` | Host dashboard. Each area file lists its sections as `Chart` objects. |
+| `service_nodes_dashboard.py` | Atlas - Service Nodes: Vector metrics of proxy, WireGuard gateway, and IPv6 router nodes |
+| `alerts.py` | The P1, P2 Hosts, P2 Platform, and P3 alert queries and their Insights Alerts. See [alerts](../../docs/operate/dashboards.md#alerts). |
 | `update_workbook.py` | Finds the bench of the Insights site, gets these scripts, generates the workbook, and runs `import_workbook.py` |
-| `import_workbook.py` | Runs in the bench: updates the workbook, then loads every chart once |
+| `import_workbook.py` | Runs in the bench: updates the workbook and its alerts, then loads every chart once |
 
 ## Update the workbook
 
@@ -27,6 +29,7 @@ The script finds the bench that has the site under the Pilot `benches` folder, a
 | `--ref <branch, tag, or commit>` | Take the scripts from another Atlas version. |
 | `--default-host <host title>` | The host that Atlas - Host opens with. |
 | `--source <folder>` | Use a local `scripts/insights` folder, such as a checkout with changes. |
+| `--alert-webhook-url <https URL>` | Send the alerts to this webhook and enable them. Set the token in `ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN`. |
 
 The update changes the workbook named Atlas in place and lets everyone in the organization edit it. Each query, chart, and dashboard keeps its generated name, so a dashboard URL, such as `/insights/dashboards/dashboard-atlas-uptime`, stays the same. The update overwrites edits made in Insights and deletes members that the scripts no longer make. Change the scripts instead.
 
