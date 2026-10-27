@@ -1,4 +1,4 @@
-from workbook import UPTIME_PERCENT, dimension, measure
+from workbook import METAL_HOST_IDS, UPTIME_PERCENT, dimension, measure
 
 MONTH_START = "toDateTime(toStartOfMonth(now()))"
 DAYS = "toDateTime(today() - 27)"
@@ -53,7 +53,7 @@ WHERE wanted IS NOT NULL AND minute IN (SELECT minute FROM reported)"""
 # first reported this month and its newest push.
 VM_DOWNTIME_THIS_MONTH = f"""measured AS (
   SELECT resource_id, dateDiff('second', min(ts), now()) AS seconds, max(ts) AS last_push
-  FROM samples WHERE metric = 'metal_vm_wanted_running' AND ts > {MONTH_START}
+  FROM samples WHERE metric = 'metal_vm_wanted_running' AND ts > {MONTH_START} AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY resource_id
 ),
 downtime AS (

@@ -16,6 +16,31 @@ frappe.ui.form.on("Wireguard Gateway Server", {
 			return;
 		}
 
+		if (frm.doc.status === "Active") {
+			frm.add_custom_button(
+				__("Update Package"),
+				() =>
+					frappe.confirm(
+						__(
+							"Install the published package on {0}? Device traffic stops for a moment while the gateway reloads.",
+							[frm.doc.name]
+						),
+						() => frm.call({ method: "update_package", doc: frm.doc, freeze: true })
+					),
+				__("Actions")
+			);
+			frm.add_custom_button(
+				__("Configure Telemetry"),
+				() =>
+					frappe.confirm(
+						__("Install Vector and a new Datum token on {0}?", [frm.doc.name]),
+						() =>
+							frm.call({ method: "configure_telemetry", doc: frm.doc, freeze: true })
+					),
+				__("Actions")
+			);
+		}
+
 		frm.add_custom_button(
 			__("Archive"),
 			() =>

@@ -85,6 +85,8 @@ Each router owns one pool. A region can run several routers for separate blocks.
 
 For each routed tenant VM, Atlas derives a public address from its mesh address and points the VM's `2000::/3` route at the router's mesh address. A pool cannot be archived while routed allocations still use it. A failed setup records its phase and needs operator action.
 
+To install a newly published package on an `Active` router, select **Actions > Update Package**. The router stays `Active`. Routed IPv6 traffic stops for a moment while the router reloads its filter. A failure sets the Failure field to `installation: <error>`.
+
 ## Install by hand
 
 To install by hand, run this as root on a tenant-0 gateway VM that owns the block. It is safe to run again:

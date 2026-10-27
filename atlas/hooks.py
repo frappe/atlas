@@ -234,6 +234,7 @@ scheduler_events = {
 		],
 		"30 3 * * *": [
 			"atlas.metal_server.doctype.metal_server.metal_server.renew_telemetry_credentials",
+			"atlas.service.core.telemetry.renew_service_telemetry_credentials",
 		],
 		"* * * * *": [
 			"atlas.atlas.core.telemetry.datum.publish_metrics",

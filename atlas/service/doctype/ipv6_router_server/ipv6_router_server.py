@@ -19,6 +19,7 @@ from atlas.service.core.ipv6_router.address import (
 	parse_ipv6_network,
 	validate_router_network,
 )
+from atlas.service.core.telemetry import request_service_telemetry
 
 if TYPE_CHECKING:
 	from collections.abc import Iterator
@@ -91,6 +92,31 @@ class IPv6RouterServer(Document):
 		return {"name": router.name, "is_draft": is_draft}
 
 	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this node."""
+		_validate_system_manager()
+		request_service_telemetry(self)
+
+	@frappe.whitelist(methods=["POST"])
+	def update_package(self) -> None:
+		"""Queue an install of the published IPv6 router package on this node."""
+		_validate_system_manager()
+		if self.status != "Active":
+			frappe.throw(_("IPv6 Router Server {0} is not active.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_update_package",
+			queue="long",
+			timeout=3_600,
+			job_id=f"atlas||ipv6-router-server||package||{self.name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+		frappe.msgprint(_("IPv6 router package update has been queued. Please check after some time."))
+
+	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
 		"""Terminate the router virtual machine. Termination releases its addresses."""
 		_validate_system_manager()
@@ -148,6 +174,11 @@ class IPv6RouterServer(Document):
 			deduplicate=True,
 			enqueue_after_commit=enqueue_after_commit,
 		)
+
+	def _update_package(self) -> None:
+		from atlas.service.core.ipv6_router.provisioning import IPv6RouterServerProvisioner
+
+		IPv6RouterServerProvisioner(self).update_package()
 
 	def _provision(self) -> None:
 		from atlas.service.core.ipv6_router.provisioning import IPv6RouterServerProvisioner

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -7,7 +9,7 @@ from ipaddress import ip_network
 
 import frappe
 import requests
-from frappe.utils import add_to_date, get_datetime, now_datetime
+from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
 
 MEBIBYTE = 1 << 20
@@ -43,6 +45,7 @@ class AtlasGauges:
 		self.add_services()
 		self.add_service_readiness()
 		self.add_jobs()
+		self.add_file_systems()
 		return self.samples
 
 	def add(self, metric: str, value: float, **labels: str) -> None:
@@ -234,6 +237,19 @@ class AtlasGauges:
 			self.add("atlas_job_queue_length", queue.count, queue=queue_name)
 			self.add("atlas_job_failed", queue.failed_job_registry.count, queue=queue_name)
 			self.add("atlas_job_started", queue.started_job_registry.count, queue=queue_name)
+
+	def add_file_systems(self) -> None:
+		"""Report the size and free space of the root, bench, and local MariaDB file systems, once each."""
+		devices = set()
+		for path in ("/", get_bench_path(), frappe.db.sql("SELECT @@datadir")[0][0]):
+			# MariaDB on another server has no data directory here.
+			device = os.stat(path).st_dev if os.path.isdir(path) else None
+			if device is None or device in devices:
+				continue
+			devices.add(device)
+			usage = shutil.disk_usage(path)
+			self.add("atlas_filesystem_bytes", usage.total, path=path, kind="size")
+			self.add("atlas_filesystem_bytes", usage.free, path=path, kind="available")
 
 	def latest_usages(self) -> list:
 		"""Return the newest usage sample of each host from the last hour."""

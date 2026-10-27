@@ -1,5 +1,10 @@
 DATA_SOURCE = "datum"
 LOOKBACK = "INTERVAL 14 DAY"
+# Pilot servers push to the same Datum, so host queries read only the Metal servers that Atlas lists.
+METAL_HOST_IDS = f"SELECT labels['server'] FROM samples WHERE metric = 'atlas_metal_server_info' AND ts > now() - {LOOKBACK}"
+# Proxy, WireGuard gateway, and IPv6 router nodes push under their node name.
+SERVICE_NODE_IDS = f"""SELECT labels['node'] FROM samples
+WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo' AND ts > now() - {LOOKBACK}"""
 
 PERCENT = {"decimals": 1, "suffix": "%"}
 UPTIME_PERCENT = {"decimals": 2, "suffix": "%"}
@@ -36,18 +41,25 @@ UNHEALTHY_DISKS = """disks AS (
 HOST = "if(t.title = '', {alias}.resource_id, t.title)"
 
 
-def gauge_sql(metric: str, series: str = "''", where: str = "", value: str = "s.value") -> str:
-	"""One row per sample of a gauge."""
+def gauge_sql(
+	metric: str, series: str = "''", where: str = "", value: str = "s.value", resources: str = METAL_HOST_IDS
+) -> str:
+	"""One row per sample of a gauge, from Metal hosts by default."""
 	return f"""WITH {TITLES}
 SELECT s.ts AS ts, {HOST.format(alias="s")} AS host, {series} AS series, {value} AS value
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
-WHERE s.metric = '{metric}' AND s.ts > now() - {LOOKBACK} {where}"""
+WHERE s.metric = '{metric}' AND s.ts > now() - {LOOKBACK} AND s.resource_id IN ({resources}) {where}"""
 
 
 def rate_sql(
-	metrics: list[str], series: str = "''", where: str = "", scale: str = "1", per_second: bool = True
+	metrics: list[str],
+	series: str = "''",
+	where: str = "",
+	scale: str = "1",
+	per_second: bool = True,
+	resources: str = METAL_HOST_IDS,
 ) -> str:
-	"""Return counter increases or rates, with zero for reset intervals."""
+	"""Return counter increases or rates, from Metal hosts by default, with zero for reset intervals."""
 	names = ", ".join(f"'{metric}'" for metric in metrics)
 	return f"""WITH {TITLES},
 deltas AS (
@@ -55,7 +67,7 @@ deltas AS (
     value - lagInFrame(value, 1, value) OVER w AS increase,
     dateDiff('millisecond', lagInFrame(ts, 1, ts) OVER w, ts) / 1000 AS seconds
   FROM samples
-  WHERE metric IN ({names}) AND ts > now() - {LOOKBACK} {where}
+  WHERE metric IN ({names}) AND ts > now() - {LOOKBACK} AND resource_id IN ({resources}) {where}
   WINDOW w AS (PARTITION BY resource_id, metric, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
 )
 SELECT d.ts AS ts, {HOST.format(alias="d")} AS host, {series} AS series,
@@ -68,7 +80,7 @@ WEEK = "today() - 6"
 
 ERRORS = "source = 'error_log' AND service = 'atlas'"
 # Lines at level error or worse from a Metal host: metald, the kernel, or a systemd unit.
-HOST_ERRORS = "resource_id NOT LIKE 'atlas-%' AND level IN ('error', 'critical', 'alert', 'emergency')"
+HOST_ERRORS = f"resource_id IN ({METAL_HOST_IDS}) AND level IN ('error', 'critical', 'alert', 'emergency')"
 
 
 def daily_increase_sql(metrics: list[str], series: str, where: str = "") -> str:
@@ -94,6 +106,7 @@ class Workbook:
 		self.charts: dict = {}
 		self.dashboards: dict = {}
 		self.folders: list = []
+		self.alerts: list = []
 
 	def query(self, key: str, title: str, sql: str, folder: str) -> str:
 		"""Add a native query and return its name."""
@@ -155,6 +168,7 @@ class Workbook:
 			"queries": self.queries,
 			"charts": self.charts,
 			"dashboards": self.dashboards,
+			"alerts": self.alerts,
 		}
 
 
