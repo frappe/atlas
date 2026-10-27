@@ -13,6 +13,7 @@ file that dpkg owns is overwritten.
 import json
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -376,6 +377,21 @@ def test_openresty_uses_the_nginx_group_for_runtime_sockets():
 
 	assert "Group=nginx" in override.splitlines()
 	assert "RuntimeDirectory=nginx" in override.splitlines()
+
+
+def test_logrotate_makes_nginx_write_a_new_access_log():
+	"""Rotation frees disk only when nginx reopens its logs."""
+	_ensure_mapped("acme")
+	_fetch_headers("acme")
+	exec_proxy("logrotate", "--force", "/etc/logrotate.d/atlas-proxy")
+
+	for _ in range(20):
+		_fetch_headers("acme")
+		size = exec_proxy("stat", "-c", "%s", "/var/log/nginx/access.log").stdout.strip()
+		if size != "0":
+			return
+		time.sleep(0.1)
+	pytest.fail("nginx still writes to the rotated access log")
 
 
 def _upstream_conns() -> int:
