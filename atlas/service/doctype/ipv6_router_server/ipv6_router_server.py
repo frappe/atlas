@@ -19,6 +19,7 @@ from atlas.service.core.ipv6_router.address import (
 	parse_ipv6_network,
 	validate_router_network,
 )
+from atlas.service.core.telemetry import request_service_telemetry
 
 if TYPE_CHECKING:
 	from collections.abc import Iterator
@@ -89,6 +90,12 @@ class IPv6RouterServer(Document):
 		if router.status != "Failed":
 			router.enqueue_provisioning()
 		return {"name": router.name, "is_draft": is_draft}
+
+	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this node."""
+		_validate_system_manager()
+		request_service_telemetry(self)
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:

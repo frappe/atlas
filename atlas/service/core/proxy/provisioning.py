@@ -13,6 +13,7 @@ from atlas.atlas.core.ssh import SSHRunner, wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.proxy.configuration import ProxyConfiguration
 from atlas.service.core.service_package import HTTP_PROXY_PACKAGE
+from atlas.service.core.telemetry import enqueue_service_telemetry
 
 if TYPE_CHECKING:
 	from atlas.service.doctype.proxy_server.proxy_server import ProxyServer
@@ -53,6 +54,7 @@ class ProxyServerProvisioner:
 			self.proxy_server.status = "Active"
 			self.proxy_server.is_provisioning_completed = 1
 			self.save_progress()
+			enqueue_service_telemetry(self.proxy_server)
 			from atlas.service.core.proxy.configuration import push_configuration_to_active_proxies
 
 			push_configuration_to_active_proxies()
