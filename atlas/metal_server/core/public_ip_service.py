@@ -231,17 +231,22 @@ class PublicIPService:
 	def _claim_direct_allocation(
 		self, pool: PublicIPPool, tenant_id: int, *, is_reserved: bool
 	) -> PublicIPAllocation:
-		allocation = self._lock_available(pool.name)
+		allocation = self._lock_random_available(pool.name)
 		if not allocation:
-			# Only growth takes the pool lock. It looks again before it adds a prefix.
+			# Only growth takes the pool lock. It takes any free row that no claim holds before it adds a prefix.
 			pool = frappe.get_doc("Public IP Pool", pool.name, for_update=True)
-			allocation = self._lock_available(pool.name) or self._create_next(pool)
+			name = frappe.db.sql_list(
+				"""SELECT name FROM `tabPublic IP Allocation`
+				WHERE pool = %s AND status = 'Available' LIMIT 1 FOR UPDATE SKIP LOCKED""",
+				(pool.name,),
+			)
+			allocation = frappe.get_doc("Public IP Allocation", name[0]) if name else self._create_next(pool)
 		allocation.tenant_id = tenant_id
 		allocation.is_reserved = int(is_reserved)
 		allocation.status = "Reserved" if is_reserved else "Available"
 		return allocation
 
-	def _lock_available(self, pool_name: str) -> PublicIPAllocation | None:
+	def _lock_random_available(self, pool_name: str) -> PublicIPAllocation | None:
 		"""Lock a random free allocation of the pool. Rows that other claims hold are skipped, not awaited."""
 		# A locking ORDER BY RAND() locks every free row, so the random pick is a plain read.
 		candidates = frappe.db.sql_list(
