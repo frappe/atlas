@@ -17,6 +17,7 @@ log_inputs=journal_lines
 
 # The configuration holds the token, so only root and Vector can read it.
 umask 027
+rm -f /etc/vector/vector.next.yaml
 {
 cat <<'VECTOR'
 data_dir: /var/lib/vector

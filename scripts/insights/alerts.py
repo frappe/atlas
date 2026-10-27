@@ -6,19 +6,23 @@ from region_tables import STRESS
 from slo_dashboard import SLA_STATUS, SLO_STATUS
 from workbook import ERRORS, LOOKBACK, TITLES, UNHEALTHY_DISKS, Workbook
 
+# The newest Atlas inventory, so a quiet Atlas keeps its sets.
+NEWEST_INVENTORY = """ts > now() - INTERVAL 1 DAY
+    AND ts > (SELECT max(ts) FROM samples WHERE metric = '{metric}' AND ts > now() - INTERVAL 1 DAY) - INTERVAL 5 MINUTE"""
+
 # Alerts check only hosts that Atlas runs. A Pending, Installing, or Stopped host is expected to be quiet.
-RUNNING_HOSTS = """running AS (
+RUNNING_HOSTS = f"""running AS (
   SELECT labels['server'] AS server FROM samples
-  WHERE metric = 'atlas_metal_server_info' AND ts > now() - INTERVAL 15 MINUTE
+  WHERE metric = 'atlas_metal_server_info' AND {NEWEST_INVENTORY.format(metric="atlas_metal_server_info")}
   GROUP BY server
   HAVING argMax(labels['status'], ts) = 'Running'
 )"""
 
 # Proxy, WireGuard gateway, and IPv6 router nodes that Atlas runs. Vector on each one pushes under the node name.
-SERVICE_NODES = """service_nodes AS (
+SERVICE_NODES = f"""service_nodes AS (
   SELECT labels['node'] AS node FROM samples
   WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo'
-    AND ts > now() - INTERVAL 15 MINUTE
+    AND {NEWEST_INVENTORY.format(metric="atlas_service_node")}
   GROUP BY node
 )"""
 
