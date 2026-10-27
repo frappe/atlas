@@ -85,6 +85,29 @@ class WireGuardGatewayProvisioner:
 
 		push_configuration_to_active_gateways()
 
+	def update_package(self) -> None:
+		"""Install the published package on an active node and wait until it is ready. The node stays Active."""
+		with wireguard_gateway_lifecycle_lock(self.gateway.name):
+			self.gateway = frappe.get_doc("Wireguard Gateway Server", self.gateway.name)
+			if self.gateway.status != "Active":
+				return
+
+			try:
+				self.install_package()
+				self.wait_for_readiness()
+			except Exception as error:
+				self.gateway.failure_message = f"package: {error}"
+				self.save()
+				frappe.db.commit()  # nosemgrep
+				self.logger.exception(
+					"WireGuard gateway package update failed",
+					extra={"resource": self.gateway.name, "operation": "update-package"},
+				)
+				raise
+
+			self.gateway.failure_message = None
+			self.save()
+
 	@property
 	def steps(self) -> tuple[tuple[str, Callable[[], None]], ...]:
 		"""Return setup steps in execution order. Membership reaches the other nodes before DNS lists this one."""

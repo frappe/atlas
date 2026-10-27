@@ -10,6 +10,18 @@ frappe.ui.form.on("IPv6 Router Server", {
 
 		if (frm.doc.status === "Active") {
 			frm.add_custom_button(
+				__("Update Package"),
+				() =>
+					frappe.confirm(
+						__(
+							"Install the published package on {0}? Routed IPv6 traffic stops for a moment while the router reloads.",
+							[frm.doc.name]
+						),
+						() => frm.call({ method: "update_package", doc: frm.doc, freeze: true })
+					),
+				__("Actions")
+			);
+			frm.add_custom_button(
 				__("Configure Telemetry"),
 				() =>
 					frappe.confirm(
