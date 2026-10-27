@@ -48,7 +48,7 @@ class TestPublicIPAllocation(IntegrationTestCase):
 		self.assertIn(allocation.prefix, {"198.19.45.0/32", "198.19.45.1/32"})
 		self.assertEqual(frappe.db.get_value("Public IP Pool", pool.name, "next_allocation_offset"), "2")
 
-	def test_a_full_pool_with_held_candidates_still_gives_a_free_allocation(self) -> None:
+	def test_a_claim_whose_random_pick_misses_takes_a_free_allocation(self) -> None:
 		pool = insert_pool("198.19.46.0/31", 32)
 		generate_available_allocations(pool.name)
 
