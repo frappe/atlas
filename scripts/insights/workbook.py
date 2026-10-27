@@ -1,4 +1,6 @@
-DATA_SOURCE = "datum"
+import os
+
+DATA_SOURCE = os.environ.get("ATLAS_INSIGHTS_DATA_SOURCE", "datum")
 LOOKBACK = "INTERVAL 14 DAY"
 # Pilot servers push to the same Datum, so host queries read only the Metal servers that Atlas lists.
 METAL_HOST_IDS = f"SELECT labels['server'] FROM samples WHERE metric = 'atlas_metal_server_info' AND ts > now() - {LOOKBACK}"

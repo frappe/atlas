@@ -54,6 +54,9 @@ def main() -> None:
 	)
 	parser.add_argument("--default-host", default="", help="host title that Atlas - Host opens with")
 	parser.add_argument(
+		"--data-source", default="datum", help="name of the Insights data source for the Datum database"
+	)
+	parser.add_argument(
 		"--bench",
 		type=Path,
 		help="bench folder that holds the site, such as ~/frappe-bench; default: find it with pilot",
@@ -82,6 +85,7 @@ def main() -> None:
 		environment = {
 			**os.environ,
 			"ATLAS_INSIGHTS_DEFAULT_HOST": arguments.default_host,
+			"ATLAS_INSIGHTS_DATA_SOURCE": arguments.data_source,
 			"ATLAS_INSIGHTS_ALERT_WEBHOOK_URL": arguments.alert_webhook_url or "",
 			"PYTHONDONTWRITEBYTECODE": "1",
 		}

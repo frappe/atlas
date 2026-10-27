@@ -16,7 +16,7 @@ Generate and import the Atlas workbook for [Insights](https://github.com/frappe/
 
 ## Update the workbook
 
-Run this on the server of the Insights site, as the user that owns the bench. The site needs a ClickHouse data source named `datum` for the Datum database.
+Run this on the server of the Insights site, as the user that owns the bench. The site needs a ClickHouse data source for the Datum database, named `datum` unless you pass `--data-source`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/frappe/atlas/develop/scripts/insights/update_workbook.py | python3 - <insights site>
@@ -28,6 +28,7 @@ The script finds the bench that has the site under the Pilot `benches` folder, o
 | --- | --- |
 | `--ref <branch, tag, or commit>` | Take the scripts from another Atlas version. |
 | `--default-host <host title>` | The host that Atlas - Host opens with. |
+| `--data-source <name>` | The Insights data source for the Datum database. The default is `datum`. |
 | `--bench <folder>` | Use this bench, such as `~/frappe-bench` on a server without Pilot. |
 | `--source <folder>` | Use a local `scripts/insights` folder, such as a checkout with changes. |
 | `--alert-webhook-url <https URL>` | Send the alerts to this webhook, such as a Raven incoming webhook, and enable them. |
