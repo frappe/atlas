@@ -6,10 +6,24 @@ from unittest.mock import Mock, patch
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ProviderOperationError
+from atlas.metal_server.core.host_installation import HostInstallation
 from atlas.metal_server.core.provisioning import ServerProvisioner
 
 
 class TestServerProvisioner(UnitTestCase):
+	def test_hostname_changes_only_when_requested(self) -> None:
+		server = self.server()
+		installation = HostInstallation(server)
+		with patch("atlas.metal_server.core.host_installation.SSHTask.create_for_script_file") as create:
+			installation.configure_hostname()
+			create.assert_not_called()
+
+			server.set_hostname = 1
+			installation.configure_hostname()
+
+		self.assertEqual(create.call_args.kwargs["environment"], {"SERVER_HOSTNAME": server.title})
+		self.assertEqual(create.call_args.kwargs["target"], server.name)
+
 	def test_run_uses_the_safe_setup_order(self) -> None:
 		server = self.server()
 		provider = Mock()
@@ -19,6 +33,7 @@ class TestServerProvisioner(UnitTestCase):
 		server.ensure_provider_server.side_effect = lambda: operations("provider-create")
 		provider.prepare_server.side_effect = lambda _server: operations("provider-preparation")
 		provisioner.wait_for_root_ssh = Mock(side_effect=lambda: operations("secure-shell"))
+		provisioner.host_installation.configure_hostname.side_effect = lambda: operations("hostname")
 		provider.configure_server_network.side_effect = lambda _server: operations("provider-network")
 		provisioner.host_installation.configure_wireguard.side_effect = lambda: operations("wireguard")
 		provisioner.wait_for_wireguard_ssh = Mock(side_effect=lambda: operations("wireguard-link"))
@@ -33,6 +48,7 @@ class TestServerProvisioner(UnitTestCase):
 				"provider-create",
 				"provider-preparation",
 				"secure-shell",
+				"hostname",
 				"provider-network",
 				"wireguard",
 				"wireguard-link",
@@ -140,6 +156,9 @@ class TestServerProvisioner(UnitTestCase):
 	def server() -> SimpleNamespace:
 		server = SimpleNamespace(
 			name="node-test-00001",
+			doctype="Metal Server",
+			title="metal-test-1",
+			set_hostname=0,
 			status="Pending",
 			is_provisioning_completed=0,
 			provider_server_id="server-id",
