@@ -16,7 +16,7 @@ Generate and import the Atlas workbook for [Insights](https://github.com/frappe/
 
 ## Update the workbook
 
-Run this as the Pilot user on the server of the Insights site. The site needs a ClickHouse data source named `datum` for the Datum database.
+Run this on the server of the Insights site, as the user that owns the bench. The site needs a ClickHouse data source named `datum` for the Datum database.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/frappe/atlas/develop/scripts/insights/update_workbook.py | python3 - <insights site>
