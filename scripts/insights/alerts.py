@@ -673,13 +673,16 @@ MESSAGE_BODY = f""" · `{{{{ rows[0].atlas }}}}`
 {{{{ row.value | int }}}} {{{{ row.detail }}}}
 {{%- endfor %}}
 {{%- if not failing %}}
+
 ✅ All checks are healthy.
 {{%- endif %}}
 {{%- for row in failing %}}
 {{%- if loop.changed(row.check) %}}
 
+&nbsp;
+
 **{{{{ row.check }}}}** (healthy: {{{{ row.healthy }}}})
-{{%- endif %}}
+{{% endif %}}
 - `{{{{ row.host }}}}`: **{{{{ '%g' | format(row.value) }}}}**{{% if row.detail %}} · {{{{ row.detail }}}}{{% endif %}}
 {{%- endfor %}}"""
 
