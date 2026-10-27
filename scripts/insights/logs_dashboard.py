@@ -1,4 +1,15 @@
-from workbook import HOST, LOOKBACK, TITLES, Layout, Workbook, dimension, measure, table, time_series
+from workbook import (
+	HOST,
+	LOOKBACK,
+	METAL_HOST_IDS,
+	TITLES,
+	Layout,
+	Workbook,
+	dimension,
+	measure,
+	table,
+	time_series,
+)
 
 LINES = measure("Lines", "count", "count", "Integer")
 
@@ -9,7 +20,7 @@ def logs_sql(where: str, columns: str = "") -> str:
 SELECT l.ts AS ts, {HOST.format(alias="l")} AS host, l.service AS service, l.level AS level,
   l.message AS message, l.attributes['virtual_machine_id'] AS vm, l.attributes['request_id'] AS request_id {columns}
 FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
-WHERE l.ts > now() - {LOOKBACK} {where}"""
+WHERE l.ts > now() - {LOOKBACK} AND (l.resource_id LIKE 'atlas-%' OR l.resource_id IN ({METAL_HOST_IDS})) {where}"""
 
 
 def log_table(

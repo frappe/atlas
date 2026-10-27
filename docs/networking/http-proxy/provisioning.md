@@ -12,6 +12,7 @@ Atlas waits until the VM is no longer a draft, then runs these steps in order:
 4. Wait for the new node's `/readyz` response.
 5. Create its `/healthz` check and publish its address in regional DNS.
 6. Mark the Proxy Server `Active` and update Active nodes again.
+7. Queue the [service node telemetry](../../operate/telemetry.md#service-node-telemetry) setup. Vector sends system metrics, request counts from the JSON access log, and error lines to Datum.
 
 `/readyz` is the setup gate: the node has synchronized and knows a leader. Route 53 uses `/healthz` for ongoing DNS health. A joining node restores its saved route map and catches up from the peer with the highest generation. Atlas does not send a route snapshot. See [cluster recovery](high-availability.md).
 
@@ -52,6 +53,8 @@ Atlas tries to remove the challenge TXT record after issuance. Cleanup errors do
 ## Failure and recovery
 
 The Failure field names the failed step, such as `package`, `configuration`, or `control-readiness`. `Pending` setup is queued again each minute. `Failed` setup needs operator action. Correct the cause, then select **Re-provision** on the existing Proxy Server. Unchanged work can be skipped.
+
+To install a newly published package on an `Active` node, select **Actions > Update Package**. Atlas runs only the `package` step and waits for `/readyz`. The node stays `Active`. OpenResty restarts, so the node drops its open connections for a few seconds. Update one node at a time. A failure sets the Failure field to `package: <error>`.
 
 ::: details Source code and tests
 

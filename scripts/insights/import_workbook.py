@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 
 import frappe
@@ -9,6 +10,7 @@ WORKBOOK_TITLE = "Atlas"
 def import_workbook(path: str) -> str:
 	"""Update the Atlas workbook in place and return its name. Generated names stay, so URLs stay."""
 	workbook = frappe.get_file_json(path)
+	alerts = workbook.pop("alerts")
 	name = frappe.db.get_value("Insights Workbook", {"title": WORKBOOK_TITLE})
 	target = frappe.get_doc("Insights Workbook", name) if name else frappe.new_doc("Insights Workbook")
 	if not name:
@@ -19,8 +21,25 @@ def import_workbook(path: str) -> str:
 	frappe.flags.in_patch = True
 	target.restore_workbook_contents(workbook, target.name, ignore_permissions=True, keep_names=True)
 	share_with_organization(target.name)
+	import_alerts(alerts)
 	frappe.db.commit()  # nosemgrep
 	return target.name
+
+
+def import_alerts(alerts: list[dict]) -> None:
+	"""Create or update each alert. A webhook from the environment enables them; without one, each keeps its webhook and state."""
+	url = os.environ.get("ATLAS_INSIGHTS_ALERT_WEBHOOK_URL")
+	for alert in alerts:
+		name = frappe.db.get_value("Insights Alert", {"query": alert["query"]})
+		target = frappe.get_doc("Insights Alert", name) if name else frappe.new_doc("Insights Alert")
+		target.update({**alert, "frequency": "Cron", "channel": "Webhook", "custom_condition": 1})
+		if url:
+			target.webhook_url = url
+			target.webhook_token = os.environ["ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN"]
+			target.disabled = 0
+		elif not name:
+			target.disabled = 1
+		target.save(ignore_permissions=True)
 
 
 def share_with_organization(workbook: str) -> None:

@@ -1,6 +1,7 @@
 from workbook import (
 	COUNT,
 	HOST,
+	METAL_HOST_IDS,
 	PERCENT,
 	SECONDS,
 	TITLES,
@@ -20,7 +21,7 @@ def host_daily_sql(metric: str, aggregate: str = "avg") -> str:
 	return f"""WITH {TITLES}
 SELECT toDate(s.ts) AS day, {HOST.format(alias="s")} AS host, {aggregate}(s.value) AS value
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
-WHERE s.metric = '{metric}' AND s.ts >= {WEEK}
+WHERE s.metric = '{metric}' AND s.ts >= {WEEK} AND s.resource_id IN ({METAL_HOST_IDS})
 GROUP BY day, host"""
 
 

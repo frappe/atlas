@@ -3,15 +3,21 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils.file_lock import LockTimeoutError
+from frappe.utils.synchronization import filelock
 
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
+from atlas.service.core.telemetry import request_service_telemetry
 
 if TYPE_CHECKING:
+	from collections.abc import Iterator
+
 	from frappe.types import DF
 
 MAX_PROXY_SERVERS = 5
@@ -150,6 +156,30 @@ class ProxyServer(Document):
 		frappe.msgprint(_("Proxy Server setup has been queued. Please check after some time."))
 
 	@frappe.whitelist(methods=["POST"])
+	def update_package(self) -> None:
+		"""Queue an install of the published HTTP proxy package on this node."""
+		from atlas.service.core.proxy.provisioning import (
+			CONTROL_READY_TIMEOUT_SECONDS,
+			INSTALL_TIMEOUT_SECONDS,
+		)
+
+		_validate_system_manager()
+		if self.status != "Active":
+			frappe.throw(_("Proxy Server {0} is not active.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_update_package",
+			queue="long",
+			timeout=INSTALL_TIMEOUT_SECONDS + CONTROL_READY_TIMEOUT_SECONDS,
+			job_id=f"atlas||proxy-server||package||{self.name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+		frappe.msgprint(_("Proxy package update has been queued. Please check after some time."))
+
+	@frappe.whitelist(methods=["POST"])
 	def update_dns_record(self) -> None:
 		"""Point the proxy name at its current address."""
 		_validate_system_manager()
@@ -168,6 +198,12 @@ class ProxyServer(Document):
 				provisioner.proxy_server.get_domain(), provisioner.proxy_server.public_ipv4
 			)
 		)
+
+	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this node."""
+		_validate_system_manager()
+		request_service_telemetry(self)
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
@@ -239,6 +275,11 @@ class ProxyServer(Document):
 
 		ProxyServerProvisioner(self).push_configuration()
 
+	def _update_package(self) -> None:
+		from atlas.service.core.proxy.provisioning import ProxyServerProvisioner
+
+		ProxyServerProvisioner(self).update_package()
+
 	def _provision(self) -> None:
 		from atlas.service.core.proxy.provisioning import ProxyServerProvisioner
 
@@ -249,6 +290,16 @@ class ProxyServer(Document):
 def create(request: str | dict[str, Any]) -> dict[str, str | bool]:
 	"""Call the Proxy Server creation service from the list view."""
 	return ProxyServer.create(request)
+
+
+@contextmanager
+def proxy_server_lifecycle_lock(name: str) -> Iterator[None]:
+	"""Serialize setup and package updates of one proxy node."""
+	try:
+		with filelock(f"atlas:proxy-server:{name}", timeout=0):
+			yield
+	except LockTimeoutError:
+		frappe.throw(_("Another lifecycle action is in progress for Proxy Server {0}.").format(name))
 
 
 def _validate_system_manager() -> None:

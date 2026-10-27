@@ -55,6 +55,7 @@ class TestProvisioningSequence(UnitTestCase):
 		provisioner = ProxyServerProvisioner(proxy_server)
 		later_step = Mock()
 		with (
+			patch.object(provisioning.frappe, "get_doc", return_value=proxy_server),
 			patch.object(ProxyServerProvisioner, "is_virtual_machine_ready", new=property(lambda self: True)),
 			patch.object(
 				ProxyServerProvisioner,
@@ -91,7 +92,9 @@ class TestProvisioningSequence(UnitTestCase):
 		proxy_server = _proxy_server()
 		provisioner = ProxyServerProvisioner(proxy_server)
 		with patch.object(
-			provisioning.frappe, "get_doc", return_value=SimpleNamespace(name="vm-00001", is_draft=True)
+			provisioning.frappe,
+			"get_doc",
+			side_effect=[proxy_server, SimpleNamespace(name="vm-00001", is_draft=True)],
 		):
 			provisioner.run()
 
@@ -213,6 +216,32 @@ class TestApplySteps(UnitTestCase):
 
 		create_task.assert_not_called()
 		proxy_server.save.assert_called_once_with(ignore_permissions=True)
+
+	def test_a_failed_package_update_keeps_the_node_active(self) -> None:
+		proxy_server = _proxy_server(status="Active")
+		with (
+			patch.object(provisioning.frappe, "get_doc", return_value=proxy_server),
+			patch.object(
+				ProxyServerProvisioner, "install_package", side_effect=frappe.ValidationError("no disk")
+			),
+			patch.object(provisioning.frappe.db, "set_value") as set_value,
+			patch.object(provisioning.frappe.db, "commit"),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				ProxyServerProvisioner(proxy_server).update_package()
+
+		set_value.assert_called_once_with("Proxy Server", "proxy-001", "failure_message", "package: no disk")
+		self.assertEqual(proxy_server.status, "Active")
+
+	def test_a_package_update_skips_a_node_that_left_active(self) -> None:
+		proxy_server = _proxy_server(status="Archived")
+		with (
+			patch.object(provisioning.frappe, "get_doc", return_value=proxy_server),
+			patch.object(ProxyServerProvisioner, "install_package") as install_package,
+		):
+			ProxyServerProvisioner(proxy_server).update_package()
+
+		install_package.assert_not_called()
 
 	def test_a_missing_package_fails_loudly(self) -> None:
 		provisioner = ProxyServerProvisioner(_proxy_server())

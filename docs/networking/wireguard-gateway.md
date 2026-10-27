@@ -65,6 +65,8 @@ Atlas publishes `wireguard-NNN.<wildcard>`, installs the package, and configures
 
 The firewall admits UDP on the listen port, TCP 443, and ICMP from any address. It also admits traffic from the region mesh.
 
+To install a newly published package on an `Active` node, select **Actions > Update Package**. Atlas installs the package and waits for `/readyz`. The node stays `Active`. Device traffic stops for a moment while the eBPF filter reloads, and devices stay connected. A failure sets the Failure field to `package: <error>`.
+
 ## Rebuild or archive a node
 
 If a node fails, its assigned devices disconnect. To replace its VM, select **Dangerous Actions > Rebuild** and a free tenant-0 IPv4 allocation. The gateway record keeps the VM shape, so Rebuild needs only a new address. The new VM boots the latest Ubuntu base image.

@@ -3,6 +3,7 @@ from logs_dashboard import LINES, log_table
 from workbook import (
 	HOST,
 	LOOKBACK,
+	METAL_HOST_IDS,
 	TITLES,
 	Layout,
 	Workbook,
@@ -18,7 +19,7 @@ from workbook import (
 LATEST_READ = f"""{TITLES},
 reads AS (
   SELECT resource_id, max(ts) AS read_ts FROM samples
-  WHERE metric = 'bmc_up' AND ts > now() - INTERVAL 1 DAY
+  WHERE metric = 'bmc_up' AND ts > now() - INTERVAL 1 DAY AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY resource_id
 ),
 latest AS (

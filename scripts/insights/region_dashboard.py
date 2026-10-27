@@ -8,6 +8,7 @@ from workbook import (
 	HOST,
 	HOST_ERRORS,
 	LOOKBACK,
+	METAL_HOST_IDS,
 	PERCENT,
 	TITLES,
 	Layout,
@@ -30,7 +31,7 @@ host_minutes AS (
     maxIf(value, metric = 'system_zfs_pool_capacity_percent') AS pool_used
   FROM samples
   WHERE metric IN ('metal_vm_count', 'metal_vm_pending', 'metal_vm_failing', 'system_zfs_pool_capacity_percent')
-    AND ts > now() - {LOOKBACK}
+    AND ts > now() - {LOOKBACK} AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY minute, resource_id
 ),
 hosts AS (
@@ -97,7 +98,7 @@ SELECT h.minute AS ts, h.hosts_reporting AS hosts_reporting, h.running_vms AS ru
   a.memory_allocated AS memory_allocated, a.storage_allocated AS storage_allocated,
   coalesce(l.unhandled_errors, 0) AS unhandled_errors, coalesce(l.host_errors, 0) AS host_errors,
   coalesce(g.api_server_errors, 0) AS api_server_errors, h.worst_pool_used AS worst_pool_used,
-  a.ipv4_total AS ipv4_total, a.ipv4_attached AS ipv4_attached, a.ipv4_total - a.ipv4_attached AS ipv4_available,
+  a.ipv4_total AS ipv4_total, a.ipv4_attached AS ipv4_attached, a.ipv4_total - a.ipv4_attached AS ipv4_available
 FROM hosts AS h
 LEFT JOIN atlas AS a ON a.minute = h.minute
 LEFT JOIN growth AS g ON g.minute = h.minute

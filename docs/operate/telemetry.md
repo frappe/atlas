@@ -1,6 +1,6 @@
 # Telemetry
 
-Atlas and Metal hosts send metrics and logs to regional [Datum](https://github.com/frappe/Datum), which stores them in ClickHouse. Read them with SQL or the [Insights dashboards](dashboards.md).
+Atlas, Metal hosts, and service nodes send metrics and logs to regional [Datum](https://github.com/frappe/Datum), which stores them in ClickHouse. Read them with SQL or the [Insights dashboards](dashboards.md).
 
 ```text
 Metal host
@@ -10,6 +10,9 @@ Atlas
   scheduled job ── regional state, counters, events ──> Datum /v1/ingest
   scheduled job ── Error Logs ──> Datum /v1/logs/ingest
   BMC jobs ── Redfish readings and events of each host ──> Datum, as the host
+Proxy, WireGuard gateway, and IPv6 router node
+  Vector ── system metrics, proxy request counts ──> Datum /v1/ingest/remote
+  Vector ── journald and OpenResty error lines ──> Datum /v1/logs/ingest
 ```
 
 During a Datum outage, metald retains counters and up to 50,000 events in memory. Atlas uses Redis. Vector buffers up to 256 MiB of logs on disk.
@@ -22,7 +25,7 @@ During a Datum outage, metald retains counters and up to 50,000 events in memory
 | `[telemetry]` in `metald.toml` | Atlas, host | Atlas writes `datum_url` and `datum_token`. metald rereads them every 24 hours, or when the token expires. The host sets `interval` (default `30s`) and `restart_count_units`, the systemd units whose restart count it reports. |
 | `/etc/vector/vector.yaml` | Atlas | Vector sources, the Datum line format, and the token. Readable only by root and Vector. |
 
-Datum names each row by the `resource_id` in its token. A host uses its Metal Server name. Atlas uses `atlas-<region name>`. The `atlas_metal_server_info` metric maps a Metal Server name to its title.
+Datum names each row by the `resource_id` in its token. A host uses its Metal Server name. A service node uses its node name, such as `proxy-012`. Atlas uses `atlas-<region name>`. The `atlas_metal_server_info` metric maps a Metal Server name to its title.
 
 ## Tokens and installation
 
@@ -36,6 +39,17 @@ Atlas signs every token with its regional key for the `atlas-datum:<region ID>` 
 The SSH Task `install-vector.sh` installs a pinned Vector package and smartmontools, and makes the RAID monitor `mdmonitor` log array events to the journal. It also removes the Vector start limit, so systemd restarts Vector every 5 seconds until it starts.
 
 Then `install-telemetry.sh` writes the token to `metald.toml` and `vector.yaml`, and restarts Vector. It runs over direct SSH, so no SSH Task stores the token.
+
+## Service node telemetry
+
+Each active proxy, WireGuard gateway, and IPv6 router node runs Vector. Cargo does not.
+
+- A node gets telemetry when its provisioning completes. `renew_service_telemetry_credentials` installs it again with a new 7-day token every day at 03:30.
+- `install-vector.sh` installs Vector. Then `install-service-telemetry.sh` writes `vector.yaml` with the token over direct SSH and restarts Vector.
+- Vector sends `service_*` system metrics every 30 seconds through Prometheus remote write, and journald lines at warning or worse.
+- On a proxy node, Vector reads the JSON OpenResty access log and sends only counts and times: `service_proxy_requests_total` by status class, `service_proxy_request_seconds_total`, `service_proxy_upstream_seconds_total`, and `service_proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. OpenResty error lines at `error` or worse go to the log route.
+
+To repair one node, run **Configure Telemetry** (`configure_telemetry`) on its form.
 
 ## Metrics
 
@@ -52,7 +66,8 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_migration_*` | Destination host | State transitions, duration, downtime, and transfer size |
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
-| `atlas_*` | Atlas | Regional inventory, capacity, migrations, placement, API calls, queues, public IPs, images, and service readiness |
+| `atlas_*` | Atlas | Regional inventory, capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, and the free space of its own root, bench, and MariaDB file systems |
+| `service_*` | Vector on service nodes | CPU, memory, file systems, disks, network, load, OOM kills, and proxy requests |
 | `bmc_*` | Atlas, from the host BMC | Out-of-band health, sensors, and power. See [BMC hardware](#bmc-hardware). |
 
 Kernel tables use a `field` label, for example `system_memory_info{field="MemAvailable"}`.
