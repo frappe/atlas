@@ -908,7 +908,7 @@ class TestServer(UnitTestCase):
 		commit.assert_called_once_with()
 		server._enqueue_setup_server.assert_called_once_with()
 		self.assertEqual(server.status, "Pending")
-		self.assertEqual(server.set_hostname, 1)
+		self.assertEqual(server.db_set.call_args.args[0]["set_hostname"], 1)
 		self.assertEqual(json.loads(server.provider_metadata)["storage_pool_device"], "/root/disks/atlas.img")
 
 	def test_import_inserts_a_pending_server_from_the_provider(self) -> None:
