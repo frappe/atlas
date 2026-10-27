@@ -340,6 +340,7 @@ class TestHostInspection(UnitTestCase):
 				bmc_url="https://bmc.local",
 				bmc_username="admin",
 				bmc_password="secret",
+				set_hostname=True,
 			)
 
 		values = server.update.call_args.args[0]
@@ -348,6 +349,7 @@ class TestHostInspection(UnitTestCase):
 		self.assertEqual(values["public_network_interface"], "eno1")
 		self.assertEqual(values["private_network_interface"], "vxlan0")
 		self.assertEqual(values["architecture"], "amd64")
+		self.assertTrue(values["set_hostname"])
 		self.assertEqual(metadata["storage_pool_device"], "/dev/nvme1n1")
 		self.assertEqual(metadata["storage_pool_size_gib"], 1800)
 		self.assertEqual(

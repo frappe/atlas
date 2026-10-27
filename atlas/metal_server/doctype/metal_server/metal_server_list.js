@@ -2,7 +2,7 @@ const HOST_REGISTRATION_METHOD = "atlas.metal_server.doctype.metal_server.metal_
 const HOST_INSPECTION_POLL_MILLISECONDS = 2_000;
 const HOST_INSPECTION_TIMEOUT_MILLISECONDS = 300_000;
 const BMC_FIELDS = ["bmc_url", "bmc_username", "bmc_password"];
-const OPTIONAL_HOST_REGISTRATION_FIELDS = ["provider_server_id", ...BMC_FIELDS];
+const OPTIONAL_HOST_REGISTRATION_FIELDS = ["provider_server_id", "set_hostname", ...BMC_FIELDS];
 const HOST_REGISTRATION_FIELDS = [
 	"public_ipv4_address",
 	"private_ipv4_address",
@@ -48,6 +48,12 @@ class HostRegistrationDialog {
 					fieldtype: "Data",
 					label: __("Provider Server ID"),
 					description: __("The ID of this host at your provider. Atlas suggests one."),
+				},
+				{
+					fieldname: "set_hostname",
+					fieldtype: "Check",
+					label: __("Set hostname to server name"),
+					default: 0,
 				},
 				{
 					fieldname: "bmc_url",
@@ -244,7 +250,11 @@ class HostRegistrationDialog {
 
 	show_review_step() {
 		const storage_pool_device = this.dialog.get_value("storage_pool_device");
-		this.set_step(["provider_server_id"], this.step_title(4, __("Review the host")), "");
+		this.set_step(
+			["provider_server_id", "set_hostname"],
+			this.step_title(4, __("Review the host")),
+			""
+		);
 		this.set_result(
 			`<div class="alert alert-danger">${__(
 				"Atlas destroys all data on {0} when it creates the storage pool.",
@@ -279,6 +289,7 @@ class HostRegistrationDialog {
 					bmc_url: this.dialog.get_value("bmc_url"),
 					bmc_username: this.dialog.get_value("bmc_username"),
 					bmc_password: this.dialog.get_value("bmc_password"),
+					set_hostname: this.dialog.get_value("set_hostname"),
 				},
 				freeze: true,
 				freeze_message: __("Creating Metal Server..."),
@@ -439,6 +450,12 @@ function showImportServerDialog(listview) {
 				description: __(
 					"Leave empty to use the provider storage device. Atlas destroys all data on it."
 				),
+			},
+			{
+				fieldname: "set_hostname",
+				fieldtype: "Check",
+				label: __("Set hostname to server name"),
+				default: 0,
 			},
 		],
 		primary_action_label: __("Import"),
