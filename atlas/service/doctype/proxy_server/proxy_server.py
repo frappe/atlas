@@ -3,16 +3,21 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils.file_lock import LockTimeoutError
+from frappe.utils.synchronization import filelock
 
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
 from atlas.service.core.telemetry import request_service_telemetry
 
 if TYPE_CHECKING:
+	from collections.abc import Iterator
+
 	from frappe.types import DF
 
 MAX_PROXY_SERVERS = 5
@@ -285,6 +290,16 @@ class ProxyServer(Document):
 def create(request: str | dict[str, Any]) -> dict[str, str | bool]:
 	"""Call the Proxy Server creation service from the list view."""
 	return ProxyServer.create(request)
+
+
+@contextmanager
+def proxy_server_lifecycle_lock(name: str) -> Iterator[None]:
+	"""Serialize setup and package updates of one proxy node."""
+	try:
+		with filelock(f"atlas:proxy-server:{name}", timeout=0):
+			yield
+	except LockTimeoutError:
+		frappe.throw(_("Another lifecycle action is in progress for Proxy Server {0}.").format(name))
 
 
 def _validate_system_manager() -> None:
