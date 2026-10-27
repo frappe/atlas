@@ -85,12 +85,13 @@ class TestPublicIPAllocation(IntegrationTestCase):
 		stale = frappe.get_doc("Public IP Allocation", name)
 
 		self.move(frappe.get_doc("Public IP Allocation", name), destination)
+		frappe.db.set_value("Public IP Allocation", name, "status", "Attached")
 		with patch("frappe.get_doc", wraps=frappe.get_doc) as get_doc:
 			self.move(stale, destination)
 
 		get_doc.assert_called_once_with("Public IP Allocation", name, for_update=True)
 		current = frappe.get_doc("Public IP Allocation", name)
-		self.assertEqual((current.server, current.status), (destination, "Attaching"))
+		self.assertEqual((current.server, current.status), (destination, "Attached"))
 		self.assertEqual(current.intent_version, stale.intent_version + 1)
 
 	def test_a_stale_move_keeps_a_detach(self) -> None:
