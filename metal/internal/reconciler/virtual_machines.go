@@ -12,7 +12,7 @@ import (
 
 const (
 	// defaultMaxConcurrentOperations limits active VM operations in one pass.
-	defaultMaxConcurrentOperations = 4
+	defaultMaxConcurrentOperations = 16
 
 	// defaultOperationTimeout bounds one list or reconcile operation. One
 	// reconcile can download and import an image, so the limit is generous.
@@ -98,7 +98,7 @@ func NewVirtualMachineReconciler(
 // NewSleepTransferReconciler runs sleep transfers in their own bounded worker pool.
 func NewSleepTransferReconciler(manager SleepTransferManager, interval time.Duration, configuration VirtualMachineConfig) *VirtualMachineReconciler {
 	if configuration.MaxConcurrentOperations <= 0 {
-		configuration.MaxConcurrentOperations = 2
+		configuration.MaxConcurrentOperations = 8
 	}
 	reconciler := NewVirtualMachineReconciler(manager, interval, configuration)
 	reconciler.loop = "sleep_transfer"
@@ -109,7 +109,7 @@ func NewSleepTransferReconciler(manager SleepTransferManager, interval time.Dura
 // NewSleepRestoreReconciler gives wake downloads their own bounded worker pool.
 func NewSleepRestoreReconciler(manager SleepRestoreManager, interval time.Duration, configuration VirtualMachineConfig) *VirtualMachineReconciler {
 	if configuration.MaxConcurrentOperations <= 0 {
-		configuration.MaxConcurrentOperations = 2
+		configuration.MaxConcurrentOperations = 8
 	}
 
 	reconciler := NewVirtualMachineReconciler(manager, interval, configuration)
