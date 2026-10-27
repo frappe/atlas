@@ -170,6 +170,7 @@ class ProxyServer(Document):
 			timeout=INSTALL_TIMEOUT_SECONDS + CONTROL_READY_TIMEOUT_SECONDS,
 			job_id=f"atlas||proxy-server||package||{self.name}",
 			deduplicate=True,
+			enqueue_after_commit=True,
 		)
 		frappe.msgprint(_("Proxy package update has been queued. Please check after some time."))
 

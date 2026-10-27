@@ -152,6 +152,7 @@ class WireguardGatewayServer(Document):
 			timeout=3_600,
 			job_id=f"atlas||wireguard-gateway-server||package||{self.name}",
 			deduplicate=True,
+			enqueue_after_commit=True,
 		)
 		frappe.msgprint(_("WireGuard gateway package update has been queued. Please check after some time."))
 

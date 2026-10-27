@@ -112,6 +112,7 @@ class IPv6RouterServer(Document):
 			timeout=3_600,
 			job_id=f"atlas||ipv6-router-server||package||{self.name}",
 			deduplicate=True,
+			enqueue_after_commit=True,
 		)
 		frappe.msgprint(_("IPv6 router package update has been queued. Please check after some time."))
 
