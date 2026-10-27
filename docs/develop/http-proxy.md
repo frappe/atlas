@@ -38,8 +38,9 @@ nginx/
   nginx.conf                Main OpenResty configuration.
   lua/http/                 HTTP routes, maps, and map storage.
   lua/stream/               TLS SNI routes and the SNI bridge.
+  logrotate/                Log rotation for /var/log/nginx.
   pages/                    HTML error pages.
-  systemd/                  OpenResty and daemon systemd units.
+  systemd/                  OpenResty, daemon, and logrotate timer units.
 
 tests/
   test_proxy.py             Site route tests.

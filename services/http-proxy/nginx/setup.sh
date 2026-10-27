@@ -21,7 +21,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 # Install the exact OpenResty package required by the proxy.
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release
+apt-get install -y --no-install-recommends ca-certificates curl gnupg logrotate lsb-release
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL https://openresty.org/package/pubkey.gpg \
 	| gpg --batch --yes --dearmor -o /usr/share/keyrings/openresty.gpg
@@ -102,6 +102,7 @@ if [ ! -e "$CONFIG_FILE" ]; then
 fi
 install -d -o root -g nginx -m 0770 "$RUN_DIR"
 install -d -m 0755 "$LOG_DIR"
+install -m 0644 "$SERVICE_DIR/nginx/logrotate/atlas-proxy" /etc/logrotate.d/atlas-proxy
 install -d -m 0750 "$STATE_DIR/certs"
 install -d -o root -g nginx -m 0770 "$STATE_DIR"
 install -d -o root -g nginx -m 0750 "$STATE_DIR/acme"
@@ -138,11 +139,15 @@ install -m 0644 "$SERVICE_DIR/nginx/systemd/atlas-proxy-control.service" \
 	/etc/systemd/system/atlas-proxy-control.service
 install -m 0644 "$SERVICE_DIR/nginx/systemd/atlas-proxy-control.socket" \
 	/etc/systemd/system/atlas-proxy-control.socket
+install -d /etc/systemd/system/logrotate.timer.d
+install -m 0644 "$SERVICE_DIR/nginx/systemd/logrotate.timer.d/atlas.conf" \
+	/etc/systemd/system/logrotate.timer.d/atlas.conf
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload
 	systemctl enable openresty.service
 	systemctl enable --now atlas-proxy-control.socket
 	systemctl enable atlas-proxy-control.service
+	systemctl restart logrotate.timer
 else
 	install -d /etc/systemd/system/multi-user.target.wants /etc/systemd/system/sockets.target.wants
 	ln -sf /usr/lib/systemd/system/openresty.service \

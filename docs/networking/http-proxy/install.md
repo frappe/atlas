@@ -17,6 +17,8 @@ Each node needs a public IPv4 address, a stable `proxy-NNN.<wildcard-domain>` A 
 
 The setup script creates the locked `frappe` account, installs OpenResty and the daemon, and creates a placeholder certificate. A repeated run keeps the installed package and restarts OpenResty.
 
+Logrotate checks the OpenResty logs in `/var/log/nginx` every hour. It rotates a log every day, or earlier when it is larger than 1 GiB, and keeps 7 old copies. It compresses each old copy except the newest. After a rotation it sends `USR1` to OpenResty, so OpenResty opens a new log file without a reload.
+
 Before the daemon can become ready, write the complete configuration described [below](#configuration-file).
 
 ## Checks
