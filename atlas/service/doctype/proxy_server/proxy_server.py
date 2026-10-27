@@ -151,6 +151,29 @@ class ProxyServer(Document):
 		frappe.msgprint(_("Proxy Server setup has been queued. Please check after some time."))
 
 	@frappe.whitelist(methods=["POST"])
+	def update_package(self) -> None:
+		"""Queue an install of the published HTTP proxy package on this node."""
+		from atlas.service.core.proxy.provisioning import (
+			CONTROL_READY_TIMEOUT_SECONDS,
+			INSTALL_TIMEOUT_SECONDS,
+		)
+
+		_validate_system_manager()
+		if self.status != "Active":
+			frappe.throw(_("Proxy Server {0} is not active.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_update_package",
+			queue="long",
+			timeout=INSTALL_TIMEOUT_SECONDS + CONTROL_READY_TIMEOUT_SECONDS,
+			job_id=f"atlas||proxy-server||package||{self.name}",
+			deduplicate=True,
+		)
+		frappe.msgprint(_("Proxy package update has been queued. Please check after some time."))
+
+	@frappe.whitelist(methods=["POST"])
 	def update_dns_record(self) -> None:
 		"""Point the proxy name at its current address."""
 		_validate_system_manager()
@@ -245,6 +268,11 @@ class ProxyServer(Document):
 		from atlas.service.core.proxy.provisioning import ProxyServerProvisioner
 
 		ProxyServerProvisioner(self).push_configuration()
+
+	def _update_package(self) -> None:
+		from atlas.service.core.proxy.provisioning import ProxyServerProvisioner
+
+		ProxyServerProvisioner(self).update_package()
 
 	def _provision(self) -> None:
 		from atlas.service.core.proxy.provisioning import ProxyServerProvisioner

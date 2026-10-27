@@ -70,6 +70,28 @@ class ProxyServerProvisioner:
 			frappe.log_error(title=f"Proxy provisioning failed for {self.proxy_server.name} during {phase}")
 			raise
 
+	def update_package(self) -> None:
+		"""Install the published package on an active node and wait until it serves again. The node stays Active."""
+		try:
+			self.install_package(save=False)
+			self.wait_for_control_readiness(save=False)
+		except Exception as error:
+			frappe.db.set_value(
+				"Proxy Server", self.proxy_server.name, "failure_message", f"package: {error}"
+			)
+			frappe.db.commit()  # nosemgrep
+			self.logger.exception(
+				"Proxy package update failed",
+				extra={"resource": self.proxy_server.name, "operation": "update-package"},
+			)
+			raise
+
+		frappe.db.set_value(
+			"Proxy Server",
+			self.proxy_server.name,
+			{"installed_package_hash": self.proxy_server.installed_package_hash, "failure_message": None},
+		)
+
 	@property
 	def steps(self) -> tuple[tuple[str, Callable[[bool], None]], ...]:
 		"""Return setup steps in execution order."""
