@@ -78,7 +78,7 @@ P3 always posts. Its first line is a heartbeat with the number of hosts that rep
 A new alert stays disabled until the update sets a webhook:
 
 ```sh
-ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN=<token> python3 update_workbook.py <insights site> --alert-webhook-url https://<receiver>
+python3 update_workbook.py <insights site> --alert-webhook-url https://<receiver>
 ```
 
-Insights sends the token as `Authorization: Bearer <token>`. It posts only to a public `https` URL. A later update without `--alert-webhook-url` keeps the webhook and the enabled state of each alert.
+Use a URL that carries the receiver's secret, such as a Raven incoming webhook. Insights sends no token, and the body has the Markdown in `message` and `content`. It posts only to a public `https` URL. A later update without `--alert-webhook-url` keeps the webhook and the enabled state of each alert.

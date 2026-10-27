@@ -30,7 +30,7 @@ The script finds the bench that has the site under the Pilot `benches` folder, o
 | `--default-host <host title>` | The host that Atlas - Host opens with. |
 | `--bench <folder>` | Use this bench, such as `~/frappe-bench` on a server without Pilot. |
 | `--source <folder>` | Use a local `scripts/insights` folder, such as a checkout with changes. |
-| `--alert-webhook-url <https URL>` | Send the alerts to this webhook and enable them. Set the token in `ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN`. |
+| `--alert-webhook-url <https URL>` | Send the alerts to this webhook, such as a Raven incoming webhook, and enable them. |
 
 The update changes the workbook named Atlas in place and lets everyone in the organization edit it. Each query, chart, and dashboard keeps its generated name, so a dashboard URL, such as `/insights/dashboards/dashboard-atlas-uptime`, stays the same. The update overwrites edits made in Insights and deletes members that the scripts no longer make. Change the scripts instead.
 
