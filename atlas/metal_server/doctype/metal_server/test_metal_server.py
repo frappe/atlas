@@ -885,6 +885,7 @@ class TestServer(UnitTestCase):
 		server = self._server(status="Failed")
 		server._enqueue_setup_server = Mock()
 		server._set_storage_pool_device = MethodType(MetalServer._set_storage_pool_device, server)
+		server.set_hostname = 1
 
 		with (
 			patch(
@@ -907,6 +908,7 @@ class TestServer(UnitTestCase):
 		commit.assert_called_once_with()
 		server._enqueue_setup_server.assert_called_once_with()
 		self.assertEqual(server.status, "Pending")
+		self.assertEqual(server.set_hostname, 1)
 		self.assertEqual(json.loads(server.provider_metadata)["storage_pool_device"], "/root/disks/atlas.img")
 
 	def test_import_inserts_a_pending_server_from_the_provider(self) -> None:
@@ -1323,6 +1325,7 @@ class TestServer(UnitTestCase):
 			public_ipv4_address="203.0.113.7",
 			private_network_interface="eno1.1878",
 			is_cpu_template_disabled=0,
+			set_hostname=0,
 			ssh_host="192.0.2.7",
 			port=51820,
 			settings=SimpleNamespace(
