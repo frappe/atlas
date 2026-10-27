@@ -61,7 +61,8 @@
    "default": "0",
    "fieldname": "set_hostname",
    "fieldtype": "Check",
-   "label": "Set hostname to server name"
+   "label": "Set hostname to server name",
+   "read_only_depends_on": "eval: doc.is_provisioning_completed"
   },
   {
    "default": "0",
