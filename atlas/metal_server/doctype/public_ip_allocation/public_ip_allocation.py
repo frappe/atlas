@@ -171,14 +171,16 @@ class PublicIPAllocation(Document):
 		self.queue_reconcile()
 
 	def move_to_server(self, server: str) -> None:
-		if self.is_routed or self.server == server:
+		# Migration finalize and the scheduled move sweep can move the same allocation at once.
+		current: PublicIPAllocation = frappe.get_doc(self.doctype, self.name, for_update=True)
+		if current.is_routed or current.server == server:
 			return
-		self.status = "Attaching"
-		self.server = server
-		self.failure_message = None
-		self.intent_version = (self.intent_version or 0) + 1
-		self.save(ignore_permissions=True)
-		self.queue_reconcile()
+		current.status = "Attaching"
+		current.server = server
+		current.failure_message = None
+		current.intent_version = (current.intent_version or 0) + 1
+		current.save(ignore_permissions=True)
+		current.queue_reconcile()
 
 	def intent(self) -> AllocationIntent:
 		return AllocationIntent(

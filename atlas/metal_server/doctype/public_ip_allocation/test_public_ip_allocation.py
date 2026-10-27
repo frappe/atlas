@@ -1,9 +1,11 @@
+import uuid
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.metal_server.core.public_ip_service import PublicIPService, generate_available_allocations
+from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import PublicIPAllocation
 
 
 def insert_pool(prefix: str, allocation_prefix_length: int):
@@ -57,6 +59,30 @@ class TestPublicIPAllocation(IntegrationTestCase):
 
 		self.assertEqual(allocation.status, "Reserved")
 		self.assertEqual(frappe.db.count("Public IP Allocation", {"pool": pool.name}), 2)
+
+	def test_a_stale_move_to_the_same_server_does_nothing(self) -> None:
+		pool = insert_pool("198.19.47.0/31", 32)
+		generate_available_allocations(pool.name, 1)
+		name = frappe.get_value("Public IP Allocation", {"pool": pool.name})
+		source, destination = str(uuid.uuid4()), str(uuid.uuid4())
+		frappe.db.set_value(
+			"Public IP Allocation",
+			name,
+			{"status": "Attached", "tenant_id": 7, "virtual_machine": "vm-a", "server": source},
+		)
+		stale = frappe.get_doc("Public IP Allocation", name)
+
+		with (
+			patch.object(PublicIPAllocation, "validate"),
+			patch.object(PublicIPAllocation, "_validate_links"),
+			patch.object(PublicIPAllocation, "queue_reconcile"),
+		):
+			frappe.get_doc("Public IP Allocation", name).move_to_server(destination)
+			stale.move_to_server(destination)
+
+		current = frappe.get_doc("Public IP Allocation", name)
+		self.assertEqual((current.server, current.status), (destination, "Attaching"))
+		self.assertEqual(current.intent_version, stale.intent_version + 1)
 
 	def test_allocator_stops_at_the_end_of_the_pool(self) -> None:
 		pool = insert_pool("198.19.42.1/32", 32)
