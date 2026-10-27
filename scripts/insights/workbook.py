@@ -2,6 +2,9 @@ DATA_SOURCE = "datum"
 LOOKBACK = "INTERVAL 14 DAY"
 # Pilot servers push to the same Datum, so host queries read only the Metal servers that Atlas lists.
 METAL_HOST_IDS = f"SELECT labels['server'] FROM samples WHERE metric = 'atlas_metal_server_info' AND ts > now() - {LOOKBACK}"
+# Proxy, WireGuard gateway, and IPv6 router nodes push under their node name.
+SERVICE_NODE_IDS = f"""SELECT labels['node'] FROM samples
+WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo' AND ts > now() - {LOOKBACK}"""
 
 PERCENT = {"decimals": 1, "suffix": "%"}
 UPTIME_PERCENT = {"decimals": 2, "suffix": "%"}
@@ -103,6 +106,7 @@ class Workbook:
 		self.charts: dict = {}
 		self.dashboards: dict = {}
 		self.folders: list = []
+		self.alerts: list = []
 
 	def query(self, key: str, title: str, sql: str, folder: str) -> str:
 		"""Add a native query and return its name."""
@@ -164,6 +168,7 @@ class Workbook:
 			"queries": self.queries,
 			"charts": self.charts,
 			"dashboards": self.dashboards,
+			"alerts": self.alerts,
 		}
 
 
