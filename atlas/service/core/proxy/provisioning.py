@@ -72,6 +72,10 @@ class ProxyServerProvisioner:
 
 	def update_package(self) -> None:
 		"""Install the published package on an active node and wait until it serves again. The node stays Active."""
+		self.proxy_server = frappe.get_doc("Proxy Server", self.proxy_server.name)
+		if self.proxy_server.status != "Active":
+			return
+
 		try:
 			self.install_package(save=False)
 			self.wait_for_control_readiness(save=False)
