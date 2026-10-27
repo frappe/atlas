@@ -345,7 +345,7 @@ class TestDueSleepWork(IntegrationTestCase):
 
 	def test_stored_state_selects_vms_without_a_host_call(self) -> None:
 		due = self.insert("sleeping")
-		migrating = self.insert("sleeping", active_migration="migration-1")
+		migrating = self.insert("sleeping", active_migration=str(uuid7()))
 		awake = self.insert("")
 
 		names = vm_sleep.get_due_virtual_machines(datetime(2026, 10, 23, 12))
