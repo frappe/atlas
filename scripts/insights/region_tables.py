@@ -1,5 +1,5 @@
 from bmc_dashboard import BMC_HOSTS
-from workbook import HOST, TITLES, UNHEALTHY_DISKS
+from workbook import HOST, METAL_HOST_IDS, TITLES, UNHEALTHY_DISKS
 
 # One row per host: its newest push, Atlas's view of its capacity, and a count of
 # the problem kinds it has, so the worst host sorts first. metald omits a VM state
@@ -20,7 +20,7 @@ latest AS (
   FROM (
     SELECT *, max(if(metric = 'metal_vm_pending', ts, NULL)) OVER (PARTITION BY resource_id) AS last_push_ts
     FROM samples
-    WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id NOT LIKE 'atlas-%'
+    WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS})
   )
   GROUP BY resource_id
   HAVING countIf(metric = 'metal_vm_pending') > 0
@@ -74,7 +74,7 @@ SELECT if(l.resource_id LIKE 'atlas-%', 'Atlas', if(t.title = '', l.resource_id,
 FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
 WHERE l.ts > now() - INTERVAL 1 DAY AND (
   (l.service = 'atlas' AND l.source = 'error_log' AND l.attributes['unhandled'] = '1')
-  OR (l.resource_id NOT LIKE 'atlas-%' AND l.level IN ('error', 'critical', 'alert', 'emergency'))
+  OR (l.resource_id IN ({METAL_HOST_IDS}) AND l.level IN ('error', 'critical', 'alert', 'emergency'))
   OR (l.message = 'migration state changed' AND l.attributes['to'] IN ('failed', 'aborted'))
 )
 GROUP BY place, kind, problem"""
@@ -99,7 +99,7 @@ latest AS (
     argMaxIf(value, ts, metric = 'system_zfs_pool_data_errors') AS zfs_data_errors,
     maxIf(value, metric = 'system_zfs_device_errors_maximum' AND ts > now() - INTERVAL 5 MINUTE) AS zfs_device_errors
   FROM samples
-  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id NOT LIKE 'atlas-%'
+  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY resource_id
   HAVING countIf(metric = 'system_systemd_failed_units') > 0
 ),
@@ -172,7 +172,7 @@ usage AS (
     avgIf(value, metric = 'system_memory_usage_percent') AS ram_used,
     avgIf(value, metric = 'system_load_average' AND labels['window'] = '5m') / greatest(maxIf(value, metric = 'system_cpu_count'), 1) AS load_per_core
   FROM samples
-  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id NOT LIKE 'atlas-%'
+  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS})
     AND metric IN ('system_cpu_usage_percent', 'system_memory_usage_percent', 'system_load_average', 'system_cpu_count')
   GROUP BY resource_id
 ),
@@ -225,7 +225,7 @@ host_last AS (
     argMaxIf(value, ts, metric = 'metal_vm_failing') AS failing,
     argMaxIf(value, ts, metric = 'metal_vm_oldest_pending_seconds') AS oldest_pending
   FROM samples
-  WHERE resource_id NOT LIKE 'atlas-%' AND ts > now() - INTERVAL 1 HOUR AND metric IN ('metal_vm_failing', 'metal_vm_oldest_pending_seconds')
+  WHERE resource_id IN ({METAL_HOST_IDS}) AND ts > now() - INTERVAL 1 HOUR AND metric IN ('metal_vm_failing', 'metal_vm_oldest_pending_seconds')
   GROUP BY resource_id
 ),
 api AS (
