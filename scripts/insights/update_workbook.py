@@ -63,11 +63,9 @@ def main() -> None:
 	)
 	parser.add_argument(
 		"--alert-webhook-url",
-		help="send the alerts to this https URL; set the token in ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN",
+		help="send the alerts to this https URL, such as a Raven incoming webhook",
 	)
 	arguments = parser.parse_args()
-	if arguments.alert_webhook_url and not os.environ.get("ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN"):
-		sys.exit("error: --alert-webhook-url needs ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN")
 
 	bench = arguments.bench.expanduser().resolve() if arguments.bench else find_bench(arguments.site)
 	if not (bench / "sites" / arguments.site / "site_config.json").exists():
