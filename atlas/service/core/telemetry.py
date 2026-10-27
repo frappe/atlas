@@ -76,7 +76,9 @@ def request_service_telemetry(node: Document) -> None:
 
 
 def configure_service_telemetry(doctype: str, name: str) -> None:
-	ServiceTelemetry(frappe.get_doc(doctype, name)).configure()
+	node = frappe.get_doc(doctype, name)
+	if node.status == "Active":
+		ServiceTelemetry(node).configure()
 
 
 def renew_service_telemetry_credentials() -> None:
