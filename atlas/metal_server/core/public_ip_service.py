@@ -18,6 +18,7 @@ from atlas.vm.core.models import (
 	ROUTE_VIA_HOST,
 	Route,
 )
+from atlas.vm.core.placement.transaction import use_read_committed
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 AUTO_ALLOCATION = "auto"
 ALLOCATION_BATCH_SIZE = 1_000
 ALLOCATION_REPLENISH_THRESHOLD = ALLOCATION_BATCH_SIZE // 5
+CLAIM_CANDIDATES = 8
 
 
 class PublicIPError(AtlasUserError):
@@ -77,9 +79,11 @@ class PublicIPNotFound(AtlasUserError):
 class PublicIPService:
 	"""Allocate public prefixes and reconcile their VM network state."""
 
+	@use_read_committed
 	def reserve(self, tenant_id: int, version: int) -> PublicIPAllocation:
 		return self.reserve_from_pool(self._select_direct_pool(version), tenant_id)
 
+	@use_read_committed
 	def reserve_from_pool(self, pool: PublicIPPool, tenant_id: int) -> PublicIPAllocation:
 		if pool.is_routed:
 			raise UnsupportedIPReservation()
@@ -87,6 +91,7 @@ class PublicIPService:
 		allocation.save(ignore_permissions=True)
 		return allocation
 
+	@use_read_committed
 	def attach(self, virtual_machine: VirtualMachine, version: int, selector: str) -> PublicIPAllocation:
 		is_creation = bool(virtual_machine.is_draft)
 		virtual_machine = frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
@@ -113,10 +118,7 @@ class PublicIPService:
 			)
 
 		if selector == AUTO_ALLOCATION:
-			allocation = self._automatic_allocation(virtual_machine, version)
-			locked: PublicIPAllocation = frappe.get_doc(
-				"Public IP Allocation", allocation.name, for_update=True
-			)
+			locked = self._automatic_allocation(virtual_machine, version)
 		else:
 			locked = self._owned_reserved_allocation(selector, virtual_machine.tenant_id, version)
 		if locked.status not in {"Available", "Reserved"} or locked.virtual_machine:
@@ -229,15 +231,32 @@ class PublicIPService:
 	def _claim_direct_allocation(
 		self, pool: PublicIPPool, tenant_id: int, *, is_reserved: bool
 	) -> PublicIPAllocation:
-		pool = frappe.get_doc("Public IP Pool", pool.name, for_update=True)
-		name = frappe.db.get_value(
-			"Public IP Allocation", {"pool": pool.name, "status": "Available"}, "name", for_update=True
-		)
-		allocation = frappe.get_doc("Public IP Allocation", name) if name else self._create_next(pool)
+		allocation = self._lock_available(pool.name)
+		if not allocation:
+			# Only growth takes the pool lock. It looks again before it adds a prefix.
+			pool = frappe.get_doc("Public IP Pool", pool.name, for_update=True)
+			allocation = self._lock_available(pool.name) or self._create_next(pool)
 		allocation.tenant_id = tenant_id
 		allocation.is_reserved = int(is_reserved)
 		allocation.status = "Reserved" if is_reserved else "Available"
 		return allocation
+
+	def _lock_available(self, pool_name: str) -> PublicIPAllocation | None:
+		"""Lock a random free allocation of the pool. Rows that other claims hold are skipped, not awaited."""
+		# A locking ORDER BY RAND() locks every free row, so the random pick is a plain read.
+		candidates = frappe.db.sql_list(
+			"""SELECT name FROM `tabPublic IP Allocation`
+			WHERE pool = %s AND status = 'Available' ORDER BY RAND() LIMIT %s""",
+			(pool_name, CLAIM_CANDIDATES),
+		)
+		if not candidates:
+			return None
+		name = frappe.db.sql_list(
+			"""SELECT name FROM `tabPublic IP Allocation`
+			WHERE name IN %s AND status = 'Available' LIMIT 1 FOR UPDATE SKIP LOCKED""",
+			(candidates,),
+		)
+		return frappe.get_doc("Public IP Allocation", name[0]) if name else None
 
 	def _create_next(self, pool: PublicIPPool) -> PublicIPAllocation:
 		offset = int(pool.next_allocation_offset or 0)
