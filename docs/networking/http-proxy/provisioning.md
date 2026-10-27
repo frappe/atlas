@@ -54,7 +54,7 @@ Atlas tries to remove the challenge TXT record after issuance. Cleanup errors do
 
 The Failure field names the failed step, such as `package`, `configuration`, or `control-readiness`. `Pending` setup is queued again each minute. `Failed` setup needs operator action. Correct the cause, then select **Re-provision** on the existing Proxy Server. Unchanged work can be skipped.
 
-To install a newly published package on an `Active` node, select **Update Package**. Atlas runs only the `package` step and waits for `/readyz`. The node stays `Active`. OpenResty restarts, so the node drops its open connections for a few seconds. Update one node at a time. A failure sets the Failure field to `package: <error>`.
+To install a newly published package on an `Active` node, select **Actions > Update Package**. Atlas runs only the `package` step and waits for `/readyz`. The node stays `Active`. OpenResty restarts, so the node drops its open connections for a few seconds. Update one node at a time. A failure sets the Failure field to `package: <error>`.
 
 ::: details Source code and tests
 

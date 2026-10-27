@@ -64,6 +64,28 @@ class IPv6RouterServerProvisioner:
 				frappe.log_error(title=f"IPv6 router provisioning failed during {phase}")
 				raise
 
+	def update_package(self) -> None:
+		"""Install the published package on an active router. The router stays Active."""
+		with ipv6_router_lifecycle_lock(self.router.name):
+			self.router = frappe.get_doc("IPv6 Router Server", self.router.name)
+			if self.router.status != "Active":
+				return
+
+			try:
+				self.install_router()
+			except Exception as error:
+				self.router.failure_message = f"installation: {error}"
+				self.save()
+				frappe.db.commit()  # nosemgrep
+				self.logger.exception(
+					"IPv6 router package update failed",
+					extra={"resource": self.router.name, "operation": "update-package"},
+				)
+				raise
+
+			self.router.failure_message = None
+			self.save()
+
 	@property
 	def steps(self) -> tuple[tuple[str, Callable[[], None]], ...]:
 		"""Return setup steps in execution order."""

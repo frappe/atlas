@@ -138,6 +138,24 @@ class WireguardGatewayServer(Document):
 		request_service_telemetry(self)
 
 	@frappe.whitelist(methods=["POST"])
+	def update_package(self) -> None:
+		"""Queue an install of the published WireGuard gateway package on this node."""
+		_validate_system_manager()
+		if self.status != "Active":
+			frappe.throw(_("Wireguard Gateway Server {0} is not active.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_update_package",
+			queue="long",
+			timeout=3_600,
+			job_id=f"atlas||wireguard-gateway-server||package||{self.name}",
+			deduplicate=True,
+		)
+		frappe.msgprint(_("WireGuard gateway package update has been queued. Please check after some time."))
+
+	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
 		"""Remove the node from the cluster and DNS, then terminate its virtual machine. Safe to run again."""
 		_validate_system_manager()
@@ -260,6 +278,11 @@ class WireguardGatewayServer(Document):
 			deduplicate=True,
 			enqueue_after_commit=enqueue_after_commit,
 		)
+
+	def _update_package(self) -> None:
+		from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner
+
+		WireGuardGatewayProvisioner(self).update_package()
 
 	def _provision(self) -> None:
 		from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner
