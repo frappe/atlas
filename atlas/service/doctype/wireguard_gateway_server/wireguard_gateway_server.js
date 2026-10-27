@@ -16,6 +16,19 @@ frappe.ui.form.on("Wireguard Gateway Server", {
 			return;
 		}
 
+		if (frm.doc.status === "Active") {
+			frm.add_custom_button(
+				__("Configure Telemetry"),
+				() =>
+					frappe.confirm(
+						__("Install Vector and a new Datum token on {0}?", [frm.doc.name]),
+						() =>
+							frm.call({ method: "configure_telemetry", doc: frm.doc, freeze: true })
+					),
+				__("Actions")
+			);
+		}
+
 		frm.add_custom_button(
 			__("Archive"),
 			() =>

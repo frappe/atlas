@@ -10,6 +10,7 @@ from frappe import _
 from atlas.atlas.core.ssh import wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.service_package import IPV6_ROUTER_PACKAGE
+from atlas.service.core.telemetry import enqueue_service_telemetry
 from atlas.service.doctype.ipv6_router_server.ipv6_router_server import ipv6_router_lifecycle_lock
 from atlas.vm.core.models import IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST, Route
 
@@ -50,6 +51,7 @@ class IPv6RouterServerProvisioner:
 
 				self.router.status = "Active"
 				self.save()
+				enqueue_service_telemetry(self.router)
 			except Exception as error:
 				self.router.status = "Failed"
 				self.router.failure_message = f"{phase}: {error}"

@@ -17,6 +17,7 @@ from frappe.utils.synchronization import filelock
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
 from atlas.metal_server.core.atlas_peer import generate_private_key, get_public_key
+from atlas.service.core.telemetry import request_service_telemetry
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 if TYPE_CHECKING:
@@ -129,6 +130,12 @@ class WireguardGatewayServer(Document):
 			"is_draft": is_draft,
 			"api_url": f"https://{gateway.get_regional_domain()}",
 		}
+
+	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this node."""
+		_validate_system_manager()
+		request_service_telemetry(self)
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:

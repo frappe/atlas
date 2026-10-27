@@ -13,6 +13,7 @@ from frappe import _
 from atlas.atlas.core.ssh import SSHRunner, wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.service_package import WG_GATEWAY_PACKAGE
+from atlas.service.core.telemetry import enqueue_service_telemetry
 from atlas.service.core.wg_gateway.configuration import DAEMON_UNIT, GatewayConfiguration
 from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
 	wireguard_gateway_lifecycle_lock,
@@ -67,6 +68,7 @@ class WireGuardGatewayProvisioner:
 
 				self.gateway.status = "Active"
 				self.save()
+				enqueue_service_telemetry(self.gateway)
 			except Exception as error:
 				self.gateway.status = "Failed"
 				self.gateway.failure_message = f"{phase}: {error}"

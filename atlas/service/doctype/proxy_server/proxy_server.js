@@ -16,6 +16,12 @@ frappe.ui.form.on("Proxy Server", {
 				frm.doc.status !== "Archived" && frm.doc.virtual_machine,
 				"Actions",
 			],
+			[
+				__("Configure Telemetry"),
+				"configure_telemetry",
+				frm.doc.status === "Active",
+				"Actions",
+			],
 			[__("Archive"), "archive", frm.doc.status !== "Archived", "Dangerous Actions"],
 		].forEach(([label, method, condition, group]) => {
 			if (!condition) {

@@ -10,6 +10,7 @@ from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
+from atlas.service.core.telemetry import request_service_telemetry
 
 if TYPE_CHECKING:
 	from frappe.types import DF
@@ -168,6 +169,12 @@ class ProxyServer(Document):
 				provisioner.proxy_server.get_domain(), provisioner.proxy_server.public_ipv4
 			)
 		)
+
+	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this node."""
+		_validate_system_manager()
+		request_service_telemetry(self)
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
