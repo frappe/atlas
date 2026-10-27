@@ -173,7 +173,7 @@ class PublicIPAllocation(Document):
 	def move_to_server(self, server: str) -> None:
 		# Migration finalize and the scheduled move sweep can move the same allocation at once.
 		current: PublicIPAllocation = frappe.get_doc(self.doctype, self.name, for_update=True)
-		if current.is_routed or current.server == server:
+		if current.is_routed or current.status != "Attached" or current.server == server:
 			return
 		current.status = "Attaching"
 		current.server = server
