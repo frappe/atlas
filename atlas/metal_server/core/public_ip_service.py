@@ -233,11 +233,12 @@ class PublicIPService:
 	) -> PublicIPAllocation:
 		allocation = self._lock_random_available(pool.name)
 		if not allocation:
-			# Only growth takes the pool lock. It takes any free row that no claim holds before it adds a prefix.
+			# The pool lock serializes growth. Wait for free rows that other claims hold, so the pool
+			# reports empty only when no free row remains.
 			pool = frappe.get_doc("Public IP Pool", pool.name, for_update=True)
 			name = frappe.db.sql_list(
 				"""SELECT name FROM `tabPublic IP Allocation`
-				WHERE pool = %s AND status = 'Available' LIMIT 1 FOR UPDATE SKIP LOCKED""",
+				WHERE pool = %s AND status = 'Available' LIMIT 1 FOR UPDATE""",
 				(pool.name,),
 			)
 			allocation = frappe.get_doc("Public IP Allocation", name[0]) if name else self._create_next(pool)
