@@ -46,13 +46,18 @@ def download_scripts(ref: str, directory: Path) -> Path:
 
 def main() -> None:
 	parser = argparse.ArgumentParser(
-		description="Generate the Atlas workbook and update it on an Insights site of a Pilot bench."
+		description="Generate the Atlas workbook and update it on an Insights site of a Pilot or Frappe bench."
 	)
 	parser.add_argument("site", help="Insights site, such as insights.example.com")
 	parser.add_argument(
 		"--ref", default="develop", help="Atlas branch, tag, or commit to take the scripts from"
 	)
 	parser.add_argument("--default-host", default="", help="host title that Atlas - Host opens with")
+	parser.add_argument(
+		"--bench",
+		type=Path,
+		help="bench folder that holds the site, such as ~/frappe-bench; default: find it with pilot",
+	)
 	parser.add_argument(
 		"--source", type=Path, help="use this scripts/insights folder instead of downloading one"
 	)
@@ -64,7 +69,9 @@ def main() -> None:
 	if arguments.alert_webhook_url and not os.environ.get("ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN"):
 		sys.exit("error: --alert-webhook-url needs ATLAS_INSIGHTS_ALERT_WEBHOOK_TOKEN")
 
-	bench = find_bench(arguments.site)
+	bench = arguments.bench.expanduser().resolve() if arguments.bench else find_bench(arguments.site)
+	if not (bench / "sites" / arguments.site / "site_config.json").exists():
+		sys.exit(f"error: bench {bench} has no site {arguments.site}")
 	with tempfile.TemporaryDirectory() as temporary:
 		directory = Path(temporary)
 		print(f"==> get the scripts from {arguments.source or f'{REPOSITORY}@{arguments.ref}'}", flush=True)
