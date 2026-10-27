@@ -138,13 +138,13 @@ Artifact status includes `object_key` when stored. Set it with the optional `obj
 
 Uploads use stable staging data, so a wake can proceed during upload. A wake, or any other change to the VM, cancels a running upload, because the VM no longer needs its checkpoint. No part reaches object storage after Atlas deletes the checkpoint objects. The upload status belongs to its checkpoint ID. A request for a later sleep checkpoint creates a new ID.
 
-Staging, compression, and uploads run in a separate pool of two background workers. Slow object storage does not consume normal VM reconciliation workers. The daemon cancels and waits for upload workers during shutdown. A later pass retries incomplete transfers after restart.
+Staging, compression, and uploads run in a separate pool of eight background workers. Slow object storage does not consume normal VM reconciliation workers. The daemon cancels and waits for upload workers during shutdown. A later pass retries incomplete transfers after restart.
 
 ## Wake an offloaded VM
 
 Traffic and an explicit start use one restore path for all sleep states. For a VM in coma, Metal first recovers a missing disk. For either remote sleep state, it then recovers missing memory and calls the normal saved-state restore. It verifies artifact checksums and checkpoint metadata before use. A completed local download can be reused on retry.
 
-Start returns `202` after it saves the wake request. Normal VM reconciliation restores memory that is on the host. VMs in deep sleep or coma restore in a separate pool of two background workers, so a slow download does not delay other VMs. Poll the VM response for `observed.phase`, `observed.error`, and completion. A repeated pending start returns without waiting for the download. The daemon cancels and waits for restore workers at shutdown, and a saved wake request resumes after restart.
+Start returns `202` after it saves the wake request. Normal VM reconciliation restores memory that is on the host. VMs in deep sleep or coma restore in a separate pool of eight background workers, so a slow download does not delay other VMs. Poll the VM response for `observed.phase`, `observed.error`, and completion. A repeated pending start returns without waiting for the download. The daemon cancels and waits for restore workers at shutdown, and a saved wake request resumes after restart.
 
 A download or artifact validation failure leaves the VM asleep and reports `observed.error`. Metal rearms traffic events after a failed wake and retries pending requests. If a GET URL expires, Atlas refreshes it with PATCH. PATCH stores URLs only. It does not create a wake request, but a pending wake uses the new URLs on retry.
 

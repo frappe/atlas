@@ -77,7 +77,7 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 ## Runtime loops
 
 - The daemon owns all reconcilers, source streams, and snapshot uploads.
-- Sleep uploads and restores have separate two-worker reconcilers. API changes wake both. Traffic events save wake intent and wake the restore reconciler.
+- Sleep uploads and restores have separate eight-worker reconcilers. API changes wake both. Traffic events save wake intent and wake the restore reconciler.
 - `SIGINT` or `SIGTERM` starts a bounded graceful shutdown.
 - Shutdown never stops or destroys guest VMs.
 

@@ -243,7 +243,7 @@ func TestSleepPoolsDoNotBlockVMWorkersAndStopOnShutdown(t *testing.T) {
 				recordingManager: newRecordingManager(ids...),
 				uploads:          &concurrencyManager{ids: ids, started: make(chan string, 32)},
 			}
-			configuration := VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)}
+			configuration := VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil), MaxConcurrentOperations: 2}
 			uploads := NewSleepTransferReconciler(manager, time.Hour, configuration)
 			if operation == "restore" {
 				uploads = NewSleepRestoreReconciler(manager, time.Hour, configuration)
