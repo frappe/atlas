@@ -60,29 +60,47 @@ class TestPublicIPAllocation(IntegrationTestCase):
 		self.assertEqual(allocation.status, "Reserved")
 		self.assertEqual(frappe.db.count("Public IP Allocation", {"pool": pool.name}), 2)
 
-	def test_a_stale_move_to_the_same_server_does_nothing(self) -> None:
-		pool = insert_pool("198.19.47.0/31", 32)
+	def insert_attached_allocation(self, pool_prefix: str) -> str:
+		pool = insert_pool(pool_prefix, 32)
 		generate_available_allocations(pool.name, 1)
 		name = frappe.get_value("Public IP Allocation", {"pool": pool.name})
-		source, destination = str(uuid.uuid4()), str(uuid.uuid4())
 		frappe.db.set_value(
 			"Public IP Allocation",
 			name,
-			{"status": "Attached", "tenant_id": 7, "virtual_machine": "vm-a", "server": source},
+			{"status": "Attached", "tenant_id": 7, "virtual_machine": "vm-a", "server": str(uuid.uuid4())},
 		)
-		stale = frappe.get_doc("Public IP Allocation", name)
+		return name
 
+	def move(self, allocation: PublicIPAllocation, server: str) -> None:
 		with (
 			patch.object(PublicIPAllocation, "validate"),
 			patch.object(PublicIPAllocation, "_validate_links"),
 			patch.object(PublicIPAllocation, "queue_reconcile"),
 		):
-			frappe.get_doc("Public IP Allocation", name).move_to_server(destination)
-			stale.move_to_server(destination)
+			allocation.move_to_server(server)
 
+	def test_a_stale_move_to_the_same_server_does_nothing(self) -> None:
+		name = self.insert_attached_allocation("198.19.47.0/31")
+		destination = str(uuid.uuid4())
+		stale = frappe.get_doc("Public IP Allocation", name)
+
+		self.move(frappe.get_doc("Public IP Allocation", name), destination)
+		with patch("frappe.get_doc", wraps=frappe.get_doc) as get_doc:
+			self.move(stale, destination)
+
+		get_doc.assert_called_once_with("Public IP Allocation", name, for_update=True)
 		current = frappe.get_doc("Public IP Allocation", name)
 		self.assertEqual((current.server, current.status), (destination, "Attaching"))
 		self.assertEqual(current.intent_version, stale.intent_version + 1)
+
+	def test_a_stale_move_keeps_a_detach(self) -> None:
+		name = self.insert_attached_allocation("198.19.48.0/31")
+		stale = frappe.get_doc("Public IP Allocation", name)
+		frappe.db.set_value("Public IP Allocation", name, "status", "Detaching")
+
+		self.move(stale, str(uuid.uuid4()))
+
+		self.assertEqual(frappe.db.get_value("Public IP Allocation", name, "status"), "Detaching")
 
 	def test_allocator_stops_at_the_end_of_the_pool(self) -> None:
 		pool = insert_pool("198.19.42.1/32", 32)
