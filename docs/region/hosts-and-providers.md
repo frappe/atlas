@@ -17,6 +17,10 @@ Atlas commits a `Pending` record before contacting the provider. The stable reco
 
 Setup prepares provider resources, SSH, networking, WireGuard, and Metal. It saves completed phases in MariaDB and marks the host `Running` only after completion. See the [provisioning sequence](index.md).
 
+Select **Set hostname to server name** before setup to set the host's operating system hostname to its Metal Server title, such as `metal-bom-1`. The option is off by default and is available on the server form, the **Add Server** review step, and **Import Server**.
+
+The field is read-only after provisioning completes. Setup retries apply the saved option. Cloud-init preserves the hostname across restarts.
+
 ### Import a provider server
 
 Use **Import Server** on the Metal Server list for a Scaleway or AWS server that Atlas did not create. Enter its provider server ID. Atlas matches its size and image to the catalog, adds the Scaleway private network option when it is missing, and runs the normal setup.
@@ -25,7 +29,7 @@ The Atlas SSH key must allow login as a user that the provider supports. A non-r
 
 Atlas uses the Scaleway `/dev/md2` array or the AWS storage volume mapped as `/dev/sdb`. If an imported AWS server has no volume mapped as `/dev/sdb`, enter a **Storage Pool Device** that exists on the host. You can also name a disk image file that you created. A new pool needs an empty device. Setup reuses an existing `metal` pool.
 
-Importing the same server again continues setup if it is incomplete. The command line equivalent is `pilot --site SITE import-metal-server <id> [--storage-pool-device PATH]`. Generic hosts use **Add Server** instead.
+Importing the same server again continues setup if it is incomplete. The command line equivalent is `pilot --site SITE import-metal-server <id> [--storage-pool-device PATH] [--set-hostname]`. Generic hosts use **Add Server** instead.
 
 ### Retry setup
 
