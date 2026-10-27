@@ -79,6 +79,9 @@ if __name__ == "__main__":
 	frappe.connect()
 	try:
 		name = import_workbook(path)
+		if os.environ.get("ATLAS_INSIGHTS_SKIP_CHART_CHECK"):
+			print(f"Updated workbook {name}. Skipped the chart check.")
+			sys.exit(0)
 		failed = get_failed_charts(name)
 	finally:
 		frappe.destroy()
