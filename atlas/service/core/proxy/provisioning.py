@@ -14,6 +14,7 @@ from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.proxy.configuration import ProxyConfiguration
 from atlas.service.core.service_package import HTTP_PROXY_PACKAGE
 from atlas.service.core.telemetry import enqueue_service_telemetry
+from atlas.service.doctype.proxy_server.proxy_server import proxy_server_lifecycle_lock
 
 if TYPE_CHECKING:
 	from atlas.service.doctype.proxy_server.proxy_server import ProxyServer
@@ -40,61 +41,66 @@ class ProxyServerProvisioner:
 
 	def run(self) -> None:
 		"""Run each proxy setup step in order."""
-		if not self.is_virtual_machine_ready:
-			return
+		with proxy_server_lifecycle_lock(self.proxy_server.name):
+			self.proxy_server = frappe.get_doc("Proxy Server", self.proxy_server.name)
+			if not self.is_virtual_machine_ready:
+				return
 
-		phase = "start"
-		self.proxy_server.status = "Provisioning"
-		self.proxy_server.failure_message = None
-		self.save_progress()
-		try:
-			for phase, operation in self.steps:
-				self.run_step(phase, operation)
-
-			self.proxy_server.status = "Active"
-			self.proxy_server.is_provisioning_completed = 1
+			phase = "start"
+			self.proxy_server.status = "Provisioning"
+			self.proxy_server.failure_message = None
 			self.save_progress()
-			enqueue_service_telemetry(self.proxy_server)
-			from atlas.service.core.proxy.configuration import push_configuration_to_active_proxies
+			try:
+				for phase, operation in self.steps:
+					self.run_step(phase, operation)
 
-			push_configuration_to_active_proxies()
-		except Exception as error:
-			self.proxy_server.status = "Failed"
-			self.proxy_server.failure_message = f"{phase}: {error}"
-			self.save_progress()
-			frappe.db.commit()  # nosemgrep
-			self.logger.exception(
-				"Proxy provisioning failed",
-				extra={"resource": self.proxy_server.name, "operation": "provision", "phase": phase},
-			)
-			frappe.log_error(title=f"Proxy provisioning failed for {self.proxy_server.name} during {phase}")
-			raise
+				self.proxy_server.status = "Active"
+				self.proxy_server.is_provisioning_completed = 1
+				self.save_progress()
+				enqueue_service_telemetry(self.proxy_server)
+				from atlas.service.core.proxy.configuration import push_configuration_to_active_proxies
+
+				push_configuration_to_active_proxies()
+			except Exception as error:
+				self.proxy_server.status = "Failed"
+				self.proxy_server.failure_message = f"{phase}: {error}"
+				self.save_progress()
+				frappe.db.commit()  # nosemgrep
+				self.logger.exception(
+					"Proxy provisioning failed",
+					extra={"resource": self.proxy_server.name, "operation": "provision", "phase": phase},
+				)
+				frappe.log_error(
+					title=f"Proxy provisioning failed for {self.proxy_server.name} during {phase}"
+				)
+				raise
 
 	def update_package(self) -> None:
 		"""Install the published package on an active node and wait until it serves again. The node stays Active."""
-		self.proxy_server = frappe.get_doc("Proxy Server", self.proxy_server.name)
-		if self.proxy_server.status != "Active":
-			return
+		with proxy_server_lifecycle_lock(self.proxy_server.name):
+			self.proxy_server = frappe.get_doc("Proxy Server", self.proxy_server.name)
+			if self.proxy_server.status != "Active":
+				return
 
-		try:
-			self.install_package(save=False)
-			self.wait_for_control_readiness(save=False)
-		except Exception as error:
+			try:
+				self.install_package(save=False)
+				self.wait_for_control_readiness(save=False)
+			except Exception as error:
+				frappe.db.set_value(
+					"Proxy Server", self.proxy_server.name, "failure_message", f"package: {error}"
+				)
+				frappe.db.commit()  # nosemgrep
+				self.logger.exception(
+					"Proxy package update failed",
+					extra={"resource": self.proxy_server.name, "operation": "update-package"},
+				)
+				raise
+
 			frappe.db.set_value(
-				"Proxy Server", self.proxy_server.name, "failure_message", f"package: {error}"
+				"Proxy Server",
+				self.proxy_server.name,
+				{"installed_package_hash": self.proxy_server.installed_package_hash, "failure_message": None},
 			)
-			frappe.db.commit()  # nosemgrep
-			self.logger.exception(
-				"Proxy package update failed",
-				extra={"resource": self.proxy_server.name, "operation": "update-package"},
-			)
-			raise
-
-		frappe.db.set_value(
-			"Proxy Server",
-			self.proxy_server.name,
-			{"installed_package_hash": self.proxy_server.installed_package_hash, "failure_message": None},
-		)
 
 	@property
 	def steps(self) -> tuple[tuple[str, Callable[[bool], None]], ...]:

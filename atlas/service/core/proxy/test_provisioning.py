@@ -55,6 +55,7 @@ class TestProvisioningSequence(UnitTestCase):
 		provisioner = ProxyServerProvisioner(proxy_server)
 		later_step = Mock()
 		with (
+			patch.object(provisioning.frappe, "get_doc", return_value=proxy_server),
 			patch.object(ProxyServerProvisioner, "is_virtual_machine_ready", new=property(lambda self: True)),
 			patch.object(
 				ProxyServerProvisioner,
@@ -91,7 +92,9 @@ class TestProvisioningSequence(UnitTestCase):
 		proxy_server = _proxy_server()
 		provisioner = ProxyServerProvisioner(proxy_server)
 		with patch.object(
-			provisioning.frappe, "get_doc", return_value=SimpleNamespace(name="vm-00001", is_draft=True)
+			provisioning.frappe,
+			"get_doc",
+			side_effect=[proxy_server, SimpleNamespace(name="vm-00001", is_draft=True)],
 		):
 			provisioner.run()
 
