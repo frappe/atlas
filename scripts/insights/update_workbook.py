@@ -68,6 +68,9 @@ def main() -> None:
 		"--alert-webhook-url",
 		help="send the alerts to this https URL, such as a Raven incoming webhook",
 	)
+	parser.add_argument(
+		"--skip-chart-check", action="store_true", help="do not load every chart after the update"
+	)
 	arguments = parser.parse_args()
 
 	bench = arguments.bench.expanduser().resolve() if arguments.bench else find_bench(arguments.site)
@@ -85,6 +88,7 @@ def main() -> None:
 		environment = {
 			**os.environ,
 			"ATLAS_INSIGHTS_DEFAULT_HOST": arguments.default_host,
+			"ATLAS_INSIGHTS_SKIP_CHART_CHECK": "1" if arguments.skip_chart_check else "",
 			"ATLAS_INSIGHTS_DATA_SOURCE": arguments.data_source,
 			"ATLAS_INSIGHTS_ALERT_WEBHOOK_URL": arguments.alert_webhook_url or "",
 			"PYTHONDONTWRITEBYTECODE": "1",

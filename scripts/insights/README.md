@@ -28,6 +28,7 @@ The script finds the bench that has the site under the Pilot `benches` folder, o
 | --- | --- |
 | `--ref <branch, tag, or commit>` | Take the scripts from another Atlas version. |
 | `--default-host <host title>` | The host that Atlas - Host opens with. |
+| `--skip-chart-check` | Do not load every chart after the update. Use it when the Datum ClickHouse cannot take one query for each chart in a row. |
 | `--data-source <name>` | The Insights data source for the Datum database. The default is `datum`. |
 | `--bench <folder>` | Use this bench, such as `~/frappe-bench` on a server without Pilot. |
 | `--source <folder>` | Use a local `scripts/insights` folder, such as a checkout with changes. |
