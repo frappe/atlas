@@ -1123,6 +1123,284 @@
         "title": "ImageResponse",
         "type": "object"
       },
+      "InvestigationEntryResponse": {
+        "description": "One row of the audit log of an investigation.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scrubbed arguments and result or error, as JSON.",
+            "title": "Detail"
+          },
+          "is_approved": {
+            "description": "The person in the chat approved the call.",
+            "title": "Is Approved",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "Tool Call for a read, Action for a change, Decision or Note from the agent.",
+            "enum": [
+              "Tool Call",
+              "Action",
+              "Decision",
+              "Note"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "description": "Time as Unix seconds.",
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "reference_doctype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Atlas record of the call, such as Metal Server Console Log or SSH Task.",
+            "title": "Reference Doctype"
+          },
+          "reference_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of that record.",
+            "title": "Reference Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "Success",
+                  "Failed",
+                  "Refused"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Result of a tool call.",
+            "title": "Status"
+          },
+          "title": {
+            "description": "Tool name with its arguments, or the decision.",
+            "title": "Title",
+            "type": "string"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Owner of the chat that ran the tool.",
+            "title": "User"
+          }
+        },
+        "required": [
+          "occurred_at",
+          "kind",
+          "title",
+          "status",
+          "user",
+          "is_approved",
+          "detail",
+          "reference_doctype",
+          "reference_name"
+        ],
+        "title": "InvestigationEntryResponse",
+        "type": "object"
+      },
+      "InvestigationPayload": {
+        "additionalProperties": false,
+        "description": "One problem for the read-only investigator of the region.",
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Facts that help, such as resource IDs, alert names, and times.",
+            "title": "Context"
+          },
+          "problem": {
+            "description": "The problem to investigate.",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Problem",
+            "type": "string"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Email of the person who asked.",
+            "title": "Requested By"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Short title. The default is the start of the problem.",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "problem"
+        ],
+        "title": "InvestigationPayload",
+        "type": "object"
+      },
+      "InvestigationResponse": {
+        "description": "One investigation. Atlas masks credentials in each text field.",
+        "examples": [
+          {
+            "context": {
+              "virtual_machine": "vm-0000076"
+            },
+            "created_at": 1793141980,
+            "entries": [],
+            "error": null,
+            "id": "investigation-00001",
+            "outcome": "## Summary\nThe ZFS pool on waw-1 is full...",
+            "problem": "VM vm-0000076 does not boot after a restart.",
+            "status": "completed",
+            "title": "VM vm-0000076 does not boot"
+          }
+        ],
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Facts sent with the problem.",
+            "title": "Context"
+          },
+          "created_at": {
+            "description": "Creation time as Unix seconds.",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "The audit log of tool calls and decisions, in time order.",
+            "items": {
+              "$ref": "#/components/schemas/InvestigationEntryResponse"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the investigation failed.",
+            "title": "Error"
+          },
+          "id": {
+            "description": "Investigation ID.",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The report in Markdown, when the investigation is complete.",
+            "title": "Outcome"
+          },
+          "problem": {
+            "description": "The problem to investigate.",
+            "title": "Problem",
+            "type": "string"
+          },
+          "status": {
+            "description": "Investigation state.",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "Short title.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "problem",
+          "context",
+          "outcome",
+          "error",
+          "created_at",
+          "entries"
+        ],
+        "title": "InvestigationResponse",
+        "type": "object"
+      },
       "JSONWebKey": {
         "description": "One public Ed25519 signature key.",
         "properties": {
@@ -3763,6 +4041,182 @@
         "summary": "Update termination protection",
         "tags": [
           "Images"
+        ]
+      }
+    },
+    "/api/atlas/investigations": {
+      "post": {
+        "description": "Queues the read-only investigator on one problem. It reads telemetry, records, and hosts, and changes nothing.",
+        "operationId": "create_investigation",
+        "parameters": [
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "context": {
+                  "virtual_machine": "vm-0000076"
+                },
+                "problem": "VM vm-0000076 does not boot after a restart.",
+                "requested_by": "alice@example.com"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationResponse"
+                }
+              }
+            },
+            "description": "Atlas queued the investigation. Read it until the status is completed or failed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Start investigation",
+        "tags": [
+          "Investigations"
+        ]
+      }
+    },
+    "/api/atlas/investigations/{investigation_id}": {
+      "get": {
+        "description": "Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.",
+        "operationId": "get_investigation",
+        "parameters": [
+          {
+            "description": "Investigation id.",
+            "in": "path",
+            "name": "investigation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The investigation does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Get investigation",
+        "tags": [
+          "Investigations"
         ]
       }
     },
@@ -6794,6 +7248,10 @@
     {
       "description": "Close Warpgate sessions of a person. Tenant 0 only.",
       "name": "Warpgate"
+    },
+    {
+      "description": "Hand a problem to the read-only investigator of the region and read its report. Tenant 0 only.",
+      "name": "Investigations"
     }
   ]
 }
