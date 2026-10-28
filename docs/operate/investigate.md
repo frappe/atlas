@@ -52,9 +52,10 @@ A Central investigation that reaches the iteration limit gets one more turn to w
 | Group | Tools | Approval |
 | --- | --- | --- |
 | Telemetry | `list_failing_alert_checks`, `get_telemetry_freshness`, `list_saved_queries`, `run_saved_query`, `query_telemetry`, `get_counter_increase`, `get_reconciler_status` | None |
-| Records | `find_resources`, `describe_host`, `describe_virtual_machine`, `list_recent_errors`, `read_error_log`, `get_host_changes` | None |
-| Host reads | `read_firecracker_log`, `read_virtual_machine_journal`, `read_metald_journal`, `check_host_health`, `run_read_only_command` | None |
+| Records | `find_resources`, `describe_host`, `describe_virtual_machine`, `list_recent_errors`, `read_error_log`, `get_host_changes`, `wait` | None |
+| Host reads | `read_firecracker_log`, `read_virtual_machine_journal`, `read_metald_journal`, `check_host_health`, `run_read_only_command`, `read_redfish_resource` | None |
 | Desk actions (engineer only) | `list_desk_actions`, `run_desk_action` | None |
+| BMC (engineer only) | `run_redfish_request`, `run_ipmitool` | None. The agent asks the engineer before a change. |
 | Changes (engineer only) | `run_dangerous_desk_action`, `set_record_value`, `run_command` | Each call |
 | Records (engineer only) | `save_investigation` | None |
 
