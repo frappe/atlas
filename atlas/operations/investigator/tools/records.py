@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Annotated
 
 import frappe
@@ -7,7 +8,9 @@ from frappe.flow import ToolContext
 
 from atlas.atlas.core.scrub import scrub
 from atlas.operations.doctype.investigation.investigation import Investigation
-from atlas.operations.investigator.tools.decorators import engineer_tool
+from atlas.operations.investigator.tools.decorators import engineer_tool, read_tool
+
+MAXIMUM_WAIT_SECONDS = 300
 
 
 @engineer_tool()
@@ -30,3 +33,11 @@ def save_investigation(
 	investigation.update_summary({"problem": problem, "outcome": scrub(outcome), "context": context})
 	investigation.add_decisions(decisions or [], ctx.user)
 	return {"investigation": investigation.name}
+
+
+@read_tool(background=True)
+def wait(seconds: Annotated[int, "Seconds to wait, at most 300."], *, ctx: ToolContext) -> dict:
+	"""Wait before the next tool call, such as for a BMC, a host, or a VM to apply a change."""
+	seconds = max(0, min(seconds, MAXIMUM_WAIT_SECONDS))
+	time.sleep(seconds)
+	return {"waited_seconds": seconds}

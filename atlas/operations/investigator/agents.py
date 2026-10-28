@@ -5,7 +5,7 @@ from frappe.flow import Agent
 from frappe.flow.knowledge import Knowledge
 
 from atlas.operations.doctype.investigation.investigation import INVESTIGATOR_AGENT
-from atlas.operations.investigator.tools import changes, hosts, inventory, records, telemetry
+from atlas.operations.investigator.tools import bmc, changes, hosts, inventory, records, telemetry
 
 ENGINEER_AGENT = "Atlas Engineer Assistant"
 KNOWLEDGE_BASE = "Atlas"
@@ -29,6 +29,8 @@ READ_TOOLS = [
 	hosts.read_metald_journal,
 	hosts.check_host_health,
 	hosts.run_read_only_command,
+	bmc.read_redfish_resource,
+	records.wait,
 ]
 ENGINEER_TOOLS = [
 	*READ_TOOLS,
@@ -37,6 +39,8 @@ ENGINEER_TOOLS = [
 	changes.run_desk_action,
 	changes.run_dangerous_desk_action,
 	changes.set_record_value,
+	bmc.run_redfish_request,
+	bmc.run_ipmitool,
 	records.save_investigation,
 ]
 
@@ -58,6 +62,7 @@ If the cause is not certain, give your best hypothesis, set the confidence to lo
 ENGINEER_INSTRUCTIONS = f"""{COMMON_INSTRUCTIONS}
 You help an Atlas engineer. Commands, field changes, and dangerous Desk actions need the engineer's approval in the chat.
 Use a change only when the engineer asks for the change, or after you explain why it is needed.
+Ask the engineer before any BMC request or ipmitool command that changes state, such as a PATCH, a POST, or a set command.
 Find a Desk action with list_desk_actions. Run a normal action with run_desk_action and any other with run_dangerous_desk_action.
 Termination, archive, and deletion are not available. Tell the engineer to do them in the Desk.
 When the engineer asks, save the chat with save_investigation."""
