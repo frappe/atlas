@@ -35,6 +35,19 @@ frappe.ui.form.on("Metal Server", {
 			.filter(Boolean)
 			.join("<br><br>");
 
+		if (is_running && frm.doc.is_provisioning_completed) {
+			[
+				[__("metald Journal"), "fetch_metald_journal"],
+				[__("Host Health"), "check_health"],
+			].forEach(([label, method]) => {
+				frm.add_custom_button(
+					label,
+					() => show_diagnostics(frm, method, label),
+					__("Diagnostics")
+				);
+			});
+		}
+
 		[
 			[
 				__("Retry Provisioning"),
@@ -190,6 +203,22 @@ frappe.ui.form.on("Metal Server", {
 		}
 	},
 });
+
+// Diagnostics read the host over SSH and show the scrubbed output. They store no record.
+function show_diagnostics(frm, method, title) {
+	frm.call({ method, doc: frm.doc, freeze: true }).then(({ message }) => {
+		const dialog = new frappe.ui.Dialog({
+			title,
+			size: "extra-large",
+			fields: [{ fieldname: "output", fieldtype: "Code", read_only: 1 }],
+		});
+		dialog.set_value(
+			"output",
+			message.output || __("No output. Exit code {0}.", [message.exit_code])
+		);
+		dialog.show();
+	});
+}
 
 function show_drain_dialog(frm) {
 	const dialog = new frappe.ui.Dialog({

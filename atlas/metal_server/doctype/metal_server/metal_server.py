@@ -24,6 +24,7 @@ from atlas.atlas.core.telemetry.datum import get_datum_url
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.disk_inventory import DiskInventory
+from atlas.metal_server.core.host_diagnostics import HostDiagnostics
 from atlas.metal_server.core.host_inspection import HostInspection
 from atlas.metal_server.core.host_installation import (
 	FIREWALL_INSTALL_TIMEOUT_SECONDS,
@@ -219,6 +220,18 @@ class MetalServer(Document):
 		).name
 		frappe.msgprint(_("Check the ping status <a href='/app/ssh-task/{0}'>here</a>").format(ssh_task_name))
 		return ssh_task_name
+
+	@frappe.whitelist(methods=["POST"])
+	def fetch_metald_journal(self) -> dict:
+		"""Read the last hour of the metald journal. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics(self.name).fetch_metald_journal()
+
+	@frappe.whitelist(methods=["POST"])
+	def check_health(self) -> dict:
+		"""Read the live state of the host. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics(self.name).check_health()
 
 	@frappe.whitelist(methods=["POST"])
 	def setup_server(self) -> None:
