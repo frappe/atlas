@@ -13,6 +13,7 @@ atlas/          Settings, providers, TLS, host binaries
 auth/           Tokens, regional keys, identity, permissions
 metal_server/   Provider hosts and catalog records
 operations/     Fleet operations: Metald Update rollouts, Metal Server Console
+investigation/  Investigation records and the Flow agents and tools that investigate a problem
 service/        Atlas services on VMs: Cargo, proxy, IPv6 router, WG gateway
 vm/             VM records, images, and orchestration
 realtime/       Browser console bridge
@@ -27,6 +28,7 @@ In each module, `core/` holds orchestration and `doctype/` holds DocType control
 - [Atlas settings](atlas/SPEC.md)
 - [Metal Servers](metal_server/SPEC.md)
 - [Operations](operations/SPEC.md)
+- [Investigation](investigation/SPEC.md)
 - [Services](service/SPEC.md)
 - [Virtual machines](vm/SPEC.md)
 

@@ -68,6 +68,10 @@ class MetalServerConsoleLog(Document):
 			frappe.throw(_("Timeout must be between 1 and 3600 seconds."))
 
 	def after_insert(self) -> None:
+		if self.flags.run_in_background is False:
+			self.execute()
+			return
+
 		frappe.enqueue_doc(
 			self.doctype,
 			self.name,

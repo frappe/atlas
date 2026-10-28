@@ -105,10 +105,14 @@ after_install = [
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
 ]
+
+flow_agents = ["atlas.investigation.core.agents.get_agents"]
+
 after_migrate = [
 	"atlas.atlas.core.install.realign_scheduled_job_baselines",
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
+	"atlas.investigation.core.agents.enable_skill_commands",
 ]
 
 # Uninstallation

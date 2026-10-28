@@ -71,6 +71,12 @@ class TestInvestigation(IntegrationTestCase):
 		self.assertEqual([entry.title for entry in self._entries()], ["inserted by a parallel tool call"])
 		self.assertEqual(frappe.db.get_value("Investigation", name, "status"), "Completed")
 
+	def test_refuses_a_central_investigation_while_investigation_is_off(self) -> None:
+		frappe.db.set_single_value("Atlas Settings", "is_investigation_enabled", 0)
+
+		with self.assertRaises(frappe.ValidationError):
+			Investigation.create_for_central("Disk alert on waw-1", None, None, None)
+
 	def test_follows_the_status_of_the_latest_run_and_the_chat_title(self) -> None:
 		name = Investigation.get_for_session(self.context.session_id)
 		for status, expected in (("Paused", "Running"), ("Completed", "Completed"), ("Running", "Running")):

@@ -76,9 +76,11 @@ class AtlasSettings(Document):
 		dns_provider: DF.Literal["Route53"]
 		http_proxy_package_file: DF.Link | None
 		http_proxy_package_hash: DF.Data | None
+		investigation_model: DF.Link | None
 		ipv6_router_package_file: DF.Link | None
 		ipv6_router_package_hash: DF.Data | None
 		is_dns_setup_completed: DF.Check
+		is_investigation_enabled: DF.Check
 		is_letsencrypt_staging: DF.Check
 		is_migration_on_wireguard: DF.Check
 		is_server_provider_setup_completed: DF.Check
@@ -136,6 +138,10 @@ class AtlasSettings(Document):
 		]
 		server_provider: DF.Literal["Generic", "Scaleway", "AWS"]
 		sleepy_vm_overcommit_factor: DF.Float
+		telemetry_query_database: DF.Data | None
+		telemetry_query_password: DF.Password | None
+		telemetry_query_url: DF.Data | None
+		telemetry_query_username: DF.Data | None
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_ipv6_router_for_auto_assignment: DF.Check
 		warpgate_api_token: DF.Password | None
