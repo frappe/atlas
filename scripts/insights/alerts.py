@@ -28,7 +28,7 @@ SERVICE_NODES = f"""service_nodes AS (
 
 HOST_TITLE = "if(t.title = '', {column}, t.title)"
 # A drop means the counter restarted, so its new value is all growth.
-VALUES = "arrayMap(sample -> sample.2, arraySort(groupArray((ts, value))))"
+VALUES = "tupleElement(arraySort(groupArray((ts, value))), 2)"
 GROWTH = f"arraySum(arrayMap((change, value) -> if(change >= 0, change, value), arrayDifference({VALUES}), {VALUES}))"
 # Keep 25% of each disk free. A ZFS mount shares its pool's space, which the pool checks cover.
 DISK_FREE_WARNING = 25
