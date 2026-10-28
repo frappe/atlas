@@ -22,7 +22,9 @@ REALTIME_PATHS = frozenset(
 		"/api/method/frappe.realtime.has_permission",
 	}
 )
-GUEST_PATHS = frozenset({"/login", "/api/method/login", "/api/method/logout"})
+# The Flow server calls back as a guest. Flow checks its X-Harness-Token before it reads the body.
+FLOW_CALLBACK_PATH = "/api/method/frappe.flow.daemon.callback.callback"
+GUEST_PATHS = frozenset({"/login", "/api/method/login", "/api/method/logout", FLOW_CALLBACK_PATH})
 PUBLIC_ATLAS_PATHS = frozenset({"/api/atlas/jwks.json", "/vm_console"})
 GUEST_PATH_PREFIXES = ("/assets/", "/files/")
 

@@ -12,7 +12,7 @@ api/            Tenant API routes and models
 atlas/          Settings, providers, TLS, host binaries
 auth/           Tokens, regional keys, identity, permissions
 metal_server/   Provider hosts and catalog records
-operations/     Fleet operations: Metald Update rollouts, Metal Server Console
+operations/     Fleet operations: Metald Update rollouts, Metal Server Console, investigation agents
 service/        Atlas services on VMs: Cargo, proxy, IPv6 router, WG gateway
 vm/             VM records, images, and orchestration
 realtime/       Browser console bridge
