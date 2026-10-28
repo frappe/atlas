@@ -17,6 +17,7 @@ class MetalServerConsole(Document):
 		from frappe.types import DF
 
 		script: DF.Code | None
+		scrub_output: DF.Check
 		servers: DF.SmallText | None
 		timeout_seconds: DF.Int
 	# end: auto-generated types
@@ -30,6 +31,7 @@ class MetalServerConsole(Document):
 				"doctype": "Metal Server Console Log",
 				"servers": self.servers,
 				"script": self.script,
+				"scrub_output": self.scrub_output,
 				"timeout_seconds": self.timeout_seconds,
 			}
 		)

@@ -6,7 +6,7 @@ app_email = "developers@frappe.io"
 app_license = "agpl-3.0"
 
 fixtures = [
-	{"dt": "Role", "filters": [["name", "=", "Atlas Admin"]]},
+	{"dt": "Role", "filters": [["name", "in", ["Atlas Admin", "Atlas Investigator"]]]},
 	{"dt": "Role Profile", "filters": [["name", "=", "Atlas Admin"]]},
 ]
 
@@ -104,10 +104,15 @@ after_install = [
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
 ]
+
+flow_agents = ["atlas.operations.investigator.agents.get_agents"]
+
 after_migrate = [
 	"atlas.atlas.core.install.realign_scheduled_job_baselines",
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
+	"atlas.operations.investigator.agents.enable_skill_commands",
+	"atlas.operations.investigator.knowledge.load_knowledge_base_after_migrate",
 ]
 
 # Uninstallation
@@ -172,6 +177,12 @@ has_permission = {
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+	"Flow Session": {
+		"on_update": "atlas.operations.doctype.investigation.investigation.sync_with_flow_session",
+	},
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
@@ -228,6 +239,7 @@ scheduler_events = {
 			"atlas.vm.core.vm_image_storage_migration.enqueue_site_file_image_migrations",
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
 			"atlas.vm.core.vm_image_deletion.delete_unused_kernels",
+			"atlas.operations.doctype.investigation.investigation.fail_idle_investigations",
 		],
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",

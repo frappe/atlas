@@ -17,6 +17,7 @@ from atlas.atlas.core.parsing import strict_bool
 from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
+from atlas.metal_server.core.host_diagnostics import HostDiagnostics
 from atlas.vm.core import reconciliation
 from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
@@ -634,6 +635,18 @@ class VirtualMachine(Document):
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		VirtualMachineService(self).request_restart()
+
+	@frappe.whitelist(methods=["POST"])
+	def fetch_firecracker_log(self) -> dict:
+		"""Read the end of the Firecracker log on the host. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics.for_virtual_machine(self.name).fetch_firecracker_log(self.name)
+
+	@frappe.whitelist(methods=["POST"])
+	def fetch_journal(self) -> dict:
+		"""Read the last hour of the metal-vm unit journal. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics.for_virtual_machine(self.name).fetch_virtual_machine_journal(self.name)
 
 	@frappe.whitelist(methods=["POST"])
 	def get_console_token(self, mode: str = "tty") -> dict[str, str]:

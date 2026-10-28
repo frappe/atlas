@@ -110,6 +110,8 @@ pilot --site <site> build-ubuntu-base-image \
 
 The command uploads the root file system and kernel to object storage. It then creates an Available **Virtual Machine Image**.
 
+After all target sites commit, the command removes the raw image, compressed image, kernel, and kernel release file from `--output-directory` (default: `./dist`). If a build or publication fails, the command keeps its output files.
+
 Without object storage credentials, add `--storage site-file` to serve both artifacts from the site itself. Atlas moves the image into object storage after you set the credentials in Atlas Settings. See [Images](../storage/image-records.md#artifact-storage).
 
 ## 9. Create a VM
