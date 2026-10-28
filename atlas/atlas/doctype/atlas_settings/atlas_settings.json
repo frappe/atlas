@@ -1038,10 +1038,9 @@
    "description": "A read-only ClickHouse user on the regional Datum database. The agents read metrics and logs with it."
   },
   {
-   "description": "ClickHouse HTTP URL, such as http://127.0.0.1:8123.",
    "fieldname": "telemetry_query_url",
    "fieldtype": "Data",
-   "label": "URL"
+   "label": "ClickHouse URL"
   },
   {
    "default": "datum",
@@ -1068,7 +1067,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-28 23:55:00.000000",
+ "modified": "2026-10-29 00:05:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

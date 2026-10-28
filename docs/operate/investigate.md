@@ -11,23 +11,29 @@ No agent can terminate a VM, archive a host, delete a record, or read a password
 
 ## Configuration
 
-Set these values in **Atlas Settings > LLM Investigation**:
+Do these steps once for each region, in this order:
 
-| Field | Value |
-| --- | --- |
-| Investigation Model | A Flow Model. Without it, Atlas does not create the agents. |
-| Enable Investigation | Off by default. While it is off, Atlas refuses `POST /api/atlas/investigations` and every agent tool call. |
-| Telemetry Query URL, Database, Username, Password | A read-only ClickHouse user on the regional Datum database. |
+1. In the Desk, create a **Flow Provider**. Set **Provider** to the LiteLLM provider name, such as `openrouter`, and set its **API Key**. Set **Base URL** only for an OpenAI-compatible endpoint that you host.
+2. Create a **Flow Model** for the agents. Select the provider, and set **Model ID** to the provider name and the model, such as `openrouter/deepseek/deepseek-v4.1-flash-1017`.
+3. Create a second Flow Model for embeddings, such as `openrouter/openai/text-embedding-3-small`. Select it as **Embedding Model** in **Flow Knowledge Settings**.
+4. Create a read-only ClickHouse user on the regional Datum database, with `readonly = 2 CONST` and only `SELECT`:
 
-Create the ClickHouse user with `readonly = 2 CONST` and only `SELECT` on the Datum database:
+   ```sql
+   CREATE USER atlas_investigator IDENTIFIED WITH sha256_password BY '<password>'
+     SETTINGS readonly = 2 CONST, max_execution_time = 30 MAX 60;
+   GRANT SELECT ON datum.* TO atlas_investigator;
+   ```
 
-```sql
-CREATE USER atlas_investigator IDENTIFIED WITH sha256_password BY '<password>'
-  SETTINGS readonly = 2 CONST, max_execution_time = 30 MAX 60;
-GRANT SELECT ON datum.* TO atlas_investigator;
-```
+5. In **Atlas Settings > LLM Investigation**, set these fields:
 
-Then run `migrate` to create the agents and the skills. Set an embedding model in **Flow Knowledge Settings**, and load the Atlas knowledge base with `execute atlas.operations.investigator.knowledge.load_knowledge_base`. Run the load again after a deploy that changes the documents.
+   | Field | Value |
+   | --- | --- |
+   | Investigation Model | The Flow Model from step 2. Without it, Atlas does not create the agents. |
+   | Enable Investigation | Turn it on. It is off by default, and while it is off, Atlas refuses `POST /api/atlas/investigations` and every agent tool call. |
+   | ClickHouse URL, Database, Username, Password | The ClickHouse HTTP URL, such as `http://127.0.0.1:8123`, the `datum` database, and the user from step 4. |
+
+6. Run `pilot --site SITE migrate`. It creates the two agents and their skills.
+7. Run `pilot --site SITE execute atlas.operations.investigator.knowledge.load_knowledge_base` to load the Atlas documents into the knowledge base. Run it again after a deploy that changes the documents.
 
 ## How an investigation works
 
