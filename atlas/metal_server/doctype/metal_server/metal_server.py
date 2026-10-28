@@ -83,7 +83,6 @@ class MetalServer(Document):
 		public_network_interface: DF.Data | None
 		server_image: DF.Link
 		server_size: DF.Link
-		set_hostname: DF.Check
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
 		tags: DF.Table[AtlasTag]
 		title: DF.Data | None
@@ -535,22 +534,18 @@ class MetalServer(Document):
 		image: str,
 		*,
 		is_sleepy_vm_host: bool = False,
-		set_hostname: bool = False,
 	) -> MetalServer:
 		"""Insert a Pending Server with the selected image and size."""
 		server: "MetalServer" = frappe.new_doc("Metal Server")
 		server.server_size = size
 		server.server_image = image
 		server.is_sleepy_vm_host = is_sleepy_vm_host
-		server.set_hostname = set_hostname
 		server.status = "Pending"
 		server.insert(ignore_permissions=True)
 		return server
 
 	@staticmethod
-	def import_from_provider(
-		provider_server_id: str, storage_pool_device: str | None = None, *, set_hostname: bool = False
-	) -> MetalServer:
+	def import_from_provider(provider_server_id: str, storage_pool_device: str | None = None) -> MetalServer:
 		"""Insert a Metal Server for a provider server that Atlas did not create, or resume its setup."""
 		if not provider_server_id:
 			frappe.throw(_("Enter the provider server ID."))
@@ -563,18 +558,11 @@ class MetalServer(Document):
 				server: MetalServer = frappe.get_doc("Metal Server", name)
 				if not server.is_provisioning_completed and not is_job_enqueued(server.setup_job_id):
 					server._set_storage_pool_device(storage_pool_device)
-					server.db_set(
-						{
-							"provider_metadata": server.provider_metadata,
-							"status": "Pending",
-							"set_hostname": int(set_hostname or server.set_hostname),
-						}
-					)
+					server.db_set({"provider_metadata": server.provider_metadata, "status": "Pending"})
 					server._enqueue_setup_server()
 			else:
 				server = frappe.new_doc("Metal Server")
 				server.provider_server_id = provider_server_id
-				server.set_hostname = set_hostname
 				server._set_storage_pool_device(storage_pool_device)
 				server.settings.server_provider_controller.import_server(server)
 				server.architecture = frappe.db.get_value(
@@ -732,14 +720,10 @@ def get_server_creation_options() -> dict:
 
 
 @frappe.whitelist(methods=["POST"])
-def import_server(
-	provider_server_id: str, storage_pool_device: str | None = None, set_hostname: bool = False
-) -> str:
+def import_server(provider_server_id: str, storage_pool_device: str | None = None) -> str:
 	"""Add a provider server that was created outside Atlas, and set it up."""
 	frappe.only_for("System Manager")
-	return MetalServer.import_from_provider(
-		provider_server_id.strip(), storage_pool_device or None, set_hostname=set_hostname
-	).name
+	return MetalServer.import_from_provider(provider_server_id.strip(), storage_pool_device or None).name
 
 
 @frappe.whitelist(methods=["POST"])
@@ -771,7 +755,6 @@ def register_host(
 	bmc_url: str | None = None,
 	bmc_username: str | None = None,
 	bmc_password: str | None = None,
-	set_hostname: bool = False,
 ) -> str:
 	"""Create the Metal Server for an inspected host and return its name."""
 	frappe.only_for("System Manager")
@@ -783,7 +766,6 @@ def register_host(
 			bmc_url=bmc_url,
 			bmc_username=bmc_username,
 			bmc_password=bmc_password,
-			set_hostname=set_hostname,
 		)
 		.name
 	)

@@ -366,7 +366,6 @@ class HostInspection:
 		bmc_url: str | None = None,
 		bmc_username: str | None = None,
 		bmc_password: str | None = None,
-		set_hostname: bool = False,
 	) -> "MetalServer":
 		"""Create the Metal Server for a passed inspection and start its provisioning."""
 		state = self.state
@@ -387,7 +386,6 @@ class HostInspection:
 				bmc_url=bmc_url,
 				bmc_username=bmc_username,
 				bmc_password=bmc_password,
-				set_hostname=set_hostname,
 			)
 			frappe.cache.delete_value(self.cache_key)
 		return server
@@ -402,7 +400,6 @@ class HostInspection:
 		bmc_url: str | None = None,
 		bmc_username: str | None = None,
 		bmc_password: str | None = None,
-		set_hostname: bool = False,
 	) -> "MetalServer":
 		"""Insert the Pending Metal Server with the inspected host facts."""
 		disk = next(disk for disk in report.disks if disk.device == storage_pool_device)
@@ -432,7 +429,6 @@ class HostInspection:
 					}
 				),
 				"status": "Pending",
-				"set_hostname": set_hostname,
 				"bmc_url": bmc_url,
 				"bmc_username": bmc_username,
 				"bmc_password": bmc_password,

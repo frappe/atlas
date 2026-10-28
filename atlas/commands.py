@@ -268,13 +268,8 @@ def start_dev_listener(context: CliCtxObj) -> None:
 @click.command("import-metal-server")
 @click.argument("provider_server_id")
 @click.option("--storage-pool-device", help="Device or disk image file for the storage pool.")
-@click.option(
-	"--set-hostname", is_flag=True, help="Set the host hostname to its Metal Server title during setup."
-)
 @pass_context
-def import_metal_server(
-	context: CliCtxObj, provider_server_id: str, storage_pool_device: str | None, set_hostname: bool
-) -> None:
+def import_metal_server(context: CliCtxObj, provider_server_id: str, storage_pool_device: str | None) -> None:
 	"""Add a provider server that was created outside Atlas, or continue its setup."""
 	if not context.sites:
 		raise SiteNotSpecifiedError
@@ -283,9 +278,7 @@ def import_metal_server(
 		try:
 			frappe.init(site)
 			frappe.connect()
-			server = MetalServer.import_from_provider(
-				provider_server_id, storage_pool_device, set_hostname=set_hostname
-			)
+			server = MetalServer.import_from_provider(provider_server_id, storage_pool_device)
 			frappe.db.commit()  # nosemgrep
 			click.echo(f"{site}: Metal Server {server.name} ({server.title}) is {server.status}")
 		finally:
