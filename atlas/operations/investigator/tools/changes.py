@@ -6,10 +6,10 @@ import frappe
 from frappe import _
 from frappe.flow import ToolContext
 
-from atlas.investigation.core import desk_actions
-from atlas.investigation.tools.decorators import change_tool, engineer_tool
-from atlas.investigation.tools.hosts import run_on_target
-from atlas.investigation.tools.inventory import get_host_name
+from atlas.operations.investigator import desk_actions
+from atlas.operations.investigator.tools.decorators import change_tool, engineer_tool
+from atlas.operations.investigator.tools.hosts import run_on_target
+from atlas.operations.investigator.tools.inventory import get_host_name
 
 
 @change_tool(lambda arguments: f"Run as root on {arguments['target']}:\n{arguments['command']}")

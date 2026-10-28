@@ -4,7 +4,7 @@ import frappe
 from frappe.model.base_document import get_controller
 from frappe.tests import UnitTestCase
 
-from atlas.investigation.core.desk_actions import (
+from atlas.operations.investigator.desk_actions import (
 	ALLOWED_ACTIONS,
 	get_desk_actions,
 	run_desk_action,

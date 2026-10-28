@@ -9,7 +9,7 @@ from frappe import _
 from frappe.flow import Tool, tool
 
 from atlas.atlas.core.scrub import scrub_value
-from atlas.investigation.doctype.investigation.investigation import (
+from atlas.operations.doctype.investigation.investigation import (
 	record_tool_call,
 	validate_investigation_enabled,
 )

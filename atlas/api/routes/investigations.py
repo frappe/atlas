@@ -7,7 +7,7 @@ from atlas.api.core.docs import api_docs
 from atlas.api.models import InvestigationPayload, InvestigationResponse
 from atlas.api.router import get_resource_location, investigations
 from atlas.auth.identity import require_tenant_zero_operator
-from atlas.investigation.doctype.investigation.investigation import Investigation
+from atlas.operations.doctype.investigation.investigation import Investigation
 
 
 @investigations.post("")

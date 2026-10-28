@@ -4,8 +4,8 @@ import frappe
 from frappe.flow import Agent
 from frappe.flow.knowledge import Knowledge
 
-from atlas.investigation.doctype.investigation.investigation import INVESTIGATOR_AGENT
-from atlas.investigation.tools import changes, hosts, inventory, records, telemetry
+from atlas.operations.doctype.investigation.investigation import INVESTIGATOR_AGENT
+from atlas.operations.investigator.tools import changes, hosts, inventory, records, telemetry
 
 ENGINEER_AGENT = "Atlas Engineer Assistant"
 KNOWLEDGE_BASE = "Atlas"

@@ -44,10 +44,10 @@ from atlas.vm.core.models import (
 from atlas.vm.core.placement.affinity import AffinityOperator, AffinityResource, AffinityRules
 
 if TYPE_CHECKING:
-	from atlas.investigation.doctype.investigation.investigation import Investigation
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
 		PublicIPAllocation,
 	)
+	from atlas.operations.doctype.investigation.investigation import Investigation
 	from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage

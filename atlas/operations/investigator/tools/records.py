@@ -6,8 +6,8 @@ import frappe
 from frappe.flow import ToolContext
 
 from atlas.atlas.core.scrub import scrub
-from atlas.investigation.doctype.investigation.investigation import Investigation
-from atlas.investigation.tools.decorators import engineer_tool
+from atlas.operations.doctype.investigation.investigation import Investigation
+from atlas.operations.investigator.tools.decorators import engineer_tool
 
 
 @engineer_tool()
