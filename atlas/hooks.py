@@ -6,7 +6,7 @@ app_email = "developers@frappe.io"
 app_license = "agpl-3.0"
 
 fixtures = [
-	{"dt": "Role", "filters": [["name", "=", "Atlas Admin"]]},
+	{"dt": "Role", "filters": [["name", "in", ["Atlas Admin", "Atlas Investigator"]]]},
 	{"dt": "Role Profile", "filters": [["name", "=", "Atlas Admin"]]},
 ]
 
@@ -29,6 +29,7 @@ add_to_apps_screen = [
 # Navigation lives in the Atlas sidebar. These modules keep their doctypes and stay
 # reachable, but they no longer get a dock entry of their own.
 code_only_modules = {
+	"Investigation": ["Atlas"],
 	"Metal Server": ["Atlas"],
 	"Service": ["Atlas"],
 	"VM": ["Atlas"],
@@ -172,6 +173,12 @@ has_permission = {
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+	"Flow Session": {
+		"on_update": "atlas.investigation.doctype.investigation.investigation.sync_with_flow_session",
+	},
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
@@ -228,6 +235,7 @@ scheduler_events = {
 			"atlas.vm.core.vm_image_storage_migration.enqueue_site_file_image_migrations",
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
 			"atlas.vm.core.vm_image_deletion.delete_unused_kernels",
+			"atlas.investigation.doctype.investigation.investigation.fail_idle_investigations",
 		],
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",
