@@ -149,7 +149,18 @@
   "column_break_tckj",
   "default_metal_machine_size",
   "column_break_jfub",
-  "default_metal_machine_image"
+  "default_metal_machine_image",
+  "investigation_tab",
+  "investigation_agent_section",
+  "investigation_model",
+  "column_break_investigation_agent",
+  "is_investigation_enabled",
+  "telemetry_query_section",
+  "telemetry_query_url",
+  "telemetry_query_database",
+  "column_break_telemetry_query",
+  "telemetry_query_username",
+  "telemetry_query_password"
  ],
  "fields": [
   {
@@ -993,13 +1004,71 @@
    "fieldname": "migration_section",
    "fieldtype": "Section Break",
    "label": "Migration"
+  },
+  {
+   "fieldname": "investigation_tab",
+   "fieldtype": "Tab Break",
+   "label": "LLM Investigation"
+  },
+  {
+   "fieldname": "investigation_agent_section",
+   "fieldtype": "Section Break",
+   "label": "Agent"
+  },
+  {
+   "fieldname": "investigation_model",
+   "fieldtype": "Link",
+   "label": "Investigation Model",
+   "options": "Flow Model"
+  },
+  {
+   "fieldname": "column_break_investigation_agent",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_investigation_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Investigation"
+  },
+  {
+   "fieldname": "telemetry_query_section",
+   "fieldtype": "Section Break",
+   "label": "Telemetry Query",
+   "description": "A read-only ClickHouse user on the regional Datum database. The agents read metrics and logs with it."
+  },
+  {
+   "description": "ClickHouse HTTP URL, such as http://127.0.0.1:8123.",
+   "fieldname": "telemetry_query_url",
+   "fieldtype": "Data",
+   "label": "URL"
+  },
+  {
+   "default": "datum",
+   "fieldname": "telemetry_query_database",
+   "fieldtype": "Data",
+   "label": "Database"
+  },
+  {
+   "fieldname": "column_break_telemetry_query",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "telemetry_query_username",
+   "fieldtype": "Data",
+   "label": "Username"
+  },
+  {
+   "fieldname": "telemetry_query_password",
+   "fieldtype": "Password",
+   "label": "Password"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-22 19:30:00.000000",
+ "modified": "2026-10-28 23:55:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

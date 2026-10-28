@@ -73,6 +73,7 @@ class Investigation(Document):
 		problem: str, title: str | None, context: dict | None, requested_by: str | None
 	) -> Investigation:
 		"""Record a problem from Central. The investigator starts in a background job."""
+		validate_investigation_enabled()
 		return frappe.get_doc(
 			{
 				"doctype": "Investigation",
@@ -189,6 +190,12 @@ class Investigation(Document):
 			InvestigationEntry.append_to(
 				self.name, kind="Decision", title=decision, detail=scrub(decision), user=user
 			)
+
+
+def validate_investigation_enabled() -> None:
+	"""Refuse while Atlas Settings turns investigation off."""
+	if not frappe.db.get_single_value("Atlas Settings", "is_investigation_enabled"):
+		frappe.throw(_("Investigation is off. Enable it in Atlas Settings."))
 
 
 def record_tool_call(

@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import re
 import shlex
+from typing import TYPE_CHECKING
 
 import frappe
 from frappe import _
 
 from atlas.atlas.core.scrub import scrub
 from atlas.atlas.core.ssh import SSHRunner
+
+if TYPE_CHECKING:
+	from atlas.operations.doctype.metal_server_console_log.metal_server_console_log import (
+		MetalServerConsoleLog,
+	)
 
 MACHINES_PATH = "/var/lib/metal/machines"
 VIRTUAL_MACHINE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -32,7 +38,8 @@ section sockets; ss -s
 class HostDiagnostics:
 	"""Fixed read-only scripts for the logs and live state of one host.
 
-	A read returns its scrubbed output directly and stores no record.
+	A read returns its scrubbed output directly and stores no record. A command that can change the host
+	runs through `run` as a Metal Server Console Log.
 	"""
 
 	def __init__(self, server: str) -> None:
@@ -77,6 +84,20 @@ class HostDiagnostics:
 		runner = SSHRunner(frappe.get_doc("Metal Server", self.server).ssh_host)
 		result = runner.run_command(script, timeout_seconds=TIMEOUT_SECONDS)
 		return {"host": self.server, "exit_code": result.exit_code, "output": scrub(result.output)}
+
+	def run(self, script: str, run_in_background: bool = True) -> MetalServerConsoleLog:
+		"""Record the script as a scrubbed Metal Server Console Log and run it."""
+		log = frappe.get_doc(
+			{
+				"doctype": "Metal Server Console Log",
+				"servers": self.server,
+				"script": script,
+				"timeout_seconds": TIMEOUT_SECONDS,
+				"scrub_output": 1,
+			}
+		)
+		log.flags.run_in_background = run_in_background
+		return log.insert(ignore_permissions=True)
 
 
 def _journal_script(unit: str, since_minutes: int, line_count: int) -> str:
