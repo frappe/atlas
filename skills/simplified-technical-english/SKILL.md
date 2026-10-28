@@ -10,11 +10,11 @@ These rules are a short form of [ASD-STE100 Simplified Technical English](https:
 ## Reply shape
 
 - Write a bullet list. One fact or one action in each bullet.
-- At most 8 bullets. Put the most important bullet first.
+- Put the most important bullet first.
 - No preamble, no restated question, and no closing summary.
 - Use a numbered list for steps that must be done in order.
-- Use a table only for more than 3 items with the same fields.
-- Show a cause chain or a timeline as an ASCII diagram in a `text` code block.
+- Use a table for 2 or more items with the same fields.
+- Show a cause chain as an ASCII diagram in a `text` code block.
 
 ## Words
 
