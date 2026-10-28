@@ -1238,24 +1238,6 @@ class InvestigationPayload(StrictModel):
 	)
 
 
-class InvestigationEntryResponse(BaseModel):
-	"""One row of the audit log of an investigation."""
-
-	occurred_at: int = Field(description="Time as Unix seconds.")
-	kind: Literal["Tool Call", "Action", "Decision", "Note"] = Field(
-		description="Tool Call for a read, Action for a change, Decision or Note from the agent."
-	)
-	title: str = Field(description="Tool name with its arguments, or the decision.")
-	status: Literal["Success", "Failed", "Refused"] | None = Field(description="Result of a tool call.")
-	user: str | None = Field(description="Owner of the chat that ran the tool.")
-	is_approved: bool = Field(description="The person in the chat approved the call.")
-	detail: str | None = Field(description="Scrubbed arguments and result or error, as JSON.")
-	reference_doctype: str | None = Field(
-		description="Atlas record of the call, such as Metal Server Console Log or SSH Task."
-	)
-	reference_name: str | None = Field(description="Name of that record.")
-
-
 class InvestigationResponse(BaseModel):
 	"""One investigation. Atlas masks credentials in each text field."""
 
@@ -1271,7 +1253,6 @@ class InvestigationResponse(BaseModel):
 					"outcome": "## Summary\nThe ZFS pool on waw-1 is full...",
 					"error": None,
 					"created_at": 1793141980,
-					"entries": [],
 				}
 			]
 		}
@@ -1285,9 +1266,6 @@ class InvestigationResponse(BaseModel):
 	outcome: str | None = Field(description="The report in Markdown, when the investigation is complete.")
 	error: str | None = Field(description="Why the investigation failed.")
 	created_at: int = Field(description="Creation time as Unix seconds.")
-	entries: list[InvestigationEntryResponse] = Field(
-		description="The audit log of tool calls and decisions, in time order."
-	)
 
 	@classmethod
 	def from_document(cls, investigation: Investigation) -> InvestigationResponse:
@@ -1301,18 +1279,4 @@ class InvestigationResponse(BaseModel):
 			outcome=investigation.outcome,
 			error=investigation.error,
 			created_at=to_unix_timestamp(investigation.creation),
-			entries=[
-				InvestigationEntryResponse(
-					occurred_at=to_unix_timestamp(entry.occurred_at),
-					kind=entry.kind,
-					title=entry.title,
-					status=entry.status or None,
-					user=entry.user,
-					is_approved=bool(entry.is_approved),
-					detail=entry.detail,
-					reference_doctype=entry.reference_doctype,
-					reference_name=entry.reference_name,
-				)
-				for entry in investigation.entries
-			],
 		)
