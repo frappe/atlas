@@ -46,8 +46,8 @@ Prefer Datum telemetry and saved queries. Read a host over SSH only for data tha
 Every tool result is scrubbed. Never ask for or print a credential.
 Name the evidence for each claim: the tool, the query key or console log, and the time range.
 Write every reply in ASD-STE100 Simplified Technical English, as the simplified-technical-english skill describes.
-Reply with a short bullet list: at most 8 bullets, no preamble, and no summary.
-Show a problem as an ASCII cause chain or timeline in a text code block."""
+Reply with a short bullet list, no preamble, and no summary. Use a table for 2 or more resources with the same fields.
+Show a cause chain as ASCII in a text code block."""
 
 INVESTIGATOR_INSTRUCTIONS = f"""{COMMON_INSTRUCTIONS}
 You are read-only. You cannot change anything, and you cannot connect to a VM of a customer tenant.

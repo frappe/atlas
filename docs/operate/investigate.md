@@ -42,7 +42,7 @@ Do these steps once for each region, in this order:
 3. It checks the raw data behind each alert, because an alert query can be wrong.
 4. It finds what changed on each affected host, then tests 2 to 4 possible causes against Datum.
 5. It reads a host over SSH only for data that Datum does not have: the Firecracker log, journal lines below warning, live state, or a host with stale telemetry.
-6. It writes a report of at most 25 lines: the cause, impact, confidence, an ASCII cause chain and timeline, evidence, ruled-out causes, and next steps.
+6. It writes a report: the cause, impact, confidence, an ASCII cause chain, a table for each group of resources and for the timeline, evidence, ruled-out causes, unexplained observations, and next steps.
 
 Every reply uses ASD-STE100 Simplified Technical English as a short bullet list. The `simplified-technical-english` skill has the rules. An engineer can start either skill from the **Skills** menu or with `/skill:<name>` in the Flow chat.
 
