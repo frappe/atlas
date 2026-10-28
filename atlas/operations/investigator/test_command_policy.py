@@ -3,7 +3,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.investigation.core.command_policy import validate_read_only_command
+from atlas.operations.investigator.command_policy import validate_read_only_command
 
 
 class TestReadOnlyCommand(UnitTestCase):

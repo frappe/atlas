@@ -8,8 +8,8 @@ from frappe import _
 from frappe.flow import ToolContext
 from frappe.utils import add_to_date, now_datetime
 
-from atlas.investigation.core.telemetry import TelemetryQuery
-from atlas.investigation.tools.decorators import read_tool
+from atlas.operations.investigator.telemetry import TelemetryQuery
+from atlas.operations.investigator.tools.decorators import read_tool
 
 HOST_FIELDS = (
 	"name", "title", "status", "is_provisioning_completed", "is_in_maintenance", "is_sleepy_vm_host",

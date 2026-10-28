@@ -29,7 +29,6 @@ add_to_apps_screen = [
 # Navigation lives in the Atlas sidebar. These modules keep their doctypes and stay
 # reachable, but they no longer get a dock entry of their own.
 code_only_modules = {
-	"Investigation": ["Atlas"],
 	"Metal Server": ["Atlas"],
 	"Service": ["Atlas"],
 	"VM": ["Atlas"],
@@ -106,13 +105,13 @@ after_install = [
 	"atlas.service.core.service_package.publish_service_packages",
 ]
 
-flow_agents = ["atlas.investigation.core.agents.get_agents"]
+flow_agents = ["atlas.operations.investigator.agents.get_agents"]
 
 after_migrate = [
 	"atlas.atlas.core.install.realign_scheduled_job_baselines",
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
-	"atlas.investigation.core.agents.enable_skill_commands",
+	"atlas.operations.investigator.agents.enable_skill_commands",
 ]
 
 # Uninstallation
@@ -179,7 +178,7 @@ has_permission = {
 
 doc_events = {
 	"Flow Session": {
-		"on_update": "atlas.investigation.doctype.investigation.investigation.sync_with_flow_session",
+		"on_update": "atlas.operations.doctype.investigation.investigation.sync_with_flow_session",
 	},
 }
 
@@ -239,7 +238,7 @@ scheduler_events = {
 			"atlas.vm.core.vm_image_storage_migration.enqueue_site_file_image_migrations",
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
 			"atlas.vm.core.vm_image_deletion.delete_unused_kernels",
-			"atlas.investigation.doctype.investigation.investigation.fail_idle_investigations",
+			"atlas.operations.doctype.investigation.investigation.fail_idle_investigations",
 		],
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",

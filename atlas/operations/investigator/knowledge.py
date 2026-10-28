@@ -5,7 +5,7 @@ from pathlib import Path
 import frappe
 from frappe.flow.knowledge import Knowledge
 
-from atlas.investigation.core.agents import KNOWLEDGE_BASE
+from atlas.operations.investigator.agents import KNOWLEDGE_BASE
 
 SOURCE_PATTERNS = ("docs/**/*.md", "**/SPEC.md")
 SKIPPED_FOLDERS = {"node_modules", ".git", "dist", ".tmp"}

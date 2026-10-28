@@ -9,10 +9,10 @@ from frappe.flow import ToolContext
 from atlas.atlas.core.scrub import scrub
 from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
-from atlas.investigation.core.command_policy import validate_read_only_command
-from atlas.investigation.tools.decorators import read_tool
-from atlas.investigation.tools.inventory import get_host_name
 from atlas.metal_server.core.host_diagnostics import TIMEOUT_SECONDS, HostDiagnostics
+from atlas.operations.investigator.command_policy import validate_read_only_command
+from atlas.operations.investigator.tools.decorators import read_tool
+from atlas.operations.investigator.tools.inventory import get_host_name
 
 if TYPE_CHECKING:
 	from atlas.operations.doctype.metal_server_console_log.metal_server_console_log import (

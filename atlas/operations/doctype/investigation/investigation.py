@@ -12,7 +12,7 @@ from frappe.model.document import Document
 from frappe.utils import add_to_date, now_datetime
 
 from atlas.atlas.core.scrub import scrub, scrub_value
-from atlas.investigation.doctype.investigation_entry.investigation_entry import InvestigationEntry
+from atlas.operations.doctype.investigation_entry.investigation_entry import InvestigationEntry
 
 if TYPE_CHECKING:
 	from frappe.flow import ToolContext
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 INVESTIGATOR_AGENT = "Atlas Investigator"
 INVESTIGATOR_USER = "investigator@atlas.internal"
 INVESTIGATOR_ROLES = ("Atlas Investigator", "Flow User")
-ON_FLOW_RUN_COMPLETE = "atlas.investigation.doctype.investigation.investigation.record_flow_run"
+ON_FLOW_RUN_COMPLETE = "atlas.operations.doctype.investigation.investigation.record_flow_run"
 ITERATION_LIMIT_ERROR = "The agent hit its iteration limit."
 REFERENCE_KEYS = {"console_log": "Metal Server Console Log", "ssh_task": "SSH Task"}
 # A paused run waits for approval in the chat, and a denied call ends the run normally.
@@ -54,7 +54,7 @@ class Investigation(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from atlas.investigation.doctype.investigation_entry.investigation_entry import InvestigationEntry
+		from atlas.operations.doctype.investigation_entry.investigation_entry import InvestigationEntry
 
 		context: DF.Code | None
 		entries: DF.Table[InvestigationEntry]

@@ -27,7 +27,7 @@ CREATE USER atlas_investigator IDENTIFIED WITH sha256_password BY '<password>'
 GRANT SELECT ON datum.* TO atlas_investigator;
 ```
 
-Then run `migrate` to create the agents and the skills. Set an embedding model in **Flow Knowledge Settings**, and load the Atlas knowledge base with `execute atlas.investigation.core.knowledge.load_knowledge_base`. Run the load again after a deploy that changes the documents.
+Then run `migrate` to create the agents and the skills. Set an embedding model in **Flow Knowledge Settings**, and load the Atlas knowledge base with `execute atlas.operations.investigator.knowledge.load_knowledge_base`. Run the load again after a deploy that changes the documents.
 
 ## How an investigation works
 
@@ -53,7 +53,7 @@ A Central investigation that reaches the iteration limit gets one more turn to w
 | Changes (engineer only) | `run_dangerous_desk_action`, `set_record_value`, `run_command` | Each call |
 | Records (engineer only) | `save_investigation` | None |
 
-An agent can run only the Desk actions in `ALLOWED_ACTIONS` in `atlas/investigation/core/desk_actions.py`. Every other method is blocked, such as terminate, archive, deletion, and methods that return a secret.
+An agent can run only the Desk actions in `ALLOWED_ACTIONS` in `atlas/operations/investigator/desk_actions.py`. Every other method is blocked, such as terminate, archive, deletion, and methods that return a secret.
 
 - A normal action is the method behind an **Actions** or **Diagnostics** button. `run_desk_action` runs it without approval, except on a VM of a customer tenant.
 - A dangerous action is a **Dangerous Actions** button or a fleet change, such as Upgrade Metald or a Metald Update rollout. `run_dangerous_desk_action` runs it after approval.

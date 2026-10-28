@@ -4,13 +4,13 @@ import frappe
 from frappe.flow import ToolContext
 from frappe.tests import IntegrationTestCase
 
-from atlas.investigation.doctype.investigation.investigation import (
+from atlas.operations.doctype.investigation.investigation import (
 	Investigation,
 	fail_idle_investigations,
 	record_tool_call,
 	sync_with_flow_session,
 )
-from atlas.investigation.doctype.investigation_entry.investigation_entry import InvestigationEntry
+from atlas.operations.doctype.investigation_entry.investigation_entry import InvestigationEntry
 
 
 class TestInvestigation(IntegrationTestCase):

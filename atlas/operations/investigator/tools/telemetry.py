@@ -4,9 +4,9 @@ from typing import Annotated
 
 from frappe.flow import ToolContext
 
-from atlas.investigation.core.telemetry import TelemetryQuery, get_saved_queries
-from atlas.investigation.tools.decorators import read_tool
-from atlas.investigation.tools.inventory import get_host_name
+from atlas.operations.investigator.telemetry import TelemetryQuery, get_saved_queries
+from atlas.operations.investigator.tools.decorators import read_tool
+from atlas.operations.investigator.tools.inventory import get_host_name
 
 
 @read_tool(background=True)
