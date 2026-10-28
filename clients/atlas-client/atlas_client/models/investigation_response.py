@@ -12,7 +12,6 @@ from ..models.investigation_response_status import InvestigationResponseStatus
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.investigation_entry_response import InvestigationEntryResponse
   from ..models.investigation_response_context_type_0 import InvestigationResponseContextType0
 
 
@@ -30,7 +29,6 @@ class InvestigationResponse:
         Attributes:
             context (InvestigationResponseContextType0 | None): Facts sent with the problem.
             created_at (int): Creation time as Unix seconds.
-            entries (list[InvestigationEntryResponse]): The audit log of tool calls and decisions, in time order.
             error (None | str): Why the investigation failed.
             id (str): Investigation ID.
             outcome (None | str): The report in Markdown, when the investigation is complete.
@@ -41,7 +39,6 @@ class InvestigationResponse:
 
     context: InvestigationResponseContextType0 | None
     created_at: int
-    entries: list[InvestigationEntryResponse]
     error: None | str
     id: str
     outcome: None | str
@@ -55,7 +52,6 @@ class InvestigationResponse:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.investigation_entry_response import InvestigationEntryResponse # noqa: PLC0415
         from ..models.investigation_response_context_type_0 import InvestigationResponseContextType0 # noqa: PLC0415
         context: dict[str, Any] | None
         if isinstance(self.context, InvestigationResponseContextType0):
@@ -64,13 +60,6 @@ class InvestigationResponse:
             context = self.context
 
         created_at = self.created_at
-
-        entries = []
-        for entries_item_data in self.entries:
-            entries_item = entries_item_data.to_dict()
-            entries.append(entries_item)
-
-
 
         error: None | str
         error = self.error
@@ -92,7 +81,6 @@ class InvestigationResponse:
         field_dict.update({
             "context": context,
             "created_at": created_at,
-            "entries": entries,
             "error": error,
             "id": id,
             "outcome": outcome,
@@ -107,7 +95,6 @@ class InvestigationResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.investigation_entry_response import InvestigationEntryResponse # noqa: PLC0415
         from ..models.investigation_response_context_type_0 import InvestigationResponseContextType0 # noqa: PLC0415
         d = dict(src_dict)
         def _parse_context(data: object) -> InvestigationResponseContextType0 | None:
@@ -129,16 +116,6 @@ class InvestigationResponse:
 
 
         created_at = d.pop("created_at")
-
-        entries = []
-        _entries = d.pop("entries")
-        for entries_item_data in (_entries):
-            entries_item = InvestigationEntryResponse.from_dict(entries_item_data)
-
-
-
-            entries.append(entries_item)
-
 
         def _parse_error(data: object) -> None | str:
             if data is None:
@@ -170,7 +147,6 @@ class InvestigationResponse:
         investigation_response = cls(
             context=context,
             created_at=created_at,
-            entries=entries,
             error=error,
             id=id,
             outcome=outcome,
