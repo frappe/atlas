@@ -86,6 +86,8 @@ A failed upgrade or check pauses the update. [When a server fails](../operate/ro
 
 **Metal Server Console** runs a script as `root` on many Metal Servers at once, over each host SSH address (wg0). Enter titles, names, or IP addresses, or use **Pick Servers**. Each entry must match one server. The Metal Server Console Log shows the live output of each server.
 
+**Scrub Output** is on by default. It masks credentials and high-entropy words, such as keys and tokens, before Atlas stores the output. Turn it off only when you must see a value.
+
 ### Upgrade on one host
 
 `upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. It keeps the new binaries when the new build has a [metald patch](../develop/metal.md#change-stored-state-with-a-patch) that the host has not applied, because the previous build cannot read the patched state. A repeated upgrade to the running build changes nothing.

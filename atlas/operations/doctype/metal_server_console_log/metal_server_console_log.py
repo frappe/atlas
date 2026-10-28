@@ -14,6 +14,7 @@ from frappe.model.document import Document
 from frappe.utils import now_datetime
 
 from atlas.atlas.core.background_jobs import run_as_admin
+from atlas.atlas.core.scrub import scrub, scrub_complete_lines
 from atlas.atlas.core.ssh import SSHRunner
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ class MetalServerConsoleLog(Document):
 		ended_at: DF.Datetime | None
 		results: DF.Table[MetalServerConsoleResult]
 		script: DF.Code
+		scrub_output: DF.Check
 		servers: DF.SmallText
 		started_at: DF.Datetime | None
 		status: DF.Literal["Pending", "Running", "Success", "Failed"]
@@ -80,7 +82,7 @@ class MetalServerConsoleLog(Document):
 		"""Run the script on all servers at once. Save and publish the output each second."""
 		self.db_set({"status": "Running", "started_at": now_datetime()}, commit=True)
 		self._publish_progress([])
-		server_runs = [ServerRun(row) for row in self.results]
+		server_runs = [ServerRun(row, bool(self.scrub_output)) for row in self.results]
 		with ThreadPoolExecutor(max_workers=len(server_runs)) as executor:
 			futures = [executor.submit(run.execute, self.script, self.timeout_seconds) for run in server_runs]
 			pending = futures
@@ -140,8 +142,9 @@ class MetalServerConsoleLog(Document):
 class ServerRun:
 	"""The script run on one server. Its thread writes only to this object, and the job thread saves it."""
 
-	def __init__(self, row: MetalServerConsoleResult) -> None:
+	def __init__(self, row: MetalServerConsoleResult, scrub_output: bool = False) -> None:
 		self.row = row
+		self.scrub_output = scrub_output
 		self.output_chunks: list[str] = []
 		self.exit_code: int | None = None
 		self.is_started = False
@@ -168,7 +171,12 @@ class ServerRun:
 
 	def save(self) -> dict | None:
 		"""Save new output and status to the row. Return the change for the form, or None."""
+		# Read the flag first: output joined after the run ends is complete.
+		is_finished = self.is_finished
 		output = "".join(self.output_chunks)
+		if self.scrub_output:
+			# A running output keeps its last line back, so the saved text only grows.
+			output = scrub(output) if is_finished else scrub_complete_lines(output)
 		values = {"output": output, "status": self.status}
 		# The exit code column cannot be null. A run without an exit code keeps the default.
 		if self.exit_code is not None:
