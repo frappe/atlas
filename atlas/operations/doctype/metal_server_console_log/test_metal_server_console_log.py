@@ -93,3 +93,32 @@ class TestServerConsoleLog(IntegrationTestCase):
 				self.assertEqual(change["offset"], len(published_output[change["name"]]))
 				published_output[change["name"]] += change["new_output"]
 		self.assertEqual(published_output, {row.name: row.output for row in log.results})
+
+	def test_scrubbed_run_stores_and_streams_masked_output(self) -> None:
+		log = insert_log("metal-console-test-1")
+		log.db_set("scrub_output", 1)
+
+		class SecretSSHRunner:
+			def __init__(self, host: str) -> None:
+				pass
+
+			def run_command(self, script, *, timeout_seconds, on_output):
+				for chunk in ("ok\npass", "word=hunter2\n", "token=abc"):
+					on_output(chunk)
+				return SSHResult("", 0)
+
+		with (
+			patch(f"{MODULE}.SSHRunner", SecretSSHRunner),
+			patch.object(frappe.db, "commit"),
+			patch(f"{MODULE}.frappe.publish_realtime") as publish_realtime,
+		):
+			log.execute()
+
+		log.reload()
+		self.assertEqual(log.results[0].output, "ok\npassword=[REDACTED]\ntoken=[REDACTED]")
+		published = "".join(
+			change["new_output"]
+			for call in publish_realtime.call_args_list
+			for change in call.args[1]["results"]
+		)
+		self.assertEqual(published, log.results[0].output)
