@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
@@ -164,6 +165,24 @@ func TestEthtoolReadsQueuePrefixedDriverStatistics(t *testing.T) {
 	}
 	if packets := valueOf(t, samples, "system_ethtool", telemetry.Labels{"interface": "eno1", "field": "[0]_rx_ucast_packets"}); packets != 5 {
 		t.Fatalf("queue packets = %v, want 5", packets)
+	}
+}
+
+func TestEthtoolSkipsAnInterfaceWithoutStatistics(t *testing.T) {
+	sysRoot := writeFiles(t, map[string]string{"class/net/eno1/device": "", "class/net/enx1/device": ""})
+	output := func(ctx context.Context, _ string, args ...string) (string, error) {
+		if args[1] == "enx1" {
+			return platform.Output(ctx, "sh", "-c", "exit 94")
+		}
+		return "     rx_discards: 12\n", nil
+	}
+
+	samples, err := ethtoolCollector{sysRoot: sysRoot, output: output}.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect error = %v, want nil", err)
+	}
+	if discards := valueOf(t, samples, "system_ethtool", telemetry.Labels{"interface": "eno1", "field": "rx_discards"}); discards != 12 {
+		t.Fatalf("rx_discards = %v, want 12", discards)
 	}
 }
 
