@@ -1123,115 +1123,6 @@
         "title": "ImageResponse",
         "type": "object"
       },
-      "InvestigationEntryResponse": {
-        "description": "One row of the audit log of an investigation.",
-        "properties": {
-          "detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Scrubbed arguments and result or error, as JSON.",
-            "title": "Detail"
-          },
-          "is_approved": {
-            "description": "The person in the chat approved the call.",
-            "title": "Is Approved",
-            "type": "boolean"
-          },
-          "kind": {
-            "description": "Tool Call for a read, Action for a change, Decision or Note from the agent.",
-            "enum": [
-              "Tool Call",
-              "Action",
-              "Decision",
-              "Note"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "occurred_at": {
-            "description": "Time as Unix seconds.",
-            "title": "Occurred At",
-            "type": "integer"
-          },
-          "reference_doctype": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Atlas record of the call, such as Metal Server Console Log or SSH Task.",
-            "title": "Reference Doctype"
-          },
-          "reference_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Name of that record.",
-            "title": "Reference Name"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "enum": [
-                  "Success",
-                  "Failed",
-                  "Refused"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Result of a tool call.",
-            "title": "Status"
-          },
-          "title": {
-            "description": "Tool name with its arguments, or the decision.",
-            "title": "Title",
-            "type": "string"
-          },
-          "user": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Owner of the chat that ran the tool.",
-            "title": "User"
-          }
-        },
-        "required": [
-          "occurred_at",
-          "kind",
-          "title",
-          "status",
-          "user",
-          "is_approved",
-          "detail",
-          "reference_doctype",
-          "reference_name"
-        ],
-        "title": "InvestigationEntryResponse",
-        "type": "object"
-      },
       "InvestigationPayload": {
         "additionalProperties": false,
         "description": "One problem for the read-only investigator of the region.",
@@ -1300,7 +1191,6 @@
               "virtual_machine": "vm-0000076"
             },
             "created_at": 1793141980,
-            "entries": [],
             "error": null,
             "id": "investigation-00001",
             "outcome": "## Summary\nThe ZFS pool on waw-1 is full...",
@@ -1327,14 +1217,6 @@
             "description": "Creation time as Unix seconds.",
             "title": "Created At",
             "type": "integer"
-          },
-          "entries": {
-            "description": "The audit log of tool calls and decisions, in time order.",
-            "items": {
-              "$ref": "#/components/schemas/InvestigationEntryResponse"
-            },
-            "title": "Entries",
-            "type": "array"
           },
           "error": {
             "anyOf": [
@@ -1395,8 +1277,7 @@
           "context",
           "outcome",
           "error",
-          "created_at",
-          "entries"
+          "created_at"
         ],
         "title": "InvestigationResponse",
         "type": "object"
@@ -4138,7 +4019,7 @@
     },
     "/api/atlas/investigations/{investigation_id}": {
       "get": {
-        "description": "Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.",
+        "description": "Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the Atlas Desk.",
         "operationId": "get_investigation",
         "parameters": [
           {

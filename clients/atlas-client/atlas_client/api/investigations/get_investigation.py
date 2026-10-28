@@ -101,7 +101,8 @@ def sync_detailed(
 ) -> Response[ApiErrorResponse | InvestigationResponse]:
     """ Get investigation
 
-     Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.
+     Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the
+    Atlas Desk.
 
     Args:
         investigation_id (str):
@@ -137,7 +138,8 @@ def sync(
 ) -> ApiErrorResponse | InvestigationResponse | None:
     """ Get investigation
 
-     Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.
+     Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the
+    Atlas Desk.
 
     Args:
         investigation_id (str):
@@ -168,7 +170,8 @@ async def asyncio_detailed(
 ) -> Response[ApiErrorResponse | InvestigationResponse]:
     """ Get investigation
 
-     Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.
+     Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the
+    Atlas Desk.
 
     Args:
         investigation_id (str):
@@ -204,7 +207,8 @@ async def asyncio(
 ) -> ApiErrorResponse | InvestigationResponse | None:
     """ Get investigation
 
-     Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.
+     Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the
+    Atlas Desk.
 
     Args:
         investigation_id (str):

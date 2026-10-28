@@ -44,7 +44,7 @@ def create_investigation(payload: InvestigationPayload) -> ApiResult[Investigati
 def get_investigation(investigation_id: str) -> InvestigationResponse:
 	"""Get investigation.
 
-	Returns the status, the report, and the audit log of tool calls. Atlas masks credentials.
+	Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the Atlas Desk.
 	"""
 	require_tenant_zero_operator()
 	if not frappe.db.exists("Investigation", investigation_id):

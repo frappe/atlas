@@ -40,9 +40,6 @@ from .image_response_architecture import ImageResponseArchitecture
 from .image_response_image_type import ImageResponseImageType
 from .image_response_status import ImageResponseStatus
 from .image_response_tags import ImageResponseTags
-from .investigation_entry_response import InvestigationEntryResponse
-from .investigation_entry_response_kind import InvestigationEntryResponseKind
-from .investigation_entry_response_status_type_0 import InvestigationEntryResponseStatusType0
 from .investigation_payload import InvestigationPayload
 from .investigation_payload_context_type_0 import InvestigationPayloadContextType0
 from .investigation_response import InvestigationResponse
@@ -139,9 +136,6 @@ __all__ = (
     "ImageResponseImageType",
     "ImageResponseStatus",
     "ImageResponseTags",
-    "InvestigationEntryResponse",
-    "InvestigationEntryResponseKind",
-    "InvestigationEntryResponseStatusType0",
     "InvestigationPayload",
     "InvestigationPayloadContextType0",
     "InvestigationResponse",
