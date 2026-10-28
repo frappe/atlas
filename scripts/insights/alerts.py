@@ -27,7 +27,9 @@ SERVICE_NODES = f"""service_nodes AS (
 )"""
 
 HOST_TITLE = "if(t.title = '', {column}, t.title)"
-GROWTH = "greatest(max(value) - min(value), 0)"
+# A drop means the counter restarted, so its new value is all growth.
+VALUES = "arrayMap(sample -> sample.2, arraySort(groupArray((ts, value))))"
+GROWTH = f"arraySum(arrayMap((change, value) -> if(change >= 0, change, value), arrayDifference({VALUES}), {VALUES}))"
 # Keep 25% of each disk free. A ZFS mount shares its pool's space, which the pool checks cover.
 DISK_FREE_WARNING = 25
 DISK_FREE_CRITICAL = 10
@@ -71,16 +73,16 @@ WHERE {limit}
 GROUP BY host"""
 
 
-def growth_check(condition: str, window: str = "INTERVAL 1 HOUR", detail: str = "''") -> str:
-	"""Running hosts whose counters grew in window."""
+def growth_check(condition: str, window: str = "INTERVAL 1 HOUR", detail: str = "''", limit: int = 0) -> str:
+	"""Running hosts with a counter series that grew more than limit in window."""
 	return f"""SELECT {HOST_TITLE.format(column="g.resource_id")} AS host, sum(g.increase) AS value,
   arrayStringConcat(arraySort(groupUniqArray(g.detail)), ', ') AS detail
 FROM (
   SELECT resource_id, {detail} AS detail, {GROWTH} AS increase FROM samples
   WHERE {condition} AND ts > now() - {window} AND resource_id IN (SELECT server FROM running)
-  GROUP BY resource_id, labels
+  GROUP BY resource_id, metric, labels
 ) AS g LEFT JOIN titles AS t ON t.server = g.resource_id
-WHERE g.increase > 0
+WHERE g.increase > {limit}
 GROUP BY host"""
 
 
@@ -518,10 +520,11 @@ P2_HOSTS = Alert(
 		Check("Links down", "0", LINKS_DOWN),
 		Check(
 			"NIC errors, last hour",
-			"0",
+			"at most 10",
 			growth_check(
 				"metric IN ('system_network_receive_errors_total', 'system_network_transmit_errors_total', 'system_network_rx_crc_errors_total')",
 				detail="labels['interface']",
+				limit=10,
 			),
 		),
 		Check(
