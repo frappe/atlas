@@ -20,7 +20,6 @@
   "column_break_njar",
   "server_image",
   "is_cpu_template_disabled",
-  "set_hostname",
   "column_break_iiyh",
   "server_size",
   "section_break_cjau",
@@ -57,13 +56,6 @@
   "metald_tls_private_key"
  ],
  "fields": [
-  {
-   "default": "0",
-   "fieldname": "set_hostname",
-   "fieldtype": "Check",
-   "label": "Set hostname to server name",
-   "read_only_depends_on": "eval: doc.is_provisioning_completed"
-  },
   {
    "default": "0",
    "fieldname": "is_provisioning_completed",

@@ -11,15 +11,10 @@ from atlas.metal_server.core.provisioning import ServerProvisioner
 
 
 class TestServerProvisioner(UnitTestCase):
-	def test_hostname_changes_only_when_requested(self) -> None:
+	def test_hostname_is_set_to_the_server_title(self) -> None:
 		server = self.server()
-		installation = HostInstallation(server)
 		with patch("atlas.metal_server.core.host_installation.SSHTask.create_for_script_file") as create:
-			installation.configure_hostname()
-			create.assert_not_called()
-
-			server.set_hostname = 1
-			installation.configure_hostname()
+			HostInstallation(server).configure_hostname()
 
 		self.assertEqual(create.call_args.kwargs["environment"], {"SERVER_HOSTNAME": server.title})
 		self.assertEqual(create.call_args.kwargs["target"], server.name)
@@ -158,7 +153,6 @@ class TestServerProvisioner(UnitTestCase):
 			name="node-test-00001",
 			doctype="Metal Server",
 			title="metal-test-1",
-			set_hostname=0,
 			status="Pending",
 			is_provisioning_completed=0,
 			provider_server_id="server-id",

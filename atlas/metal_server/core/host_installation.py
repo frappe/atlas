@@ -38,10 +38,7 @@ class HostInstallation:
 		self.server = server
 
 	def configure_hostname(self) -> None:
-		"""Set the host name to the server title when setup requests it."""
-		if not self.server.set_hostname:
-			return
-
+		"""Set the host name to the server title."""
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,
