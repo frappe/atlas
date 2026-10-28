@@ -241,6 +241,7 @@ class Setup:
 				"zstd",
 				"e2fsprogs",
 				"wireguard-tools",
+				"ipmitool",
 				# The guest root file system has no modules for the Atlas VM kernel. nft and WireGuard need them.
 				f"linux-modules-{os.uname().release}",
 			],
