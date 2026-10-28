@@ -28,9 +28,9 @@ RECENT_LIMIT = 10
 
 @read_tool()
 def find_resources(
-	text: Annotated[str, "A name, title, host name, IP address, or tenant ID."], *, ctx: ToolContext
+	text: Annotated[str, "A name, title, IP address, or tenant ID."], *, ctx: ToolContext
 ) -> dict:
-	"""Find hosts (Metal Servers) and VMs that match a name, title, host name, IP address, or tenant ID."""
+	"""Find hosts (Metal Servers) and VMs that match a name, title, IP address, or tenant ID."""
 	pattern = f"%{text.strip()}%"
 	hosts = frappe.get_all(
 		"Metal Server",
@@ -47,15 +47,21 @@ def find_resources(
 		fields=["name", "title", "status"],
 		limit=RECENT_LIMIT,
 	)
-	virtual_machine_filters = {
-		field: ("like", pattern) for field in ("name", "hostname", "public_ipv4", "wireguard_mesh_ipv6")
-	}
+	# A VM's host name and addresses are virtual fields read from Metal, so IPs come from their allocations.
+	allocated = frappe.get_all(
+		"Public IP Allocation",
+		filters={"prefix": ("like", pattern), "virtual_machine": ("is", "set")},
+		pluck="virtual_machine",
+	)
+	virtual_machine_filters = [["name", "like", pattern]]
+	if allocated:
+		virtual_machine_filters.append(["name", "in", allocated])
 	if text.strip().isdigit():
-		virtual_machine_filters["tenant_id"] = int(text)
+		virtual_machine_filters.append(["tenant_id", "=", int(text)])
 	virtual_machines = frappe.get_all(
 		"Virtual Machine",
 		or_filters=virtual_machine_filters,
-		fields=["name", "tenant_id", "server", "hostname"],
+		fields=["name", "tenant_id", "server"],
 		limit=RECENT_LIMIT * 5,
 	)
 	return {"hosts": hosts, "virtual_machines": virtual_machines}
