@@ -184,6 +184,14 @@ def build_ubuntu_base_image(
 		finally:
 			frappe.destroy()
 
+	for path in (
+		image_path,
+		image_path.with_name(f"{image_path.name}.zst"),
+		kernel_path,
+		kernel_path.with_name(f"{kernel_path.name}.release"),
+	):
+		path.unlink()
+
 
 def is_image_available(site: str, title: str, architecture: str) -> bool:
 	"""Return true when a site has the requested system image."""

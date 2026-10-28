@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -59,26 +60,33 @@ class TestConfigureAtlasCommand(UnitTestCase):
 
 class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 	def test_skip_existing_publishes_only_to_missing_sites(self) -> None:
-		image_path = Path("/tmp/image.raw")
-		kernel_path = Path("/tmp/vmlinux")
 		with (
+			TemporaryDirectory() as directory,
 			patch.object(
 				commands,
 				"is_image_available",
 				side_effect=lambda site, *_: site == "existing.local",
 			),
-			patch.object(commands, "build_ubuntu_image", return_value=(image_path, kernel_path)) as build,
+			patch.object(commands, "build_ubuntu_image") as build,
 			patch.object(commands, "publish_ubuntu_image") as publish,
 			patch.object(commands.frappe, "init") as initialize,
 			patch.object(commands.frappe, "connect"),
 			patch.object(commands.frappe.db, "commit"),
 			patch.object(commands.frappe, "destroy") as destroy,
 		):
+			image_path = Path(directory) / "image.ext4"
+			kernel_path = Path(directory) / "vmlinux"
+			for name in ("image.ext4", "image.ext4.zst", "vmlinux", "vmlinux.release"):
+				(Path(directory) / name).write_bytes(b"build output")
+			unrelated_path = Path(directory) / "other.ext4"
+			unrelated_path.touch()
+			build.return_value = (image_path, kernel_path)
 			result = CliRunner().invoke(
 				commands.build_ubuntu_base_image,
 				["--version", "24.04", "--storage", "site-file", "--skip-existing"],
 				obj=command_context("existing.local", "missing.local"),
 			)
+			self.assertEqual(list(Path(directory).iterdir()), [unrelated_path])
 
 		self.assertEqual(result.exit_code, 0, result.output)
 		build.assert_called_once_with("24.04", "amd64", False, Path("dist"))
@@ -93,3 +101,45 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			False,
 		)
 		destroy.assert_called_once_with()
+
+	def test_outputs_remain_until_every_site_commits(self) -> None:
+		for failure in (None, "publish", "commit"):
+			with (
+				self.subTest(failure=failure),
+				TemporaryDirectory() as directory,
+				patch.object(commands, "build_ubuntu_image") as build,
+				patch.object(commands, "publish_ubuntu_image") as publish,
+				patch.object(commands.frappe, "init"),
+				patch.object(commands.frappe, "connect"),
+				patch.object(commands.frappe.db, "commit") as commit,
+				patch.object(commands.frappe, "destroy"),
+			):
+				paths = [
+					Path(directory) / name
+					for name in ("image.ext4", "image.ext4.zst", "vmlinux", "vmlinux.release")
+				]
+				for path in paths:
+					path.write_bytes(b"build output")
+				build.return_value = (paths[0], paths[2])
+
+				def check_outputs(*args: object) -> None:
+					self.assertTrue(all(path.exists() for path in paths))
+					if failure == "publish" and publish.call_count == 2:
+						raise RuntimeError("publish failed")
+
+				publish.side_effect = check_outputs
+				if failure == "commit":
+					commit.side_effect = [None, RuntimeError("commit failed")]
+				result = CliRunner().invoke(
+					commands.build_ubuntu_base_image,
+					["--version", "24.04"],
+					obj=command_context("first.local", "second.local"),
+				)
+
+				if failure:
+					self.assertIsInstance(result.exception, RuntimeError)
+					self.assertTrue(all(path.exists() for path in paths))
+				else:
+					self.assertEqual(result.exit_code, 0, result.output)
+					self.assertFalse(any(path.exists() for path in paths))
+				self.assertEqual(publish.call_count, 2)
