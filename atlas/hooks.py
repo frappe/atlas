@@ -112,6 +112,7 @@ after_migrate = [
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
 	"atlas.operations.investigator.agents.enable_skill_commands",
+	"atlas.operations.investigator.knowledge.load_knowledge_base_after_migrate",
 ]
 
 # Uninstallation

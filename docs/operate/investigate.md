@@ -32,8 +32,7 @@ Do these steps once for each region, in this order:
    | Enable Investigation | Turn it on. It is off by default, and while it is off, Atlas refuses `POST /api/atlas/investigations` and every agent tool call. |
    | ClickHouse URL, Database, Username, Password | The ClickHouse HTTP URL, such as `http://127.0.0.1:8123`, the `datum` database, and the user from step 4. |
 
-6. Run `pilot --site SITE migrate`. It creates the two agents and their skills.
-7. Run `pilot --site SITE execute atlas.operations.investigator.knowledge.load_knowledge_base` to load the Atlas documents into the knowledge base. Run it again after a deploy that changes the documents.
+6. Run `pilot --site SITE migrate`. It creates the two agents and their skills, and loads the Atlas documents into the knowledge base. The load needs the embedding model of Flow Knowledge Settings. If the load fails, the migrate prints the error and continues. To load the documents without a migrate, run `pilot --site SITE execute atlas.operations.investigator.knowledge.load_knowledge_base`.
 
 ## How an investigation works
 
