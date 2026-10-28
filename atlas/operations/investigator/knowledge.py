@@ -20,7 +20,7 @@ def load_knowledge_base() -> dict[str, int]:
 	root = Path(frappe.get_app_source_path("atlas"))
 	knowledge = Knowledge(KNOWLEDGE_BASE)
 	documents = {
-		str(path.relative_to(root)): path.read_text(encoding="utf-8")
+		str(path.relative_to(root)): as_knowledge_text(path.read_text(encoding="utf-8"))
 		for pattern in SOURCE_PATTERNS
 		for path in sorted(root.glob(pattern))
 		if not SKIPPED_FOLDERS & set(path.relative_to(root).parts)
@@ -48,3 +48,8 @@ def load_knowledge_base() -> dict[str, int]:
 			counts["added"] += title not in sources
 
 	return counts
+
+
+def as_knowledge_text(content: str) -> str:
+	"""Flow saves a source through the HTML sanitizer, which drops the text after a tag-like `<site>`."""
+	return content.replace("<", "&lt;").replace(">", "&gt;")
