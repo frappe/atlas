@@ -50,6 +50,18 @@ def load_knowledge_base() -> dict[str, int]:
 	return counts
 
 
+def load_knowledge_base_after_migrate() -> None:
+	"""after_migrate: refresh the knowledge base. A failure, such as an embedding API error, does not stop the migrate."""
+	if not frappe.db.get_single_value("Flow Knowledge Settings", "embedding_model"):
+		print("Investigator knowledge base: skipped, Flow Knowledge Settings has no embedding model.")
+		return
+
+	try:
+		print(f"Investigator knowledge base: {load_knowledge_base()}")
+	except Exception as error:
+		print(f"Investigator knowledge base: not loaded. {error}")
+
+
 def as_knowledge_text(content: str) -> str:
 	"""Flow saves a source through the HTML sanitizer, which drops the text after a tag-like `<site>`."""
 	return content.replace("<", "&lt;").replace(">", "&gt;")
