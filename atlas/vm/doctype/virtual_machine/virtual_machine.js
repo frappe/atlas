@@ -18,6 +18,7 @@ frappe.ui.form.on("Virtual Machine", {
 		const CONSOLE = __("Console Access");
 		const ACTIONS = __("Actions");
 		const DANGEROUS = __("Dangerous Actions");
+		const DIAGNOSTICS = __("Diagnostics");
 
 		// A string action calls that method on the document. A function opens a dialog.
 		[
@@ -28,6 +29,18 @@ frappe.ui.form.on("Virtual Machine", {
 				CONSOLE,
 			],
 			[__("SSH Console"), () => openConsole(frm, "ssh"), is_running, CONSOLE],
+			[
+				__("Firecracker Log"),
+				() => showDiagnostics(frm, "fetch_firecracker_log", __("Firecracker Log")),
+				true,
+				DIAGNOSTICS,
+			],
+			[
+				__("VM Journal"),
+				() => showDiagnostics(frm, "fetch_journal", __("VM Journal")),
+				true,
+				DIAGNOSTICS,
+			],
 			[__("Start VM"), "start", is_stopped, ACTIONS, __("Starting...")],
 			[__("Stop VM"), "stop", is_running || is_paused, ACTIONS, __("Stopping...")],
 			[__("Reboot VM"), "reboot", is_running, ACTIONS, __("Rebooting...")],
@@ -135,6 +148,22 @@ frappe.ui.form.on("Virtual Machine", {
 		});
 	},
 });
+
+// Diagnostics read the host over SSH and show the scrubbed output. They store no record.
+function showDiagnostics(frm, method, title) {
+	frm.call({ method, doc: frm.doc, freeze: true }).then(({ message }) => {
+		const dialog = new frappe.ui.Dialog({
+			title,
+			size: "extra-large",
+			fields: [{ fieldname: "output", fieldtype: "Code", read_only: 1 }],
+		});
+		dialog.set_value(
+			"output",
+			message.output || __("No output. Exit code {0}.", [message.exit_code])
+		);
+		dialog.show();
+	});
+}
 
 function setTerminationProtection(frm) {
 	const protecting = !frm.doc.is_termination_protected;

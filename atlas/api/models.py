@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
 		PublicIPAllocation,
 	)
+	from atlas.operations.doctype.investigation.investigation import Investigation
 	from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
@@ -1219,3 +1221,98 @@ class HostAccessResponse(BaseModel):
 	host_id: str = Field(description="Metal Server ID, or `all`.")
 	email: str = Field(description="Email of the person, in lowercase.")
 	expires_at: datetime = Field(description="End of the access.")
+
+
+class InvestigationPayload(StrictModel):
+	"""One problem for the read-only investigator of the region."""
+
+	problem: str = Field(min_length=1, max_length=10_000, description="The problem to investigate.")
+	title: str | None = Field(
+		default=None, max_length=140, description="Short title. The default is the start of the problem."
+	)
+	context: dict[str, Any] | None = Field(
+		default=None, description="Facts that help, such as resource IDs, alert names, and times."
+	)
+	requested_by: str | None = Field(
+		default=None, max_length=140, description="Email of the person who asked."
+	)
+
+
+class InvestigationEntryResponse(BaseModel):
+	"""One row of the audit log of an investigation."""
+
+	occurred_at: int = Field(description="Time as Unix seconds.")
+	kind: Literal["Tool Call", "Action", "Decision", "Note"] = Field(
+		description="Tool Call for a read, Action for a change, Decision or Note from the agent."
+	)
+	title: str = Field(description="Tool name with its arguments, or the decision.")
+	status: Literal["Success", "Failed", "Refused"] | None = Field(description="Result of a tool call.")
+	user: str | None = Field(description="Owner of the chat that ran the tool.")
+	is_approved: bool = Field(description="The person in the chat approved the call.")
+	detail: str | None = Field(description="Scrubbed arguments and result or error, as JSON.")
+	reference_doctype: str | None = Field(
+		description="Atlas record of the call, such as Metal Server Console Log or SSH Task."
+	)
+	reference_name: str | None = Field(description="Name of that record.")
+
+
+class InvestigationResponse(BaseModel):
+	"""One investigation. Atlas masks credentials in each text field."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "investigation-00001",
+					"title": "VM vm-0000076 does not boot",
+					"status": "completed",
+					"problem": "VM vm-0000076 does not boot after a restart.",
+					"context": {"virtual_machine": "vm-0000076"},
+					"outcome": "## Summary\nThe ZFS pool on waw-1 is full...",
+					"error": None,
+					"created_at": 1793141980,
+					"entries": [],
+				}
+			]
+		}
+	)
+
+	id: str = Field(description="Investigation ID.")
+	title: str = Field(description="Short title.")
+	status: Literal["queued", "running", "completed", "failed"] = Field(description="Investigation state.")
+	problem: str = Field(description="The problem to investigate.")
+	context: dict[str, Any] | None = Field(description="Facts sent with the problem.")
+	outcome: str | None = Field(description="The report in Markdown, when the investigation is complete.")
+	error: str | None = Field(description="Why the investigation failed.")
+	created_at: int = Field(description="Creation time as Unix seconds.")
+	entries: list[InvestigationEntryResponse] = Field(
+		description="The audit log of tool calls and decisions, in time order."
+	)
+
+	@classmethod
+	def from_document(cls, investigation: Investigation) -> InvestigationResponse:
+		"""Build a response from an Investigation document."""
+		return cls(
+			id=investigation.name,
+			title=investigation.title,
+			status=investigation.status.lower(),
+			problem=investigation.problem,
+			context=json.loads(investigation.context) if investigation.context else None,
+			outcome=investigation.outcome,
+			error=investigation.error,
+			created_at=to_unix_timestamp(investigation.creation),
+			entries=[
+				InvestigationEntryResponse(
+					occurred_at=to_unix_timestamp(entry.occurred_at),
+					kind=entry.kind,
+					title=entry.title,
+					status=entry.status or None,
+					user=entry.user,
+					is_approved=bool(entry.is_approved),
+					detail=entry.detail,
+					reference_doctype=entry.reference_doctype,
+					reference_name=entry.reference_name,
+				)
+				for entry in investigation.entries
+			],
+		)
