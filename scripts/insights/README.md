@@ -10,7 +10,7 @@ Generate and import the Atlas workbook for [Insights](https://github.com/frappe/
 | `uptime_queries.py` | Uptime SQL and charts that the Uptime, SLA and SLOs, and Platform Services dashboards share |
 | `host/` | Host dashboard. Each area file lists its sections as `Chart` objects. |
 | `service_nodes_dashboard.py` | Atlas - Service Nodes: Vector metrics of proxy, WireGuard gateway, and IPv6 router nodes |
-| `alerts.py` | The P1, P2 Hosts, P2 Platform, and P3 alert queries and their Insights Alerts. See [alerts](../../docs/operate/dashboards.md#alerts). |
+| `alerts.py` | The P1, P2 Hosts, and P2 Platform alert queries and their Insights Alerts. See [alerts](../../docs/operate/dashboards.md#alerts). |
 | `update_workbook.py` | Finds the bench of the Insights site, gets these scripts, generates the workbook, and runs `import_workbook.py` |
 | `import_workbook.py` | Runs in the bench: updates the workbook and its alerts, then loads every chart once |
 
