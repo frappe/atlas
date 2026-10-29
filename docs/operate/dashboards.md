@@ -17,8 +17,6 @@ Host charts and tables read only the Metal servers that Atlas lists in `atlas_me
 | Atlas - Weekly Trends | How did hosts, VMs, migrations, and images change in the last 7 days? |
 | Atlas - Logs | What happened to one VM or request? |
 
-The Insights dashboard [Abuse Protection ↗](https://dashboard.frappe.io/insights/dashboards/8eplc8khne) shows host packet load and the abuse profile split for [abuse detection](../abuse/detection.md#fleet-data). It was built by hand, not by `scripts/insights`.
-
 ## Atlas - Region
 
 Read it from the top. Each table sorts its worst row first.

@@ -74,6 +74,8 @@ Kernel tables use a `field` label, for example `system_memory_info{field="MemAva
 
 Collectors exclude VM volumes, interfaces, units, and per-dataset ZFS counters. Datum retains series forever, so temporary resources would cause unbounded growth.
 
+The planned per-VM [abuse metrics](../abuse/metrics.md#counters) (`vm_abuse_*`) are the only exception. They go to a separate Datum table with a 30-day TTL.
+
 ## Boot time
 
 `metal_vm_boot_seconds` has 2 stages for each cold, warm, and restore boot. `started` is the time until Firecracker runs the guest. `reachable` is the time until the guest answers ping from its network namespace. metald pings every 250 ms for up to 3 minutes. A guest that does not answer counts in `metal_vm_boot_unreachable_total`.

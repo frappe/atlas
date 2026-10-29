@@ -111,7 +111,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 		collapsed: true,
 		items: [
 			{ text: 'Overview', link: '/docs/abuse/' },
-			{ text: 'Detection', link: '/docs/abuse/detection' },
+			{ text: 'Metrics', link: '/docs/abuse/metrics' },
 			{ text: 'Enforcement', link: '/docs/abuse/enforcement' },
 			{ text: 'Contract', link: '/docs/abuse/contract' },
 			{ text: 'Data', link: '/docs/abuse/data' },

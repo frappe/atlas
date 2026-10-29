@@ -54,24 +54,23 @@ METRICS = (
 
 PERCENTILES = (("p1", 1.0), ("p10", 10.0), ("p50", 50.0), ("p90", 90.0), ("p99", 99.0), ("p999", 99.9))
 
-# Starting values from docs/abuse/detection.md#thresholds. Shape conditions that need
-# counters Metal does not have yet (answer ratios, public/private split) are left
-# out, so a hit here is an upper bound on what the real rule would do.
+# Starting values from the Central thresholds (spec/ABUSE.md#thresholds). The planned counters are in
+# docs/abuse/metrics.md#counters. Shape conditions that need counters Metal does not have yet (answer
+# ratios, public/private split) are left out, so a hit here is an upper bound on what the real rule would do.
 RULES = {
-	"udp_flood": (3, lambda rate: rate["sent_udp_pps"] > 20_000),
+	"udp_flood": (12, lambda rate: rate["sent_udp_pps"] > 20_000),
 	"small_packet_flood": (
-		3,
+		12,
 		lambda rate: rate["sent_pps"] > 20_000 and rate["sent_average_packet_bytes"] < 200,
 	),
 	"volumetric": (
 		6,
 		lambda rate: rate["sent_bits_per_second"] > 1e9 and (rate["received_to_sent_packet_ratio"] or 0) < 0.05,
 	),
-	"icmp_flood": (3, lambda rate: rate["sent_icmp_pps"] > 1_000),
-	"syn_flood": (3, lambda rate: rate["sent_syn_per_second"] > 2_000),
-	"host_safety": (3, lambda rate: rate["sent_pps"] > 80_000),
+	"icmp_flood": (12, lambda rate: rate["sent_icmp_pps"] > 1_000),
+	"syn_flood": (12, lambda rate: rate["sent_syn_per_second"] > 2_000),
 	"inbound_notice": (
-		3,
+		12,
 		lambda rate: rate["received_pps"] > 20_000 or rate["received_bits_per_second"] > 1e9,
 	),
 }
@@ -82,7 +81,6 @@ RULE_NOTES = {
 	"volumetric": "includes mesh traffic",
 	"icmp_flood": "includes mesh traffic",
 	"syn_flood": "SYN count includes SYN-ACK replies (track_traffic.c:137)",
-	"host_safety": "matches the real rule",
 	"inbound_notice": "includes mesh traffic",
 }
 
