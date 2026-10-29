@@ -284,13 +284,19 @@ GROUP BY host"""
 
 
 # metald logs one line per failed attempt, so a burst of one message is a real problem, not a retry.
-REPEATED_HOST_ERRORS = f"""SELECT {HOST_TITLE.format(column="l.resource_id")} AS host, toFloat64(count()) AS value,
-  concat(l.service, ': ', left(l.message, 100)) AS detail
-FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
-WHERE l.ts > now() - INTERVAL 1 HOUR AND l.level IN ('error', 'critical', 'alert', 'emergency')
-  AND (l.resource_id IN (SELECT server FROM running) OR l.resource_id IN (SELECT node FROM service_nodes))
-GROUP BY host, l.service, l.message
+# openresty wraps each message in its time, worker, connection, and request, so the check strips them.
+def repeated_errors_check(resources: str) -> str:
+	"""Resources that logged one error message at least 10 times in the last hour."""
+	return f"""SELECT {HOST_TITLE.format(column="e.resource_id")} AS host, toFloat64(count()) AS value,
+  concat(e.service, ': ', left(e.message, 100)) AS detail
+FROM (
+  SELECT resource_id, service, replaceRegexpAll(message, '^[0-9/]+ [0-9:]+ .[a-z]+. [0-9#]+: ([*][0-9]+ )?|, client: .*$', '') AS message
+  FROM logs
+  WHERE ts > now() - INTERVAL 1 HOUR AND level IN ('error', 'critical', 'alert', 'emergency') AND resource_id IN ({resources})
+) AS e LEFT JOIN titles AS t ON t.server = e.resource_id
+GROUP BY e.resource_id, t.title, e.service, e.message
 HAVING value >= 10"""
+
 
 # A node that never pushed has no telemetry installed yet, so it does not alert.
 SERVICE_NOT_REPORTING = f"""SELECT p.resource_id AS host, dateDiff('second', p.last_ts, now()) AS value, '' AS detail
@@ -516,7 +522,9 @@ P2_HOSTS = Alert(
 		),
 		Check("BMC problems", "0", BMC_PROBLEMS),
 		Check("BMC warning events, last hour", "0", bmc_events("warning")),
-		Check("Repeated host errors, last hour", "under 10", REPEATED_HOST_ERRORS),
+		Check(
+			"Repeated host errors, last hour", "under 10", repeated_errors_check("SELECT server FROM running")
+		),
 		Check(
 			"Dropped telemetry, last hour",
 			"0",
@@ -542,6 +550,11 @@ P2_PLATFORM = Alert(
 		),
 		Check("Service node memory used, %", "at most 90", SERVICE_MEMORY),
 		Check("Service node OOM kills, last hour", "0", SERVICE_OOM_KILLS),
+		Check(
+			"Repeated service node errors, last hour",
+			"under 10",
+			repeated_errors_check("SELECT node FROM service_nodes"),
+		),
 		Check("Proxy 5xx, % of requests in the last hour", "at most 5", PROXY_SERVER_ERRORS),
 		Check("Atlas disk free, %", f"at least {DISK_FREE_WARNING}", atlas_disk_check(DISK_FREE_WARNING)),
 		Check("Unhandled Atlas errors, last hour", "no new error, under 20", ATLAS_ERRORS),
