@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 
-from bmc_dashboard import BMC_HOSTS, SYSTEM
-from host.summary import DISKS_NOW, POOLS_NOW
+from bmc_dashboard import BMC_HOSTS
 from region_tables import STRESS
-from slo_dashboard import SLA_STATUS, SLO_STATUS
 from workbook import ERRORS, LOOKBACK, TITLES, UNHEALTHY_DISKS, Workbook
 
 # The newest Atlas inventory, so a quiet Atlas keeps its sets.
@@ -365,36 +363,6 @@ FROM (
 )
 WHERE capacity > 0 AND capacity - used < 5"""
 
-HEARTBEAT_CHECK = "Hosts reporting, last 5 min"
-
-# Always one row, so the report arrives every 6 hours even when all is well. A missing report means alerts are broken.
-HEARTBEAT = """SELECT 'Atlas' AS host, toFloat64(uniqExactIf(resource_id, ts > now() - INTERVAL 5 MINUTE)) AS value,
-  concat('of ', toString((SELECT count() FROM running)), ' running hosts') AS detail
-FROM samples
-WHERE metric = 'metal_vm_pending' AND ts > now() - INTERVAL 5 MINUTE AND resource_id IN (SELECT server FROM running)"""
-
-FLEET_ALLOCATION = """SELECT 'Atlas' AS host, allocated AS value, kind AS detail
-FROM (
-  SELECT replaceRegexpOne(metric, '^atlas_host_(cpu|memory|storage)_.*', '\\\\1') AS kind,
-    (1 - sumIf(value, labels['kind'] = 'available') / nullIf(sumIf(value, labels['kind'] = 'total'), 0)) * 100 AS allocated
-  FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric IN ('atlas_host_cpu_millicores', 'atlas_host_memory_bytes', 'atlas_host_storage_bytes')
-    AND ts = (SELECT max(ts) FROM samples WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_host_memory_bytes' AND ts > now() - INTERVAL 15 MINUTE)
-  GROUP BY kind
-)
-WHERE allocated > 80"""
-
-VERSION_DRIFT = f"""WITH versions AS (
-  SELECT resource_id, argMax(labels['version'], ts) AS version FROM samples
-  WHERE metric = 'metal_build_info' AND ts > now() - INTERVAL 15 MINUTE AND resource_id IN (SELECT server FROM running)
-  GROUP BY resource_id
-)
-SELECT v.version AS host, toFloat64(count()) AS value,
-  arrayStringConcat(arraySort(groupArray({HOST_TITLE.format(column="v.resource_id")})), ', ') AS detail
-FROM versions AS v LEFT JOIN titles AS t ON t.server = v.resource_id
-WHERE (SELECT uniqExact(version) FROM versions) > 1
-GROUP BY v.version"""
-
 P1 = Alert(
 	"critical",
 	"Atlas P1 Critical",
@@ -608,61 +576,7 @@ P2_PLATFORM = Alert(
 	],
 )
 
-P3 = Alert(
-	"report",
-	"Atlas P3 Report",
-	"🔵",
-	"0 */6 * * *",
-	[
-		Check(HEARTBEAT_CHECK, "every running host", HEARTBEAT),
-		Check(
-			"SLA error budget left, %",
-			"at least 50",
-			f"SELECT sla AS host, budget_left AS value, concat(toString(round(this_month, 2)), '% this month') AS detail FROM ({SLA_STATUS}) WHERE budget_left < 50",
-		),
-		Check(
-			"SLO error budget left, %",
-			"at least 50",
-			f"SELECT slo AS host, budget_left AS value, concat(toString(round(within_target, 1)), '% within ', target) AS detail FROM ({SLO_STATUS}) WHERE budget_left < 50",
-		),
-		Check("Fleet allocated, %", "at most 80", FLEET_ALLOCATION),
-		Check(
-			"Pool used, %",
-			"at most 75",
-			latest_check("metric = 'system_zfs_pool_capacity_percent'", "l.reading > 75", "labels['pool']"),
-		),
-		Check("metald versions, hosts", "one version", VERSION_DRIFT),
-		Check(
-			"BMC temperature headroom, °C",
-			"at least 10",
-			f"SELECT host, temperature_headroom AS value, '' AS detail FROM ({BMC_HOSTS}) WHERE temperature_headroom < 10",
-		),
-		Check(
-			"BMC clock offset, minutes",
-			"under 5",
-			f"SELECT host, clock_offset_minutes AS value, '' AS detail FROM ({SYSTEM}) WHERE clock_offset_minutes >= 5",
-		),
-		Check(
-			"Days since last scrub",
-			"at most 35",
-			f"SELECT host, scrub_age_days AS value, name AS detail FROM ({POOLS_NOW}) WHERE scrub_age_days > 35",
-		),
-		Check(
-			"Disk life used, %",
-			"at most 80",
-			f"SELECT host, life_used AS value, concat(device, ' ', model) AS detail FROM ({DISKS_NOW}) WHERE life_used > 80",
-		),
-		Check(
-			"Oldest VM draft, hours",
-			"at most 24",
-			atlas_check(
-				"atlas_virtual_machine_oldest_draft_seconds", "argMax(value, ts) / 3600", "reading > 24"
-			),
-		),
-	],
-)
-
-ALERTS = [P1, P2_HOSTS, P2_PLATFORM, P3]
+ALERTS = [P1, P2_HOSTS, P2_PLATFORM]
 
 # The query is the Atlas instance that pushes to this Datum, so alerts from several regions stay apart.
 ATLAS_INSTANCE = f"""SELECT argMax(resource_id, ts) AS atlas FROM samples
@@ -670,34 +584,19 @@ WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_servers' AND ts > now
 
 # Jinja that Insights renders with the query rows. The rows arrive in check order, so a heading starts each check.
 # Raven collapses paragraph margins, so a <br> separates the sections.
-MESSAGE_BODY = f""" - {{{{ rows[0].atlas | replace('atlas-', '') }}}}**
-{{%- set failing = rows | rejectattr('check', 'equalto', '{HEARTBEAT_CHECK}') | list %}}
-{{%- for row in rows if row.check == '{HEARTBEAT_CHECK}' %}}
+MESSAGE_BODY = """ - {{ rows[0].atlas | replace('atlas-', '') }}**
+{%- for row in rows %}
+{%- if loop.changed(row.check) %}
 
 <br>
 
-**{{{{ row.check }}}}** (Healthy if {{{{ row.healthy }}}})
-
-{{{{ row.value | int }}}} {{{{ row.detail }}}}
-{{%- endfor %}}
-{{%- if not failing %}}
-
-<br>
-
-✅ All checks are healthy.
-{{%- endif %}}
-{{%- for row in failing %}}
-{{%- if loop.changed(row.check) %}}
-
-<br>
-
-**{{{{ row.check }}}}** (Healthy if {{{{ row.healthy }}}})
+**{{ row.check }}** (Healthy if {{ row.healthy }})
 
 | Name | Value | Detail |
 |---|---|---|
-{{%- endif %}}
-| {{{{ row.host }}}} | {{{{ '%g' | format(row.value) }}}} | {{{{ row.detail }}}} |
-{{%- endfor %}}"""
+{%- endif %}
+| {{ row.host }} | {{ '%g' | format(row.value) }} | {{ row.detail }} |
+{%- endfor %}"""
 
 
 def alert_sql(alert: Alert) -> str:
