@@ -107,6 +107,18 @@ const handbook: DefaultTheme.SidebarItem[] = [
 		],
 	},
 	{
+		text: 'Abuse protection',
+		collapsed: true,
+		items: [
+			{ text: 'Overview', link: '/docs/abuse/' },
+			{ text: 'Detection', link: '/docs/abuse/detection' },
+			{ text: 'Enforcement', link: '/docs/abuse/enforcement' },
+			{ text: 'Contract', link: '/docs/abuse/contract' },
+			{ text: 'Data', link: '/docs/abuse/data' },
+			{ text: 'Layouts', link: '/docs/abuse/layouts' },
+		],
+	},
+	{
 		text: 'Build and test',
 		collapsed: true,
 		items: [
