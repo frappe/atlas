@@ -73,7 +73,7 @@ P1 and P2 check only hosts that Atlas reports as Running, and only active servic
 
 P1 shows critical BMC events of the last 15 minutes, so one event can post up to 3 times. P2 posts each BMC warning event once.
 
-P3 always posts. Its first line is a heartbeat with the number of hosts that report, so a missing report means that telemetry or alerts are broken.
+P3 always posts. Its first section is a heartbeat with the number of hosts that report, so a missing report means that telemetry or alerts are broken.
 
 A new alert stays disabled until the update sets a webhook:
 
