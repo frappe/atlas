@@ -365,11 +365,11 @@ FROM (
 )
 WHERE capacity > 0 AND capacity - used < 5"""
 
-HEARTBEAT_CHECK = "Heartbeat, hosts reporting"
+HEARTBEAT_CHECK = "Hosts reporting, last 5 min"
 
 # Always one row, so the report arrives every 6 hours even when all is well. A missing report means alerts are broken.
 HEARTBEAT = """SELECT 'Atlas' AS host, toFloat64(uniqExactIf(resource_id, ts > now() - INTERVAL 5 MINUTE)) AS value,
-  concat('of ', toString((SELECT count() FROM running)), ' running hosts reported in the last 5 min') AS detail
+  concat('of ', toString((SELECT count() FROM running)), ' running hosts') AS detail
 FROM samples
 WHERE metric = 'metal_vm_pending' AND ts > now() - INTERVAL 5 MINUTE AND resource_id IN (SELECT server FROM running)"""
 
@@ -669,24 +669,34 @@ ATLAS_INSTANCE = f"""SELECT argMax(resource_id, ts) AS atlas FROM samples
 WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_servers' AND ts > now() - {LOOKBACK}"""
 
 # Jinja that Insights renders with the query rows. The rows arrive in check order, so a heading starts each check.
-MESSAGE_BODY = f""" · `{{{{ rows[0].atlas }}}}`
+# Raven collapses paragraph margins, so a <br> separates the sections.
+MESSAGE_BODY = f""" - {{{{ rows[0].atlas | replace('atlas-', '') }}}}**
 {{%- set failing = rows | rejectattr('check', 'equalto', '{HEARTBEAT_CHECK}') | list %}}
 {{%- for row in rows if row.check == '{HEARTBEAT_CHECK}' %}}
+
+<br>
+
+**{{{{ row.check }}}}** (Healthy if {{{{ row.healthy }}}})
 
 {{{{ row.value | int }}}} {{{{ row.detail }}}}
 {{%- endfor %}}
 {{%- if not failing %}}
+
+<br>
 
 ✅ All checks are healthy.
 {{%- endif %}}
 {{%- for row in failing %}}
 {{%- if loop.changed(row.check) %}}
 
-&nbsp;
+<br>
 
-**{{{{ row.check }}}}** (healthy: {{{{ row.healthy }}}})
-{{% endif %}}
-- `{{{{ row.host }}}}`: **{{{{ '%g' | format(row.value) }}}}**{{% if row.detail %}} · {{{{ row.detail }}}}{{% endif %}}
+**{{{{ row.check }}}}** (Healthy if {{{{ row.healthy }}}})
+
+| Name | Value | Detail |
+|---|---|---|
+{{%- endif %}}
+| {{{{ row.host }}}} | {{{{ '%g' | format(row.value) }}}} | {{{{ row.detail }}}} |
 {{%- endfor %}}"""
 
 
@@ -715,6 +725,6 @@ def add_alerts(workbook: Workbook) -> None:
 				"query": query,
 				"cron_format": alert.cron,
 				"condition": "q['check'] != ''",
-				"message": f"{alert.icon} **{alert.title}**{MESSAGE_BODY}",
+				"message": f"**{alert.icon} {alert.title.removeprefix('Atlas ')}{MESSAGE_BODY}",
 			}
 		)
