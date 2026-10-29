@@ -65,8 +65,8 @@ The workbook has 3 Insights Alerts. Each alert runs one query from the Alerts fo
 | Alert | Runs | Checks |
 | --- | --- | --- |
 | 🔴 Atlas P1 Critical | Every 5 minutes | Hosts, service nodes, or Atlas not reporting, host sync, unavailable or failing VMs, storage at risk, host, service node, or Atlas disk under 10% free, stalled reconcilers, stuck VM changes, service nodes not ready, uncorrected ECC errors, critical BMC events, API 5xx |
-| 🟠 Atlas P2 Hosts | Every hour | Host disk under 25% free, hardware faults, host stress, failed units, clock sync, BMC problems, BMC warning events, repeated host and service node errors, dropped telemetry, RAM allocation |
-| 🟠 Atlas P2 Platform | Every hour | Atlas or service node disk under 25% free, service node memory and OOM kills, proxy 5xx over 5%, new or bursting Atlas errors, migrations, jobs, Metal calls, free IPv4 addresses |
+| 🟠 Atlas P2 Hosts | Every hour | Host disk under 25% free, hardware faults, host stress, failed units, clock sync, BMC problems, BMC warning events, repeated host errors, dropped telemetry, RAM allocation |
+| 🟠 Atlas P2 Platform | Every hour | Atlas or service node disk under 25% free, service node memory, OOM kills, and repeated errors, proxy 5xx over 5%, new or bursting Atlas errors, migrations, jobs, Metal calls, free IPv4 addresses |
 
 P1 and P2 check only hosts that Atlas reports as Running, and only active service nodes. A service node that never sent telemetry does not alert as not reporting. P2 is two alerts, because one query is over the Insights SQL size limit. An alert posts when its query returns a row, and posts again on each run while the problem stays.
 
