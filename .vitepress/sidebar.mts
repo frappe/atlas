@@ -114,7 +114,6 @@ const handbook: DefaultTheme.SidebarItem[] = [
 			{ text: 'Metrics', link: '/docs/abuse/metrics' },
 			{ text: 'Enforcement', link: '/docs/abuse/enforcement' },
 			{ text: 'Contract', link: '/docs/abuse/contract' },
-			{ text: 'Data', link: '/docs/abuse/data' },
 			{ text: 'Layouts', link: '/docs/abuse/layouts' },
 		],
 	},

@@ -10,9 +10,13 @@ Metal never reads the content of guest traffic. It reads only the TLS ClientHell
 
 ## Counters
 
-A new TCX program and new maps sit next to [track_traffic.c](../../metal/internal/network/traffic/bpf/track_traffic.c). The maps belong to Metal, so they need no WG Mesh map layout patch.
+The counters extend the existing packet monitor: [monitor.go](../../metal/internal/network/traffic/monitor.go) and the TCX programs in [track_traffic.c](../../metal/internal/network/traffic/bpf/track_traffic.c). There is no second TCX program. New maps sit next to the existing maps. The maps belong to Metal, so they need no WG Mesh map layout patch.
 
-Metal counts only the traffic that the guest starts. It never counts a reply as a new flow. Today `track_traffic.c` counts a SYN-ACK as a SYN. The new `tcp_initiated` counter counts a SYN without ACK.
+The `track_traffic.c` maps are not pinned. metald creates them in memory when it starts (`bpfHooks.open` in [bpf_hooks.go](../../metal/internal/network/traffic/bpf_hooks.go)), and gives them to each program with `MapReplacements`. So a value layout change needs no metald patch. New maps are still the rule, so that the existing values keep their layout.
+
+Metal counts only the traffic that the guest starts. It never counts a reply as a new flow. Today `tcp_syn_packets` in `track_traffic.c` counts each packet with the SYN flag, a SYN-ACK too. That counter keeps its meaning for its current readers, for example `sent_tcp_syn_packets` in the VM metrics API. A new counter counts a SYN without ACK, for `vm_abuse_tcp_initiated_total`.
+
+Metal exports the `vm_abuse_*` metrics only when `metald.toml` has `[telemetry] abuse_metrics = true`. The default is false. Atlas writes the value from the Atlas Settings check `is_abuse_metrics_enabled`. See [telemetry](contract.md#telemetry).
 
 Metal exports the counters at the metald telemetry interval, 30 s by default. Each series has the label `virtual_machine`, with the Atlas VM ID, for example `vm-0a1b2c3d4e`. Metal exports the counters of every VM, tenant-0 VMs included.
 
@@ -120,7 +124,8 @@ python3 -I atlas-abuse-baseline.py merge abuse-baseline-*.json --csv fleet.csv
 
 ::: details Code to change
 
-- [Traffic counters](../../metal/internal/network/traffic/bpf/track_traffic.c) count a SYN-ACK as a SYN today.
+- [Traffic counters](../../metal/internal/network/traffic/bpf/track_traffic.c) count a SYN-ACK as a SYN today. Add the new counters and maps here, and read them in the [packet monitor](../../metal/internal/network/traffic/monitor.go).
+- The [metald config](../../metal/cmd/metald/config.go) reads `[telemetry] abuse_metrics`.
 - [System telemetry](../../metal/internal/telemetry/system/system.go) skips VM interfaces. The `vm_abuse_*` exporter is separate from it.
 - The [telemetry registry](../../metal/internal/telemetry/registry.go) rejects samples with a label in `churningLabels`. Exempt metrics with the `vm_abuse_` prefix from this check. All other metrics keep the check.
 
