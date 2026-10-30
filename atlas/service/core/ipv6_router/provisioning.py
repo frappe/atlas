@@ -10,6 +10,7 @@ from frappe import _
 from atlas.atlas.core.ssh import wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.service_package import IPV6_ROUTER_PACKAGE
+from atlas.service.core.telemetry import enqueue_service_telemetry
 from atlas.service.doctype.ipv6_router_server.ipv6_router_server import ipv6_router_lifecycle_lock
 from atlas.vm.core.models import IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST, Route
 
@@ -50,6 +51,7 @@ class IPv6RouterServerProvisioner:
 
 				self.router.status = "Active"
 				self.save()
+				enqueue_service_telemetry(self.router)
 			except Exception as error:
 				self.router.status = "Failed"
 				self.router.failure_message = f"{phase}: {error}"
@@ -61,6 +63,28 @@ class IPv6RouterServerProvisioner:
 				)
 				frappe.log_error(title=f"IPv6 router provisioning failed during {phase}")
 				raise
+
+	def update_package(self) -> None:
+		"""Install the published package on an active router. The router stays Active."""
+		with ipv6_router_lifecycle_lock(self.router.name):
+			self.router = frappe.get_doc("IPv6 Router Server", self.router.name)
+			if self.router.status != "Active":
+				return
+
+			try:
+				self.install_router()
+			except Exception as error:
+				self.router.failure_message = f"installation: {error}"
+				self.save()
+				frappe.db.commit()  # nosemgrep
+				self.logger.exception(
+					"IPv6 router package update failed",
+					extra={"resource": self.router.name, "operation": "update-package"},
+				)
+				raise
+
+			self.router.failure_message = None
+			self.save()
 
 	@property
 	def steps(self) -> tuple[tuple[str, Callable[[], None]], ...]:

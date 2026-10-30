@@ -45,6 +45,7 @@ class VirtualMachineDetailResponse:
             id (str): Virtual machine ID.
             image_id (str): Image used to create the virtual machine.
             is_privileged (bool): Whether the guest can reach every tenant through the mesh.
+            is_termination_protected (bool): Whether deletion is blocked.
             network (VirtualMachineNetwork): The addresses, internet access, and network limits of one virtual machine.
             public_ipv4 (None | PublicIPResponse): Attached public IPv4 allocation, or null.
             public_ipv6 (None | PublicIPResponse): Attached public IPv6 allocation, or null.
@@ -65,6 +66,7 @@ class VirtualMachineDetailResponse:
     id: str
     image_id: str
     is_privileged: bool
+    is_termination_protected: bool
     network: VirtualMachineNetwork
     public_ipv4: None | PublicIPResponse
     public_ipv6: None | PublicIPResponse
@@ -109,6 +111,8 @@ class VirtualMachineDetailResponse:
 
         is_privileged = self.is_privileged
 
+        is_termination_protected = self.is_termination_protected
+
         network = self.network.to_dict()
 
         public_ipv4: dict[str, Any] | None
@@ -150,6 +154,7 @@ class VirtualMachineDetailResponse:
             "id": id,
             "image_id": image_id,
             "is_privileged": is_privileged,
+            "is_termination_protected": is_termination_protected,
             "network": network,
             "public_ipv4": public_ipv4,
             "public_ipv6": public_ipv6,
@@ -218,6 +223,8 @@ class VirtualMachineDetailResponse:
         image_id = d.pop("image_id")
 
         is_privileged = d.pop("is_privileged")
+
+        is_termination_protected = d.pop("is_termination_protected")
 
         network = VirtualMachineNetwork.from_dict(d.pop("network"))
 
@@ -299,6 +306,7 @@ class VirtualMachineDetailResponse:
             id=id,
             image_id=image_id,
             is_privileged=is_privileged,
+            is_termination_protected=is_termination_protected,
             network=network,
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,

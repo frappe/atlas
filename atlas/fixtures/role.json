@@ -6,5 +6,13 @@
   "is_custom": 0,
   "name": "Atlas Admin",
   "role_name": "Atlas Admin"
+ },
+ {
+  "desk_access": 1,
+  "disabled": 0,
+  "doctype": "Role",
+  "is_custom": 0,
+  "name": "Atlas Investigator",
+  "role_name": "Atlas Investigator"
  }
 ]

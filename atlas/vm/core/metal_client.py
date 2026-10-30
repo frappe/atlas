@@ -139,6 +139,28 @@ class MetalClient:
 			budget_seconds=self.status_budget_seconds,
 		)
 
+	def offload_sleep_state(self, virtual_machine_id: str, request: dict[str, Any]) -> MetalVirtualMachine:
+		"""Request upload and eviction of selected sleep artifacts."""
+		response = self._request(
+			"POST",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/sleep-state",
+			json=request,
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
+	def refresh_sleep_state(self, virtual_machine_id: str, request: dict[str, Any]) -> MetalVirtualMachine:
+		"""Refresh GET URLs without waking the VM."""
+		response = self._request(
+			"PATCH",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/sleep-state",
+			json=request,
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
 	def get_virtual_machine_metrics(
 		self,
 		virtual_machine_id: str,
@@ -390,6 +412,25 @@ class MetalClient:
 		return self._request(
 			"POST",
 			f"/v1/migrations/{quote(migration_id, safe='')}/finish",
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+
+	def restore_migration_source(self, migration_id: str, virtual_machine_id: str) -> dict[str, Any]:
+		"""Ask the source host to start and unlock a stopped source. Safe to repeat."""
+		return self._request(
+			"POST",
+			f"/v1/migrations/{quote(migration_id, safe='')}/restore-source",
+			expected_status=202,
+			uncertain_on_failure=True,
+			json={"virtual_machine_id": virtual_machine_id},
+		)
+
+	def discard_migration(self, migration_id: str) -> dict[str, Any]:
+		"""Ask a returned destination host to remove a migration whose source was restored."""
+		return self._request(
+			"POST",
+			f"/v1/migrations/{quote(migration_id, safe='')}/discard",
 			expected_status=202,
 			uncertain_on_failure=True,
 		)

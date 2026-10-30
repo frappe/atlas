@@ -57,7 +57,7 @@ func (s *Server) createVirtualMachine(c echo.Context) error {
 // @Router		/v1/vms [get]
 func (s *Server) listVirtualMachines(c echo.Context) error {
 	ctx := c.Request().Context()
-	virtualMachines, err := s.virtualMachineManager.List(ctx)
+	virtualMachines, _, err := s.virtualMachineManager.List(ctx)
 	if err != nil {
 		return err
 	}

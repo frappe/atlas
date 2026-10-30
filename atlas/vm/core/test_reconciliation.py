@@ -14,6 +14,9 @@ def metal_error(status: int) -> MetalClientError:
 
 
 class TestReconciliation(UnitTestCase):
+	def setUp(self) -> None:
+		frappe.cache.delete_value(reconciliation.failure_key("VM-00001", "draft reconciliation"))
+
 	def settle(self, *, side_effect=None, on_present=None, delete_error=None) -> MagicMock:
 		"""Run one settle pass against a stubbed Metal client and record the document."""
 		virtual_machine = MagicMock()
@@ -57,6 +60,9 @@ class TestReconciliation(UnitTestCase):
 
 		virtual_machine.delete.assert_not_called()
 		virtual_machine.log_error.assert_called_once()
+
+		# Every pass fails while the host is down, so later passes do not log again.
+		self.settle(side_effect=metal_error(503)).log_error.assert_not_called()
 
 	def test_a_present_virtual_machine_runs_the_present_action(self) -> None:
 		seen: list[object] = []

@@ -5,7 +5,7 @@ frappe.ui.form.on("Virtual Machine", {
 			return;
 		}
 
-		// All fields mirror Metal and are edited through actions, never a direct save.
+		// VM fields are edited through actions, never a direct save.
 		frm.disable_save();
 
 		const current_state = frm.doc.current_state;
@@ -18,6 +18,7 @@ frappe.ui.form.on("Virtual Machine", {
 		const CONSOLE = __("Console Access");
 		const ACTIONS = __("Actions");
 		const DANGEROUS = __("Dangerous Actions");
+		const DIAGNOSTICS = __("Diagnostics");
 
 		// A string action calls that method on the document. A function opens a dialog.
 		[
@@ -28,6 +29,18 @@ frappe.ui.form.on("Virtual Machine", {
 				CONSOLE,
 			],
 			[__("SSH Console"), () => openConsole(frm, "ssh"), is_running, CONSOLE],
+			[
+				__("Firecracker Log"),
+				() => showDiagnostics(frm, "fetch_firecracker_log", __("Firecracker Log")),
+				true,
+				DIAGNOSTICS,
+			],
+			[
+				__("VM Journal"),
+				() => showDiagnostics(frm, "fetch_journal", __("VM Journal")),
+				true,
+				DIAGNOSTICS,
+			],
 			[__("Start VM"), "start", is_stopped, ACTIONS, __("Starting...")],
 			[__("Stop VM"), "stop", is_running || is_paused, ACTIONS, __("Stopping...")],
 			[__("Reboot VM"), "reboot", is_running, ACTIONS, __("Rebooting...")],
@@ -43,6 +56,12 @@ frappe.ui.form.on("Virtual Machine", {
 			[__("Resize Disk"), () => showResizeDiskDialog(frm), true, ACTIONS],
 			[__("Edit Disk Limits"), () => showEditDiskLimitsDialog(frm), true, ACTIONS],
 			[__("Resize VM"), () => showResizeDialog(frm), true, ACTIONS],
+			[
+				__("Edit Sleep Configuration"),
+				() => showEditSleepConfigurationDialog(frm),
+				true,
+				ACTIONS,
+			],
 			[__("Edit SSH Keys"), () => showEditSSHKeysDialog(frm), true, ACTIONS],
 			[__("Edit Metadata"), () => showEditMetadataDialog(frm), true, ACTIONS],
 			[__("Edit Network Throughput"), () => showEditThroughputDialog(frm), true, ACTIONS],
@@ -135,6 +154,22 @@ frappe.ui.form.on("Virtual Machine", {
 		});
 	},
 });
+
+// Diagnostics read the host over SSH and show the scrubbed output. They store no record.
+function showDiagnostics(frm, method, title) {
+	frm.call({ method, doc: frm.doc, freeze: true }).then(({ message }) => {
+		const dialog = new frappe.ui.Dialog({
+			title,
+			size: "extra-large",
+			fields: [{ fieldname: "output", fieldtype: "Code", read_only: 1 }],
+		});
+		dialog.set_value(
+			"output",
+			message.output || __("No output. Exit code {0}.", [message.exit_code])
+		);
+		dialog.show();
+	});
+}
 
 function setTerminationProtection(frm) {
 	const protecting = !frm.doc.is_termination_protected;
@@ -458,20 +493,13 @@ function showResizeDialog(frm) {
 				default: frm.doc.disk_mib,
 				description: __("The disk can only grow."),
 			},
-			{
-				fieldname: "sleep_after_idle_seconds",
-				fieldtype: "Int",
-				label: __("Sleep After Idle (Seconds)"),
-				default: frm.doc.sleep_after_idle_seconds,
-				description: __("0 disables automatic idle sleep."),
-			},
 		],
 		(values) =>
 			frm
 				.call({
 					method: "resize",
 					doc: frm.doc,
-					args: values,
+					args: getChangedValues(frm, values),
 					freeze: true,
 					freeze_message: __("Resizing..."),
 				})
@@ -486,6 +514,52 @@ function showResizeDialog(frm) {
 				}),
 		__("Resize VM"),
 		__("Resize")
+	);
+}
+
+function showEditSleepConfigurationDialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "sleep_after_idle_seconds",
+				fieldtype: "Int",
+				label: __("Sleep After Idle (Seconds)"),
+				default: frm.doc.sleep_after_idle_seconds,
+				description: __("0 disables automatic idle sleep."),
+			},
+			{
+				fieldname: "deep_sleep_after_idle_seconds",
+				fieldtype: "Int",
+				label: __("Deep Sleep After Idle (Seconds)"),
+				default: frm.doc.deep_sleep_after_idle_seconds,
+				description: __("0 disables deep sleep."),
+			},
+			{
+				fieldname: "coma_after_idle_seconds",
+				fieldtype: "Int",
+				label: __("Coma After Idle (Seconds)"),
+				default: frm.doc.coma_after_idle_seconds,
+				description: __("Must exceed Deep Sleep After Idle. 0 disables coma."),
+			},
+		],
+		(values) =>
+			frm
+				.call({
+					method: "resize",
+					doc: frm.doc,
+					args: getChangedValues(frm, values),
+					freeze: true,
+					freeze_message: __("Saving..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Edit Sleep Configuration"),
+		__("Save")
+	);
+}
+
+function getChangedValues(frm, values) {
+	return Object.fromEntries(
+		Object.entries(values).filter(([field, value]) => value !== frm.doc[field])
 	);
 }
 

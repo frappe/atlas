@@ -98,6 +98,7 @@ EOF
 	[[ -n $rescue_kernel ]] || { echo "rescue kernel was not installed" >&2; return 1; }
 	extract_vmlinux "$rescue_kernel" "$kernel_path.part"
 	mv "$kernel_path.part" "$kernel_path"
+	basename "$rescue_kernel" | sed 's/^vmlinuz-//' > "$kernel_path.release"
 	# Package installation can create host identities. Each guest must generate its own.
 	rm -f "$rootfs_directory"/etc/ssh/ssh_host_* "$rootfs_directory/var/lib/dbus/machine-id"
 	: > "$rootfs_directory/etc/machine-id"

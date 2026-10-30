@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -35,6 +36,11 @@ func (virtualMachine virtualMachine) records() (DesiredRecord, ObservedRecord, e
 		desired, desiredError := virtualMachine.manager.store.readDesired(virtualMachine.identifier)
 		observed, observedError := virtualMachine.manager.store.readObserved(virtualMachine.identifier)
 		if desiredError == nil && observedError == nil {
+			if observed.Generation > desired.Generation ||
+				observed.SpecificationGeneration > desired.SpecificationGeneration ||
+				observed.RestartGeneration > desired.RestartGeneration {
+				return DesiredRecord{}, ObservedRecord{}, fmt.Errorf("records of %s: observed generation is ahead of desired", virtualMachine.identifier)
+			}
 			return desired, observed, nil
 		}
 

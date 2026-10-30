@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -168,6 +169,7 @@ func (runtime *Runtime) launchMemorySnapshot(
 		return err
 	}
 	if metadata != nil {
+		vm.SetMetadataHostTime(metadata, time.Now())
 		if err := client.PutMMDS(ctx, metadata); err != nil {
 			return fmt.Errorf("refresh snapshot metadata: %w", err)
 		}
@@ -203,15 +205,23 @@ func (runtime *Runtime) launchWarmImage(ctx context.Context, configuration vm.Ru
 	metadata := configuration.Specification.MetadataServiceData(
 		configuration.ID, configuration.NetworkInterface.GuestIPAddress, configuration.NetworkInterface.MACAddress,
 	)
-	return runtime.launchMemorySnapshot(
+	if err := runtime.launchMemorySnapshot(
 		ctx,
 		configuration,
 		artifacts.RootSnapshot,
 		artifacts.StateFile,
 		artifacts.MemoryFile,
 		metadata,
-		true,
-	)
+		false,
+	); err != nil {
+		return err
+	}
+	// The guest still sees the warm disk size and no disk limits until the drive is refreshed.
+	if err := runtime.RefreshDisk(ctx, configuration); err != nil {
+		return fmt.Errorf("refresh warm disk: %w", err)
+	}
+
+	return api.New(runtime.configuration.socketPath(configuration.ID)).Resume(ctx)
 }
 
 // firecrackerCompatibility identifies the build and CPU template for snapshot matching.
@@ -228,8 +238,9 @@ func (runtime *Runtime) firecrackerCompatibility() string {
 	return compatibility
 }
 
-// hasMatchingMemorySnapshot reports whether CPU, memory, and disk match the warm
-// image shape exactly.
+// hasMatchingMemorySnapshot reports whether CPU and memory match the warm image
+// shape exactly. A larger disk also matches, because the warm launch shows the
+// guest the grown drive.
 func (runtime *Runtime) hasMatchingMemorySnapshot(specification vm.Specification) bool {
 	configuration := specification.Image.MemorySnapshotConfiguration
 	return !specification.Rescue.Enabled && specification.Image.CacheImage &&
@@ -237,7 +248,7 @@ func (runtime *Runtime) hasMatchingMemorySnapshot(specification vm.Specification
 		configuration != nil &&
 		configuration.VirtualCPUCount == specification.VirtualCPUCount() &&
 		configuration.MemoryMiB == specification.MemoryMiB &&
-		configuration.DiskMiB == specification.DiskMiB
+		configuration.DiskMiB <= specification.DiskMiB
 }
 
 // mkdirChown creates a directory the jailed process can write to.

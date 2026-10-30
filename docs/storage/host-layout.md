@@ -13,9 +13,9 @@ This page shows every file and dataset that Metal keeps on a host. After a resta
 ├── metald.toml                    metald configuration
 ├── image-policies.json            cached images requested by host sync
 ├── wireguard-peers.json           managed WireGuard peer set
+├── kernels/<kernel-sha256>        guest kernel, shared by images, hard-linked into each jail
 ├── images/<image-ref>/
 │   ├── manifest.json              digests and architecture. Never changes
-│   ├── vmlinux                    guest kernel, hard-linked into each jail
 │   ├── boot-args                  kernel command line (optional)
 │   ├── last-used                  time of the last VM start
 │   └── warm/<key>/                warm boot artifact for one exact VM shape
@@ -27,6 +27,9 @@ This page shows every file and dataset that Metal keeps on a host. After a resta
 └── machines/<vm-id>/
     ├── config.json                desired state and reservation
     ├── status.json                observed state and cleanup progress
+    ├── sleep-state.json           upload checkpoint and presigned URLs (mode 0600)
+    ├── sleep-transfer/            stable memory upload files
+    ├── sleep-restore/             temporary verified memory download and extraction
     ├── metrics/                  seven days of daily VM usage files
     ├── jailer.env                 arguments for metal-vm@<id>
     ├── migration/                 migration records and transfer staging
@@ -54,7 +57,8 @@ These are dataset names in the configured pool, not directories:
 <pool>/images/<image-ref>          base volume
 <pool>/images/<image-ref>@ready    source snapshot for VM disks
 <pool>/vms/<vm-id>                 one VM disk clone
-<pool>/staging/<snapshot-id>       read-only Machine image upload source
+<pool>/staging/<snapshot-id>       read-only image or sleep disk upload source
+<pool>/staging/sleep-<vm-id>       temporary sleep disk download before publication
 <pool>/warm/<key>@ready            warm boot disk for one image and VM shape
 <pool>/state                       file system mounted at /var/lib/metal
 ```

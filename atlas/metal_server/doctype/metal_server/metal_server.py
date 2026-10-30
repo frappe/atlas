@@ -24,6 +24,7 @@ from atlas.atlas.core.telemetry.datum import get_datum_url
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.disk_inventory import DiskInventory
+from atlas.metal_server.core.host_diagnostics import HostDiagnostics
 from atlas.metal_server.core.host_inspection import HostInspection
 from atlas.metal_server.core.host_installation import (
 	FIREWALL_INSTALL_TIMEOUT_SECONDS,
@@ -36,6 +37,7 @@ from atlas.metal_server.core.host_installation import (
 )
 from atlas.metal_server.core.provisioning import ServerProvisioner
 from atlas.metal_server.usage import enqueue_server_sync
+from atlas.operations.doctype.metal_server_drain.metal_server_drain import MetalServerDrain
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -219,6 +221,18 @@ class MetalServer(Document):
 		return ssh_task_name
 
 	@frappe.whitelist(methods=["POST"])
+	def fetch_metald_journal(self) -> dict:
+		"""Read the last hour of the metald journal. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics(self.name).fetch_metald_journal()
+
+	@frappe.whitelist(methods=["POST"])
+	def check_health(self) -> dict:
+		"""Read the live state of the host. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics(self.name).check_health()
+
+	@frappe.whitelist(methods=["POST"])
 	def setup_server(self) -> None:
 		"""Queue server setup again after a provisioning failure."""
 		frappe.only_for("System Manager")
@@ -323,6 +337,12 @@ class MetalServer(Document):
 		provider = self.settings.server_provider_controller
 		self.set_onload("has_bmc_driver", provider.has_bmc_driver)
 		self.set_onload("has_resizable_volumes", provider.has_resizable_volumes)
+		self.set_onload(
+			"running_drain",
+			frappe.db.get_value(
+				"Metal Server Drain", {"source_metal_server": self.name, "status": "Running"}
+			),
+		)
 
 	@frappe.whitelist(methods=["POST"])
 	def get_volume(self, kind: str) -> dict:
@@ -352,6 +372,27 @@ class MetalServer(Document):
 			deduplicate=True,
 			enqueue_after_commit=False,
 		)
+
+	@frappe.whitelist(methods=["POST"])
+	def drain(
+		self,
+		destinations: list[str] | None = None,
+		has_memory_snapshot: bool = False,
+		allow_disk_only_fallback: bool = True,
+		retry_failed_migrations: bool = True,
+		parallel_migrations: int = 1,
+	) -> str:
+		"""Start moving every VM off this server, and return the new Metal Server Drain."""
+		frappe.only_for("System Manager")
+		drain = MetalServerDrain.start(
+			self.name,
+			destinations=destinations,
+			has_memory_snapshot=cint(has_memory_snapshot),
+			allow_disk_only_fallback=cint(allow_disk_only_fallback),
+			retry_failed_migrations=cint(retry_failed_migrations),
+			parallel_migrations=cint(parallel_migrations),
+		)
+		return drain.name
 
 	@frappe.whitelist(methods=["POST"])
 	def sync_state(self) -> None:

@@ -6,6 +6,8 @@ Metal stores VM disks in ZFS and keeps records and artifacts under `/var/lib/met
 
 Every VM disk is a copy-on-write clone of an image, so creating a disk is almost instant and costs no space until the VM writes.
 
+A writable VM disk accepts discard, so a guest trim such as `fstrim` frees blocks in the clone.
+
 ```mermaid
 flowchart LR
     Base["Base image @ready"] -->|clone| VM1["VM 1 disk"]
@@ -17,7 +19,7 @@ flowchart LR
 | --- | --- |
 | `<pool>/images/<image-ref>` | Base volume with a `@ready` snapshot, the source of VM disks. |
 | `<pool>/vms/<vm-id>` | One VM disk clone. The VM ID matches `machines/<vm-id>`. |
-| `<pool>/staging/<snapshot-id>` | Read-only Machine image upload source. |
+| `<pool>/staging/<snapshot-id>` | Read-only image or sleep disk upload source. |
 | `<pool>/warm/<key>@ready` | Warm boot disk for one image and exact VM shape. |
 | `<pool>/state` | File system mounted at `/var/lib/metal`. Downloads, warm memory, and saved state use pool space, not the root disk. |
 
@@ -62,11 +64,17 @@ When a cached image no longer requests a memory snapshot, Metal removes its unus
 
 A VM disk clone keeps its source image and warm disk until the VM is removed. Metal can build a new warm artifact while an old warm disk stays in use.
 
+Images with the same kernel share one kernel file. Metal keeps a kernel while a stored image or a VM on the host uses it, including a VM that is migrating in, and removes an unused kernel one hour after its download. A VM with an existing disk boots from its kernel alone, so it still starts after its image is removed.
+
 An existing VM clone can keep an image dataset in use after policy stops requesting it.
 
 ## Limits and recovery
 
 Check free storage before downloads, staging, migration, or warm-artifact work. If a ZFS capacity check fails, Metal does not invent a capacity value.
+
+Metal reports available storage as the smaller of two values: the free pool space, and the usable pool size less the full size of every VM disk and incoming migration. A thin clone can grow to its full size, so placement never gives the same space to two VMs.
+
+The `<pool>/state` dataset has a 1 GiB ZFS reservation. Metal can still write its records when VM data fills the pool.
 
 Keep partial staging for retry. Before removing a dataset, confirm that no VM or staging clone still uses it.
 

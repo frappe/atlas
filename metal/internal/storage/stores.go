@@ -55,16 +55,17 @@ type VirtualMachineStore struct {
 
 // ImageStore manages local image artifacts and cache policy.
 type ImageStore struct {
-	pool         *ZFSPool
-	directory    string
-	policiesFile string
-	httpClient   *http.Client
-	imageLocks   sync.Map
-	logger       *slog.Logger
-	telemetry    *telemetry.Registry
+	pool             *ZFSPool
+	directory        string
+	kernelsDirectory string
+	policiesFile     string
+	httpClient       *http.Client
+	imageLocks       sync.Map
+	logger           *slog.Logger
+	telemetry        *telemetry.Registry
 }
 
-// SnapshotStore manages staged image snapshots.
+// SnapshotStore manages staged snapshots and their uploads.
 type SnapshotStore struct {
 	pool          *ZFSPool
 	images        *ImageStore
@@ -108,12 +109,13 @@ func NewStores(parentContext context.Context, poolName, imagesDirectory string, 
 	pool := &ZFSPool{name: poolName}
 	baseDirectory := filepath.Dir(imagesDirectory)
 	images := &ImageStore{
-		pool:         pool,
-		directory:    imagesDirectory,
-		policiesFile: filepath.Join(baseDirectory, "image-policies.json"),
-		httpClient:   newImageHTTPClient(),
-		logger:       logger,
-		telemetry:    registry,
+		pool:             pool,
+		directory:        imagesDirectory,
+		kernelsDirectory: filepath.Join(baseDirectory, "kernels"),
+		policiesFile:     filepath.Join(baseDirectory, "image-policies.json"),
+		httpClient:       newImageHTTPClient(),
+		logger:           logger,
+		telemetry:        registry,
 	}
 
 	return Stores{
@@ -157,14 +159,14 @@ func (store *SnapshotStore) Shutdown(shutdownContext context.Context) error {
 	}
 }
 
-// imageDirectory holds the kernel, manifest, and warm artifacts of one image.
+// imageDirectory holds the manifest and warm artifacts of one image.
 func (store *ImageStore) imageDirectory(imageReference string) string {
 	return filepath.Join(store.directory, imageReference)
 }
 
-// kernelFile is the uncompressed kernel of one image.
-func (store *ImageStore) kernelFile(imageReference string) string {
-	return filepath.Join(store.imageDirectory(imageReference), "vmlinux")
+// kernelFile is one uncompressed kernel. Images with the same kernel share it.
+func (store *ImageStore) kernelFile(kernelSHA256 string) string {
+	return filepath.Join(store.kernelsDirectory, strings.ToLower(kernelSHA256))
 }
 
 // manifestFile records the content one image reference is bound to.

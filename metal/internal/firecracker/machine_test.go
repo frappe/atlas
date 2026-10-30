@@ -2,12 +2,14 @@ package firecracker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -44,6 +47,27 @@ func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 
 	if err := m.saveAndStop(context.Background()); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+}
+
+func TestSaveAndStopRemovesPreviousRestoreFiles(t *testing.T) {
+	runtime := &Runtime{configuration: Config{MachinesDir: t.TempDir(), FirecrackerBin: "/missing/firecracker"}, units: &stubUnits{}}
+	machine := runtime.newMachine(vm.RuntimeMachine{ID: "vm-1", UserID: 1001})
+	requirement := machine.savedStateRequirement()
+	savedStateFixture(t, runtime.configuration, requirement)
+	previous := filepath.Join(runtime.configuration.chrootRoot(machine.input.ID), "snap")
+	if err := os.MkdirAll(previous, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeSavedStateFile(t, filepath.Join(previous, "mem"), 256)
+	if err := machine.saveAndStop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(previous); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("previous restore files remain: %v", err)
+	}
+	if _, err := runtime.configuration.loadSavedState(requirement); err != nil {
+		t.Fatalf("current saved state was lost: %v", err)
 	}
 }
 
@@ -294,6 +318,7 @@ type fakeImages struct {
 	releaseCalls int
 	releaseError error
 	staged       map[string]storage.StagedSnapshot
+	warm         *storage.WarmImageArtifacts
 }
 
 func (images *fakeImages) PrepareBoot(
@@ -358,7 +383,10 @@ func (images *fakeImages) WarmImage(
 	vm.MemorySnapshotConfiguration,
 	string,
 ) (storage.WarmImageArtifacts, bool, error) {
-	return storage.WarmImageArtifacts{}, false, nil
+	if images.warm == nil {
+		return storage.WarmImageArtifacts{}, false, nil
+	}
+	return *images.warm, true, nil
 }
 
 func (images *fakeImages) RemoveOtherWarmImages(context.Context, string, string) error {
@@ -406,5 +434,113 @@ func TestKillPreservesFailureWhenStopCannotComplete(t *testing.T) {
 	_, _, waits := units.counts()
 	if waits != 0 || !units.failed {
 		t.Fatalf("waits=%d failed=%v", waits, units.failed)
+	}
+}
+
+func TestWarmImageMatchesALargerDisk(t *testing.T) {
+	runtime := &Runtime{}
+	image := vm.Image{CacheImage: true, MemorySnapshot: true, MemorySnapshotConfiguration: &vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1024, DiskMiB: 10240}}
+	for diskMiB, want := range map[int]bool{10176: false, 10240: true, 20480: true} {
+		specification := vm.Specification{CPUMillicores: 1000, MemoryMiB: 1024, DiskMiB: diskMiB, Image: image}
+		if got := runtime.hasMatchingMemorySnapshot(specification); got != want {
+			t.Errorf("disk %d MiB matches = %v, want %v", diskMiB, got, want)
+		}
+	}
+}
+
+func TestWarmLaunchRefreshesTheDriveBeforeResume(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fc-warm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	artifacts := storage.WarmImageArtifacts{StateFile: filepath.Join(root, "state"), MemoryFile: filepath.Join(root, "memory")}
+	for _, path := range []string{artifacts.StateFile, artifacts.MemoryFile} {
+		if err := os.WriteFile(path, []byte("warm"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configuration := Config{MachinesDir: root, SocketsDir: filepath.Join(root, "sockets"), FirecrackerBin: filepath.Join(root, "binary")}
+	units := &migrationUnits{configuration: configuration, testing: t}
+	images := &fakeImages{warm: &artifacts}
+	runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil, telemetry.NewRegistry(nil))
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid()), Specification: vm.Specification{
+		CPUMillicores: 1000, MemoryMiB: 1, DiskMiB: 8, Disk: vm.Disk{IOPS: 3000},
+		Image: vm.Image{Name: "image", MemorySnapshotConfiguration: &vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1, DiskMiB: 4}},
+	}}
+	requests := make(chan string, 8)
+	units.handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests <- request.URL.Path
+		switch request.URL.Path {
+		case "/":
+			json.NewEncoder(writer).Encode(api.InstanceInfo{ID: "vm-1", State: "Paused"})
+			return
+		case "/drives/drive0":
+			var drive api.PartialDrive
+			if err := json.NewDecoder(request.Body).Decode(&drive); err != nil {
+				t.Error(err)
+			}
+			if drive.PathOnHost != rootDrivePath || drive.RateLimiter == nil || drive.RateLimiter.Ops == nil || drive.RateLimiter.Ops.Size != 3000 {
+				t.Errorf("drive refresh = %+v", drive)
+			}
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := runtime.launchWarmImage(t.Context(), input, "image"); err != nil {
+		t.Fatal(err)
+	}
+	close(requests)
+	var paths []string
+	for path := range requests {
+		paths = append(paths, path)
+	}
+	if got := strings.Join(paths, " "); got != "/snapshot/load /mmds / /drives/drive0 /vm" {
+		t.Fatalf("requests = %s", got)
+	}
+}
+
+func TestMetadataRefreshKeepsTheHostTime(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fc-metadata-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	configuration := Config{MachinesDir: root, SocketsDir: filepath.Join(root, "sockets"), FirecrackerBin: filepath.Join(root, "binary")}
+	units := &migrationUnits{configuration: configuration, testing: t}
+	images := &fakeImages{}
+	runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil, telemetry.NewRegistry(nil))
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid())}
+	documents := make(chan map[string]any, 1)
+	units.handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/":
+			json.NewEncoder(writer).Encode(api.InstanceInfo{ID: "vm-1", State: "Running"})
+			return
+		case "/mmds":
+			var document map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&document); err != nil {
+				t.Error(err)
+			}
+			documents <- document
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := units.Start(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configuration.SocketsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(configuration.chrootSocketPath("vm-1"), configuration.socketPath("vm-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.RefreshMetadata(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	metadata := (<-documents)["latest"].(map[string]any)["meta-data"].(map[string]any)
+	if _, ok := metadata["host-time-unix-ms"]; !ok {
+		t.Fatalf("metadata = %v", metadata)
 	}
 }

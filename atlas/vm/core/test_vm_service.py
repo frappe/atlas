@@ -62,7 +62,13 @@ class TestVirtualMachineCreation(UnitTestCase):
 		image = SimpleNamespace(name="image-1", architecture="amd64")
 		for placement_rules in (AFFINITY_RULES, []):
 			request = VirtualMachineCreateRequest.from_value(
-				{**self.request(), "tags": {"role": "cargo-server"}, "placement_rules": placement_rules}
+				{
+					**self.request(),
+					"tags": {"role": "cargo-server"},
+					"placement_rules": placement_rules,
+					"deep_sleep_after_idle_seconds": 3600,
+					"coma_after_idle_seconds": 86400,
+				}
 			)
 			with (
 				self.subTest(placement_rules=placement_rules),
@@ -72,6 +78,8 @@ class TestVirtualMachineCreation(UnitTestCase):
 
 				values = get_doc.call_args.args[0]
 				self.assertEqual(values["tags"], [{"key": "role", "value": "cargo-server"}])
+				self.assertEqual(values["deep_sleep_after_idle_seconds"], 3600)
+				self.assertEqual(values["coma_after_idle_seconds"], 86400)
 				# A VM without rules stores nothing.
 				stored_rules = values["placement_rules"]
 				self.assertEqual(json.loads(stored_rules) if stored_rules else [], placement_rules)
@@ -232,7 +240,15 @@ class TestVirtualMachineInformation(UnitTestCase):
 class TestVirtualMachineDisk(UnitTestCase):
 	def build_service(self, size_mib: int = 20480) -> tuple[VirtualMachineService, Mock]:
 		"""Return a service whose host reports one desired disk."""
-		virtual_machine = SimpleNamespace(name="VM-00001", sleep_after_idle_seconds=0, db_set=Mock())
+		virtual_machine = SimpleNamespace(
+			name="VM-00001",
+			sleep_after_idle_seconds=0,
+			deep_sleep_after_idle_seconds=0,
+			coma_after_idle_seconds=0,
+			memory_mib=2048,
+			disk_mib=20480,
+			db_set=Mock(),
+		)
 		service = VirtualMachineService(virtual_machine)
 		information = SimpleNamespace(
 			desired=SimpleNamespace(
@@ -266,6 +282,17 @@ class TestVirtualMachineDisk(UnitTestCase):
 			service.update_disk({"size_mib": 40960})
 
 		set_disk.assert_called_once_with(40960, 50, 2000)
+		service.virtual_machine.db_set.assert_called_once_with("disk_mib", 40960)
+
+	def test_a_retry_after_a_lost_response_repairs_the_stored_size(self) -> None:
+		service, information = self.build_service(size_mib=40960)
+
+		with (
+			patch.object(service, "require_information", return_value=information),
+			patch.object(service, "set_disk", return_value={}),
+		):
+			service.update_disk({"size_mib": 40960})
+
 		service.virtual_machine.db_set.assert_called_once_with("disk_mib", 40960)
 
 	def test_a_full_host_tells_the_caller_to_stop_and_resize(self) -> None:
@@ -325,6 +352,14 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 
 		for allocation in allocations.values():
 			allocation.begin_detach.assert_called_once_with()
+
+	def test_a_concurrent_network_change_gets_a_conflict(self) -> None:
+		with (
+			patch("atlas.vm.core.vm_service.NETWORK_LOCK_TIMEOUT_SECONDS", 0),
+			self.build_service(None).network_lock(),
+			self.assertRaises(AtlasConflictError),
+		):
+			self.build_service(None).set_routes([])
 
 	# An allocation job can run before Metal stores a new VM. An empty route list
 	# would then replace the create routes, so the read must fail and retry.

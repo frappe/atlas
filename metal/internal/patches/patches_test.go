@@ -222,19 +222,19 @@ func TestMemoryMigrationPatchRetriesAfterPartialUpgrade(t *testing.T) {
 	baseDirectory := t.TempDir()
 	sourcePath := filepath.Join(baseDirectory, "machines", "vm-1", "migration", "source.json")
 	destinationPath := filepath.Join(baseDirectory, "machines", "vm-2", "migration", "destination.json")
-	writeMigrationPatchRecord(t, sourcePath, `{"sequence":7}`)
+	writeMigrationPatchRecord(t, sourcePath, `{"schema_version":2,"sequence":7}`)
 	writeMigrationPatchRecord(t, destinationPath, "{")
 	logger := slog.New(slog.DiscardHandler)
 
 	if err := Run(baseDirectory, logger); err == nil {
 		t.Fatal("a corrupt destination record was accepted")
 	}
-	wantSource := map[string]any{"sequence": json.Number("7"), "has_memory_snapshot": nil}
+	wantSource := map[string]any{"schema_version": json.Number("2"), "sequence": json.Number("7"), "has_memory_snapshot": nil}
 	if got := readMigrationPatchRecord(t, sourcePath); !reflect.DeepEqual(got, wantSource) {
 		t.Fatalf("source was not upgraded before the failure: %v", got)
 	}
 
-	writeMigrationPatchRecord(t, destinationPath, `{}`)
+	writeMigrationPatchRecord(t, destinationPath, `{"schema_version":2}`)
 	for range 2 {
 		if err := Run(baseDirectory, logger); err != nil {
 			t.Fatal(err)
@@ -245,9 +245,82 @@ func TestMemoryMigrationPatchRetriesAfterPartialUpgrade(t *testing.T) {
 	}
 }
 
+func TestSleepMigrationPatchPreservesCheckpointsAndRestrictsCredentials(t *testing.T) {
+	baseDirectory := t.TempDir()
+	for _, name := range []string{"source.json", "destination.json"} {
+		path := filepath.Join(baseDirectory, "machines", "vm-1", "migration", name)
+		writeMigrationPatchRecord(t, path, `{"schema_version":2,"sequence":7,"intervals":[{"total_bytes":9007199254740993}]}`)
+		want := readMigrationPatchRecord(t, path)
+		want["schema_version"] = json.Number("3")
+		for range 2 {
+			if err := initializeSleepMigration(baseDirectory); err != nil {
+				t.Fatal(err)
+			}
+			if got := readMigrationPatchRecord(t, path); !reflect.DeepEqual(got, want) {
+				t.Fatalf("migration checkpoint changed: %v", got)
+			}
+			information, err := os.Stat(path)
+			if err != nil || information.Mode().Perm() != 0o600 {
+				t.Fatalf("migration credentials are not private: %v, %v", information, err)
+			}
+		}
+	}
+}
+
+func TestRenameComatoseSleepStateToComaKeepsOtherValues(t *testing.T) {
+	baseDirectory := t.TempDir()
+	statusPath := filepath.Join(baseDirectory, "machines", "vm-1", "status.json")
+	sourcePath := filepath.Join(baseDirectory, "machines", "vm-1", "migration", "source.json")
+	destinationPath := filepath.Join(baseDirectory, "machines", "vm-2", "migration", "destination.json")
+	writeMigrationPatchRecord(t, statusPath, `{"schema_version":1,"generation":9007199254740993,"state":"stopped","sleep_state":"comatose","updated_at":"2026-10-23T08:00:00Z"}`)
+	writeMigrationPatchRecord(t, sourcePath, `{"schema_version":3,"state":"locked","sleep":{"state":"comatose","checkpoint":{"id":"checkpoint-1"}}}`)
+	writeMigrationPatchRecord(t, destinationPath, `{"schema_version":3,"state":"ready","definition":{"sleep":{"state":"comatose"}}}`)
+
+	for range 2 {
+		if err := renameComatoseSleepStateToComa(baseDirectory); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status := readMigrationPatchRecord(t, statusPath)
+	if status["sleep_state"] != "coma" || status["state"] != "stopped" || status["generation"] != json.Number("9007199254740993") {
+		t.Fatalf("status = %v", status)
+	}
+	source := readMigrationPatchRecord(t, sourcePath)
+	if source["state"] != "locked" || source["sleep"].(map[string]any)["state"] != "coma" {
+		t.Fatalf("source = %v", source)
+	}
+	destination := readMigrationPatchRecord(t, destinationPath)
+	if destination["definition"].(map[string]any)["sleep"].(map[string]any)["state"] != "coma" {
+		t.Fatalf("destination = %v", destination)
+	}
+}
+
 func TestMemoryMigrationPatchRunsWithoutRecords(t *testing.T) {
 	if err := Run(t.TempDir(), slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMoveImageKernelsToKernelStoreSharesOneKernel(t *testing.T) {
+	baseDirectory := t.TempDir()
+	kernel := strings.Repeat("a", 64)
+	for _, image := range []string{"sha256:first", "sha256:second"} {
+		writeMigrationPatchRecord(t, filepath.Join(baseDirectory, "images", image, "manifest.json"), `{"kernel_sha256":"`+kernel+`"}`)
+		writeMigrationPatchRecord(t, filepath.Join(baseDirectory, "images", image, "vmlinux"), "kernel")
+	}
+
+	for range 2 {
+		if err := moveImageKernelsToKernelStore(baseDirectory); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if data, err := os.ReadFile(filepath.Join(baseDirectory, "kernels", kernel)); err != nil || string(data) != "kernel" {
+		t.Fatalf("kernel = %q, error %v", data, err)
+	}
+	if kernels, _ := filepath.Glob(filepath.Join(baseDirectory, "images", "*", "vmlinux")); len(kernels) != 0 {
+		t.Fatalf("image kernels remain: %v", kernels)
 	}
 }
 

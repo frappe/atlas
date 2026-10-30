@@ -16,6 +16,7 @@ from atlas.atlas.core.telemetry.events import timed
 from atlas.vm.core.placement.capacity_expansion import enqueue_capacity_expansion
 from atlas.vm.core.placement.context import (
 	PlacementContext,
+	has_hosts_without_fresh_capacity,
 	is_pool_known_full,
 	remember_pool_is_full,
 )
@@ -155,10 +156,6 @@ class PlacementStrategy(ABC):
 			and host.free.storage_mib >= self.requirements.disk_mib
 		]
 
-	def get_placement_rate(self, host_name: str | None = None) -> float:
-		"""Return the recent placement rate for a host or the fleet."""
-		return self._placement.get_placement_rate(host_name)
-
 	def try_select(self, host_name: str, *, wait: bool = False) -> bool:
 		"""Lock and recheck one host, and report whether this placement selected it."""
 		return self._placement.try_select(host_name, wait=wait)
@@ -205,12 +202,14 @@ class PlacementStrategy(ABC):
 		requirements: PlacementRequirements,
 		*,
 		exclude_servers: set[str] | None = None,
+		allowed_servers: set[str] | None = None,
 		current_placement: CurrentPlacement | None = None,
 	) -> str:
 		"""Return a locked host name or report that the pool has no capacity.
 
 		A resize passes its current placement, so the strategy keeps the VM on its
-		host when the host has room for the increase.
+		host when the host has room for the increase. A full set of allowed servers
+		says nothing about the pool, so it neither marks the pool full nor expands it.
 		"""
 		# A full pool can still hold the increase on the current host.
 		if not current_placement and is_pool_known_full(requirements):
@@ -225,6 +224,7 @@ class PlacementStrategy(ABC):
 				requirements,
 				overcommit_factor,
 				exclude_servers,
+				allowed_servers=allowed_servers,
 				cache_snapshot=attempt == 0,
 				deadline=deadline,
 				use_dedicated_sleepy_vm_hosts=dedicated_sleepy_hosts,
@@ -246,13 +246,15 @@ class PlacementStrategy(ABC):
 
 			cls._wait_before_retry(attempt, remaining)
 
-		if is_pool_full:
+		if is_pool_full and allowed_servers is None:
 			remember_pool_is_full(requirements)
 
 		# Contention must not trigger capacity expansion.
 		if is_contended:
 			cls._report_placement_busy()
 
+		if allowed_servers is not None:
+			frappe.throw(_("No allowed Metal Server has capacity. Retry later."), exc=OutOfCapacity)
 		cls._report_out_of_capacity(requirements)
 
 	@classmethod
@@ -324,7 +326,16 @@ class PlacementStrategy(ABC):
 
 	@classmethod
 	def _report_out_of_capacity(cls, requirements: PlacementRequirements) -> Never:
-		"""Queue capacity expansion, then tell the caller to retry later."""
+		"""Queue capacity expansion, then tell the caller to retry later.
+
+		A host without a recent capacity sample can still have room, so a sync outage
+		does not order a new host.
+		"""
+		if has_hosts_without_fresh_capacity(requirements.architecture):
+			frappe.throw(
+				_("Some Metal Servers have not reported their capacity in the last 2 minutes. Retry later."),
+				exc=OutOfCapacity,
+			)
 		enqueue_capacity_expansion(requirements)
 		frappe.throw(_("No Metal Server has capacity. Retry later."), exc=OutOfCapacity)
 

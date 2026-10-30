@@ -6,7 +6,7 @@ app_email = "developers@frappe.io"
 app_license = "agpl-3.0"
 
 fixtures = [
-	{"dt": "Role", "filters": [["name", "=", "Atlas Admin"]]},
+	{"dt": "Role", "filters": [["name", "in", ["Atlas Admin", "Atlas Investigator"]]]},
 	{"dt": "Role Profile", "filters": [["name", "=", "Atlas Admin"]]},
 ]
 
@@ -104,10 +104,15 @@ after_install = [
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
 ]
+
+flow_agents = ["atlas.operations.investigator.agents.get_agents"]
+
 after_migrate = [
 	"atlas.atlas.core.install.realign_scheduled_job_baselines",
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.service_package.publish_service_packages",
+	"atlas.operations.investigator.agents.enable_skill_commands",
+	"atlas.operations.investigator.knowledge.load_knowledge_base_after_migrate",
 ]
 
 # Uninstallation
@@ -172,6 +177,12 @@ has_permission = {
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+	"Flow Session": {
+		"on_update": "atlas.operations.doctype.investigation.investigation.sync_with_flow_session",
+	},
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
@@ -209,6 +220,7 @@ scheduler_events = {
 		],
 		"* * * * * */5": [
 			"atlas.operations.doctype.metald_update.metald_update.run_metald_update_steps",
+			"atlas.operations.doctype.metal_server_drain.metal_server_drain.run_metal_server_drain_steps",
 		],
 		"* * * * * */10": [
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_terminating_virtual_machines",
@@ -226,12 +238,15 @@ scheduler_events = {
 			"atlas.atlas.core.artifacts.delete_unlinked_files",
 			"atlas.vm.core.vm_image_storage_migration.enqueue_site_file_image_migrations",
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
+			"atlas.vm.core.vm_image_deletion.delete_unused_kernels",
+			"atlas.operations.doctype.investigation.investigation.fail_idle_investigations",
 		],
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_cluster_passwords",
 		],
 		"30 3 * * *": [
 			"atlas.metal_server.doctype.metal_server.metal_server.renew_telemetry_credentials",
+			"atlas.service.core.telemetry.renew_service_telemetry_credentials",
 		],
 		"* * * * *": [
 			"atlas.atlas.core.telemetry.datum.publish_metrics",
@@ -239,6 +254,8 @@ scheduler_events = {
 			"atlas.metal_server.core.public_ip_service.replenish_direct_allocations",
 			"atlas.atlas.doctype.ssh_task.ssh_task.mark_timed_out_ssh_tasks",
 			"atlas.vm.core.vm_migration.reconcile_migrations",
+			"atlas.vm.core.vm_sleep.enqueue_sleep_state_reconciliation",
+			"atlas.vm.core.sleepy_rebalance.enqueue_sleepy_host_rebalances",
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_stale_drafts",
 			"atlas.service.doctype.cargo_server.cargo_server.enqueue_pending_cargo_provisioning",
 			"atlas.service.core.cargo.bucket.enqueue_pending_bucket_provisioning",
@@ -256,6 +273,7 @@ scheduler_events = {
 		"atlas.atlas.doctype.atlas_settings.atlas_settings.renew_expiring_wildcard_certificate",
 		"atlas.metal_server.doctype.metal_server.metal_server.renew_expiring_tls_certificates",
 		"atlas.service.core.warpgate.installation.renew_warpgate_token",
+		"atlas.vm.core.vm_sleep.delete_orphaned_sleep_objects",
 	],
 }
 
@@ -293,7 +311,8 @@ scheduler_events = {
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-# ignore_links_on_delete = ["Communication", "ToDo"]
+# Drain history must not block the deletion of a VM or its migrations.
+ignore_links_on_delete = ["Metal Server Drain Migration", "Metal Server Drain Virtual Machine"]
 
 # Request Events
 # ----------------

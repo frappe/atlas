@@ -70,6 +70,7 @@ class ServerProvisioner:
 			("provider-create", self.server.ensure_provider_server),
 			("provider-preparation", lambda: self.provider.prepare_server(self.server)),
 			("secure-shell", self.wait_for_root_ssh),
+			("hostname", self.host_installation.configure_hostname),
 			("provider-network", lambda: self.provider.configure_server_network(self.server)),
 			("wireguard", self.host_installation.configure_wireguard),
 			("wireguard-link", self.wait_for_wireguard_ssh),

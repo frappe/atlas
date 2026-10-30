@@ -80,7 +80,7 @@ func (c *SourceClient) postJSON(ctx context.Context, client *http.Client, addres
 
 // PrepareSource asks the source to lock the VM and return its definition and state.
 func (c *SourceClient) PrepareSource(ctx context.Context, address, migrationID, virtualMachineID string) (VirtualMachineDefinition, vm.State, error) {
-	body, err := c.call(ctx, http.MethodPut, address, sourcePath(migrationID, virtualMachineID, "/source"))
+	body, err := c.call(ctx, http.MethodPut, address, sourcePath(migrationID, virtualMachineID, "/source")+"&sleep_state=true")
 	if err != nil {
 		return VirtualMachineDefinition{}, "", err
 	}
@@ -155,7 +155,16 @@ func (c *SourceClient) do(request *http.Request, client *http.Client) ([]byte, e
 		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, vm.ErrConflict)
 	}
 	if response.StatusCode == http.StatusUnprocessableEntity {
-		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, ErrNoMemoryToSave)
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		cause := ErrNoMemoryToSave
+		if json.Unmarshal(body, &failure) == nil && failure.Error.Code == "source_woke" {
+			cause = ErrSourceWoke
+		}
+		return nil, fmt.Errorf("source %s %s: %w", request.Method, request.URL.Path, cause)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("source %s %s returned HTTP %d", request.Method, request.URL.Path, response.StatusCode)

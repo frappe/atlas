@@ -15,6 +15,7 @@ type fakeImageStore struct {
 	cached              []string
 	removedWarmImages   []string
 	prunedImages        bool
+	usedKernels         []string
 	prunedSnapshots     bool
 	snapshotMaximumIdle time.Duration
 	imageMaximumIdle    time.Duration
@@ -43,6 +44,17 @@ func (store *fakeImageStore) PruneImages(
 	store.prunedImages = true
 	store.imageMaximumIdle = maximumIdle
 	return nil
+}
+
+func (store *fakeImageStore) PruneKernels(usedKernelSHA256s []string, _ time.Time, _ time.Duration) error {
+	store.usedKernels = usedKernelSHA256s
+	return nil
+}
+
+type fakeVirtualMachineKernels []string
+
+func (kernels fakeVirtualMachineKernels) KernelSHA256s(context.Context) ([]string, error) {
+	return kernels, nil
 }
 
 func (store *fakeImageStore) PruneStagedSnapshots(
@@ -74,7 +86,8 @@ func TestImageReconcilerCachesAndWarmsDesiredImages(t *testing.T) {
 		{Name: "on-demand"},
 	}}
 	builder := &fakeMemorySnapshotBuilder{}
-	reconciler := NewImageReconciler(store, store, builder, time.Hour, ImageConfig{Telemetry: telemetry.NewRegistry(nil)})
+	virtualMachineKernels := fakeVirtualMachineKernels{"kernel"}
+	reconciler := NewImageReconciler(store, store, builder, virtualMachineKernels, time.Hour, ImageConfig{Telemetry: telemetry.NewRegistry(nil)})
 
 	reconciler.reconcileAll(context.Background())
 
@@ -89,6 +102,9 @@ func TestImageReconcilerCachesAndWarmsDesiredImages(t *testing.T) {
 	}
 	if !store.prunedImages {
 		t.Fatal("unused images were not pruned")
+	}
+	if len(store.usedKernels) != 1 || store.usedKernels[0] != "kernel" {
+		t.Fatalf("used kernels = %v", store.usedKernels)
 	}
 	if !store.prunedSnapshots {
 		t.Fatal("idle snapshots were not pruned")

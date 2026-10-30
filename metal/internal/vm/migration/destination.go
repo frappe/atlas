@@ -75,6 +75,10 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	if definition.VirtualMachineID != virtualMachineID {
 		return m.recordDestinationError(record, fmt.Errorf("source returned definition for %s", definition.VirtualMachineID))
 	}
+	if err := definition.validateSleepMigration(observedState, record.HasMemorySnapshot); err != nil {
+		record.State = destinationFailed
+		return m.recordDestinationError(record, err)
+	}
 	definition, err = record.Resize.apply(definition)
 	if err != nil {
 		return m.recordDestinationError(record, err)
@@ -84,6 +88,19 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	}
 	m.StartTransfer(virtualMachineID)
 	return nil
+}
+
+func (definition VirtualMachineDefinition) validateSleepMigration(observedState vm.State, hasMemorySnapshot bool) error {
+	if definition.Sleep == nil {
+		return nil
+	}
+	if !hasMemorySnapshot {
+		return fmt.Errorf("offloaded migration requires memory compatibility: %w", vm.ErrConflict)
+	}
+	if definition.DesiredState != vm.StateRunning || observedState != vm.StateStopped || definition.Specification.SleepAfterIdleSeconds <= 0 {
+		return fmt.Errorf("offloaded migration source must be sleeping: %w", vm.ErrConflict)
+	}
+	return definition.Sleep.Validate(definition.SpecificationGeneration, definition.RestartGeneration)
 }
 
 // reserveAndReconstructDestination makes the capacity check and its reservation one
@@ -114,11 +131,9 @@ func (m *Manager) ActiveDestinationVirtualMachineIDs(_ context.Context) ([]strin
 		if !m.store.has(m.store.destinationPath(virtualMachineID)) {
 			continue
 		}
+		// An unreadable record stays active, so each pass reports its error.
 		record, err := m.store.readDestination(virtualMachineID)
-		if err != nil {
-			return nil, err
-		}
-		if !record.State.terminal() {
+		if err != nil || !record.State.terminal() {
 			active = append(active, virtualMachineID)
 		}
 	}
@@ -282,7 +297,8 @@ func (m *Manager) advanceAbort(ctx context.Context, record destinationRecord) er
 
 	// Restore a stopped source before unlocking it.
 	if record.State == destinationRestoringSource {
-		if err := m.source.StartSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil {
+		// A missing source record means Atlas already restored and unlocked the source.
+		if err := m.source.StartSource(ctx, record.Source, record.ID, record.VirtualMachineID); err != nil && !errors.Is(err, vm.ErrNotFound) {
 			return err
 		}
 		if record, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {

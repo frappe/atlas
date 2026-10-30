@@ -37,6 +37,21 @@ class HostInstallation:
 	def __init__(self, server: "MetalServer") -> None:
 		self.server = server
 
+	def configure_hostname(self) -> None:
+		"""Set the host name to the server title."""
+		result = SSHTask.create_for_script_file(
+			target_type=self.server.doctype,
+			target=self.server.name,
+			script_path="configure-hostname.sh",
+			environment={"SERVER_HOSTNAME": self.server.title},
+			timeout_seconds=60,
+			run_in_background=False,
+		).result
+		if not result or not result.is_success:
+			throw_script_failure(
+				_("Could not set the hostname on server {0}.").format(self.server.name), result
+			)
+
 	def configure_wireguard(self) -> None:
 		"""Configure WireGuard and store its public key."""
 		if not self.server.private_network_interface:

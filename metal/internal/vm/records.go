@@ -51,6 +51,7 @@ type ObservedRecord struct {
 	RestartGeneration       uint64           `json:"restart_generation"`
 	RescueGeneration        uint64           `json:"rescue_generation,omitempty"`
 	State                   State            `json:"state"`
+	SleepState              SleepState       `json:"sleep_state,omitempty"`
 	Phase                   string           `json:"phase,omitempty"`
 	OperationID             string           `json:"operation_id,omitempty"`
 	OperationStartedAt      time.Time        `json:"operation_started_at,omitempty"`
@@ -91,31 +92,6 @@ func newRecordStore(directory string) *recordStore {
 	return &recordStore{directory: directory}
 }
 
-// validateAll rejects corrupt machine records at startup.
-func (store *recordStore) validateAll() error {
-	identifiers, err := store.listIDs()
-	if err != nil {
-		return err
-	}
-	for _, identifier := range identifiers {
-		desired, err := store.readDesired(identifier)
-		if err != nil {
-			return err
-		}
-		observed, err := store.readObserved(identifier)
-		if err != nil {
-			return err
-		}
-		if observed.Generation > desired.Generation ||
-			observed.SpecificationGeneration > desired.SpecificationGeneration ||
-			observed.RestartGeneration > desired.RestartGeneration ||
-			observed.RescueGeneration > desired.RescueGeneration {
-			return fmt.Errorf("validate %s: observed generation is ahead of desired generation", store.virtualMachineDirectory(identifier))
-		}
-	}
-	return nil
-}
-
 // listIDs returns every reserved identifier in sorted order. A directory
 // without a desired record is not a reserved VM: a temporary VM keeps no
 // records, and a stopped build leaves its directory behind.
@@ -150,15 +126,8 @@ func (store *recordStore) readDesired(identifier string) (DesiredRecord, error) 
 	if err := readRecord(store.desiredPath(identifier), &record); err != nil {
 		return DesiredRecord{}, err
 	}
-	if record.SchemaVersion != recordSchemaVersion {
-		return DesiredRecord{}, fmt.Errorf("read %s: unsupported schema version %d", store.desiredPath(identifier), record.SchemaVersion)
-	}
-	if record.ID != identifier {
-		return DesiredRecord{}, fmt.Errorf("read %s: virtual machine identifier mismatch", store.desiredPath(identifier))
-	}
-	fingerprint, fingerprintError := hex.DecodeString(record.CreateFingerprint)
-	if fingerprintError != nil || len(fingerprint) != sha256.Size || record.Generation == 0 || !IsDesiredState(record.State) {
-		return DesiredRecord{}, fmt.Errorf("read %s: invalid desired record", store.desiredPath(identifier))
+	if err := record.validate(identifier); err != nil {
+		return DesiredRecord{}, fmt.Errorf("read %s: %w", store.desiredPath(identifier), err)
 	}
 	return record, nil
 }
@@ -169,25 +138,54 @@ func (store *recordStore) readObserved(identifier string) (ObservedRecord, error
 	if err := readRecord(store.observedPath(identifier), &record); err != nil {
 		return ObservedRecord{}, err
 	}
-	if record.SchemaVersion != recordSchemaVersion {
-		return ObservedRecord{}, fmt.Errorf("read %s: unsupported schema version %d", store.observedPath(identifier), record.SchemaVersion)
-	}
-	if !isObservedState(record.State) || record.UpdatedAt.IsZero() {
-		return ObservedRecord{}, fmt.Errorf("read %s: invalid observed record", store.observedPath(identifier))
+	if err := record.validate(); err != nil {
+		return ObservedRecord{}, fmt.Errorf("read %s: %w", store.observedPath(identifier), err)
 	}
 	return record, nil
 }
 
-// writeDesired stamps the schema version and replaces the desired record.
+// writeDesired stamps the schema version and replaces the desired record. It
+// refuses a record that a later read would reject.
 func (store *recordStore) writeDesired(record DesiredRecord) error {
 	record.SchemaVersion = recordSchemaVersion
+	if err := record.validate(record.ID); err != nil {
+		return fmt.Errorf("write %s: %w", store.desiredPath(record.ID), err)
+	}
 	return writeRecord(store.desiredPath(record.ID), record)
 }
 
-// writeObserved stamps the schema version and replaces the observed record.
+// writeObserved stamps the schema version and replaces the observed record. It
+// refuses a record that a later read would reject.
 func (store *recordStore) writeObserved(identifier string, record ObservedRecord) error {
 	record.SchemaVersion = recordSchemaVersion
+	if err := record.validate(); err != nil {
+		return fmt.Errorf("write %s: %w", store.observedPath(identifier), err)
+	}
 	return writeRecord(store.observedPath(identifier), record)
+}
+
+func (record DesiredRecord) validate(identifier string) error {
+	if record.SchemaVersion != recordSchemaVersion {
+		return fmt.Errorf("unsupported schema version %d", record.SchemaVersion)
+	}
+	if record.ID != identifier {
+		return errors.New("virtual machine identifier mismatch")
+	}
+	fingerprint, err := hex.DecodeString(record.CreateFingerprint)
+	if err != nil || len(fingerprint) != sha256.Size || record.Generation == 0 || !IsDesiredState(record.State) {
+		return errors.New("invalid desired record")
+	}
+	return nil
+}
+
+func (record ObservedRecord) validate() error {
+	if record.SchemaVersion != recordSchemaVersion {
+		return fmt.Errorf("unsupported schema version %d", record.SchemaVersion)
+	}
+	if !isObservedState(record.State) || record.UpdatedAt.IsZero() {
+		return errors.New("invalid observed record")
+	}
+	return nil
 }
 
 // remove deletes every record of one virtual machine.

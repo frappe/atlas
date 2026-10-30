@@ -33,13 +33,13 @@ func DefaultConfig() Config {
 }
 
 // FirecrackerVersion returns the version that the Firecracker binary prints,
-// for example "v1.16.1".
+// for example "v1.17.0".
 func (configuration Config) FirecrackerVersion(ctx context.Context) (string, error) {
 	output, err := platform.Output(ctx, configuration.FirecrackerBin, "--version")
 	if err != nil {
 		return "", err
 	}
-	// The first line is "Firecracker v1.16.1".
+	// The first line is "Firecracker v1.17.0".
 	fields := strings.Fields(output)
 	if len(fields) < 2 {
 		return "", fmt.Errorf("Firecracker printed no version: %q", output)

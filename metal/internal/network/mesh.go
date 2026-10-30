@@ -129,6 +129,18 @@ func (mesh *Mesh) EnsureHost(ctx context.Context) error {
 		"--uplink", mesh.uplinkName, "--wireguard", mesh.wireGuardName, "--controller", mesh.controllerAddress)
 }
 
+// EnsureHooks configures the host again when an interface restart removed a
+// mesh hook. Restarting wg0 or the uplink deletes its tc filters.
+func (mesh *Mesh) EnsureHooks(ctx context.Context) error {
+	for _, interfaceName := range []string{mesh.wireGuardName, mesh.uplinkName} {
+		output, err := platform.Output(ctx, "tc", "filter", "show", "dev", interfaceName, "ingress")
+		if err != nil || !strings.Contains(output, "handle 0x1") {
+			return mesh.EnsureHost(ctx)
+		}
+	}
+	return nil
+}
+
 // removeVM unregisters one VM address. An address this host does not own is not an error.
 func (mesh *Mesh) removeVM(ctx context.Context, address, interfaceName string) error {
 	mesh.forgetRegistration(address)

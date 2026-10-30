@@ -1,14 +1,16 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from uuid import uuid7
 
 import frappe
-from frappe.tests import UnitTestCase
+from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import CurrentPlacement
 from atlas.vm.core.vm_resize import VirtualMachineResize
 from atlas.vm.core.vm_service import MetalOperationError, VirtualMachineService
+from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 
 def build_information(state: str = "stopped") -> SimpleNamespace:
@@ -35,16 +37,11 @@ class TestVirtualMachineResize(UnitTestCase):
 			memory_mib=2048,
 			disk_mib=20480,
 			sleep_after_idle_seconds=0,
+			deep_sleep_after_idle_seconds=0,
+			coma_after_idle_seconds=0,
 			placement_rules=None,
-			db_set=Mock(),
 		)
-
-		def store(field, value=None):
-			values = field if isinstance(field, dict) else {field: value}
-			for name, stored_value in values.items():
-				setattr(self.virtual_machine, name, stored_value)
-
-		self.virtual_machine.db_set.side_effect = store
+		self.virtual_machine.db_set = Mock(side_effect=self.db_set)
 		self.resize = VirtualMachineResize(self.virtual_machine)
 		self.metal_client = self.start_patch(patch.object(VirtualMachineService, "metal_client", Mock()))
 		self.find_server = self.start_patch(
@@ -53,6 +50,12 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.create_migration = self.start_patch(
 			patch("atlas.vm.core.vm_resize.MigrationService.create", return_value="mig-00001")
 		)
+
+	def db_set(self, field: str | dict, value: int | None = None) -> None:
+		"""Mirror Document.db_set, which also updates the document."""
+		values = field if isinstance(field, dict) else {field: value}
+		for name, new_value in values.items():
+			setattr(self.virtual_machine, name, new_value)
 
 	def start_patch(self, active_patch) -> Mock:
 		mock = active_patch.start()
@@ -70,6 +73,7 @@ class TestVirtualMachineResize(UnitTestCase):
 			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
 		)
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
+		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 		self.find_server.assert_not_called()
 		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 
@@ -183,12 +187,31 @@ class TestVirtualMachineResize(UnitTestCase):
 
 		self.find_server.assert_not_called()
 
+	def test_offload_is_rejected_for_a_large_virtual_machine_before_a_host_read(self) -> None:
+		for changes in (
+			{"memory_mib": 8192, "deep_sleep_after_idle_seconds": 3600},
+			{"disk_mib": 102400, "deep_sleep_after_idle_seconds": 3600},
+		):
+			with (
+				self.subTest(changes=changes),
+				self.assertRaisesRegex(frappe.ValidationError, "at most 4 GiB"),
+			):
+				self.resize.apply(changes)
+
+		self.virtual_machine.deep_sleep_after_idle_seconds = 3600
+		with self.assertRaisesRegex(frappe.ValidationError, "at most 4 GiB"):
+			self.resize.apply({"memory_mib": 8192})
+		self.metal_client.get_virtual_machine.assert_not_called()
+
 	def test_an_invalid_value_is_rejected_before_a_host_read(self) -> None:
 		for resize_values in (
 			{"cpu_millicores": 99},
 			{"memory_mib": 0},
 			{"disk_mib": 0},
 			{"gpu_count": 1},
+			{"deep_sleep_after_idle_seconds": -1},
+			{"coma_after_idle_seconds": 3600},
+			{"deep_sleep_after_idle_seconds": 7200, "coma_after_idle_seconds": 3600},
 		):
 			with (
 				patch.object(self.resize.service, "require_information") as require_information,
@@ -197,3 +220,36 @@ class TestVirtualMachineResize(UnitTestCase):
 				self.resize.apply(resize_values)
 
 			require_information.assert_not_called()
+
+
+class TestStoredSleepTimes(IntegrationTestCase):
+	def insert_virtual_machine(self, **values) -> VirtualMachine:
+		"""Insert an Atlas-only VM fixture without host operations."""
+		machine = frappe.new_doc("Virtual Machine")
+		machine.update(
+			{
+				"name": "vm-sleep-" + frappe.generate_hash(length=10),
+				"server": str(uuid7()),
+				"tenant_id": 7,
+				"virtual_machine_image": "sleep-test",
+				"architecture": "amd64",
+				"cpu_millicores": 1000,
+				"memory_mib": 1024,
+				"disk_mib": 8192,
+				**values,
+			}
+		)
+		machine.db_insert()
+		return machine
+
+	def test_offload_only_resize_never_calls_metal_and_merges_fresh_values(self) -> None:
+		machine = self.insert_virtual_machine(deep_sleep_after_idle_seconds=3600)
+		with patch.object(VirtualMachineService, "require_information") as information:
+			VirtualMachineResize(machine).apply({"coma_after_idle_seconds": 86400})
+			self.assertEqual(machine.reload().coma_after_idle_seconds, 86400)
+			information.assert_not_called()
+
+		frappe.db.set_value("Virtual Machine", machine.name, "deep_sleep_after_idle_seconds", 7200)
+		with self.assertRaisesRegex(frappe.ValidationError, "Coma After Idle"):
+			VirtualMachineResize(machine).apply({"coma_after_idle_seconds": 4000})
+		self.assertEqual(machine.reload().coma_after_idle_seconds, 86400)

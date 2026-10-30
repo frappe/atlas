@@ -30,7 +30,7 @@ This package converges one VM network and applies the host WireGuard peer set. I
 
 ## Host sync boundary
 
-`EnsureHost` applies uplink and WireGuard interfaces. The WG Mesh command refuses an uplink change until an operator resets the mesh. `ApplyPrivilegedAddresses` and `WireGuardManager.Apply` each replace a complete set. `Apply` drops this host from its peer set, changes only previously managed peers, and rejects missing, invalid, or duplicate mesh addresses. `SyncPeerState` replaces the BPF peer map.
+`EnsureHost` applies uplink and WireGuard interfaces. `EnsureHooks` runs on every host sync and calls `EnsureHost` again when a restart of `wg0` or the uplink removed a mesh hook. The WG Mesh command refuses an uplink change until an operator resets the mesh. `ApplyPrivilegedAddresses` and `WireGuardManager.Apply` each replace a complete set. `Apply` drops this host from its peer set, changes only previously managed peers, and rejects missing, invalid, or duplicate mesh addresses. `SyncPeerState` replaces the BPF peer map.
 
 ## Validation
 

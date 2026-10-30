@@ -1,4 +1,5 @@
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlsplit
 
 from botocore.exceptions import ClientError
 from frappe.tests import UnitTestCase
@@ -7,6 +8,25 @@ from atlas.atlas.object_storage import ObjectStorageClient, ObjectStorageError
 
 
 class TestObjectStorageClient(UnitTestCase):
+	def test_signed_get_and_put_urls_share_the_object_but_not_the_signature(self) -> None:
+		client = ObjectStorageClient(
+			bucket="snapshots",
+			access_key_id="test-access",
+			secret_access_key="test-secret",
+			endpoint_url="https://objects.example",
+			region="test-region",
+		)
+		key = "sleep/site/host/vm-1/memory"
+		download = urlsplit(client.object_url(key))
+		upload = urlsplit(client.object_url(key, method="PUT"))
+
+		self.assertEqual(
+			(download.scheme, download.netloc, download.path), (upload.scheme, upload.netloc, upload.path)
+		)
+		self.assertNotEqual(
+			parse_qs(download.query)["X-Amz-Signature"], parse_qs(upload.query)["X-Amz-Signature"]
+		)
+
 	def make_client(self) -> tuple[ObjectStorageClient, Mock]:
 		boto_client = Mock()
 		with patch("atlas.atlas.object_storage.boto3.client", return_value=boto_client):

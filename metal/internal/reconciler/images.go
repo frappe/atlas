@@ -30,6 +30,12 @@ type ImageStore interface {
 	EnsureImage(ctx context.Context, image vm.Image) error
 	RemoveWarmImages(ctx context.Context, imageReference string) error
 	PruneImages(ctx context.Context, policies []vm.Image, now time.Time, maximumIdle time.Duration) error
+	PruneKernels(usedKernelSHA256s []string, now time.Time, maximumIdle time.Duration) error
+}
+
+// VirtualMachineKernels lists the kernels of local VMs, which must stay.
+type VirtualMachineKernels interface {
+	KernelSHA256s(ctx context.Context) ([]string, error)
 }
 
 // SnapshotStore prunes local snapshot staging.
@@ -57,13 +63,14 @@ type ImageConfig struct {
 type ImageReconciler struct {
 	passScheduler
 
-	imageStore          ImageStore
-	snapshotStore       SnapshotStore
-	builder             MemorySnapshotBuilder
-	operationTimeout    time.Duration
-	imageMaximumIdle    time.Duration
-	snapshotMaximumIdle time.Duration
-	logger              *slog.Logger
+	imageStore            ImageStore
+	snapshotStore         SnapshotStore
+	builder               MemorySnapshotBuilder
+	virtualMachineKernels VirtualMachineKernels
+	operationTimeout      time.Duration
+	imageMaximumIdle      time.Duration
+	snapshotMaximumIdle   time.Duration
+	logger                *slog.Logger
 }
 
 // NewImageReconciler returns an image reconciler that runs at interval.
@@ -71,6 +78,7 @@ func NewImageReconciler(
 	imageStore ImageStore,
 	snapshotStore SnapshotStore,
 	builder MemorySnapshotBuilder,
+	virtualMachineKernels VirtualMachineKernels,
 	interval time.Duration,
 	configuration ImageConfig,
 ) *ImageReconciler {
@@ -88,14 +96,15 @@ func NewImageReconciler(
 	}
 
 	return &ImageReconciler{
-		passScheduler:       newPassScheduler("image", interval, configuration.Telemetry),
-		imageStore:          imageStore,
-		snapshotStore:       snapshotStore,
-		builder:             builder,
-		operationTimeout:    configuration.OperationTimeout,
-		imageMaximumIdle:    configuration.ImageMaximumIdle,
-		snapshotMaximumIdle: configuration.SnapshotMaximumIdle,
-		logger:              configuration.Logger,
+		passScheduler:         newPassScheduler("image", interval, configuration.Telemetry),
+		imageStore:            imageStore,
+		snapshotStore:         snapshotStore,
+		builder:               builder,
+		virtualMachineKernels: virtualMachineKernels,
+		operationTimeout:      configuration.OperationTimeout,
+		imageMaximumIdle:      configuration.ImageMaximumIdle,
+		snapshotMaximumIdle:   configuration.SnapshotMaximumIdle,
+		logger:                configuration.Logger,
 	}
 }
 
@@ -149,8 +158,8 @@ func (r *ImageReconciler) reconcileImage(ctx context.Context, image vm.Image) {
 	}
 }
 
-// pruneLocalArtifacts removes images and staging that policies no longer keep.
-// One timestamp covers both, and each artifact type uses its own idle window.
+// pruneLocalArtifacts removes images, kernels, and staging that nothing keeps.
+// One timestamp covers all, and each artifact type uses its own idle window.
 func (r *ImageReconciler) pruneLocalArtifacts(ctx context.Context, policies []vm.Image) {
 	pruneContext, cancelPrune := context.WithTimeout(ctx, r.operationTimeout)
 	defer cancelPrune()
@@ -158,11 +167,23 @@ func (r *ImageReconciler) pruneLocalArtifacts(ctx context.Context, policies []vm
 	now := time.Now()
 	err := r.imageStore.PruneImages(pruneContext, policies, now, r.imageMaximumIdle)
 	if err == nil {
+		err = r.pruneKernels(pruneContext, now)
+	}
+	if err == nil {
 		err = r.snapshotStore.PruneStagedSnapshots(pruneContext, now, r.snapshotMaximumIdle)
 	}
 	if err != nil {
 		r.logFailure(ctx, "prune local artifacts", err)
 	}
+}
+
+// pruneKernels removes idle kernels that no local VM boots from.
+func (r *ImageReconciler) pruneKernels(ctx context.Context, now time.Time) error {
+	kernels, err := r.virtualMachineKernels.KernelSHA256s(ctx)
+	if err != nil {
+		return err
+	}
+	return r.imageStore.PruneKernels(kernels, now, r.imageMaximumIdle)
 }
 
 // logFailure reports an error unless ctx ended, because a canceled pass fails

@@ -42,6 +42,7 @@ func driveRequest(index int, drive storage.Drive, disk vm.Disk, driveCount int) 
 		IsRootDevice: drive.Root,
 		IsReadOnly:   drive.ReadOnly,
 		CacheType:    api.CacheTypeWriteback,
+		Discard:      !drive.ReadOnly,
 		RateLimiter:  driveRateLimiter(disk, driveCount),
 	}
 }

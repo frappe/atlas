@@ -40,6 +40,11 @@ from .image_response_architecture import ImageResponseArchitecture
 from .image_response_image_type import ImageResponseImageType
 from .image_response_status import ImageResponseStatus
 from .image_response_tags import ImageResponseTags
+from .investigation_payload import InvestigationPayload
+from .investigation_payload_context_type_0 import InvestigationPayloadContextType0
+from .investigation_response import InvestigationResponse
+from .investigation_response_context_type_0 import InvestigationResponseContextType0
+from .investigation_response_status import InvestigationResponseStatus
 from .json_web_key import JSONWebKey
 from .json_web_key_set_response import JSONWebKeySetResponse
 from .list_images_image_type_type_0 import ListImagesImageTypeType0
@@ -133,6 +138,11 @@ __all__ = (
     "ImageResponseImageType",
     "ImageResponseStatus",
     "ImageResponseTags",
+    "InvestigationPayload",
+    "InvestigationPayloadContextType0",
+    "InvestigationResponse",
+    "InvestigationResponseContextType0",
+    "InvestigationResponseStatus",
     "JSONWebKey",
     "JSONWebKeySetResponse",
     "ListImagesImageTypeType0",

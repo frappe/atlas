@@ -45,7 +45,7 @@ class PublicIPAllocation(Document):
 		pool: DF.Link
 		prefix: DF.Data
 		server: DF.Link | None
-		status: DF.Literal["Available", "Reserved", "Attaching", "Attached", "Detaching"]
+		status: DF.Literal["Available", "Reserved", "Attaching", "Attached", "Detaching", "Blocked"]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		version: DF.Literal["4", "6"]
@@ -74,7 +74,7 @@ class PublicIPAllocation(Document):
 		self._validate_overlap(prefix)
 
 	def on_trash(self) -> None:
-		if self.status not in {"Available", "Reserved"} or self.virtual_machine:
+		if self.status not in {"Available", "Reserved", "Blocked"} or self.virtual_machine:
 			frappe.throw(_("Detach this allocation before deletion."))
 
 	@property
@@ -105,6 +105,25 @@ class PublicIPAllocation(Document):
 		self.status = "Available"
 		self.tenant_id = UNOWNED_TENANT_ID
 		self.is_reserved = 0
+		self.save(ignore_permissions=True)
+
+	@frappe.whitelist(methods=["POST"])
+	def block(self) -> None:
+		"""Keep this unused address out of every later allocation."""
+		frappe.only_for("System Manager")
+		self._change_unused_status("Available", "Blocked", _("Only an available public IP can be blocked."))
+
+	@frappe.whitelist(methods=["POST"])
+	def unblock(self) -> None:
+		"""Let the pool allocate this address again."""
+		frappe.only_for("System Manager")
+		self._change_unused_status("Blocked", "Available", _("This public IP is not blocked."))
+
+	def _change_unused_status(self, current: str, new: str, message: str) -> None:
+		# The row lock makes the check safe against a concurrent claim of the same address.
+		if frappe.db.get_value("Public IP Allocation", self.name, "status", for_update=True) != current:
+			frappe.throw(message)
+		self.status = new
 		self.save(ignore_permissions=True)
 
 	@frappe.whitelist(methods=["POST"])
@@ -152,14 +171,16 @@ class PublicIPAllocation(Document):
 		self.queue_reconcile()
 
 	def move_to_server(self, server: str) -> None:
-		if self.is_routed or self.server == server:
+		# Migration finalize and the scheduled move sweep can move the same allocation at once.
+		current: PublicIPAllocation = frappe.get_doc(self.doctype, self.name, for_update=True)
+		if current.is_routed or current.status != "Attached" or current.server == server:
 			return
-		self.status = "Attaching"
-		self.server = server
-		self.failure_message = None
-		self.intent_version = (self.intent_version or 0) + 1
-		self.save(ignore_permissions=True)
-		self.queue_reconcile()
+		current.status = "Attaching"
+		current.server = server
+		current.failure_message = None
+		current.intent_version = (current.intent_version or 0) + 1
+		current.save(ignore_permissions=True)
+		current.queue_reconcile()
 
 	def intent(self) -> AllocationIntent:
 		return AllocationIntent(
@@ -209,8 +230,8 @@ class PublicIPAllocation(Document):
 
 	def _validate_state(self, is_routed: bool) -> None:
 		owned = self.tenant_id != UNOWNED_TENANT_ID
-		if self.status == "Available" and (owned or self.virtual_machine or self.is_reserved):
-			frappe.throw(_("An available allocation cannot have an owner or attachment."))
+		if self.status in {"Available", "Blocked"} and (owned or self.virtual_machine or self.is_reserved):
+			frappe.throw(_("An available or blocked allocation cannot have an owner or attachment."))
 		if self.status == "Reserved" and (not owned or self.virtual_machine or not self.is_reserved):
 			frappe.throw(_("A reserved allocation needs an owner and no virtual machine."))
 		if self.status in {"Attaching", "Attached", "Detaching"}:

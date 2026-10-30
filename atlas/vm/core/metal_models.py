@@ -188,6 +188,49 @@ class MetalOperationError:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalSleepArtifact:
+	"""Store completion of one sleep artifact upload."""
+
+	uploaded: bool
+	object_key: str = ""
+	# part_count is how many objects hold an uploaded artifact, or 0 for one object.
+	part_count: int = 0
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepArtifact:
+		"""Validate one sleep artifact status from Metal."""
+		artifact = object_value(value, "sleep artifact")
+		content = artifact.get("artifact")
+		part_count = (
+			integer_field(object_value(content, "artifact"), "part_count", default=0) if content else 0
+		)
+		return cls(
+			uploaded=boolean_field(artifact, "uploaded"),
+			object_key=string_field(artifact, "object_key", default=""),
+			part_count=part_count,
+		)
+
+
+@dataclass(frozen=True, slots=True)
+class MetalSleepSnapshot:
+	"""Identify a sleep checkpoint and its selected artifacts."""
+
+	id: str
+	memory: MetalSleepArtifact | None
+	disk: MetalSleepArtifact | None
+
+	@classmethod
+	def from_dict(cls, value: object) -> MetalSleepSnapshot:
+		"""Validate sleep snapshot status at the Metal boundary."""
+		snapshot = object_value(value, "sleep_snapshot")
+		artifacts = {}
+		for name in ("memory", "disk"):
+			artifact = snapshot.get(name)
+			artifacts[name] = MetalSleepArtifact.from_dict(artifact) if artifact is not None else None
+		return cls(id=string_field(snapshot, "id"), **artifacts)
+
+
+@dataclass(frozen=True, slots=True)
 class MetalObservedState:
 	"""Store one observed virtual machine state."""
 
@@ -196,6 +239,8 @@ class MetalObservedState:
 	rescue_generation: int
 	rescue: MetalRescue
 	state: str
+	sleep_state: str
+	last_request_at: str
 	phase: str
 	operation_id: str
 	operation_started_at: str
@@ -203,6 +248,7 @@ class MetalObservedState:
 	disk: MetalObservedDisk
 	network: MetalObservedNetwork
 	error: MetalOperationError | None
+	sleep_snapshot: MetalSleepSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,6 +484,8 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		rescue_generation=integer_field(value, "rescue_generation", default=0),
 		rescue=parse_rescue(object_value(value.get("rescue", {"enabled": False}), "rescue")),
 		state=string_field(value, "state"),
+		sleep_state=sleep_state_field(value),
+		last_request_at=string_field(value, "last_request_at", default=""),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),
 		operation_started_at=string_field(value, "operation_started_at", default=""),
@@ -445,6 +493,11 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		disk=MetalObservedDisk(used_mib=integer_field(object_field(value, "disk"), "used_mib")),
 		network=MetalObservedNetwork(mac=string_field(object_field(value, "network"), "mac", default="")),
 		error=operation_error,
+		sleep_snapshot=(
+			MetalSleepSnapshot.from_dict(value["sleep_snapshot"])
+			if value.get("sleep_snapshot") is not None
+			else None
+		),
 	)
 
 
@@ -466,6 +519,12 @@ def string_field(value: dict[str, Any], field_name: str, *, default: str | None 
 	if not isinstance(field_value, str):
 		raise ValueError(f"{field_name} must be a string")
 	return field_value
+
+
+def sleep_state_field(value: dict[str, Any]) -> str:
+	"""Return the sleep state. A metald older than Atlas reports coma as comatose."""
+	sleep_state = string_field(value, "sleep_state", default="")
+	return "coma" if sleep_state == "comatose" else sleep_state
 
 
 def timestamp_field(value: dict[str, Any], field_name: str) -> datetime | None:

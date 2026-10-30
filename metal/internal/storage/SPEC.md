@@ -18,7 +18,8 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 ## Invariants
 
 - `EnsureImage` validates architecture, URLs, and SHA-256 values. One image reference cannot identify different content. A dependent VM clone keeps its source image from deletion.
-- `PrepareBoot` ensures the image, kernel link, disk clone and growth, and block node in the jail. `PrepareRootFileSystem` does disk work without the kernel. `Release` promotes dependent staging clones before removing a VM disk.
+- Kernels are stored once per SHA-256 value. `PruneKernels` keeps a kernel that a stored image or a listed VM uses.
+- `PrepareBoot` ensures the kernel, kernel link, disk clone and growth, and block node in the jail. It imports the image only for a new disk. `PrepareRootFileSystem` does disk work without the kernel. `Release` promotes dependent staging clones before removing a VM disk.
 - `SetImagePolicies` atomically replaces the policy file. The [image reconciler](../reconciler/SPEC.md) downloads and prunes.
 - `Stage` creates a UUIDv7 snapshot ID. `StartUpload` checks signed parts, removes leftover part buffers, and starts asynchronous upload.
 - The controller chooses the multipart part size, because it signs each part. Part count is an upper bound until compressed size is known. The digest covers uncompressed bytes. `UploadedArtifact` reports both raw and stored sizes.
@@ -27,6 +28,7 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 - `DeleteSnapshot` stops an upload, removes its staging clone before the source snapshot, and keeps data used by an active upload. A download detects zstd by frame magic, sizes the ZFS volume from the frame content size, and checks the decoded digest.
 - Migration receives only one matching snapshot GUID. Its resume token must name the requested snapshot. It cannot read another dataset. `AbortReceive` removes destination data before VM records.
 - One lock covers each image reference or snapshot ID. A failed multi-step create removes what it made. Deletes accept an absent resource.
+- `sleep.go` reuses snapshot staging, upload retries, verified downloads, and zstd for [sleep snapshots](../../../docs/compute/sleepy-vms.md#upload-saved-snapshots). Memory extraction accepts only the three regular saved-state files. Disk restore publishes a verified staging volume and never replaces an existing VM disk. [Sleep storage tests](sleep_test.go) check immutable staging, archive safety, and checksum-verified round trips.
 - A warm key includes image identity, exact VM shape, and Firecracker compatibility. Warm memory and Firecracker state stay on the host.
 
 ## Rescue storage

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -33,10 +34,12 @@ from atlas.vm.core.models import (
 	IPV4_INTERNET_DESTINATION,
 	MAXIMUM_CPU_MILLICORES,
 	MAXIMUM_FIREWALL_PREFIXES,
+	MAXIMUM_SLEEP_OFFLOAD_SECONDS,
 	MINIMUM_CPU_MILLICORES,
 	FirewallConfiguration,
 	FirewallRule,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.placement.affinity import AffinityOperator, AffinityResource, AffinityRules
 
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
 		PublicIPAllocation,
 	)
+	from atlas.operations.doctype.investigation.investigation import Investigation
 	from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
@@ -510,6 +514,20 @@ class CreateVirtualMachinePayload(StrictModel):
 	sleep_after_idle_seconds: int = Field(
 		default=0, ge=0, le=9_223_372_036, description="Idle time before automatic stop. Zero disables it."
 	)
+	deep_sleep_after_idle_seconds: int = Field(
+		default=0,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="Idle time before Atlas offloads saved memory. Zero disables it.",
+	)
+	coma_after_idle_seconds: int = Field(
+		default=0,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="Idle time before Atlas offloads the disk. Zero disables it.",
+	)
 	disk_throughput_mibps: int = Field(
 		default=0, ge=0, description="Disk throughput limit in MiB/s. Zero removes the limit."
 	)
@@ -541,6 +559,14 @@ class CreateVirtualMachinePayload(StrictModel):
 		AffinityRules.from_value([node.model_dump() for node in self.placement_rules])
 		return self
 
+	@model_validator(mode="after")
+	def validate_sleep_times(self) -> CreateVirtualMachinePayload:
+		"""Require a positive deep-sleep delay before coma."""
+		validate_sleep_times(
+			self.deep_sleep_after_idle_seconds, self.coma_after_idle_seconds, self.memory_mib, self.disk_mib
+		)
+		return self
+
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
 		"""Build the domain request for this API payload."""
 		return VirtualMachineCreateRequest(
@@ -557,6 +583,8 @@ class CreateVirtualMachinePayload(StrictModel):
 			is_privileged=self.is_privileged,
 			is_termination_protected=self.is_termination_protected,
 			sleep_after_idle_seconds=self.sleep_after_idle_seconds,
+			deep_sleep_after_idle_seconds=self.deep_sleep_after_idle_seconds,
+			coma_after_idle_seconds=self.coma_after_idle_seconds,
 			disk_throughput_mibps=self.disk_throughput_mibps,
 			disk_iops=self.disk_iops,
 			private_network_throughput_mibps=self.private_network_throughput_mibps,
@@ -585,6 +613,20 @@ class ResizePayload(PatchPayload):
 		ge=0,
 		le=9_223_372_036,
 		description="New idle time before automatic stop. Zero disables it.",
+	)
+	deep_sleep_after_idle_seconds: int | None = Field(
+		default=None,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="New idle time before Atlas offloads saved memory. Zero disables it.",
+	)
+	coma_after_idle_seconds: int | None = Field(
+		default=None,
+		strict=True,
+		ge=0,
+		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+		description="New idle time before Atlas offloads the disk. Zero disables it.",
 	)
 
 
@@ -739,6 +781,12 @@ class VirtualMachineResponse(BaseModel):
 	memory_mib: int = Field(description="Memory capacity in MiB.")
 	disk_mib: int = Field(description="Root disk capacity in MiB.")
 	sleep_after_idle_seconds: int = Field(description="Idle time before automatic stop. Zero disables it.")
+	deep_sleep_after_idle_seconds: int = Field(
+		default=0, description="Idle time before memory offload. Zero disables it."
+	)
+	coma_after_idle_seconds: int = Field(
+		default=0, description="Idle time before disk offload. Zero disables it."
+	)
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
@@ -760,6 +808,8 @@ class VirtualMachineResponse(BaseModel):
 			memory_mib=virtual_machine.memory_mib,
 			disk_mib=virtual_machine.disk_mib,
 			sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
+			deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
+			coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
@@ -809,6 +859,12 @@ class VirtualMachineCompute(BaseModel):
 	cpu_millicores: int = Field(description="CPU capacity in millicores.")
 	memory_mib: int = Field(description="Memory capacity in MiB.")
 	sleep_after_idle_seconds: int = Field(description="Idle time before automatic stop. Zero disables it.")
+	deep_sleep_after_idle_seconds: int = Field(
+		default=0, description="Idle time before memory offload. Zero disables it."
+	)
+	coma_after_idle_seconds: int = Field(
+		default=0, description="Idle time before disk offload. Zero disables it."
+	)
 
 
 class VirtualMachineDisk(BaseModel):
@@ -891,6 +947,7 @@ class VirtualMachineDetailResponse(BaseModel):
 					"tags": {"env": "prod"},
 					"created_at": 1788834165,
 					"is_privileged": False,
+					"is_termination_protected": False,
 					"public_ipv4": None,
 					"public_ipv6": None,
 					"desired_state": "running",
@@ -926,6 +983,7 @@ class VirtualMachineDetailResponse(BaseModel):
 	tags: dict[str, str] = Field(description="Resource tags as key-value pairs.")
 	created_at: int = Field(ge=0, description="Creation time as Unix seconds.")
 	is_privileged: bool = Field(description="Whether the guest can reach every tenant through the mesh.")
+	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
 	desired_state: str | None = Field(description="State requested from the host, or null when unavailable.")
@@ -955,6 +1013,7 @@ class VirtualMachineDetailResponse(BaseModel):
 			tags=read_tags(virtual_machine),
 			created_at=to_unix_timestamp(virtual_machine.creation),
 			is_privileged=bool(virtual_machine.is_privileged),
+			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
 			rescue=VirtualMachineRescue(
@@ -975,6 +1034,8 @@ class VirtualMachineDetailResponse(BaseModel):
 				cpu_millicores=virtual_machine.cpu_millicores,
 				memory_mib=virtual_machine.memory_mib,
 				sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
+				deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
+				coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
 			),
 			disk=VirtualMachineDisk(
 				size_mib=virtual_machine.disk_mib,
@@ -1189,3 +1250,62 @@ class HostAccessResponse(BaseModel):
 	host_id: str = Field(description="Metal Server ID, or `all`.")
 	email: str = Field(description="Email of the person, in lowercase.")
 	expires_at: datetime = Field(description="End of the access.")
+
+
+class InvestigationPayload(StrictModel):
+	"""One problem for the read-only investigator of the region."""
+
+	problem: str = Field(min_length=1, max_length=10_000, description="The problem to investigate.")
+	title: str | None = Field(
+		default=None, max_length=140, description="Short title. The default is the start of the problem."
+	)
+	context: dict[str, Any] | None = Field(
+		default=None, description="Facts that help, such as resource IDs, alert names, and times."
+	)
+	requested_by: str | None = Field(
+		default=None, max_length=140, description="Email of the person who asked."
+	)
+
+
+class InvestigationResponse(BaseModel):
+	"""One investigation. Atlas masks credentials in each text field."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "investigation-00001",
+					"title": "VM vm-0000076 does not boot",
+					"status": "completed",
+					"problem": "VM vm-0000076 does not boot after a restart.",
+					"context": {"virtual_machine": "vm-0000076"},
+					"outcome": "## Summary\nThe ZFS pool on waw-1 is full...",
+					"error": None,
+					"created_at": 1793141980,
+				}
+			]
+		}
+	)
+
+	id: str = Field(description="Investigation ID.")
+	title: str = Field(description="Short title.")
+	status: Literal["queued", "running", "completed", "failed"] = Field(description="Investigation state.")
+	problem: str = Field(description="The problem to investigate.")
+	context: dict[str, Any] | None = Field(description="Facts sent with the problem.")
+	outcome: str | None = Field(description="The report in Markdown, when the investigation is complete.")
+	error: str | None = Field(description="Why the investigation failed.")
+	created_at: int = Field(description="Creation time as Unix seconds.")
+
+	@classmethod
+	def from_document(cls, investigation: Investigation) -> InvestigationResponse:
+		"""Build a response from an Investigation document."""
+		return cls(
+			id=investigation.name,
+			title=investigation.title,
+			status=investigation.status.lower(),
+			problem=investigation.problem,
+			context=json.loads(investigation.context) if investigation.context else None,
+			outcome=investigation.outcome,
+			error=investigation.error,
+			created_at=to_unix_timestamp(investigation.creation),
+		)

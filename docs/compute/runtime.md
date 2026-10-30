@@ -13,9 +13,11 @@ Metal inspects systemd first: an inactive unit has no live Firecracker API.
 
 ### Cold and warm starts
 
-**Shared warm memory works only for a first boot from a fresh disk clone, with the exact VM shape.** Later starts cold-boot the existing disk.
+**Shared warm memory works only for a first boot from a fresh disk clone, with the exact vCPU count and memory and a disk at least as large as the warm disk.** Later starts cold-boot the existing disk.
 
 This rule prevents the [warm-memory disk corruption incident](../incidents/2026-09-24-guest-disk-corruption.md).
+
+A warm start grows the clone to the VM disk size before the snapshot loads. Before resume, Metal refreshes the drive, so the guest sees the larger disk and gets its disk limits. The guest image grows its file system when the disk grows.
 
 ### Resource limits
 
@@ -39,6 +41,14 @@ Power requests accept `running`, `paused`, or `stopped`.
 
 [Sleepy VMs](sleepy-vms.md) explains automatic idle stop and wake-up.
 
+### Guest clock after a memory restore
+
+A guest restored from memory keeps the wall clock of its snapshot. A warm image can be days old, and time sync needs network and a server reply before it corrects the clock. Until then, the guest rejects tokens that other services issued at the current time, and it expires its sessions and cache entries when the clock jumps.
+
+Before every resume from memory, Metal writes the host wall clock to the guest metadata as `meta-data/host-time-unix-ms`. This applies to warm starts, saved-state wakes, and memory snapshot migrations. The guest `atlas-metadata.service` steps the clock forward to that time when the guest clock is more than 2 seconds behind it. It never steps the clock back. Time sync then corrects the remaining gap.
+
+Images built before this change ignore the key and wait for time sync.
+
 ## Limits and recovery
 
 ### Daemon restart
@@ -49,12 +59,14 @@ Without that store, daemon exit closes the consoles and stops the guests. Startu
 
 ### Failed restore
 
-Metal keeps valid VM-local saved state for another try. It does not substitute a cold boot for a requested restore or reuse shared warm memory with an existing disk.
+The runtime returns restore errors to the VM manager. The manager owns [wake recovery](sleepy-vms.md#wake-an-offloaded-vm), including cold-boot fallback. Metal never reuses shared warm memory with an existing disk.
 
 ::: details Source code and tests
 
 - [Firecracker runtime](../../metal/internal/firecracker/runtime.go) owns guest launch and inspection.
 - [Machine operations](../../metal/internal/firecracker/machine.go) distinguish first boot, cold boot, stop, and saved-state restore.
+- [Memory snapshot launch](../../metal/internal/firecracker/launch.go) writes the restore metadata, including the host time.
+- [Guest metadata agent](../../atlas/vm/scripts/guest/apply-metadata) steps the guest clock forward.
 - [Console broker](../../metal/internal/console/serial_broker.go) manages serial PTYs.
 - [Console adoption](../../metal/cmd/metald/main.go) checks the systemd descriptor store at startup.
 - [Idle watcher](../../metal/internal/vm/idle_watcher.go) decides when to save or restore a guest.

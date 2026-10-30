@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, convert_utc_to_system_timezone, flt, get_datetime, now_datetime
+from frappe.utils import add_days, cint, convert_utc_to_system_timezone, flt, get_datetime, now_datetime
 
 from atlas.service.core.proxy.configuration import push_configuration_to_active_proxies
 from atlas.service.core.warpgate.installation import install_warpgate_certificate
@@ -40,6 +40,9 @@ OBJECT_STORAGE_FIELDS = (
 	"object_storage_endpoint_url",
 	"object_storage_region",
 )
+# S3 signature version 4 limits a signed URL to seven days.
+MINIMUM_SIGNED_URL_EXPIRY_SECONDS = 3600
+MAXIMUM_SIGNED_URL_EXPIRY_SECONDS = 604800
 
 
 class AtlasSettings(Document):
@@ -73,9 +76,11 @@ class AtlasSettings(Document):
 		dns_provider: DF.Literal["Route53"]
 		http_proxy_package_file: DF.Link | None
 		http_proxy_package_hash: DF.Data | None
+		investigation_model: DF.Link | None
 		ipv6_router_package_file: DF.Link | None
 		ipv6_router_package_hash: DF.Data | None
 		is_dns_setup_completed: DF.Check
+		is_investigation_enabled: DF.Check
 		is_letsencrypt_staging: DF.Check
 		is_migration_on_wireguard: DF.Check
 		is_server_provider_setup_completed: DF.Check
@@ -133,6 +138,10 @@ class AtlasSettings(Document):
 		]
 		server_provider: DF.Literal["Generic", "Scaleway", "AWS"]
 		sleepy_vm_overcommit_factor: DF.Float
+		telemetry_query_database: DF.Data | None
+		telemetry_query_password: DF.Password | None
+		telemetry_query_url: DF.Data | None
+		telemetry_query_username: DF.Data | None
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_ipv6_router_for_auto_assignment: DF.Check
 		warpgate_api_token: DF.Password | None
@@ -250,6 +259,7 @@ class AtlasSettings(Document):
 
 		self._validate_sleepy_vm_overcommit_factor()
 		self._validate_vm_migration_network_change()
+		self._validate_signed_url_expiry()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
 			if frappe.db.exists("Virtual Machine") or frappe.db.exists(
@@ -311,6 +321,11 @@ class AtlasSettings(Document):
 				_("Wait for running VM migrations to finish before you change the migration network.")
 			)
 
+	def _validate_signed_url_expiry(self) -> None:
+		expiry = self.object_storage_signed_url_expiry
+		if expiry and not MINIMUM_SIGNED_URL_EXPIRY_SECONDS <= expiry <= MAXIMUM_SIGNED_URL_EXPIRY_SECONDS:
+			frappe.throw(_("Signed URL Expiry must be from one hour to seven days (3600 to 604800 seconds)."))
+
 	def _validate_sleepy_vm_overcommit_factor(self) -> None:
 		factor = flt(self.sleepy_vm_overcommit_factor)
 		if not isfinite(factor) or factor < 1.0:
@@ -333,6 +348,16 @@ class AtlasSettings(Document):
 				title=_("Upgrade Metald on every host"),
 				indicator="orange",
 			)
+
+		if any(
+			self.has_value_changed(field)
+			for field in (*OBJECT_STORAGE_FIELDS, "object_storage_signed_url_expiry")
+		):
+			# Sleep URLs signed with the old values may no longer work, so sign new ones on the next pass.
+			state = frappe.qb.DocType("Virtual Machine State")
+			frappe.qb.update(state).set(state.download_urls_expire_at, now_datetime()).where(
+				state.download_urls_expire_at.isnotnull()
+			).run()
 
 		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
 			self.server_provider_controller.validate_credentials()

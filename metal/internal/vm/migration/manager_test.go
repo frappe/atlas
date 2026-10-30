@@ -1,12 +1,15 @@
 package migration
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 
 // fakeMigrationHost implements migrationHost with in-memory records and call counters.
 type fakeMigrationHost struct {
+	sleep    *vm.SleepMigration
 	dir      string
 	desired  map[string]vm.DesiredRecord
 	observed map[string]vm.ObservedRecord
@@ -99,6 +103,23 @@ func (f *fakeMigrationHost) WriteDesired(record vm.DesiredRecord) error {
 
 func (f *fakeMigrationHost) WriteObserved(virtualMachineID string, record vm.ObservedRecord) error {
 	f.observed[virtualMachineID] = record
+	return nil
+}
+
+func (f *fakeMigrationHost) ReadSleepMigration(identifier string) (*vm.SleepMigration, error) {
+	state := f.observed[identifier].SleepState
+	if (state == vm.SleepStateComa || state == vm.SleepStateDeepSleeping) && f.sleep == nil {
+		return nil, vm.ErrConflict
+	}
+	return f.sleep, nil
+}
+
+func (f *fakeMigrationHost) ApplySleepMigration(identifier string, sleep *vm.SleepMigration) error {
+	f.sleep = sleep
+	observed := f.observed[identifier]
+	observed.State, observed.SleepState = vm.StateStopped, sleep.State
+	observed.Generation = f.desired[identifier].Generation
+	f.observed[identifier] = observed
 	return nil
 }
 
@@ -278,7 +299,7 @@ func (f *fakeMigrationStorage) StartSnapshotServer(ctx context.Context, _, name,
 	return stream, nil
 }
 
-func (f *fakeMigrationStorage) ReceiveSnapshotTLS(ctx context.Context, _ string, _ string) error {
+func (f *fakeMigrationStorage) ReceiveSnapshotTLS(ctx context.Context, _ string, _ string, _ *atomic.Int64) error {
 	f.received++
 	if f.receive != nil {
 		return f.receive(ctx)
@@ -317,6 +338,9 @@ type fakeSourceOperations struct {
 
 	stopMemorySnapshot bool
 	memoryReceive      func(context.Context, string) error
+
+	kernel      []byte
+	kernelCalls int
 }
 
 func (c *fakeSourceOperations) PrepareSource(context.Context, string, string, string) (VirtualMachineDefinition, vm.State, error) {
@@ -395,14 +419,14 @@ func newMigrationManager(t *testing.T) (*Manager, *fakeMigrationHost, *fakeSourc
 	t.Helper()
 	machines := newFakeMigrationHost(t)
 	source := &fakeSourceOperations{}
-	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, &fakeKernelStore{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return migrationManager, machines, source
 }
 
-func TestNewManagerRejectsACorruptRecord(t *testing.T) {
+func TestACorruptSourceRecordKeepsOnlyItsVirtualMachineLocked(t *testing.T) {
 	machines := newFakeMigrationHost(t)
 	store := newMigrationStore(machines.VirtualMachineRecordsDirectory())
 	migrationDirectory := store.migrationDirectory("vm-1")
@@ -413,8 +437,16 @@ func TestNewManagerRejectsACorruptRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil)); err == nil {
-		t.Fatal("manager started with a corrupt record")
+	manager, err := newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, &fakeKernelStore{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
+	if err != nil {
+		t.Fatalf("startup with a corrupt record = %v", err)
+	}
+	// The VM stays locked, because the record may describe a stopped source.
+	if !manager.IsSourceLocked("vm-1") {
+		t.Fatal("a corrupt source record released its VM")
+	}
+	if expired, err := manager.ExpiredSourceVirtualMachineIDs(t.Context()); err != nil || len(expired) != 0 {
+		t.Fatalf("expired sources = %v, %v", expired, err)
 	}
 	if !store.has(store.sourcePath("vm-1")) {
 		t.Fatal("manager removed the corrupt source record")
@@ -575,7 +607,7 @@ func TestAbortDestinationKeepsRecordsWhenRollbackFails(t *testing.T) {
 func TestUnlockSourceStopsAnInFlightStream(t *testing.T) {
 	machines := newFakeMigrationHost(t)
 	transfer := &fakeMigrationStorage{sendHang: true, sendStarted: make(chan struct{}, 1)}
-	migrationManager, err := newManager(machines, &fakeSourceOperations{}, transfer, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err := newManager(machines, &fakeSourceOperations{}, transfer, &fakeKernelStore{}, ampleCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,6 +678,34 @@ func TestDestinationReservationsCountOnlyMigrationsWithConfig(t *testing.T) {
 func (f *fakeMigrationHost) SaveAndStopSource(context.Context, string) error {
 	f.saveMemoryCalls++
 	return f.saveMemoryError
+}
+
+func (c *fakeSourceOperations) ReceiveKernel(_ context.Context, _, _, _ string, store func(io.Reader) error) error {
+	c.kernelCalls++
+	if c.kernel == nil {
+		return vm.ErrNotFound
+	}
+	return store(bytes.NewReader(c.kernel))
+}
+
+// fakeKernelStore holds every kernel unless isMissing is set.
+type fakeKernelStore struct {
+	isMissing bool
+	stored    []byte
+}
+
+func (s *fakeKernelStore) HasKernel(string) (bool, error) {
+	return !s.isMissing || s.stored != nil, nil
+}
+
+func (s *fakeKernelStore) OpenKernel(string) (*os.File, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (s *fakeKernelStore) StoreKernel(_ string, source io.Reader) error {
+	data, err := io.ReadAll(source)
+	s.stored = data
+	return err
 }
 
 func (c *fakeSourceOperations) ReceiveMemorySnapshot(ctx context.Context, _, _, _ string, _ int, directory string, _ int) error {

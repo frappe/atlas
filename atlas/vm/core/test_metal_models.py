@@ -80,6 +80,7 @@ def complete_response() -> dict:
 			"rescue_generation": 0,
 			"rescue": {"enabled": False},
 			"state": "running",
+			"last_request_at": "2026-09-06T09:59:30Z",
 			"updated_at": "2026-09-06T10:00:00Z",
 			"disk": {"used_mib": 1024},
 			"network": {"mac": "06:00:ac:10:00:02"},
@@ -151,6 +152,7 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertTrue(machine.desired.network.firewall.enabled)
 		self.assertEqual(machine.desired.network.firewall.inbound[0].ports, "22")
 		self.assertEqual(machine.observed.network.mac, "06:00:ac:10:00:02")
+		self.assertEqual(machine.observed.last_request_at, "2026-09-06T09:59:30Z")
 		self.assertEqual(machine.observed.error.message, "network failed")
 
 	def test_a_new_virtual_machine_parses_with_empty_values(self) -> None:
@@ -191,6 +193,30 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		machine = MetalVirtualMachine.from_dict(response)
 
 		self.assertEqual(machine.desired.network.public_ipv4, "")
+
+	def test_an_omitted_sleep_state_reads_as_awake(self) -> None:
+		"""Metal omits sleep_state for an awake VM, and older hosts never send it."""
+		machine = MetalVirtualMachine.from_dict(new_virtual_machine_response())
+
+		self.assertEqual(machine.observed.sleep_state, "")
+		self.assertIsNone(machine.observed.sleep_snapshot)
+
+	def test_sleep_snapshot_status_preserves_partial_uploads(self) -> None:
+		response = complete_response()
+		response["observed"]["sleep_snapshot"] = {
+			"id": "checkpoint-1",
+			"memory": {"uploaded": True},
+			"disk": {"uploaded": False},
+		}
+		machine = MetalVirtualMachine.from_dict(response)
+
+		self.assertEqual(machine.observed.sleep_snapshot.id, "checkpoint-1")
+		self.assertTrue(machine.observed.sleep_snapshot.memory.uploaded)
+		self.assertFalse(machine.observed.sleep_snapshot.disk.uploaded)
+		self.assertEqual(MetalVirtualMachine.from_dict(json.loads(json.dumps(machine.as_dict()))), machine)
+		response["observed"]["sleep_snapshot"]["disk"]["uploaded"] = "false"
+		with self.assertRaises(ValueError):
+			MetalVirtualMachine.from_dict(response)
 
 	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
 		"""A truncated response must fail loudly, not read as an empty VM."""
@@ -266,7 +292,18 @@ class TestMetalContract(UnitTestCase):
 		self.assert_has_fields(
 			definitions,
 			"api.observedVirtualMachineResponse",
-			{"generation", "restart_generation", "state", "updated_at", "disk", "network", "error"},
+			{
+				"generation",
+				"restart_generation",
+				"state",
+				"sleep_state",
+				"sleep_snapshot",
+				"last_request_at",
+				"updated_at",
+				"disk",
+				"network",
+				"error",
+			},
 		)
 		self.assert_has_fields(definitions, "api.observedDiskResponse", {"used_mib"})
 		self.assert_has_fields(definitions, "api.operationErrorResponse", {"code", "message", "updated_at"})
@@ -293,6 +330,7 @@ class TestMetalContract(UnitTestCase):
 			"/v1/vms/{id}/ssh-keys",
 			"/v1/vms/{id}/metadata",
 			"/v1/vms/{id}/snapshots",
+			"/v1/vms/{id}/sleep-state",
 			"/v1/snapshots/{id}",
 			"/v1/snapshots/{id}/upload",
 		}

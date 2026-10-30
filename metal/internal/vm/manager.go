@@ -57,6 +57,9 @@ type Manager struct {
 	logger               *slog.Logger
 	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
+	sleepTransferLocks   KeyedLocks
+	sleepUploadsMutex    sync.Mutex
+	sleepUploads         map[string]*sleepUpload
 	allocationMutex      sync.Mutex
 	temporaryUserIDs     map[uint32]bool
 	temporaryIdentifiers map[string]bool
@@ -70,6 +73,10 @@ type Manager struct {
 	requests      map[string]notedRequest
 
 	availability availabilityTracker
+
+	// restoreFailures counts failed restores of each VM's saved state since the daemon started.
+	restoreFailuresMutex sync.Mutex
+	restoreFailures      map[string]int
 }
 
 // notedRequest is one API request and the desired generations it wrote.
@@ -107,13 +114,12 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		traffic:              dependencies.Traffic,
 		logger:               dependencies.Logger,
 		telemetry:            dependencies.Telemetry,
+		sleepUploads:         make(map[string]*sleepUpload),
 		requests:             make(map[string]notedRequest),
+		restoreFailures:      make(map[string]int),
 		availability:         newAvailabilityTracker(),
 		temporaryUserIDs:     make(map[uint32]bool),
 		temporaryIdentifiers: make(map[string]bool),
-	}
-	if err := manager.store.validateAll(); err != nil {
-		return nil, fmt.Errorf("validate VM records: %w", err)
 	}
 	if err := manager.loadWireGuardGatewayRoutes(); err != nil {
 		return nil, fmt.Errorf("load WireGuard gateway routes: %w", err)
@@ -210,15 +216,17 @@ func (manager *Manager) Information(_ context.Context, identifier string) (Infor
 	return manager.information(identifier)
 }
 
-// List returns all valid virtual machine records. A directory without both
-// records is skipped, because a VM that is created or destroyed now must not
-// fail the whole list.
-func (manager *Manager) List(ctx context.Context) ([]Information, error) {
+// List returns all valid virtual machine records, and the identifiers whose
+// records cannot be read. A directory without both records is skipped, because
+// a VM that is created or destroyed now must not fail the whole list. An
+// unreadable record affects only its own VM.
+func (manager *Manager) List(ctx context.Context) ([]Information, []string, error) {
 	identifiers, err := manager.store.listIDs()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	information := make([]Information, 0, len(identifiers))
+	var invalid []string
 	for _, identifier := range identifiers {
 		// Hide incoming migration destinations from the VM list.
 		if manager.isDestinationReserved(identifier) {
@@ -231,11 +239,38 @@ func (manager *Manager) List(ctx context.Context) ([]Information, error) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			manager.logger.ErrorContext(ctx, "skipped unreadable virtual machine records",
+				"virtual_machine_id", identifier, "error", err)
+			invalid = append(invalid, identifier)
+			continue
 		}
 		information = append(information, current)
 	}
-	return information, nil
+	return information, invalid, nil
+}
+
+// KernelSHA256s returns the kernel of every VM record on this host. Unlike
+// List, it includes incoming migration destinations.
+func (manager *Manager) KernelSHA256s(_ context.Context) ([]string, error) {
+	identifiers, err := manager.store.listIDs()
+	if err != nil {
+		return nil, err
+	}
+	kernels := make([]string, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		desired, err := manager.store.readDesired(identifier)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		kernels = append(kernels, desired.Specification.Image.KernelSHA256)
+		if desired.Specification.Rescue.Enabled {
+			kernels = append(kernels, desired.Specification.Rescue.Image.KernelSHA256)
+		}
+	}
+	return kernels, nil
 }
 
 // ListIDs returns all reserved virtual machine identifiers.
@@ -249,7 +284,20 @@ func (manager *Manager) information(identifier string) (Information, error) {
 	if err != nil {
 		return Information{}, err
 	}
-	return informationFromRecords(desired, observed, observed.Disk), nil
+	information := informationFromRecords(desired, observed, observed.Disk)
+	sleep, err := manager.readSleepRecord(identifier)
+	if err != nil {
+		return Information{}, err
+	}
+	if sleep != nil {
+		information.SleepSnapshot = sleep.status()
+		manager.applySleepUpload(sleep.ID, &information)
+	}
+	if manager.traffic != nil {
+		// A VM without attached traffic hooks reports no request time.
+		information.LastRequestAt, _ = manager.traffic.LastRequestAt(traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID})
+	}
+	return information, nil
 }
 
 // isTornRemoval reports whether removal left one record temporarily absent.
@@ -358,6 +406,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		ID:                              desired.ID,
 		State:                           observed.State,
 		DesiredState:                    desired.State,
+		SleepState:                      observed.SleepState,
 		Error:                           errorDetail,
 		CPUMillicores:                   desired.Specification.CPUMillicores,
 		MemoryMiB:                       desired.Specification.MemoryMiB,

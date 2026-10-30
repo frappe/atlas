@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,6 +33,11 @@ func (collector ethtoolCollector) Collect(ctx context.Context) ([]telemetry.Samp
 			continue
 		}
 		output, err := collector.output(ctx, "ethtool", "-S", name)
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 94 {
+			// ethtool exits 94 when the driver has no statistics, as for a USB NIC.
+			continue
+		}
 		if err != nil {
 			failures = append(failures, err)
 			continue

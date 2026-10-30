@@ -17,6 +17,8 @@ Atlas commits a `Pending` record before contacting the provider. The stable reco
 
 Setup prepares provider resources, SSH, networking, WireGuard, and Metal. It saves completed phases in MariaDB and marks the host `Running` only after completion. See the [provisioning sequence](index.md).
 
+Setup sets the host's operating system hostname to its Metal Server title, such as `metal-bom-1`. Cloud-init preserves the hostname across restarts.
+
 ### Import a provider server
 
 Use **Import Server** on the Metal Server list for a Scaleway or AWS server that Atlas did not create. Enter its provider server ID. Atlas matches its size and image to the catalog, adds the Scaleway private network option when it is missing, and runs the normal setup.
@@ -81,6 +83,10 @@ A failed upgrade or check pauses the update. [When a server fails](../operate/ro
 ### Run a script on many hosts
 
 **Metal Server Console** runs a script as `root` on many Metal Servers at once, over each host SSH address (wg0). Enter titles, names, or IP addresses, or use **Pick Servers**. Each entry must match one server. The Metal Server Console Log shows the live output of each server.
+
+**Scrub Output** is on by default. It masks credentials and high-entropy words, such as keys and tokens, before Atlas stores the output. Turn it off only when you must see a value.
+
+The **Diagnostics** menu runs fixed read-only scripts over SSH and shows the scrubbed output in a dialog. It stores no record. A Metal Server has **metald Journal** and **Host Health**. A Virtual Machine has **Firecracker Log** and **VM Journal**.
 
 ### Upgrade on one host
 

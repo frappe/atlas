@@ -32,6 +32,7 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"target_disk_mib": 0,
 		"has_memory_snapshot": 0,
 		"allow_disk_only_fallback": 1,
+		"metal_server_drain": None,
 		"error_code": None,
 		"transfers": [],
 	}
@@ -113,6 +114,29 @@ class TestMigrationValidation(UnitTestCase):
 					else:
 						self.assertEqual(MigrationService.create(source), migration.name)
 						locked.db_set.assert_called_once_with("active_migration", migration.name)
+
+	def test_offloaded_selection_requires_memory_and_disables_fallback(self) -> None:
+		service = MigrationService(migration_doc(status="scheduled"))
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch.object(service, "_prepare_sleep_migration", return_value=True),
+			patch("atlas.vm.core.vm_migration.PlacementStrategy.reserve_server", return_value="metal-2"),
+			patch.object(service, "_load_compatibility_report", return_value=HOST_COMPATIBILITY),
+			patch.object(service, "update") as update,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+		values = update.call_args.args[0]
+		self.assertEqual(values["has_memory_snapshot"], 1)
+		self.assertEqual(values["allow_disk_only_fallback"], 0)
+
+	def test_offloaded_checkpoint_never_skips_memory_compatibility(self) -> None:
+		service = MigrationService(migration_doc(has_memory_snapshot=False))
+		with patch.object(service, "_load_compatibility_report", return_value=HOST_COMPATIBILITY) as reports:
+			service.validate_compatibility("metal-2", "amd64", has_sleep_checkpoint=True)
+		self.assertEqual(reports.call_count, 2)
+		with patch.object(service, "_load_compatibility_report", side_effect=AtlasUserError("incompatible")):
+			with self.assertRaisesRegex(AtlasUserError, "incompatible"):
+				service.validate_compatibility("metal-2", "amd64", has_sleep_checkpoint=True)
 
 	def test_rejects_an_already_migrating_vm(self) -> None:
 		with self.assertRaisesRegex(AtlasUserError, "already migrating"):
@@ -196,6 +220,16 @@ class TestMigrationStatus(UnitTestCase):
 		service.settle = Mock()
 		self.assertTrue(service.advance({"status": "aborted"}))
 		service.settle.assert_called_once_with("failed")
+
+	def test_an_error_before_destination_selection_settles_as_failed(self) -> None:
+		for error_code, status in (("migration_worker_error", "failed"), (None, "aborted")):
+			with self.subTest(error_code=error_code):
+				service = MigrationService(
+					migration_doc(status="canceling", destination_metal_server=None, error_code=error_code)
+				)
+				service.settle = Mock()
+				service.run()
+				service.settle.assert_called_once_with(status)
 
 
 AFFINITY_RULES = '[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db"}}]'
@@ -405,6 +439,40 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		)
 		self.assertEqual(find_server.call_args.kwargs["exclude_servers"], {"metal-1"})
 
+	def test_a_drain_migration_places_only_on_the_drain_destinations(self) -> None:
+		service = MigrationService(
+			migration_doc(
+				status="scheduled",
+				destination_metal_server=None,
+				metal_server_drain="metal-server-drain-00001",
+			)
+		)
+		service.update = Mock()
+		drain = frappe.get_doc(
+			{
+				"doctype": "Metal Server Drain",
+				"source_metal_server": "metal-1",
+				"allow_any_destination": 0,
+				"destinations": [{"metal_server": "metal-3"}, {"metal_server": "metal-4"}],
+			}
+		)
+		documents = {"Virtual Machine": source_vm(), "Metal Server Drain": drain}
+
+		with (
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				side_effect=lambda doctype, _name: documents[doctype],
+			),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
+			patch(
+				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-3"
+			) as find_server,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+
+		self.assertEqual(find_server.call_args.kwargs["exclude_servers"], {"metal-1"})
+		self.assertEqual(find_server.call_args.kwargs["allowed_servers"], {"metal-3", "metal-4"})
+
 	def test_a_resize_migration_sends_the_target_shape_to_the_destination(self) -> None:
 		service = MigrationService(
 			migration_doc(target_cpu_millicores=4000, target_memory_mib=8192, target_disk_mib=40960)
@@ -475,6 +543,69 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		virtual_machine.db_set.assert_any_call(
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960}
 		)
+
+	def test_a_refused_rollback_moves_the_vm_to_the_destination(self) -> None:
+		for status, is_committed in ((409, True), (503, False)):
+			virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
+			migration = migration_doc(status="canceling", db_set=Mock())
+			service = MigrationService(migration)
+			destination_client = Mock()
+			destination_client.abort_migration.side_effect = MetalClientError("refused", status=status)
+			with (
+				self.subTest(status=status),
+				patch.object(MigrationService, "destination_client", destination_client),
+				patch.object(service, "_lock_records", return_value=(virtual_machine, migration)),
+				patch.object(service, "record_error") as record_error,
+				patch("atlas.vm.core.vm_migration.frappe.db.get_value", return_value="metal-1"),
+				patch("atlas.vm.core.vm_migration.frappe.db.commit"),
+				patch("atlas.vm.core.vm_migration.frappe.get_all", return_value=[]),
+			):
+				service.request_destination_abort()
+
+			self.assertEqual(destination_client.finish_migration.called, is_committed)
+			self.assertEqual(record_error.called, not is_committed)
+			if is_committed:
+				virtual_machine.db_set.assert_any_call("server", "metal-2")
+				migration.db_set.assert_any_call("status", "finalizing")
+
+	def restore(self, *, status: str = "canceling", server: str = "metal-1", is_reporting: bool = False):
+		"""Run the restore action against stubbed records and Metal clients."""
+		virtual_machine = SimpleNamespace(name="vm-00001", server=server)
+		service = MigrationService(migration_doc(status=status))
+		source_client = Mock()
+		with (
+			patch.object(service, "_lock_records", return_value=(virtual_machine, service.migration)),
+			patch.object(service, "is_destination_reporting", return_value=is_reporting),
+			patch.object(service, "update") as update,
+			patch.object(service, "settle") as settle,
+			patch.object(MigrationService, "source_metal_server", Mock()),
+			patch("atlas.vm.core.vm_migration.MetalClient", return_value=source_client),
+		):
+			service.restore_source()
+		return update, settle, source_client
+
+	def test_restore_marks_the_destination_lost_before_it_restarts_the_source(self) -> None:
+		update, settle, source_client = self.restore()
+
+		self.assertEqual(update.call_args.args[0]["error_code"], "destination_lost")
+		source_client.restore_migration_source.assert_called_once_with("mig-00001", "vm-00001")
+		settle.assert_called_once_with("failed")
+
+	def test_restore_is_refused_while_the_destination_can_still_own_the_vm(self) -> None:
+		for overrides in ({"is_reporting": True}, {"server": "metal-2"}, {"status": "completed"}):
+			with self.subTest(**overrides), self.assertRaises(AtlasUserError):
+				self.restore(**overrides)
+
+	def test_a_lost_destination_is_never_committed(self) -> None:
+		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())
+		migration = migration_doc(status="canceling", error_code="destination_lost", db_set=Mock())
+		service = MigrationService(migration)
+		with (
+			patch.object(service, "_lock_records", return_value=(virtual_machine, migration)),
+			patch("atlas.vm.core.vm_migration.frappe.db.commit"),
+		):
+			self.assertFalse(service.commit_destination(is_rollback_refused=True))
+		virtual_machine.db_set.assert_not_called()
 
 	def test_scheduled_abort_does_not_contact_an_unreserved_destination(self) -> None:
 		service = MigrationService(migration_doc(status="scheduled", destination_metal_server="metal-2"))
@@ -608,8 +739,10 @@ class TestMigrationTransfers(UnitTestCase):
 					{
 						"sequence": 2,
 						"finished_at": "2026-09-20T12:01:10Z",
+						"duration_seconds": 20,
 						"transferred_mib": 100,
 						"total_mib": 100,
+						"throughput_mibps": 64,
 						"completed": True,
 					},
 					{
@@ -628,6 +761,8 @@ class TestMigrationTransfers(UnitTestCase):
 		self.assertEqual(migration.transfers[0].finished_at, datetime(2026, 9, 20, 12, 0, 42, 26755))
 		self.assertEqual(migration.transfers[1].finished_at, datetime(2026, 9, 20, 12, 1, 10))
 		self.assertEqual(migration.transfers[1].transferred_mib, 100)
+		# The measured rate, not the throttle limit that Metal sends.
+		self.assertEqual(migration.transfers[1].throughput_mibps, 5)
 		self.assertTrue(migration.transfers[1].completed)
 		self.assertEqual(migration.transfers[2].transferred_mib, 512)
 		self.assertTrue(migration.transfers[2].completed)

@@ -46,7 +46,7 @@ def download_scripts(ref: str, directory: Path) -> Path:
 
 def main() -> None:
 	parser = argparse.ArgumentParser(
-		description="Generate the Atlas workbook and update it on an Insights site of a Pilot bench."
+		description="Generate the Atlas workbook and update it on an Insights site of a Pilot or Frappe bench."
 	)
 	parser.add_argument("site", help="Insights site, such as insights.example.com")
 	parser.add_argument(
@@ -54,11 +54,28 @@ def main() -> None:
 	)
 	parser.add_argument("--default-host", default="", help="host title that Atlas - Host opens with")
 	parser.add_argument(
+		"--data-source", default="datum", help="name of the Insights data source for the Datum database"
+	)
+	parser.add_argument(
+		"--bench",
+		type=Path,
+		help="bench folder that holds the site, such as ~/frappe-bench; default: find it with pilot",
+	)
+	parser.add_argument(
 		"--source", type=Path, help="use this scripts/insights folder instead of downloading one"
+	)
+	parser.add_argument(
+		"--alert-webhook-url",
+		help="send the alerts to this https URL, such as a Raven incoming webhook",
+	)
+	parser.add_argument(
+		"--skip-chart-check", action="store_true", help="do not load every chart after the update"
 	)
 	arguments = parser.parse_args()
 
-	bench = find_bench(arguments.site)
+	bench = arguments.bench.expanduser().resolve() if arguments.bench else find_bench(arguments.site)
+	if not (bench / "sites" / arguments.site / "site_config.json").exists():
+		sys.exit(f"error: bench {bench} has no site {arguments.site}")
 	with tempfile.TemporaryDirectory() as temporary:
 		directory = Path(temporary)
 		print(f"==> get the scripts from {arguments.source or f'{REPOSITORY}@{arguments.ref}'}", flush=True)
@@ -71,6 +88,9 @@ def main() -> None:
 		environment = {
 			**os.environ,
 			"ATLAS_INSIGHTS_DEFAULT_HOST": arguments.default_host,
+			"ATLAS_INSIGHTS_SKIP_CHART_CHECK": "1" if arguments.skip_chart_check else "",
+			"ATLAS_INSIGHTS_DATA_SOURCE": arguments.data_source,
+			"ATLAS_INSIGHTS_ALERT_WEBHOOK_URL": arguments.alert_webhook_url or "",
 			"PYTHONDONTWRITEBYTECODE": "1",
 		}
 		with workbook.open("w") as output:

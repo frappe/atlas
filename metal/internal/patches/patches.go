@@ -26,6 +26,9 @@ type Patch struct {
 var all = []Patch{
 	{Name: "rename_status_keys_to_snake_case", Apply: renameStatusKeysToSnakeCase},
 	{Name: "initialize_memory_migration_flags", Apply: initializeMemoryMigrationFlags},
+	{Name: "move_image_kernels_to_kernel_store", Apply: moveImageKernelsToKernelStore},
+	{Name: "initialize_sleep_migration", Apply: initializeSleepMigration},
+	{Name: "rename_comatose_sleep_state_to_coma", Apply: renameComatoseSleepStateToComa},
 	{Name: "recognize_rescue_state", Apply: recognizeRescueState},
 }
 

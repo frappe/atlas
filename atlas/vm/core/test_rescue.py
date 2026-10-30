@@ -58,7 +58,7 @@ class TestRescueSelection(UnitTestCase):
 			"image_object_key": "images/rescue-1/rootfs",
 			"kernel_object_key": "images/rescue-1/kernel",
 			"image_sha256": "a" * 64,
-			"kernel_sha256": "b" * 64,
+			"kernel": "b" * 64,
 			"tags": [SimpleNamespace(key="purpose", value="rescue")],
 		}.items():
 			setattr(image, key, value)
@@ -73,7 +73,16 @@ class TestRescueSelection(UnitTestCase):
 				return_value=["new-default"],
 			) as image_query,
 			patch("atlas.vm.core.vm_service.frappe.db.get_value", return_value=image.name) as lookup,
-			patch("atlas.vm.core.vm_service.frappe.get_doc", return_value=image),
+			patch(
+				"atlas.vm.core.vm_service.frappe.get_doc",
+				side_effect=lambda doctype, _name: (
+					image
+					if doctype == "Virtual Machine Image"
+					else SimpleNamespace(
+						get_url=lambda _expiry: f"https://images.example/kernel?renewal={renewal}"
+					)
+				),
+			),
 			patch.object(image, "get_object_url") as sign,
 		):
 			for renewal in (1, 2):
@@ -94,7 +103,7 @@ class TestRescueSelection(UnitTestCase):
 					"enabled": 1,
 					"architecture": pinned.architecture,
 					"image_sha256": pinned.rootfs.sha256,
-					"kernel_sha256": pinned.kernel.sha256,
+					"kernel": pinned.kernel.sha256,
 				},
 				"name",
 			)

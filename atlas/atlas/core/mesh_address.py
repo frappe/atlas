@@ -34,7 +34,8 @@ def get_virtual_machine_mesh_address(
 ) -> str:
 	"""Return the mesh address from stable Atlas request metadata. A caller in a loop passes the region."""
 	if region_id is None:
-		region_id = cast("AtlasSettings", frappe.get_single("Atlas Settings")).region_id
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
+		region_id = settings.region_id
 	validate_region_id(region_id)
 
 	virtual_machine_name = cast(str, virtual_machine.name)

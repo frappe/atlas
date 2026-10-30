@@ -12,7 +12,7 @@ export default defineConfig({
 	cleanUrls: true,
 	lastUpdated: true,
 	// A link can point at a script or at a directory that GitHub lists. Neither becomes a page.
-	ignoreDeadLinks: [/\.(sh|go|py|toml|h|c)$/, /\/(?:Makefile|authorized-keys-command)$/, /\/docs\/index$/, /^\/api\//],
+	ignoreDeadLinks: [/\.(sh|go|py|toml|h|c)$/, /\/(?:Makefile|authorized-keys-command|apply-metadata)$/, /\/docs\/index$/, /^\/api\//],
 
 	srcExclude: ['README.md', '**/CLAUDE.md', '**/AGENTS.md', 'report.md', 'docs-build/**', '.tmp/**', '**/node_modules/**'],
 	markdown: {
@@ -35,7 +35,7 @@ export default defineConfig({
 				if (!/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(href)) {
 					const sourcePath = posix.resolve('/', posix.dirname(environment.relativePath), href)
 					const isSourceFile = /\.(?:go|py|lua|sh|toml|json|ya?ml|h|c)(?:#.*)?$/.test(href)
-						|| /\/(?:Makefile|authorized-keys-command)(?:#.*)?$/.test(href)
+						|| /\/(?:Makefile|authorized-keys-command|apply-metadata)(?:#.*)?$/.test(href)
 					const isSourceDirectory = href.endsWith('/') && /^\/(?:atlas|metal|services|clients)\//.test(sourcePath)
 
 					if (isSourceFile || isSourceDirectory) {

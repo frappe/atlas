@@ -14,7 +14,6 @@ from atlas.vm.core.metal_client import MetalClient, MetalClientError
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
-	from atlas.atlas.object_storage import ObjectStorageClient
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
@@ -43,7 +42,10 @@ class VirtualMachineImageDeletionService:
 		return cast(str, image.status)
 
 	def reclaim_archived(self) -> None:
-		"""Queue artifact cleanup, then delete records with no VM references."""
+		"""Queue the deletion of each archived image that no VM references.
+
+		A VM can start or migrate again at any time and then needs its image artifacts.
+		"""
 		for image in frappe.get_all(
 			"Virtual Machine Image",
 			filters={"status": "Archived"},
@@ -52,21 +54,15 @@ class VirtualMachineImageDeletionService:
 				"artifact_retention_until",
 				"site_file_retention_until",
 				"image_object_key",
-				"kernel_object_key",
 				"rootfs_multipart_upload_id",
-				"kernel_multipart_upload_id",
 				"image_file",
-				"kernel_file",
 				"source_server",
 			],
 		):
-			if is_retaining_artifacts(image):
+			if is_retaining_artifacts(image) or has_virtual_machines(image.name):
 				continue
-			if not has_virtual_machines(image.name):
-				frappe.db.set_value("Virtual Machine Image", image.name, "status", "Deleting")
-				self.enqueue(image.name)
-			elif has_stored_artifacts(image):
-				self.enqueue(image.name)
+			frappe.db.set_value("Virtual Machine Image", image.name, "status", "Deleting")
+			self.enqueue(image.name)
 
 	def enqueue(self, image_name: str) -> None:
 		"""Enqueue one repeatable image cleanup."""
@@ -81,62 +77,39 @@ class VirtualMachineImageDeletionService:
 		)
 
 	def delete(self, image_name: str) -> None:
-		"""Remove artifacts after retention, then remove an unused record."""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
-		if is_retaining_artifacts(image):
+		"""Remove the artifacts and the record of an image that no VM references."""
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
+		if is_retaining_artifacts(image) or has_virtual_machines(image_name):
 			return
-		if any(
-			(
-				image.image_object_key,
-				image.kernel_object_key,
-				image.rootfs_multipart_upload_id,
-				image.kernel_multipart_upload_id,
-			)
-		):
-			client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
-			self.abort_uploads(image, client)
-			self.delete_objects(image, client)
+		if image.image_object_key:
+			settings: AtlasSettings = frappe.get_single("Atlas Settings")
+			client = settings.get_object_storage_client()
+			if image.rootfs_multipart_upload_id:
+				client.abort_multipart_upload(image.image_object_key, image.rootfs_multipart_upload_id)
+			client.delete_object(image.image_object_key)
+			# An image stored its own kernel copy before kernels were shared.
+			legacy_kernel_key = f"images/{image.name}/kernel"
+			if legacy_kernel_key != frappe.db.get_value("Virtual Machine Kernel", image.kernel, "object_key"):
+				client.delete_object(legacy_kernel_key)
 		self.delete_staged_snapshot(image)
-		# The image still links its owned files until cleanup is saved.
-		for file_name in (image.image_file, image.kernel_file):
-			if file_name:
-				frappe.delete_doc(
-					"File", file_name, force=True, ignore_permissions=True, delete_permanently=True
-				)
+		# The image still links its owned file until cleanup is saved.
+		if image.image_file:
+			frappe.delete_doc(
+				"File", image.image_file, force=True, ignore_permissions=True, delete_permanently=True
+			)
 		if has_stored_artifacts(image):
 			for field in (
 				"image_object_key",
-				"kernel_object_key",
 				"rootfs_multipart_upload_id",
-				"kernel_multipart_upload_id",
 				"image_file",
-				"kernel_file",
 				"source_server",
 				"site_file_retention_until",
 			):
 				setattr(image, field, None)
 			image.save()
-		if not has_virtual_machines(image_name):
-			if image.status != "Deleting":
-				frappe.db.set_value("Virtual Machine Image", image_name, "status", "Deleting")
-			frappe.delete_doc("Virtual Machine Image", image_name)
-
-	@staticmethod
-	def abort_uploads(image: VirtualMachineImage, client: ObjectStorageClient) -> None:
-		"""Abort each multipart upload that the transfer did not complete."""
-		for object_key, upload_id in (
-			(image.image_object_key, image.rootfs_multipart_upload_id),
-			(image.kernel_object_key, image.kernel_multipart_upload_id),
-		):
-			if object_key and upload_id:
-				client.abort_multipart_upload(object_key, upload_id)
-
-	@staticmethod
-	def delete_objects(image: VirtualMachineImage, client: ObjectStorageClient) -> None:
-		"""Remove both stored artifacts owned by this image."""
-		for object_key in (image.image_object_key, image.kernel_object_key):
-			if object_key:
-				client.delete_object(object_key)
+		if image.status != "Deleting":
+			frappe.db.set_value("Virtual Machine Image", image_name, "status", "Deleting")
+		frappe.delete_doc("Virtual Machine Image", image_name)
 
 	@staticmethod
 	def delete_staged_snapshot(image: VirtualMachineImage) -> None:
@@ -144,7 +117,7 @@ class VirtualMachineImageDeletionService:
 		if not image.source_server or not frappe.db.exists("Metal Server", image.source_server):
 			return
 
-		server = cast("MetalServer", frappe.get_doc("Metal Server", image.source_server))
+		server: MetalServer = frappe.get_doc("Metal Server", image.source_server)
 		try:
 			MetalClient(server).delete_snapshot(cast(str, image.name))
 		except MetalClientError as error:
@@ -165,11 +138,8 @@ def has_stored_artifacts(image: VirtualMachineImage) -> bool:
 		getattr(image, field)
 		for field in (
 			"image_object_key",
-			"kernel_object_key",
 			"rootfs_multipart_upload_id",
-			"kernel_multipart_upload_id",
 			"image_file",
-			"kernel_file",
 			"source_server",
 		)
 	)
@@ -203,3 +173,16 @@ def delete_virtual_machine_image(image_name: str) -> None:
 			title=f"Image deletion failed for {image_name}",
 			message=frappe.get_traceback(),
 		)
+
+
+@run_as_admin
+def delete_unused_kernels() -> None:
+	"""Remove each kernel that no image uses, and retry a failed one on the next run."""
+	used_kernels = set(frappe.get_all("Virtual Machine Image", pluck="kernel", distinct=True))
+	for kernel in frappe.get_all("Virtual Machine Kernel", pluck="name"):
+		if kernel in used_kernels:
+			continue
+		try:
+			frappe.delete_doc("Virtual Machine Kernel", kernel, ignore_permissions=True)
+		except ObjectStorageError:
+			frappe.log_error(title=f"Kernel deletion failed for {kernel}", message=frappe.get_traceback())

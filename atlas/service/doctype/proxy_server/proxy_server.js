@@ -16,8 +16,24 @@ frappe.ui.form.on("Proxy Server", {
 				frm.doc.status !== "Archived" && frm.doc.virtual_machine,
 				"Actions",
 			],
+			[
+				__("Update Package"),
+				"update_package",
+				frm.doc.status === "Active",
+				"Actions",
+				__(
+					"Install the published package on {0}? Open connections drop while OpenResty restarts.",
+					[frm.doc.name]
+				),
+			],
+			[
+				__("Configure Telemetry"),
+				"configure_telemetry",
+				frm.doc.status === "Active",
+				"Actions",
+			],
 			[__("Archive"), "archive", frm.doc.status !== "Archived", "Dangerous Actions"],
-		].forEach(([label, method, condition, group]) => {
+		].forEach(([label, method, condition, group, message]) => {
 			if (!condition) {
 				return;
 			}
@@ -25,13 +41,15 @@ frappe.ui.form.on("Proxy Server", {
 			frm.add_custom_button(
 				label,
 				() => {
-					frappe.confirm(`Are you sure you want to ${label.toLowerCase()}?`, () =>
-						frm
-							.call(method, {
-								freeze: true,
-								freeze_message: __("Please wait..."),
-							})
-							.then(() => frm.refresh())
+					frappe.confirm(
+						message || `Are you sure you want to ${label.toLowerCase()}?`,
+						() =>
+							frm
+								.call(method, {
+									freeze: true,
+									freeze_message: __("Please wait..."),
+								})
+								.then(() => frm.refresh())
 					);
 				},
 				__(group)

@@ -13,7 +13,9 @@ This package schedules convergence work. It owns no VM, image, snapshot, or traf
 | Type | Responsibility |
 |---|---|
 | `VirtualMachineReconciler` | Runs VM reconciliation passes. |
-| `ImageReconciler` | Caches images, prunes unused images and staged snapshots. |
+| `NewSleepTransferReconciler` | Runs sleep staging, compression, upload, and eviction in a separate eight-worker pool. |
+| `NewSleepRestoreReconciler` | Reconciles sleeping VMs and restores remote artifacts in a separate eight-worker pool. |
+| `ImageReconciler` | Caches images, prunes unused images, kernels, and staged snapshots. |
 | `MigrationReconciler` | Advances each active destination migration. |
 | `GuestChecker` | Pings running guests every minute, so a silent guest counts as unavailable. |
 | `passScheduler` | Runs a pass at startup, on an interval, and on request. |
@@ -21,7 +23,8 @@ This package schedules convergence work. It owns no VM, image, snapshot, or traf
 ## Pass model
 
 - Each operation has its own timeout.
-- The VM pass limits concurrency, so one slow VM cannot block others.
+- VM operations share a fixed number of slots across passes. A pass starts operations and does not wait for them, so one slow VM does not delay the next pass. A pass skips a VM whose operation still runs.
+- Sleep uploads and restores each use a separate pool of eight workers with the same timeout, backoff, wake, and shutdown behavior. They do not occupy normal VM reconciliation workers or wait for each other's pool.
 - Errors are logged. A later pass retries safe operations.
 - A failing VM waits twice as long after each failure, up to 1 minute. Wake clears the wait.
 - Errors after cancellation are suppressed.

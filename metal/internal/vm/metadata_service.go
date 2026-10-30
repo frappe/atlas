@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // MetadataServiceSizeLimitBytes bounds the MMDS document and its Firecracker API request.
@@ -47,6 +48,13 @@ func (specification Specification) MetadataServiceData(virtualMachineID, ipAddre
 		latest["user-data"] = specification.UserData
 	}
 	return map[string]any{"latest": latest}
+}
+
+// SetMetadataHostTime records the host wall clock in an MMDS document. A guest restored from
+// memory keeps the clock of its snapshot, and its metadata agent steps the clock forward to this time.
+func SetMetadataHostTime(document map[string]any, now time.Time) {
+	metadata := document["latest"].(map[string]any)["meta-data"].(map[string]any)
+	metadata["host-time-unix-ms"] = strconv.FormatInt(now.UnixMilli(), 10)
 }
 
 // validateMetadataServiceSize measures the document with the longest guest address values.

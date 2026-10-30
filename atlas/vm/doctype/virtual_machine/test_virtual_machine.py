@@ -17,6 +17,7 @@ from atlas.vm.core.models import (
 	FirewallRule,
 	Route,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.vm_service import VirtualMachineService
 from atlas.vm.doctype.virtual_machine import virtual_machine as virtual_machine_module
@@ -77,6 +78,36 @@ METAL_VIRTUAL_MACHINE_RESPONSE = {
 
 
 class TestVirtualMachineRequest(UnitTestCase):
+	def test_request_parses_vm_offload_times(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04",
+				"cpu_millicores": 1000,
+				"memory_mib": 1024,
+				"disk_mib": 8192,
+				"tenant_id": 7,
+				"deep_sleep_after_idle_seconds": 3600,
+				"coma_after_idle_seconds": 86400,
+			}
+		)
+		self.assertEqual(
+			(request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (3600, 86400)
+		)
+
+	def test_offload_times_require_non_negative_integers_and_ordered_coma(self) -> None:
+		for deep, coma in ((0, 0), (3600, 0), (3600, 86400)):
+			validate_sleep_times(deep, coma, 1024, 10240)
+		for deep, coma in ((-1, 0), (True, 0), (1.5, 0), (2**31, 0), (0, 3600), (3600, 3600), (7200, 3600)):
+			with self.subTest(deep=deep, coma=coma), self.assertRaises(ValueError):
+				validate_sleep_times(deep, coma, 1024, 10240)
+
+	def test_offload_is_limited_to_small_virtual_machines(self) -> None:
+		validate_sleep_times(3600, 86400, 4096, 51200)
+		validate_sleep_times(0, 0, 8192, 102400)
+		for memory_mib, disk_mib in ((4097, 51200), (4096, 51201)):
+			with self.subTest(memory_mib=memory_mib, disk_mib=disk_mib), self.assertRaises(ValueError):
+				validate_sleep_times(3600, 0, memory_mib, disk_mib)
+
 	def test_request_parses_ssh_keys_and_defaults(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
 			{
@@ -93,6 +124,7 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.cpu_millicores, 1500)
 		self.assertEqual(request.routes, DEFAULT_ROUTES)
 		self.assertEqual(request.firewall, FirewallConfiguration())
+		self.assertEqual((request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (0, 0))
 
 	def test_request_parses_a_firewall(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -432,7 +464,15 @@ class TestVirtualMachineResize(UnitTestCase):
 
 class TestVirtualMachineService(UnitTestCase):
 	def test_create_request_starts_without_a_public_address(self) -> None:
-		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)
+		request = VirtualMachineCreateRequest(
+			"machine-image",
+			2000,
+			2048,
+			10240,
+			7,
+			deep_sleep_after_idle_seconds=3600,
+			coma_after_idle_seconds=86400,
+		)
 		image = SimpleNamespace(get_metal_image_request=Mock(return_value={}))
 		virtual_machine = SimpleNamespace(tenant_id=7, name="VM-00001", is_network_gateway=0)
 
@@ -442,6 +482,9 @@ class TestVirtualMachineService(UnitTestCase):
 			metal_request = VirtualMachineService(virtual_machine).get_metal_request(request, image)
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
+		self.assertEqual(
+			set(metal_request["compute"]), {"cpu_millicores", "memory_mib", "sleep_after_idle_seconds"}
+		)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
 		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)
@@ -1036,6 +1079,10 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 		virtual_machine.tenant_id = tenant_id
 		virtual_machine.is_privileged = is_privileged
 		virtual_machine.is_network_gateway = 0
+		virtual_machine.deep_sleep_after_idle_seconds = 0
+		virtual_machine.coma_after_idle_seconds = 0
+		virtual_machine.memory_mib = 1024
+		virtual_machine.disk_mib = 10240
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None

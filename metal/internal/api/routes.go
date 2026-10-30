@@ -30,6 +30,8 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	virtualMachineRoutes.PUT("/:id/metadata", s.replaceVirtualMachineMetadata)
 	virtualMachineRoutes.DELETE("/:id", s.deleteVirtualMachine)
 	virtualMachineRoutes.POST("/:id/snapshots", s.createVirtualMachineSnapshot)
+	virtualMachineRoutes.POST("/:id/sleep-state", s.offloadVirtualMachineSleepState)
+	virtualMachineRoutes.PATCH("/:id/sleep-state", s.refreshVirtualMachineSleepState)
 	virtualMachineRoutes.GET("/:id/console", s.getVirtualMachineConsole)
 	virtualMachineRoutes.GET("/:id/metrics", s.getVirtualMachineMetrics)
 
@@ -43,6 +45,8 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	migrationRoutes.GET("/:id", s.getMigration)
 	migrationRoutes.POST("/:id/abort", s.abortMigration)
 	migrationRoutes.POST("/:id/finish", s.finishMigration)
+	migrationRoutes.POST("/:id/restore-source", s.restoreMigrationSource)
+	migrationRoutes.POST("/:id/discard", s.discardMigration)
 }
 
 // registerCoordinationRoutes binds the API that Metal nodes call with mutual TLS.
@@ -53,6 +57,7 @@ func (s *Server) registerCoordinationRoutes(router *echo.Echo) {
 	sourceRoutes.POST("/:id/stream", s.startMigrationStream)
 	sourceRoutes.POST("/:id/stop", s.stopMigrationSource)
 	sourceRoutes.GET("/:id/memory-snapshot", s.streamMigrationMemorySnapshotFile)
+	sourceRoutes.GET("/:id/kernel", s.streamMigrationKernel)
 	sourceRoutes.POST("/:id/start", s.startMigrationSource)
 	sourceRoutes.POST("/:id/destroy", s.destroyMigrationSource)
 	sourceRoutes.DELETE("/:id", s.deleteMigrationSource)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,9 +43,7 @@ func (store *ImageStore) deleteImage(ctx context.Context, imageReference string)
 	}
 	err := platform.Run(ctx, "zfs", "destroy", "-r", store.pool.baseDataset(imageReference))
 	switch {
-	case err == nil:
-	case strings.Contains(err.Error(), "does not exist"):
-		return ErrNotFound
+	case err == nil, strings.Contains(err.Error(), "does not exist"):
 	case strings.Contains(err.Error(), "dependent clone"):
 		return ErrInUse
 	default:
@@ -57,13 +56,11 @@ func (store *ImageStore) deleteImage(ctx context.Context, imageReference string)
 	return nil
 }
 
-// imageManifest records the content an image reference is bound to. Local marks
-// an image built on this host, which has no URLs and no digests to verify.
+// imageManifest records the content an image reference is bound to.
 type imageManifest struct {
 	RootfsSHA256 string `json:"rootfs_sha256,omitempty"`
 	KernelSHA256 string `json:"kernel_sha256,omitempty"`
 	Architecture string `json:"architecture"`
-	Local        bool   `json:"local,omitempty"`
 }
 
 // ensureImage makes one image present and verified. A reference is bound to its
@@ -78,20 +75,6 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 	if err != nil {
 		return err
 	}
-	if found && storedManifest.Local {
-		if hasImageSource(image) {
-			return fmt.Errorf("%w: image reference %q identifies a local image", ErrImageConflict, imageReference)
-		}
-		complete, err := store.localImageArtifactsExist(ctx, imageReference)
-		if err != nil {
-			return err
-		}
-		if !complete {
-			return fmt.Errorf("%w: local image %q is incomplete", ErrImageIntegrity, imageReference)
-		}
-		return nil
-	}
-
 	manifest, err := manifestForImage(image)
 	if err != nil {
 		return err
@@ -102,7 +85,7 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 	if found && storedManifest != manifest {
 		return fmt.Errorf("%w: image reference %q already identifies different content", ErrImageConflict, imageReference)
 	}
-	artifactsExist, err := store.imageArtifactsExist(ctx, imageReference)
+	artifactsExist, err := datasetExists(ctx, store.pool.baseDataset(imageReference))
 	if err != nil {
 		return err
 	}
@@ -129,7 +112,7 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 		}()
 	}
 
-	if err := store.ensureKernel(ctx, imageReference, image.KernelURL, manifest.KernelSHA256); err != nil {
+	if err := store.ensureKernel(ctx, image.KernelURL, manifest.KernelSHA256); err != nil {
 		return err
 	}
 	exists, err := datasetExists(ctx, store.pool.baseDataset(imageReference))
@@ -170,12 +153,6 @@ func (store *ImageStore) removeImageArtifacts(ctx context.Context, imageReferenc
 	return os.RemoveAll(store.imageDirectory(imageReference))
 }
 
-// hasImageSource reports whether a policy names remote image content.
-func hasImageSource(image vm.Image) bool {
-	return image.RootfsURL != "" || image.KernelURL != "" || image.RootfsSHA256 != "" ||
-		image.KernelSHA256 != "" || image.Architecture != ""
-}
-
 // manifestForImage builds and validates the manifest a policy asks for.
 func manifestForImage(image vm.Image) (imageManifest, error) {
 	if image.RootfsURL == "" || image.KernelURL == "" {
@@ -204,45 +181,6 @@ func validSHA256(value string) bool {
 	return err == nil
 }
 
-// imageArtifactsExist reports whether any artifact of an image is on the host.
-func (store *ImageStore) imageArtifactsExist(ctx context.Context, imageReference string) (bool, error) {
-	exists, err := datasetExists(ctx, store.pool.baseDataset(imageReference))
-	if err != nil || exists {
-		return exists, err
-	}
-
-	_, err = os.Stat(store.kernelFile(imageReference))
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
-}
-
-// localImageArtifactsExist reports whether a local image has every file it needs.
-func (store *ImageStore) localImageArtifactsExist(ctx context.Context, imageReference string) (bool, error) {
-	exists, err := datasetExists(ctx, store.pool.baseDataset(imageReference))
-	if err != nil || !exists {
-		return false, err
-	}
-
-	for _, path := range []string{
-		store.kernelFile(imageReference),
-		filepath.Join(store.imageDirectory(imageReference), "state"),
-		filepath.Join(store.imageDirectory(imageReference), "mem"),
-	} {
-		if _, err := os.Stat(path); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return false, nil
-			}
-			return false, err
-		}
-	}
-	return true, nil
-}
-
 // loadImageManifest reads the stored manifest and reports whether one exists.
 func (store *ImageStore) loadImageManifest(imageReference string) (imageManifest, bool, error) {
 	data, err := os.ReadFile(store.manifestFile(imageReference))
@@ -260,7 +198,7 @@ func (store *ImageStore) loadImageManifest(imageReference string) (imageManifest
 	if manifest.Architecture == "" {
 		return imageManifest{}, false, fmt.Errorf("%w: stored image manifest is invalid", ErrImageIntegrity)
 	}
-	if !manifest.Local && (!validSHA256(manifest.RootfsSHA256) || !validSHA256(manifest.KernelSHA256)) {
+	if !validSHA256(manifest.RootfsSHA256) || !validSHA256(manifest.KernelSHA256) {
 		return imageManifest{}, false, fmt.Errorf("%w: stored image manifest is invalid", ErrImageIntegrity)
 	}
 	return manifest, true, nil
@@ -277,10 +215,10 @@ func (store *ImageStore) saveImageManifest(imageReference string, manifest image
 	return platform.WriteFile(store.manifestFile(imageReference), data, 0o644)
 }
 
-// ensureKernel makes the image kernel present and verified. A stored kernel that
+// ensureKernel makes one kernel present and verified. A stored kernel that
 // fails verification is an integrity error, not a reason to download again.
-func (store *ImageStore) ensureKernel(ctx context.Context, imageReference, kernelURL, expectedDigest string) error {
-	target := store.kernelFile(imageReference)
+func (store *ImageStore) ensureKernel(ctx context.Context, kernelURL, expectedDigest string) error {
+	target := store.kernelFile(expectedDigest)
 	if _, err := os.Stat(target); err == nil {
 		if err := verifyFileSHA256(target, expectedDigest); err != nil {
 			return fmt.Errorf("%w: stored kernel verification failed", ErrImageIntegrity)
@@ -295,7 +233,7 @@ func (store *ImageStore) ensureKernel(ctx context.Context, imageReference, kerne
 		return fmt.Errorf("download kernel: %w", err)
 	}
 	defer os.Remove(kernel.file.Name())
-	if err := os.MkdirAll(store.imageDirectory(imageReference), 0o755); err != nil {
+	if err := os.MkdirAll(store.kernelsDirectory, 0o755); err != nil {
 		return err
 	}
 	if err := os.Rename(kernel.file.Name(), target); err != nil {
@@ -304,11 +242,63 @@ func (store *ImageStore) ensureKernel(ctx context.Context, imageReference, kerne
 	return os.Chmod(target, 0o644)
 }
 
+// HasKernel reports whether one kernel is stored.
+func (store *ImageStore) HasKernel(kernelSHA256 string) (bool, error) {
+	_, err := os.Stat(store.kernelFile(kernelSHA256))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// OpenKernel opens one stored kernel.
+func (store *ImageStore) OpenKernel(kernelSHA256 string) (*os.File, error) {
+	if !validSHA256(kernelSHA256) {
+		return nil, fmt.Errorf("invalid kernel digest %q", kernelSHA256)
+	}
+	file, err := os.Open(store.kernelFile(kernelSHA256))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	return file, err
+}
+
+// StoreKernel stores one kernel from source after its digest matches.
+func (store *ImageStore) StoreKernel(kernelSHA256 string, source io.Reader) error {
+	if !validSHA256(kernelSHA256) {
+		return fmt.Errorf("invalid kernel digest %q", kernelSHA256)
+	}
+	kernel := &temporaryFileDestination{directory: store.directory}
+	writer, err := kernel.open(context.Background(), 0)
+	if err != nil {
+		return err
+	}
+	defer kernel.discard()
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(writer, hash), source); err != nil {
+		return err
+	}
+	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), kernelSHA256) {
+		return fmt.Errorf("%w: received kernel digest mismatch", ErrImageIntegrity)
+	}
+	if err := kernel.commit(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(store.kernelsDirectory, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(kernel.file.Name(), store.kernelFile(kernelSHA256)); err != nil {
+		return err
+	}
+	return os.Chmod(store.kernelFile(kernelSHA256), 0o644)
+}
+
 // importRootFileSystem downloads the root file system straight into a new ZFS
 // volume and snapshots it. Every failure destroys the volume, so no half-written
 // base image can be cloned.
 func (store *ImageStore) importRootFileSystem(ctx context.Context, imageReference, rootfsURL, expectedDigest string) error {
-	volume := &volumeDestination{store: store, imageReference: imageReference}
+	volume := &volumeDestination{dataset: store.pool.baseDataset(imageReference)}
 	if err := download(ctx, store.httpClient, rootfsURL, expectedDigest, volume, store.logger); err != nil {
 		return fmt.Errorf("download root file system: %w", err)
 	}
@@ -319,11 +309,10 @@ func (store *ImageStore) importRootFileSystem(ctx context.Context, imageReferenc
 	return nil
 }
 
-// volumeDestination downloads into a new ZFS volume for one image.
+// volumeDestination downloads into a new ZFS volume.
 type volumeDestination struct {
-	store          *ImageStore
-	imageReference string
-	device         *os.File
+	dataset string
+	device  *os.File
 }
 
 // imageVolumeSizeMiB is the smallest whole MiB that holds an image. The import writes only the image bytes.
@@ -332,11 +321,10 @@ func imageVolumeSizeMiB(sizeBytes int64) int64 {
 }
 
 func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64) (io.Writer, error) {
-	dataset := destination.store.pool.baseDataset(destination.imageReference)
-	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, dataset); err != nil {
+	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, destination.dataset); err != nil {
 		return nil, err
 	}
-	devicePath := destination.store.baseImageDevicePath(destination.imageReference)
+	devicePath := "/dev/zvol/" + destination.dataset
 	if _, err := waitForBlockDevice(devicePath); err != nil {
 		destination.destroy()
 		return nil, err
@@ -366,12 +354,7 @@ func (destination *volumeDestination) discard() {
 }
 
 func (destination *volumeDestination) destroy() {
-	_ = platform.Run(context.Background(), "zfs", "destroy", "-r", destination.store.pool.baseDataset(destination.imageReference))
-}
-
-// baseImageDevicePath is the block device of one base image volume.
-func (store *ImageStore) baseImageDevicePath(imageReference string) string {
-	return "/dev/zvol/" + store.pool.baseDataset(imageReference)
+	_ = platform.Run(context.Background(), "zfs", "destroy", "-r", destination.dataset)
 }
 
 // newImageHTTPClient returns a client with timeouts suited to large artifacts.
@@ -461,7 +444,7 @@ func (store *ImageStore) PruneImages(ctx context.Context, policies []vm.Image, n
 }
 
 // pruneImage removes one image that has been idle for longer than maximumIdle.
-// An image still in use, or already gone, is left alone.
+// An image with a VM disk cloned from it is left alone.
 func (store *ImageStore) pruneImage(ctx context.Context, imageReference string, now time.Time, maximumIdle time.Duration) error {
 	lastUsed, err := store.imageLastUsed(imageReference)
 	if err != nil {
@@ -472,10 +455,55 @@ func (store *ImageStore) pruneImage(ctx context.Context, imageReference string, 
 	}
 
 	err = store.deleteImage(ctx, imageReference)
-	if errors.Is(err, ErrInUse) || errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrInUse) {
 		return nil
 	}
 	return err
+}
+
+// PruneKernels removes kernels idle for longer than maximumIdle that no stored
+// image and no listed VM uses.
+func (store *ImageStore) PruneKernels(usedKernelSHA256s []string, now time.Time, maximumIdle time.Duration) error {
+	images, err := os.ReadDir(store.directory)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, image := range images {
+		if !image.IsDir() {
+			continue
+		}
+		manifest, found, err := store.loadImageManifest(image.Name())
+		if err != nil {
+			return err
+		}
+		if found {
+			usedKernelSHA256s = append(usedKernelSHA256s, manifest.KernelSHA256)
+		}
+	}
+
+	kernels, err := os.ReadDir(store.kernelsDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, kernel := range kernels {
+		if slices.ContainsFunc(usedKernelSHA256s, func(used string) bool { return strings.EqualFold(used, kernel.Name()) }) {
+			continue
+		}
+		information, err := kernel.Info()
+		if err != nil {
+			return err
+		}
+		if now.Sub(information.ModTime()) < maximumIdle {
+			continue
+		}
+		if err := os.Remove(store.kernelFile(kernel.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // imageLastUsed reports when an image was last started from. It falls back to

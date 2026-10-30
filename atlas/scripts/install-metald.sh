@@ -14,7 +14,7 @@ set -eu
 : "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
-firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
+firecracker_version=${FIRECRACKER_VERSION:-v1.17.0}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
 mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
@@ -311,12 +311,14 @@ Description=metal daemon
 Wants=network-online.target wg-quick@$wireguard_interface.service
 After=network-online.target wg-quick@$wireguard_interface.service
 RequiresMountsFor=$base_dir
+StartLimitIntervalSec=0
 
 [Service]
 ExecStartPre=/usr/local/lib/metal/network-setup
 ExecStart=/usr/bin/metald serve --config $config_file
 Restart=on-failure
-RestartSec=1
+RestartSec=5
+WatchdogSec=60
 # Keep PTY masters across a metald restart or stop.
 NotifyAccess=main
 FileDescriptorStoreMax=1024
@@ -346,6 +348,28 @@ Restart=no
 IOAccounting=yes
 EOF
 
+# A firewall reload or flush removes the host rules, so a timer adds them again.
+cat > /etc/systemd/system/metal-network-setup.service <<EOF
+[Unit]
+Description=metal host network rules
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/metal/network-setup
+EOF
+
+cat > /etc/systemd/system/metal-network-setup.timer <<EOF
+[Unit]
+Description=Restore metal host network rules
+
+[Timer]
+OnActiveSec=30
+OnUnitActiveSec=30
+
+[Install]
+WantedBy=timers.target
+EOF
+
 step "enable IP forwarding"
 # A forwarding host ignores router advertisements unless accept_ra is 2, and a
 # gateway VM needs its host to hold the IPv6 default route.
@@ -362,6 +386,7 @@ sysctl -q -p /etc/sysctl.d/99-metald.conf
 
 step "enable and start metal service"
 systemctl daemon-reload
+systemctl enable --now metal-network-setup.timer
 systemctl enable metal.service
 # Restart preserves console descriptors and running VMs.
 if ! systemctl restart metal.service || ! service_is_stable; then

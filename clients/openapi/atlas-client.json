@@ -349,11 +349,27 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before Atlas offloads the disk. Zero disables it.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores. 1000 millicores equals one virtual CPU.",
             "maximum": 32000,
             "minimum": 100,
             "title": "Cpu Millicores",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before Atlas offloads saved memory. Zero disables it.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "disk_iops": {
@@ -1107,6 +1123,165 @@
         "title": "ImageResponse",
         "type": "object"
       },
+      "InvestigationPayload": {
+        "additionalProperties": false,
+        "description": "One problem for the read-only investigator of the region.",
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Facts that help, such as resource IDs, alert names, and times.",
+            "title": "Context"
+          },
+          "problem": {
+            "description": "The problem to investigate.",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Problem",
+            "type": "string"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Email of the person who asked.",
+            "title": "Requested By"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 140,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Short title. The default is the start of the problem.",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "problem"
+        ],
+        "title": "InvestigationPayload",
+        "type": "object"
+      },
+      "InvestigationResponse": {
+        "description": "One investigation. Atlas masks credentials in each text field.",
+        "examples": [
+          {
+            "context": {
+              "virtual_machine": "vm-0000076"
+            },
+            "created_at": 1793141980,
+            "error": null,
+            "id": "investigation-00001",
+            "outcome": "## Summary\nThe ZFS pool on waw-1 is full...",
+            "problem": "VM vm-0000076 does not boot after a restart.",
+            "status": "completed",
+            "title": "VM vm-0000076 does not boot"
+          }
+        ],
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Facts sent with the problem.",
+            "title": "Context"
+          },
+          "created_at": {
+            "description": "Creation time as Unix seconds.",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the investigation failed.",
+            "title": "Error"
+          },
+          "id": {
+            "description": "Investigation ID.",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The report in Markdown, when the investigation is complete.",
+            "title": "Outcome"
+          },
+          "problem": {
+            "description": "The problem to investigate.",
+            "title": "Problem",
+            "type": "string"
+          },
+          "status": {
+            "description": "Investigation state.",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "Short title.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "problem",
+          "context",
+          "outcome",
+          "error",
+          "created_at"
+        ],
+        "title": "InvestigationResponse",
+        "type": "object"
+      },
       "JSONWebKey": {
         "description": "One public Ed25519 signature key.",
         "properties": {
@@ -1713,6 +1888,21 @@
         "additionalProperties": false,
         "description": "VM resource and idle shutdown changes.",
         "properties": {
+          "coma_after_idle_seconds": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New idle time before Atlas offloads the disk. Zero disables it.",
+            "title": "Coma After Idle Seconds"
+          },
           "cpu_millicores": {
             "anyOf": [
               {
@@ -1727,6 +1917,21 @@
             "default": null,
             "description": "New CPU capacity in millicores.",
             "title": "Cpu Millicores"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New idle time before Atlas offloads saved memory. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds"
           },
           "disk_mib": {
             "anyOf": [
@@ -1875,9 +2080,21 @@
       "VirtualMachineCompute": {
         "description": "The compute shape of one virtual machine.",
         "properties": {
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before disk offload. Zero disables it.",
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores.",
             "title": "Cpu Millicores",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before memory offload. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "memory_mib": {
@@ -1952,6 +2169,7 @@
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
             "is_privileged": false,
+            "is_termination_protected": false,
             "network": {
               "firewall": {
                 "enabled": false,
@@ -2047,6 +2265,11 @@
             "title": "Is Privileged",
             "type": "boolean"
           },
+          "is_termination_protected": {
+            "description": "Whether deletion is blocked.",
+            "title": "Is Termination Protected",
+            "type": "boolean"
+          },
           "network": {
             "$ref": "#/components/schemas/VirtualMachineNetwork",
             "description": "Network configuration and addresses."
@@ -2107,6 +2330,7 @@
           "tags",
           "created_at",
           "is_privileged",
+          "is_termination_protected",
           "public_ipv4",
           "public_ipv6",
           "desired_state",
@@ -2290,6 +2514,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before disk offload. Zero disables it.",
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores.",
             "title": "Cpu Millicores",
@@ -2299,6 +2529,12 @@
             "description": "Creation time as Unix seconds.",
             "minimum": 0,
             "title": "Created At",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before memory offload. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "disk_mib": {
@@ -2680,6 +2916,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "coma_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before disk offload. Zero disables it.",
+            "title": "Coma After Idle Seconds",
+            "type": "integer"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores.",
             "title": "Cpu Millicores",
@@ -2689,6 +2931,12 @@
             "description": "Creation time as Unix seconds.",
             "minimum": 0,
             "title": "Created At",
+            "type": "integer"
+          },
+          "deep_sleep_after_idle_seconds": {
+            "default": 0,
+            "description": "Idle time before memory offload. Zero disables it.",
+            "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
           "disk_mib": {
@@ -3742,6 +3990,182 @@
         "summary": "Update termination protection",
         "tags": [
           "Images"
+        ]
+      }
+    },
+    "/api/atlas/investigations": {
+      "post": {
+        "description": "Queues the read-only investigator on one problem. It reads telemetry, records, and hosts, and changes nothing.",
+        "operationId": "create_investigation",
+        "parameters": [
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "context": {
+                  "virtual_machine": "vm-0000076"
+                },
+                "problem": "VM vm-0000076 does not boot after a restart.",
+                "requested_by": "alice@example.com"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationResponse"
+                }
+              }
+            },
+            "description": "Atlas queued the investigation. Read it until the status is completed or failed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Start investigation",
+        "tags": [
+          "Investigations"
+        ]
+      }
+    },
+    "/api/atlas/investigations/{investigation_id}": {
+      "get": {
+        "description": "Returns the status and the report. Atlas masks credentials. The audit log of tool calls stays in the Atlas Desk.",
+        "operationId": "get_investigation",
+        "parameters": [
+          {
+            "description": "Investigation id.",
+            "in": "path",
+            "name": "investigation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The investigation does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Get investigation",
+        "tags": [
+          "Investigations"
         ]
       }
     },
@@ -6890,6 +7314,10 @@
     {
       "description": "Close Warpgate sessions of a person. Tenant 0 only.",
       "name": "Warpgate"
+    },
+    {
+      "description": "Hand a problem to the read-only investigator of the region and read its report. Tenant 0 only.",
+      "name": "Investigations"
     }
   ]
 }

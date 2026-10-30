@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import frappe
 from frappe import _
@@ -63,12 +63,7 @@ class VirtualMachineImage(Document):
 		image_stored_size_mib: DF.Int
 		image_type: DF.Literal["system", "machine"]
 		is_termination_protected: DF.Check
-		kernel_file: DF.Link | None
-		kernel_multipart_upload_id: DF.Data | None
-		kernel_object_key: DF.Data | None
-		kernel_sha256: DF.Data | None
-		kernel_size_mib: DF.Int
-		kernel_stored_size_mib: DF.Int
+		kernel: DF.Link | None
 		memory_snapshot: DF.Check
 		memory_snapshot_disk_mib: DF.Int
 		memory_snapshot_memory_mib: DF.Int
@@ -164,7 +159,7 @@ class VirtualMachineImage(Document):
 			"ref": self.immutable_reference,
 			"architecture": self.architecture,
 			"rootfs": {"url": self.get_artifact_url("rootfs", expiry_seconds), "sha256": self.image_sha256},
-			"kernel": {"url": self.get_artifact_url("kernel", expiry_seconds), "sha256": self.kernel_sha256},
+			"kernel": {"url": self.get_artifact_url("kernel", expiry_seconds), "sha256": self.kernel},
 		}
 
 	@staticmethod
@@ -182,9 +177,7 @@ class VirtualMachineImage(Document):
 			pluck="name",
 			order_by="creation desc",
 		)
-		images = [
-			cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names
-		]
+		images: list[VirtualMachineImage] = [frappe.get_doc("Virtual Machine Image", name) for name in names]
 		base_images = [image for image in images if image.ubuntu_base_version]
 		if not base_images:
 			frappe.throw(
@@ -214,7 +207,7 @@ class VirtualMachineImage(Document):
 	@property
 	def immutable_reference(self) -> str:
 		"""Return the name that identifies this exact content on a host."""
-		identity = f"{self.architecture}\0{self.image_sha256}\0{self.kernel_sha256}"
+		identity = f"{self.architecture}\0{self.image_sha256}\0{self.kernel}"
 		return f"sha256:{hashlib.sha256(identity.encode()).hexdigest()}"
 
 	@property
@@ -245,10 +238,17 @@ class VirtualMachineImage(Document):
 			"artifact": artifact,
 			"url": self.get_artifact_url(artifact),
 			"size_mib": self.image_size_mib if artifact == "rootfs" else self.kernel_size_mib,
-			"sha256": self.image_sha256 if artifact == "rootfs" else self.kernel_sha256,
+			"sha256": self.image_sha256 if artifact == "rootfs" else self.kernel,
 			"expires_in": SIGNED_URL_EXPIRY_SECONDS,
 			"expires_at": str(add_to_date(now_datetime(), seconds=SIGNED_URL_EXPIRY_SECONDS)),
 		}
+
+	@property
+	def kernel_size_mib(self) -> int:
+		"""Return the size of the linked kernel, or 0 before the image has one."""
+		if not self.kernel:
+			return 0
+		return frappe.get_cached_value("Virtual Machine Kernel", self.kernel, "size_mib")
 
 	@property
 	def is_stored_in_site_file(self) -> bool:
@@ -257,14 +257,13 @@ class VirtualMachineImage(Document):
 
 	def get_artifact_url(self, artifact: Artifact, expiry_seconds: int = SIGNED_URL_EXPIRY_SECONDS) -> str:
 		"""Return the download URL for one artifact."""
+		if artifact == "kernel":
+			return frappe.get_doc("Virtual Machine Kernel", self.kernel).get_url(expiry_seconds)
 		if self.is_stored_in_site_file:
-			file_name = self.image_file if artifact == "rootfs" else self.kernel_file
-			if not file_name:
-				frappe.throw(_("Virtual Machine Image {0} has no {1} file.").format(self.title, artifact))
-			return get_download_url(file_name)
-
-		object_key = self.image_object_key if artifact == "rootfs" else self.kernel_object_key
-		return self.get_object_url(object_key, expiry_seconds)
+			if not self.image_file:
+				frappe.throw(_("Virtual Machine Image {0} has no rootfs file.").format(self.title))
+			return get_download_url(self.image_file)
+		return self.get_object_url(self.image_object_key, expiry_seconds)
 
 	def validate_memory_snapshot_configuration(self) -> None:
 		"""Require a complete VM shape when a warm artifact is requested."""
@@ -293,21 +292,21 @@ class VirtualMachineImage(Document):
 		"""Require both artifacts with an exact size and digest."""
 		if self.is_stored_in_site_file:
 			self.validate_site_file_artifacts()
-		elif not self.image_object_key or not self.kernel_object_key:
-			frappe.throw(_("An available Virtual Machine Image requires rootfs and kernel object keys."))
+		elif not self.image_object_key:
+			frappe.throw(_("An available Virtual Machine Image requires a rootfs object key."))
+		if not self.kernel:
+			frappe.throw(_("An available Virtual Machine Image requires a kernel."))
 		if not SHA256_PATTERN.fullmatch(self.image_sha256 or ""):
 			frappe.throw(_("Image SHA-256 must contain 64 lowercase hexadecimal characters."))
-		if not SHA256_PATTERN.fullmatch(self.kernel_sha256 or ""):
-			frappe.throw(_("Kernel SHA-256 must contain 64 lowercase hexadecimal characters."))
-		if self.image_size_mib <= 0 or self.kernel_size_mib <= 0:
-			frappe.throw(_("An available Virtual Machine Image requires positive artifact sizes."))
+		if self.image_size_mib <= 0:
+			frappe.throw(_("An available Virtual Machine Image requires a positive rootfs size."))
 
 	def validate_site_file_artifacts(self) -> None:
-		"""Require both public files, and refuse tenant content on a public URL."""
+		"""Require the public rootfs file, and refuse tenant content on a public URL."""
 		if self.image_type != "system":
 			frappe.throw(_("Only a System image can use site file storage."))
-		if not self.image_file or not self.kernel_file:
-			frappe.throw(_("A site file Virtual Machine Image requires rootfs and kernel files."))
+		if not self.image_file:
+			frappe.throw(_("A site file Virtual Machine Image requires a rootfs file."))
 
 	def validate_is_available(self) -> None:
 		"""Reject an image that is not ready to boot a VM."""
@@ -328,7 +327,7 @@ class VirtualMachineImage(Document):
 		"""Return a signed URL for one stored object."""
 		if not object_key:
 			frappe.throw(_("Virtual Machine Image {0} has no object key.").format(self.title))
-		settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		return settings.get_object_storage_client().object_url(object_key, expiry_seconds=expiry_seconds)
 
 	@frappe.whitelist(methods=["POST"])

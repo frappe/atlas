@@ -16,6 +16,9 @@ import (
 func TestPrepareSourceReadsTheDescription(t *testing.T) {
 	var gotVirtualMachineID, gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("sleep_state") != "true" {
+			t.Error("destination did not advertise asleep migration support")
+		}
 		gotVirtualMachineID = r.URL.Query().Get("virtual_machine_id")
 		gotPath = r.Method + " " + r.URL.Path
 		_, _ = w.Write([]byte(`{"config":{"virtual_machine_id":"vm-1","specification":{"memory_mib":2048}},"observed_state":"running"}`))
@@ -93,6 +96,18 @@ func TestStopSourceReportsASourceWithoutMemory(t *testing.T) {
 	defer server.Close()
 
 	if _, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2, true); !errors.Is(err, ErrNoMemoryToSave) {
+		t.Fatalf("stop error = %v", err)
+	}
+}
+
+func TestStopSourceReportsAWokenSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":{"code":"source_woke","message":"sleeping source received traffic"}}`))
+	}))
+	defer server.Close()
+
+	if _, err := NewSourceClient(0, nil).StopSource(t.Context(), server.URL, "mig-1", "vm-1", 2, false); !errors.Is(err, ErrSourceWoke) {
 		t.Fatalf("stop error = %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/klauspost/compress/zstd"
@@ -17,7 +18,7 @@ func (s *Server) prepareMigrationSource(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	sourceDescription, err := s.migrationManager.LockSource(c.Request().Context(), identifier, virtualMachineID)
+	sourceDescription, err := s.migrationManager.LockSource(c.Request().Context(), identifier, virtualMachineID, c.QueryParam("sleep_state") == "true")
 	if err != nil {
 		return err
 	}
@@ -101,6 +102,24 @@ func (s *Server) streamMigrationMemorySnapshotFile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	return streamCompressedFile(c, file)
+}
+
+// streamMigrationKernel streams the zstd-compressed kernel of the migrating VM.
+func (s *Server) streamMigrationKernel(c echo.Context) error {
+	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
+	if err != nil {
+		return err
+	}
+	file, err := s.migrationManager.OpenSourceKernel(c.Request().Context(), identifier, virtualMachineID)
+	if err != nil {
+		return err
+	}
+	return streamCompressedFile(c, file)
+}
+
+// streamCompressedFile streams and closes one zstd-compressed file.
+func streamCompressedFile(c echo.Context, file *os.File) error {
 	defer file.Close()
 	information, err := file.Stat()
 	if err != nil {

@@ -8,7 +8,8 @@
   "script_section",
   "script",
   "advanced_section",
-  "timeout_seconds"
+  "timeout_seconds",
+  "scrub_output"
  ],
  "fields": [
   {
@@ -39,11 +40,18 @@
    "fieldname": "advanced_section",
    "fieldtype": "Section Break",
    "label": "Advanced"
+  },
+  {
+   "default": "1",
+   "description": "Mask credentials and high-entropy words in the stored output.",
+   "fieldname": "scrub_output",
+   "fieldtype": "Check",
+   "label": "Scrub Output"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-17 15:45:25.771865",
+ "modified": "2026-10-28 23:30:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metal Server Console",

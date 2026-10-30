@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import frappe
+from frappe import _
 from frappe.utils import now_datetime, time_diff_in_seconds
 
 from atlas.atlas.core.background_jobs import run_as_admin
@@ -51,7 +52,12 @@ class VirtualMachineImageTransferService:
 				"disk_mib": virtual_machine.disk_mib,
 			} | (memory_snapshot_configuration or {})
 
-		server = cast("MetalServer", frappe.get_doc("Metal Server", virtual_machine.server))
+		# The snapshot boots the kernel of its source VM, which a kernel record already stores.
+		kernel = frappe.db.get_value("Virtual Machine Image", virtual_machine.virtual_machine_image, "kernel")
+		if not kernel:
+			frappe.throw(_("The image of Virtual Machine {0} has no kernel.").format(virtual_machine.name))
+
+		server: MetalServer = frappe.get_doc("Metal Server", virtual_machine.server)
 		metal_client = MetalClient(server)
 		try:
 			snapshot = metal_client.create_snapshot(cast(str, virtual_machine.name))
@@ -82,8 +88,7 @@ class VirtualMachineImageTransferService:
 				"memory_snapshot_disk_mib": shape.get("disk_mib", 0),
 				"image_object_key": f"images/{snapshot_id}/rootfs.img",
 				"image_size_mib": image_size_mib,
-				"kernel_object_key": f"images/{snapshot_id}/kernel",
-				"kernel_size_mib": self.get_positive_size(snapshot, "kernel"),
+				"kernel": kernel,
 				"source_virtual_machine": virtual_machine.name,
 				"source_server": virtual_machine.server,
 			}
@@ -113,34 +118,37 @@ class VirtualMachineImageTransferService:
 
 	def transfer(self, image_name: str) -> None:
 		"""Advance one transfer and record a visible failure."""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		try:
 			self.advance(image)
-		except (
-			MetalClientError,
-			ObjectStorageError,
-			MultipartUploadError,
-			VirtualMachineImageTransferError,
-		) as error:
-			self.mark_failed(image, str(error))
-			frappe.log_error(
-				title=f"Machine image transfer failed for {image.name}",
-				message=frappe.get_traceback(),
-			)
+		except MetalClientError as error:
+			if not error.retryable:
+				self.fail(image, error)
+				return
+			# The pending-transfer job retries a host that is down or busy.
+			image.db_set("transfer_error", str(error)[:1000])
+		except (ObjectStorageError, MultipartUploadError, VirtualMachineImageTransferError) as error:
+			self.fail(image, error)
+
+	def fail(self, image: VirtualMachineImage, error: Exception) -> None:
+		"""Mark the transfer failed and log why."""
+		self.mark_failed(image, str(error))
+		frappe.log_error(
+			title=f"Machine image transfer failed for {image.name}",
+			message=frappe.get_traceback(),
+		)
 
 	def advance(self, image: VirtualMachineImage) -> None:
 		"""Move one Machine image transfer forward by one step."""
-		server = cast(
-			"MetalServer",
-			frappe.get_doc("Metal Server", self.require_value(image.source_server, "source server")),
+		server: MetalServer = frappe.get_doc(
+			"Metal Server", self.require_value(image.source_server, "source server")
 		)
 		metal_client = MetalClient(server)
-		object_storage_client = cast(
-			"AtlasSettings", frappe.get_single("Atlas Settings")
-		).get_object_storage_client()
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
+		object_storage_client = settings.get_object_storage_client()
 		multipart_upload = MultipartUploadService(image, object_storage_client)
 
-		if image.image_sha256 and image.kernel_sha256:
+		if image.image_sha256:
 			self.finalize(image, metal_client, multipart_upload)
 			return
 
@@ -198,11 +206,9 @@ class VirtualMachineImageTransferService:
 			image.db_set("transfer_progress", max(0, min(100, percent)))
 
 	def record_completed_upload(self, image: VirtualMachineImage, status: dict[str, Any]) -> None:
-		"""Store checksums and compressed sizes before finalization removes the snapshot."""
+		"""Store the checksum and compressed size before finalization removes the snapshot."""
 		image.image_sha256 = self.require_artifact_sha256(status, "rootfs")
-		image.kernel_sha256 = self.require_artifact_sha256(status, "kernel")
 		image.image_stored_size_mib = self.get_stored_size(status, "rootfs")
-		image.kernel_stored_size_mib = self.get_stored_size(status, "kernel")
 		image.status = "Completing"
 		image.transfer_progress = 100
 		image.transfer_error = None
@@ -275,7 +281,6 @@ class VirtualMachineImageTransferService:
 		"""Mark an image available and clear completed upload identifiers."""
 		image.status = "Available"
 		image.rootfs_multipart_upload_id = None
-		image.kernel_multipart_upload_id = None
 		image.transfer_error = None
 		image.save()
 		observe_image_creation(image, "available")

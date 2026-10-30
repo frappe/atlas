@@ -22,11 +22,9 @@ def build_image(**overrides) -> SimpleNamespace:
 		"artifact_retention_until": None,
 		"site_file_retention_until": None,
 		"image_object_key": "images/image-1/rootfs.img",
-		"kernel_object_key": "images/image-1/kernel",
+		"kernel": "b" * 64,
 		"image_file": None,
-		"kernel_file": None,
 		"rootfs_multipart_upload_id": "upload-1",
-		"kernel_multipart_upload_id": None,
 		"source_server": "node-1",
 		"save": Mock(),
 		"ensure_not_termination_protected": Mock(),
@@ -91,22 +89,10 @@ class TestArchivedImageReclamation(UnitTestCase):
 		database.set_value.assert_not_called()
 		enqueue.assert_not_called()
 
-	def test_artifacts_are_reclaimed_while_vm_records_exist(self) -> None:
+	def test_artifacts_and_record_wait_for_all_vm_records_to_be_removed(self) -> None:
 		image = build_image(artifact_retention_until=NOW - timedelta(minutes=1))
 		database, get_all, enqueue = self.reclaim(image, has_virtual_machines=True)
 		self.assertEqual(get_all.call_args.kwargs["filters"], {"status": "Archived"})
-		database.set_value.assert_not_called()
-		enqueue.assert_called_once_with("image-1")
-
-	def test_record_waits_for_all_vm_records_to_be_removed(self) -> None:
-		image = build_image(
-			artifact_retention_until=NOW - timedelta(minutes=1),
-			image_object_key=None,
-			kernel_object_key=None,
-			rootfs_multipart_upload_id=None,
-			source_server=None,
-		)
-		database, _get_all, enqueue = self.reclaim(image, has_virtual_machines=True)
 		database.set_value.assert_not_called()
 		enqueue.assert_not_called()
 		database, _get_all, enqueue = self.reclaim(image)
@@ -133,55 +119,74 @@ class TestImageCleanup(UnitTestCase):
 			VirtualMachineImageDeletionService().delete("image-1")
 		delete_doc.assert_not_called()
 
-	def test_cleanup_removes_objects_but_keeps_a_referenced_record(self) -> None:
+	def test_cleanup_removes_objects_and_the_unused_record(self) -> None:
 		image = build_image(status="Archived", artifact_retention_until=NOW - timedelta(minutes=1))
 		client = Mock()
 		metal_client = Mock()
 		with (
 			patch("atlas.vm.core.vm_image_deletion.frappe.get_doc", return_value=image),
 			patch("atlas.vm.core.vm_image_deletion.now_datetime", return_value=NOW),
-			patch("atlas.vm.core.vm_image_deletion.frappe.db", Mock(exists=Mock(return_value=True))),
+			patch(
+				"atlas.vm.core.vm_image_deletion.frappe.db",
+				Mock(exists=Mock(return_value=True), get_value=Mock(return_value=f"kernels/{'b' * 64}")),
+			),
 			patch(
 				"atlas.vm.core.vm_image_deletion.frappe.get_single",
 				return_value=SimpleNamespace(get_object_storage_client=Mock(return_value=client)),
 			),
 			patch("atlas.vm.core.vm_image_deletion.MetalClient", return_value=metal_client),
-			patch("atlas.vm.core.vm_image_deletion.has_virtual_machines", return_value=True),
+			patch("atlas.vm.core.vm_image_deletion.has_virtual_machines", return_value=False),
 			patch("atlas.vm.core.vm_image_deletion.frappe.delete_doc") as delete_doc,
 		):
 			VirtualMachineImageDeletionService().delete("image-1")
 		client.abort_multipart_upload.assert_called_once_with("images/image-1/rootfs.img", "upload-1")
-		self.assertEqual(client.delete_object.call_count, 2)
+		# The image's own kernel copy from before kernels were shared goes too.
+		self.assertEqual(
+			[entry.args[0] for entry in client.delete_object.call_args_list],
+			["images/image-1/rootfs.img", "images/image-1/kernel"],
+		)
 		metal_client.delete_snapshot.assert_called_once_with("image-1")
-		self.assertEqual(image.status, "Archived")
 		self.assertIsNone(image.image_object_key)
 		self.assertIsNone(image.source_server)
 		image.save.assert_called_once_with()
-		delete_doc.assert_not_called()
+		delete_doc.assert_called_once_with("Virtual Machine Image", "image-1")
 
-	def test_site_files_are_deleted_without_object_storage(self) -> None:
-		image = build_image(
-			artifact_storage="Site File",
-			image_object_key=None,
-			kernel_object_key=None,
-			rootfs_multipart_upload_id=None,
-			source_server=None,
-			image_file="rootfs-file",
-			kernel_file="kernel-file",
-		)
+	def test_cleanup_keeps_the_artifacts_of_a_referenced_image(self) -> None:
+		image = build_image(status="Archived", artifact_retention_until=NOW - timedelta(minutes=1))
 		with (
 			patch("atlas.vm.core.vm_image_deletion.frappe.get_doc", return_value=image),
+			patch("atlas.vm.core.vm_image_deletion.now_datetime", return_value=NOW),
 			patch("atlas.vm.core.vm_image_deletion.frappe.get_single") as get_single,
 			patch("atlas.vm.core.vm_image_deletion.has_virtual_machines", return_value=True),
 			patch("atlas.vm.core.vm_image_deletion.frappe.delete_doc") as delete_doc,
 		):
 			VirtualMachineImageDeletionService().delete("image-1")
 		get_single.assert_not_called()
+		delete_doc.assert_not_called()
+		self.assertEqual(image.image_object_key, "images/image-1/rootfs.img")
+
+	def test_site_files_are_deleted_without_object_storage(self) -> None:
+		image = build_image(
+			artifact_storage="Site File",
+			image_object_key=None,
+			rootfs_multipart_upload_id=None,
+			source_server=None,
+			image_file="rootfs-file",
+		)
+		with (
+			patch("atlas.vm.core.vm_image_deletion.frappe.get_doc", return_value=image),
+			patch("atlas.vm.core.vm_image_deletion.frappe.get_single") as get_single,
+			patch("atlas.vm.core.vm_image_deletion.has_virtual_machines", return_value=False),
+			patch("atlas.vm.core.vm_image_deletion.frappe.db"),
+			patch("atlas.vm.core.vm_image_deletion.frappe.delete_doc") as delete_doc,
+		):
+			VirtualMachineImageDeletionService().delete("image-1")
+		get_single.assert_not_called()
 		self.assertEqual(
 			[entry.args[:2] for entry in delete_doc.call_args_list],
-			[("File", "rootfs-file"), ("File", "kernel-file")],
+			[("File", "rootfs-file"), ("Virtual Machine Image", "image-1")],
 		)
-		self.assertTrue(all(entry.kwargs["force"] for entry in delete_doc.call_args_list))
+		self.assertTrue(delete_doc.call_args_list[0].kwargs["force"])
 		self.assertIsNone(image.image_file)
 		image.save.assert_called_once_with()
 
@@ -189,7 +194,6 @@ class TestImageCleanup(UnitTestCase):
 		image = build_image(
 			status="Deleting",
 			image_object_key=None,
-			kernel_object_key=None,
 			rootfs_multipart_upload_id=None,
 			source_server=None,
 		)

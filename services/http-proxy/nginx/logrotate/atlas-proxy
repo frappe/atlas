@@ -1,0 +1,13 @@
+/var/log/nginx/*.log {
+	daily
+	maxsize 1G
+	rotate 7
+	compress
+	delaycompress
+	missingok
+	notifempty
+	sharedscripts
+	postrotate
+		if [ -s /run/nginx.pid ]; then kill -USR1 "$(cat /run/nginx.pid)"; fi
+	endscript
+}

@@ -199,6 +199,10 @@ class TestGuestPaths(UnitTestCase):
 			with api_request(path=path):
 				validate_auth()
 
+	def test_the_flow_server_may_call_back(self) -> None:
+		with api_request(path="/api/method/frappe.flow.daemon.callback.callback"):
+			validate_auth()
+
 	def test_a_signed_in_user_may_read_the_public_jwks(self) -> None:
 		frappe.set_user("ordinary@example.com")
 		with api_request(path="/api/atlas/jwks.json"):

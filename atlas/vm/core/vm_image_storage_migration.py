@@ -15,10 +15,8 @@ from atlas.atlas.object_storage import ObjectStorageError
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 	from atlas.atlas.object_storage import ObjectStorageClient
-	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import (
-		Artifact,
-		VirtualMachineImage,
-	)
+	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
+	from atlas.vm.doctype.virtual_machine_kernel.virtual_machine_kernel import VirtualMachineKernel
 
 MIGRATION_TIMEOUT_SECONDS = 3600
 SITE_FILE_RETENTION = timedelta(hours=6)
@@ -49,18 +47,22 @@ class VirtualMachineImageStorageMigration:
 		)
 
 	def migrate(self, image_name: str) -> None:
-		"""Upload both artifacts and move the record to object storage.
+		"""Upload the rootfs, and the kernel when needed, and move the record to object storage.
 
 		The site files stay for SITE_FILE_RETENTION, so a host that is still
 		downloading one keeps a working URL. delete_expired_site_files removes them.
 		"""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		if not image.is_stored_in_site_file:
 			return
 
-		client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
-		image.image_object_key = self.upload(client, image, "rootfs")
-		image.kernel_object_key = self.upload(client, image, "kernel")
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
+		client = settings.get_object_storage_client()
+		kernel: VirtualMachineKernel = frappe.get_doc("Virtual Machine Kernel", image.kernel)
+		kernel_object_key = kernel.object_key or self.upload(client, kernel.file, f"kernels/{kernel.name}")
+		image.image_object_key = self.upload(client, image.image_file, f"images/{image.name}/rootfs.img")
+		# Images that share the kernel can migrate at once. Each writes the same key after its uploads.
+		kernel.db_set("object_key", kernel_object_key)
 		image.artifact_storage = "Object Storage"
 		image.site_file_retention_until = now_datetime() + SITE_FILE_RETENTION
 		image.save()
@@ -77,30 +79,27 @@ class VirtualMachineImageStorageMigration:
 		artifacts already serve from object storage, so a stale reference reaches
 		nothing, and deleting a file that is gone does nothing.
 		"""
-		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
+		image: VirtualMachineImage = frappe.get_doc("Virtual Machine Image", image_name)
 		if image.is_stored_in_site_file:
 			return
 
-		for file_name in (image.image_file, image.kernel_file):
-			if file_name:
-				frappe.delete_doc(
-					"File", file_name, force=True, ignore_permissions=True, delete_permanently=True
-				)
+		if image.image_file:
+			frappe.delete_doc(
+				"File", image.image_file, force=True, ignore_permissions=True, delete_permanently=True
+			)
+		kernel: VirtualMachineKernel = frappe.get_doc("Virtual Machine Kernel", image.kernel)
+		if kernel.object_key and kernel.file:
+			frappe.delete_doc(
+				"File", kernel.file, force=True, ignore_permissions=True, delete_permanently=True
+			)
+			kernel.db_set("file", None)
 
 		image.image_file = None
-		image.kernel_file = None
 		image.site_file_retention_until = None
 		image.save()
 
-	def upload(self, client: ObjectStorageClient, image: VirtualMachineImage, artifact: Artifact) -> str:
-		"""Upload one artifact under this image's key and verify its size."""
-		if artifact == "rootfs":
-			file_name = image.image_file
-			key = f"images/{image.name}/rootfs.img"
-		else:
-			file_name = image.kernel_file
-			key = f"images/{image.name}/kernel"
-
+	def upload(self, client: ObjectStorageClient, file_name: str, key: str) -> str:
+		"""Upload one site file under key and verify its size."""
 		source = Path(frappe.get_doc("File", file_name).get_full_path())
 		client.upload_file(str(source), key)
 		self.validate_stored_size(client, key, source.stat().st_size)
@@ -119,7 +118,7 @@ class VirtualMachineImageStorageMigration:
 
 def enqueue_site_file_image_migrations() -> None:
 	"""Queue migrations for Available images stored as site files."""
-	settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+	settings: AtlasSettings = frappe.get_single("Atlas Settings")
 	if not settings.is_object_storage_configured:
 		return
 

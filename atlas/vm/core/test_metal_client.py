@@ -389,6 +389,14 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 	def test_mutations_use_versioned_subresources(self) -> None:
 		client = build_client()
 		disk = {"size_mib": 2048, "throughput_mibps": 50, "iops": 2000}
+		sleep_target = {
+			"upload_url": "https://objects.example/memory?put=signed",
+			"download_url": "https://objects.example/memory?get=signed",
+		}
+		sleep_refresh = {
+			"snapshot_id": "checkpoint-1",
+			"memory": {"download_url": "https://objects.example/memory?get=fresh"},
+		}
 		network = {
 			"routes": [{"destination": "0.0.0.0/0", "via": "host"}],
 			"public_ipv4": "203.0.113.10",
@@ -409,6 +417,8 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 			client.replace_virtual_machine_ssh_keys("VM-00001", ["ssh-ed25519 AAAA"])
 			client.replace_virtual_machine_metadata("VM-00001", {"env": "prod"})
 			client.delete_virtual_machine("VM-00001")
+			client.offload_sleep_state("VM-00001", {"memory": sleep_target})
+			client.refresh_sleep_state("VM-00001", sleep_refresh)
 
 		self.assertEqual(
 			[call.args[:2] for call in request.call_args_list],
@@ -421,6 +431,8 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 				("PUT", "https://10.0.0.2:9000/v1/vms/VM-00001/ssh-keys"),
 				("PUT", "https://10.0.0.2:9000/v1/vms/VM-00001/metadata"),
 				("DELETE", "https://10.0.0.2:9000/v1/vms/VM-00001"),
+				("POST", "https://10.0.0.2:9000/v1/vms/VM-00001/sleep-state"),
+				("PATCH", "https://10.0.0.2:9000/v1/vms/VM-00001/sleep-state"),
 			],
 		)
 		bodies = [call.kwargs.get("json") for call in request.call_args_list]
@@ -429,6 +441,8 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 		self.assertEqual(bodies[4], network)
 		self.assertEqual(bodies[5], {"ssh_keys": ["ssh-ed25519 AAAA"]})
 		self.assertEqual(bodies[6], {"metadata": {"env": "prod"}})
+		self.assertEqual(bodies[8], {"memory": sleep_target})
+		self.assertEqual(bodies[9], sleep_refresh)
 
 	def test_snapshot_calls_use_unified_image_paths(self) -> None:
 		client = build_client()
@@ -498,6 +512,8 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 			"disk": lambda: client.set_virtual_machine_disk("VM-00001", {}),
 			"compute": lambda: client.set_virtual_machine_compute("VM-00001", COMPUTE_REQUEST),
 			"snapshot_upload": lambda: client.start_snapshot_upload("image-1", {}),
+			"sleep_offload": lambda: client.offload_sleep_state("VM-00001", {}),
+			"sleep_refresh": lambda: client.refresh_sleep_state("VM-00001", {}),
 			"sync": lambda: client.sync([], [], [], [], unicast=False),
 		}
 

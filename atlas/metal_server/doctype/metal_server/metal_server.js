@@ -35,6 +35,19 @@ frappe.ui.form.on("Metal Server", {
 			.filter(Boolean)
 			.join("<br><br>");
 
+		if (is_running && frm.doc.is_provisioning_completed) {
+			[
+				[__("metald Journal"), "fetch_metald_journal"],
+				[__("Host Health"), "check_health"],
+			].forEach(([label, method]) => {
+				frm.add_custom_button(
+					label,
+					() => show_diagnostics(frm, method, label),
+					__("Diagnostics")
+				);
+			});
+		}
+
 		[
 			[
 				__("Retry Provisioning"),
@@ -176,8 +189,109 @@ frappe.ui.form.on("Metal Server", {
 				);
 			});
 		}
+
+		if (is_running && frm.doc.is_provisioning_completed && !frm.doc.__onload?.running_drain) {
+			// The Destinations field reads the child table's Link field from its metadata.
+			frm.add_custom_button(
+				__("Drain Server"),
+				() =>
+					frappe.model.with_doctype("Metal Server Drain Destination", () =>
+						show_drain_dialog(frm)
+					),
+				__("Dangerous Actions")
+			);
+		}
 	},
 });
+
+// Diagnostics read the host over SSH and show the scrubbed output. They store no record.
+function show_diagnostics(frm, method, title) {
+	frm.call({ method, doc: frm.doc, freeze: true }).then(({ message }) => {
+		const dialog = new frappe.ui.Dialog({
+			title,
+			size: "extra-large",
+			fields: [{ fieldname: "output", fieldtype: "Code", read_only: 1 }],
+		});
+		dialog.set_value(
+			"output",
+			message.output || __("No output. Exit code {0}.", [message.exit_code])
+		);
+		dialog.show();
+	});
+}
+
+function show_drain_dialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Drain Metal Server"),
+		fields: [
+			{
+				fieldtype: "Table MultiSelect",
+				fieldname: "destinations",
+				label: __("Destination Metal Servers"),
+				options: "Metal Server Drain Destination",
+				description: __(
+					"<b>Leave empty</b> to let placement choose a Metal Server for each VM."
+				),
+				get_query: () => ({
+					filters: {
+						status: "Running",
+						is_provisioning_completed: 1,
+						name: ["!=", frm.doc.name],
+					},
+				}),
+			},
+			{
+				fieldtype: "Check",
+				fieldname: "has_memory_snapshot",
+				label: __("Memory Snapshot"),
+				default: 0,
+			},
+			{
+				fieldtype: "Check",
+				fieldname: "allow_disk_only_fallback",
+				label: __("Allow Disk-Only Fallback"),
+				description: __("Cold boots the guest if its memory cannot move."),
+				default: 1,
+				depends_on: "has_memory_snapshot",
+			},
+			{
+				fieldtype: "Int",
+				fieldname: "parallel_migrations",
+				label: __("Parallel Migrations"),
+				description: __("Migrations that run at the same time."),
+				default: 1,
+				reqd: 1,
+			},
+			{
+				fieldtype: "Check",
+				fieldname: "retry_failed_migrations",
+				label: __("Retry Failed Migrations"),
+				description: __(
+					"Migrates a failed VM again after the other VMs, up to 3 attempts."
+				),
+				default: 1,
+			},
+		],
+		primary_action_label: __("Drain"),
+		primary_action(values) {
+			dialog.hide();
+			frm.call({
+				method: "drain",
+				doc: frm.doc,
+				args: {
+					destinations: (values.destinations || []).map((row) => row.metal_server),
+					has_memory_snapshot: Boolean(values.has_memory_snapshot),
+					allow_disk_only_fallback: Boolean(values.allow_disk_only_fallback),
+					retry_failed_migrations: Boolean(values.retry_failed_migrations),
+					parallel_migrations: values.parallel_migrations,
+				},
+				freeze: true,
+				freeze_message: __("Starting drain..."),
+			}).then(({ message: drain }) => frappe.set_route("Form", "Metal Server Drain", drain));
+		},
+	});
+	dialog.show();
+}
 
 function show_resize_volume_dialog(frm, kind, title) {
 	frm.call({

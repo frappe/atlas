@@ -17,6 +17,7 @@ from atlas.atlas.core.parsing import strict_bool
 from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
+from atlas.metal_server.core.host_diagnostics import HostDiagnostics
 from atlas.vm.core import reconciliation
 from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
@@ -24,6 +25,7 @@ from atlas.vm.core.models import (
 	ROUTE_VIA_HOST,
 	Route,
 	VirtualMachineCreateRequest,
+	validate_sleep_times,
 )
 from atlas.vm.core.vm_service import VirtualMachineService
 
@@ -50,7 +52,9 @@ class VirtualMachine(Document):
 
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
+		coma_after_idle_seconds: DF.Int
 		cpu_millicores: DF.Int
+		deep_sleep_after_idle_seconds: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
 		is_draft: DF.Check
@@ -103,6 +107,15 @@ class VirtualMachine(Document):
 		the address from the next whitelist and ends cross-tenant traffic.
 		"""
 		validate_tags(self)
+		try:
+			validate_sleep_times(
+				self.deep_sleep_after_idle_seconds or 0,
+				self.coma_after_idle_seconds or 0,
+				self.memory_mib,
+				self.disk_mib,
+			)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
 
 		if self.is_privileged and self.tenant_id != PRIVILEGED_TENANT_ID:
 			frappe.throw(_("A privileged Virtual Machine must use tenant {0}.").format(PRIVILEGED_TENANT_ID))
@@ -120,6 +133,13 @@ class VirtualMachine(Document):
 		self.ensure_not_termination_protected()
 		VirtualMachineService(self).validate_deletion()
 		delete_tasks_for_target(self.doctype, self.name)
+		if frappe.get_cached_doc("Atlas Settings").is_object_storage_configured:
+			frappe.enqueue(
+				"atlas.vm.core.vm_sleep.delete_sleep_objects",
+				virtual_machine_name=self.name,
+				server_name=self.server,
+				enqueue_after_commit=True,
+			)
 		if frappe.db.exists("Virtual Machine State", self.name):
 			frappe.delete_doc(
 				"Virtual Machine State", self.name, ignore_permissions=True, delete_permanently=True
@@ -325,23 +345,24 @@ class VirtualMachine(Document):
 		self.ensure_not_migrating()
 		self.validate_network_change()
 		service = VirtualMachineService(self)
-		service.lock_network()
-		self.is_network_gateway = strict_bool(is_network_gateway, "is_network_gateway")
-		changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
-		if self.is_network_gateway:
-			self.validate_network_gateway()
-			if self.is_accessible_via_wireguard_gateway:
-				frappe.throw(
-					_("Disable WireGuard gateway access before this VM becomes a gateway."),
-					exc=AtlasUserError,
-				)
-			if service.has_gateway_routes():
-				frappe.throw(
-					_("Remove the gateway routes of this VM before it becomes a gateway."), exc=AtlasUserError
-				)
-			changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
-		service.update_network(changes)
-		self.save()
+		with service.network_lock():
+			self.is_network_gateway = strict_bool(is_network_gateway, "is_network_gateway")
+			changes: dict[str, Any] = {"is_network_gateway": bool(self.is_network_gateway)}
+			if self.is_network_gateway:
+				self.validate_network_gateway()
+				if self.is_accessible_via_wireguard_gateway:
+					frappe.throw(
+						_("Disable WireGuard gateway access before this VM becomes a gateway."),
+						exc=AtlasUserError,
+					)
+				if service.has_gateway_routes():
+					frappe.throw(
+						_("Remove the gateway routes of this VM before it becomes a gateway."),
+						exc=AtlasUserError,
+					)
+				changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
+			service.update_network(changes)
+			self.save()
 
 	@frappe.whitelist(methods=["POST"])
 	def set_wireguard_gateway_access(self, is_enabled: bool | int | str) -> None:
@@ -394,7 +415,12 @@ class VirtualMachine(Document):
 	def ensure_not_migrating(self) -> None:
 		"""Reject a mutable action while a migration owns this VM."""
 		if self.active_migration:
-			frappe.throw(_("Virtual Machine {0} is migrating.").format(self.name), exc=AtlasUserError)
+			frappe.throw(
+				_(
+					"Virtual Machine {0} is locked by an internal operation. Try again after it finishes."
+				).format(self.name),
+				exc=AtlasUserError,
+			)
 
 	@frappe.whitelist(methods=["POST"])
 	def create_machine_image(
@@ -556,9 +582,10 @@ class VirtualMachine(Document):
 		memory_mib: int | None = None,
 		disk_mib: int | None = None,
 		sleep_after_idle_seconds: int | None = None,
+		deep_sleep_after_idle_seconds: int | None = None,
+		coma_after_idle_seconds: int | None = None,
 	) -> str | None:
-		"""Change CPU, memory, disk size, or idle shutdown delay. Return the migration name when the
-		current host cannot hold the new shape."""
+		"""Change resources or sleep delays. Return the migration name when the VM must move."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
@@ -573,6 +600,8 @@ class VirtualMachine(Document):
 			"memory_mib": memory_mib,
 			"disk_mib": disk_mib,
 			"sleep_after_idle_seconds": sleep_after_idle_seconds,
+			"deep_sleep_after_idle_seconds": deep_sleep_after_idle_seconds,
+			"coma_after_idle_seconds": coma_after_idle_seconds,
 		}
 		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
@@ -627,6 +656,18 @@ class VirtualMachine(Document):
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		VirtualMachineService(self).request_restart()
+
+	@frappe.whitelist(methods=["POST"])
+	def fetch_firecracker_log(self) -> dict:
+		"""Read the end of the Firecracker log on the host. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics.for_virtual_machine(self.name).fetch_firecracker_log(self.name)
+
+	@frappe.whitelist(methods=["POST"])
+	def fetch_journal(self) -> dict:
+		"""Read the last hour of the metal-vm unit journal. Return the scrubbed output."""
+		frappe.only_for("System Manager")
+		return HostDiagnostics.for_virtual_machine(self.name).fetch_virtual_machine_journal(self.name)
 
 	@frappe.whitelist(methods=["POST"])
 	def get_console_token(self, mode: str = "tty") -> dict[str, str]:

@@ -82,24 +82,55 @@ func TestFailingVirtualMachineWaitsForItsBackoff(t *testing.T) {
 	manager.reconcileErr = errors.New("inspect failed")
 	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)})
 
-	reconciler.reconcileAll(t.Context())
-	reconciler.reconcileAll(t.Context())
+	reconcileAndWait(reconciler, t.Context())
+	reconcileAndWait(reconciler, t.Context())
 	if manager.seen["a"] != 1 || manager.seen["b"] != 1 {
 		t.Fatalf("attempts = %v, want one each while waiting", manager.seen)
 	}
 
 	reconciler.Wake()
-	reconciler.reconcileAll(t.Context())
+	reconcileAndWait(reconciler, t.Context())
 	if manager.seen["a"] != 2 {
 		t.Fatalf("attempts = %v, want a retry after Wake", manager.seen)
 	}
 
 	manager.reconcileErr = nil
 	reconciler.Wake()
-	reconciler.reconcileAll(t.Context())
-	reconciler.reconcileAll(t.Context())
+	reconcileAndWait(reconciler, t.Context())
+	reconcileAndWait(reconciler, t.Context())
 	if manager.seen["a"] != 4 {
 		t.Fatalf("attempts = %v, want every pass after a success", manager.seen)
+	}
+}
+
+// reconcileAndWait runs one pass and waits for the operations it started.
+func reconcileAndWait(reconciler *VirtualMachineReconciler, ctx context.Context) {
+	reconciler.reconcileAll(ctx)
+	reconciler.operations.Wait()
+}
+
+func TestSlowOperationDoesNotDelayTheNextPass(t *testing.T) {
+	manager := &concurrencyManager{
+		ids:     []string{"slow"},
+		started: make(chan string, 4),
+		release: make(chan struct{}),
+	}
+	reconciler := NewVirtualMachineReconciler(manager, time.Hour, VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil)})
+	reconciler.reconcileAll(t.Context())
+	<-manager.started
+
+	// The next pass skips the active VM and reconciles a new one.
+	manager.ids = []string{"slow", "new"}
+	reconciler.reconcileAll(t.Context())
+	if id := <-manager.started; id != "new" {
+		t.Fatalf("started %s, want new", id)
+	}
+
+	manager.release <- struct{}{}
+	manager.release <- struct{}{}
+	reconciler.operations.Wait()
+	if len(manager.started) != 0 {
+		t.Fatal("the next pass started the active VM again")
 	}
 }
 
@@ -151,10 +182,10 @@ func TestSuccessAfterAnExpiredFailureClearsTheBackoff(t *testing.T) {
 	now := time.Unix(1000, 0)
 	reconciler.backoff.now = func() time.Time { return now }
 
-	reconciler.reconcileAll(t.Context())
+	reconcileAndWait(reconciler, t.Context())
 	now = now.Add(10 * time.Second)
 	manager.reconcileErr = nil
-	reconciler.reconcileAll(t.Context())
+	reconcileAndWait(reconciler, t.Context())
 
 	if len(reconciler.backoff.failures) != 0 || manager.seen["a"] != 2 {
 		t.Fatalf("failures = %v, attempts = %v, want a cleared backoff after two attempts", reconciler.backoff.failures, manager.seen)
@@ -189,6 +220,68 @@ type concurrencyManager struct {
 	mutex           sync.Mutex
 	active          int
 	maximumObserved int
+}
+
+type sleepTransferTestManager struct {
+	*recordingManager
+	uploads *concurrencyManager
+}
+
+func (manager *sleepTransferTestManager) OffloadSleepArtifacts(ctx context.Context, id string) error {
+	return manager.uploads.Reconcile(ctx, id)
+}
+
+func (manager *sleepTransferTestManager) RestoreSleepState(ctx context.Context, id string) error {
+	return manager.uploads.Reconcile(ctx, id)
+}
+
+func TestSleepPoolsDoNotBlockVMWorkersAndStopOnShutdown(t *testing.T) {
+	for _, operation := range []string{"upload", "restore"} {
+		t.Run(operation, func(t *testing.T) {
+			ids := []string{"a", "b", "c", "d", "e"}
+			manager := &sleepTransferTestManager{
+				recordingManager: newRecordingManager(ids...),
+				uploads:          &concurrencyManager{ids: ids, started: make(chan string, 32)},
+			}
+			configuration := VirtualMachineConfig{Telemetry: telemetry.NewRegistry(nil), MaxConcurrentOperations: 2}
+			uploads := NewSleepTransferReconciler(manager, time.Hour, configuration)
+			if operation == "restore" {
+				uploads = NewSleepRestoreReconciler(manager, time.Hour, configuration)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			stopped := make(chan struct{})
+			go func() {
+				uploads.Run(ctx)
+				close(stopped)
+			}()
+			for range 2 {
+				select {
+				case <-manager.uploads.started:
+				case <-time.After(time.Second):
+					t.Fatal("upload workers did not start")
+				}
+			}
+			operationContext, cancelOperation := context.WithTimeout(t.Context(), time.Second)
+			defer cancelOperation()
+			reconcileAndWait(NewVirtualMachineReconciler(manager, time.Hour, configuration), operationContext)
+			if operationContext.Err() != nil || len(manager.seen) != len(ids) {
+				t.Fatal("blocked uploads stalled ordinary VM reconciliation")
+			}
+			for range 10 {
+				uploads.Wake()
+			}
+			cancel()
+			select {
+			case <-stopped:
+			case <-time.After(time.Second):
+				t.Fatal("upload workers did not stop after cancellation")
+			}
+			if manager.uploads.maximumObserved != 2 || manager.uploads.active != 0 {
+				t.Fatalf("upload workers: maximum=%d, active=%d", manager.uploads.maximumObserved, manager.uploads.active)
+			}
+		})
+	}
 }
 
 func (manager *concurrencyManager) ListIDs(context.Context) ([]string, error) {
@@ -253,6 +346,7 @@ func TestReconcileAllLimitsConcurrentOperations(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("reconcile pass did not finish")
 	}
+	reconciler.operations.Wait()
 	if manager.maximumObserved != 2 {
 		t.Fatalf("maximum concurrent operations = %d, want 2", manager.maximumObserved)
 	}
@@ -278,7 +372,7 @@ func TestReconcileAllAppliesOperationTimeout(t *testing.T) {
 		OperationTimeout:        20 * time.Millisecond,
 	})
 
-	reconciler.reconcileAll(context.Background())
+	reconcileAndWait(reconciler, context.Background())
 	select {
 	case <-manager.timedOut:
 	default:

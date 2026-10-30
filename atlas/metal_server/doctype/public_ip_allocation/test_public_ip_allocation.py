@@ -1,9 +1,11 @@
+import uuid
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.metal_server.core.public_ip_service import PublicIPService, generate_available_allocations
+from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import PublicIPAllocation
 
 
 def insert_pool(prefix: str, allocation_prefix_length: int):
@@ -39,6 +41,68 @@ class TestPublicIPAllocation(IntegrationTestCase):
 		self.assertEqual(allocation.status, "Reserved")
 		self.assertTrue(allocation.is_reserved)
 
+	def test_a_claim_takes_a_free_allocation_before_it_grows_the_pool(self) -> None:
+		pool = insert_pool("198.19.45.0/30", 32)
+		generate_available_allocations(pool.name, 2)
+
+		allocation = PublicIPService().reserve(7, 4)
+
+		self.assertIn(allocation.prefix, {"198.19.45.0/32", "198.19.45.1/32"})
+		self.assertEqual(frappe.db.get_value("Public IP Pool", pool.name, "next_allocation_offset"), "2")
+
+	def test_a_claim_whose_random_pick_misses_takes_a_free_allocation(self) -> None:
+		pool = insert_pool("198.19.46.0/31", 32)
+		generate_available_allocations(pool.name)
+
+		with patch.object(PublicIPService, "_lock_random_available", return_value=None):
+			allocation = PublicIPService().reserve(7, 4)
+
+		self.assertEqual(allocation.status, "Reserved")
+		self.assertEqual(frappe.db.count("Public IP Allocation", {"pool": pool.name}), 2)
+
+	def insert_attached_allocation(self, pool_prefix: str) -> str:
+		pool = insert_pool(pool_prefix, 32)
+		generate_available_allocations(pool.name, 1)
+		name = frappe.db.get_value("Public IP Allocation", {"pool": pool.name})
+		frappe.db.set_value(
+			"Public IP Allocation",
+			name,
+			{"status": "Attached", "tenant_id": 7, "virtual_machine": "vm-a", "server": str(uuid.uuid4())},
+		)
+		return name
+
+	def move(self, allocation: PublicIPAllocation, server: str) -> None:
+		with (
+			patch.object(PublicIPAllocation, "validate"),
+			patch.object(PublicIPAllocation, "_validate_links"),
+			patch.object(PublicIPAllocation, "queue_reconcile"),
+		):
+			allocation.move_to_server(server)
+
+	def test_a_stale_move_to_the_same_server_does_nothing(self) -> None:
+		name = self.insert_attached_allocation("198.19.47.0/31")
+		destination = str(uuid.uuid4())
+		stale = frappe.get_doc("Public IP Allocation", name)
+
+		self.move(frappe.get_doc("Public IP Allocation", name), destination)
+		frappe.db.set_value("Public IP Allocation", name, "status", "Attached")
+		with patch("frappe.get_doc", wraps=frappe.get_doc) as get_doc:
+			self.move(stale, destination)
+
+		get_doc.assert_called_once_with("Public IP Allocation", name, for_update=True)
+		current = frappe.get_doc("Public IP Allocation", name)
+		self.assertEqual((current.server, current.status), (destination, "Attached"))
+		self.assertEqual(current.intent_version, stale.intent_version + 1)
+
+	def test_a_stale_move_keeps_a_detach(self) -> None:
+		name = self.insert_attached_allocation("198.19.48.0/31")
+		stale = frappe.get_doc("Public IP Allocation", name)
+		frappe.db.set_value("Public IP Allocation", name, "status", "Detaching")
+
+		self.move(stale, str(uuid.uuid4()))
+
+		self.assertEqual(frappe.db.get_value("Public IP Allocation", name, "status"), "Detaching")
+
 	def test_allocator_stops_at_the_end_of_the_pool(self) -> None:
 		pool = insert_pool("198.19.42.1/32", 32)
 		service = PublicIPService()
@@ -64,3 +128,22 @@ class TestPublicIPAllocation(IntegrationTestCase):
 		self.assertEqual(created, 4)
 		self.assertEqual(frappe.db.count("Public IP Allocation", {"pool": pool.name}), 4)
 		self.assertEqual(generate_available_allocations(pool.name), 0)
+
+	def test_a_blocked_address_is_never_allocated(self) -> None:
+		pool = insert_pool("198.19.44.0/31", 32)
+		generate_available_allocations(pool.name)
+		blocked = frappe.get_doc("Public IP Allocation", {"pool": pool.name, "prefix": "198.19.44.0/32"})
+		blocked.block()
+
+		reserved = PublicIPService().reserve(7, 4)
+		with self.assertRaisesRegex(frappe.ValidationError, "capacity"):
+			PublicIPService().reserve(7, 4)
+
+		self.assertEqual(reserved.prefix, "198.19.44.1/32")
+		self.assertEqual(frappe.db.get_value("Public IP Allocation", blocked.name, "status"), "Blocked")
+		with self.assertRaises(frappe.ValidationError):
+			frappe.get_doc("Public IP Allocation", reserved.name).block()
+
+		blocked.reload()
+		blocked.unblock()
+		self.assertEqual(PublicIPService().reserve(7, 4).name, blocked.name)

@@ -53,7 +53,7 @@ type SerialBroker interface {
 type VirtualMachineManager interface {
 	Create(context.Context, string, vm.Specification) (vm.Information, error)
 	Information(context.Context, string) (vm.Information, error)
-	List(context.Context) ([]vm.Information, error)
+	List(context.Context) ([]vm.Information, []string, error)
 	SetPowerState(context.Context, string, vm.State) error
 	RequestRestart(context.Context, string) error
 	RequestRescue(context.Context, string, vm.Image) error
@@ -66,6 +66,8 @@ type VirtualMachineManager interface {
 	ReplaceMetadata(context.Context, string, map[string]string) (bool, error)
 	Delete(context.Context, string) error
 	CreateSnapshot(context.Context, string) (vm.StagedSnapshot, error)
+	OffloadSleepState(context.Context, string, vm.SleepStateRequest) error
+	RefreshSleepState(context.Context, string, vm.SleepStateRequest) error
 	ConnectSSH(ctx context.Context, id, sessionID string) (vm.SSHSession, error)
 }
 
@@ -75,11 +77,14 @@ type MigrationManager interface {
 	DestinationStatus(ctx context.Context, migrationID string) (migration.DestinationProgress, error)
 	RequestFinish(ctx context.Context, migrationID string) error
 	AbortDestination(ctx context.Context, migrationID string) error
-	LockSource(ctx context.Context, migrationID, virtualMachineID string) (migration.SourceDescription, error)
+	DiscardDestination(ctx context.Context, migrationID string) error
+	RestoreSource(ctx context.Context, migrationID, virtualMachineID string) error
+	LockSource(ctx context.Context, migrationID, virtualMachineID string, allowSleepState bool) (migration.SourceDescription, error)
 	NextSourceSnapshot(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int) (migration.SourceSnapshot, error)
 	StartSourceStream(ctx context.Context, migrationID, virtualMachineID string, sequence int, resumeToken string, throughputMiBps int) error
 	StopSource(ctx context.Context, migrationID, virtualMachineID string, receivedSequence int, hasMemorySnapshot bool) (migration.SourceSnapshot, error)
 	OpenSourceMemorySnapshotFile(ctx context.Context, migrationID, virtualMachineID string, sequence int, name string) (*os.File, error)
+	OpenSourceKernel(ctx context.Context, migrationID, virtualMachineID string) (*os.File, error)
 	StartSourceRollback(ctx context.Context, migrationID, virtualMachineID string) error
 	DestroySource(ctx context.Context, migrationID, virtualMachineID string) error
 	UnlockSource(ctx context.Context, migrationID, virtualMachineID string) error

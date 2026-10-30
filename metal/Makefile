@@ -36,7 +36,7 @@ build: openapi bpf
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(OUTPUT_DIRECTORY)/$(BINARY_NAME)-linux-arm64 ./cmd/metald
 
 openapi:
-	$(SWAG) init -g main.go --dir ./cmd/metald,./$(SPEC_DIRECTORY) --parseInternal --outputTypes json -o $(SPEC_DIRECTORY)
+	$(SWAG) init -g main.go --dir ./cmd/metald,./$(SPEC_DIRECTORY),./internal/vm --parseInternal --outputTypes json -o $(SPEC_DIRECTORY)
 
 version:
 	@echo $(VERSION)

@@ -18,7 +18,7 @@ import (
 
 const (
 	// migrationSchemaVersion is the on-disk record format.
-	migrationSchemaVersion = 2
+	migrationSchemaVersion = 3
 
 	// migrationSubdirectory stores migration records beside VM records.
 	migrationSubdirectory = "migration"
@@ -138,6 +138,8 @@ type VirtualMachineDefinition struct {
 	RestartGeneration       uint64           `json:"restart_generation"`
 	DesiredState            vm.State         `json:"desired_state"`
 	Specification           vm.Specification `json:"specification"`
+
+	Sleep *vm.SleepMigration `json:"sleep,omitempty"`
 }
 
 // Resize is the shape a destination gives the migrated VM in place of the source shape.
@@ -151,6 +153,9 @@ type Resize struct {
 func (resize *Resize) apply(definition VirtualMachineDefinition) (VirtualMachineDefinition, error) {
 	if resize == nil {
 		return definition, nil
+	}
+	if definition.Sleep != nil {
+		return VirtualMachineDefinition{}, fmt.Errorf("an offloaded VM cannot resize during migration: %w", vm.ErrConflict)
 	}
 	if resize.DiskMiB < definition.Specification.DiskMiB {
 		return VirtualMachineDefinition{}, fmt.Errorf("resize disk %d MiB is smaller than the source disk %d MiB", resize.DiskMiB, definition.Specification.DiskMiB)
@@ -244,11 +249,21 @@ func (record destinationRecord) progress() DestinationProgress {
 
 // usesMemorySnapshot reports whether the destination resumes the transferred memory.
 func (record destinationRecord) usesMemorySnapshot() bool {
-	return record.HasMemorySnapshot && record.MemorySnapshotError == ""
+	return record.HasMemorySnapshot && record.MemorySnapshotError == "" && !record.hasSleepCheckpoint()
+}
+
+func (record destinationRecord) hasSleepCheckpoint() bool {
+	return record.Definition != nil && record.Definition.Sleep != nil
+}
+
+// hasColdBootedGuest reports whether a ready destination runs its guest from the
+// received disk. A memory restore stays paused and an offloaded VM stays asleep.
+func (record destinationRecord) hasColdBootedGuest() bool {
+	return !record.usesMemorySnapshot() && !record.hasSleepCheckpoint()
 }
 
 func (record destinationRecord) memorySnapshotStatus() string {
-	if !record.HasMemorySnapshot {
+	if !record.HasMemorySnapshot || record.hasSleepCheckpoint() {
 		return ""
 	}
 	if record.MemorySnapshotError != "" {
@@ -312,6 +327,8 @@ type sourceRecord struct {
 	TemporaryDiskLimitMiBps int         `json:"temporary_disk_limit_mibps,omitempty"`
 	// LastContactAt lets an idle source lock expire.
 	LastContactAt time.Time `json:"last_contact_at"`
+
+	Sleep *vm.SleepMigration `json:"sleep,omitempty"`
 }
 
 type migrationStore struct {
@@ -322,26 +339,6 @@ func newMigrationStore(recordsDirectory string) *migrationStore {
 	return &migrationStore{recordsDirectory: recordsDirectory}
 }
 
-func (store *migrationStore) validate() error {
-	virtualMachineIDs, err := store.listVirtualMachineIDs()
-	if err != nil {
-		return err
-	}
-	for _, virtualMachineID := range virtualMachineIDs {
-		if store.has(store.destinationPath(virtualMachineID)) {
-			if _, err := store.readDestination(virtualMachineID); err != nil {
-				return err
-			}
-		}
-		if store.has(store.sourcePath(virtualMachineID)) {
-			if _, err := store.readSource(virtualMachineID); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func writeMigrationRecord(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -350,7 +347,7 @@ func writeMigrationRecord(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create record directory: %w", err)
 	}
-	if err := platform.WriteFile(path, data, 0o640); err != nil {
+	if err := platform.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -401,17 +398,23 @@ func (store *migrationStore) findDestination(migrationID string) (string, destin
 	if err != nil {
 		return "", destinationRecord{}, err
 	}
+	var unreadable []error
 	for _, virtualMachineID := range virtualMachineIDs {
 		if !store.has(store.destinationPath(virtualMachineID)) {
 			continue
 		}
 		record, err := store.readDestination(virtualMachineID)
 		if err != nil {
-			return "", destinationRecord{}, err
+			unreadable = append(unreadable, err)
+			continue
 		}
 		if record.ID == migrationID {
 			return virtualMachineID, record, nil
 		}
+	}
+	// An unreadable record can hold this migration, so it is not proven absent.
+	if len(unreadable) > 0 {
+		return "", destinationRecord{}, fmt.Errorf("find migration %s: %w", migrationID, errors.Join(unreadable...))
 	}
 	return "", destinationRecord{}, fmt.Errorf("find migration %s: %w", migrationID, vm.ErrNotFound)
 }
@@ -426,6 +429,11 @@ func (store *migrationStore) readDestination(virtualMachineID string) (destinati
 	}
 	if record.VirtualMachineID != virtualMachineID || record.ID == "" || !record.State.valid() {
 		return destinationRecord{}, fmt.Errorf("read %s: invalid destination record", store.destinationPath(virtualMachineID))
+	}
+	if record.hasSleepCheckpoint() {
+		if err := record.Definition.Sleep.Validate(record.Definition.SpecificationGeneration, record.Definition.RestartGeneration); err != nil {
+			return destinationRecord{}, fmt.Errorf("read %s: %w", store.destinationPath(virtualMachineID), err)
+		}
 	}
 	return record, nil
 }
@@ -453,6 +461,12 @@ func (store *migrationStore) readSource(virtualMachineID string) (sourceRecord, 
 	}
 	if record.VirtualMachineID != virtualMachineID || record.ID == "" || !isValidSourceState(record.State) {
 		return sourceRecord{}, fmt.Errorf("read %s: invalid source record", store.sourcePath(virtualMachineID))
+	}
+	if record.Sleep != nil {
+		checkpoint := record.Sleep.Checkpoint
+		if err := record.Sleep.Validate(checkpoint.SpecificationGeneration, checkpoint.RestartGeneration); err != nil {
+			return sourceRecord{}, fmt.Errorf("read %s: %w", store.sourcePath(virtualMachineID), err)
+		}
 	}
 	return record, nil
 }

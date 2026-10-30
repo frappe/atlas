@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	platform "github.com/frappe/atlas/metal/internal/platform"
@@ -172,8 +173,9 @@ func relaySnapshotToDestination(ctx context.Context, listener net.Listener, stre
 	return nil
 }
 
-// ReceiveSnapshotTLS receives a mutual-TLS ZFS stream from the source host.
-func (transfer *MigrationTransfer) ReceiveSnapshotTLS(ctx context.Context, virtualMachineID, sourceAddress string) error {
+// ReceiveSnapshotTLS receives a mutual-TLS ZFS stream from the source host and
+// adds each received byte to received.
+func (transfer *MigrationTransfer) ReceiveSnapshotTLS(ctx context.Context, virtualMachineID, sourceAddress string, received *atomic.Int64) error {
 	if err := transfer.validateTLS(); err != nil {
 		return err
 	}
@@ -218,7 +220,7 @@ func (transfer *MigrationTransfer) ReceiveSnapshotTLS(ctx context.Context, virtu
 		}
 	}()
 
-	_, copyError := io.CopyBuffer(pipeWriter, stallingReader{connection}, make([]byte, copyBufferBytes))
+	_, copyError := io.CopyBuffer(countingWriter{pipeWriter, received}, stallingReader{connection}, make([]byte, copyBufferBytes))
 	// zfs recv ends on EOF, so the write end must close before the wait.
 	pipeWriter.Close()
 	receiveWaitError := receiveCommand.Wait()
@@ -238,6 +240,18 @@ func (reader stallingReader) Read(buffer []byte) (int, error) {
 		return 0, err
 	}
 	return reader.connection.Read(buffer)
+}
+
+// countingWriter adds every written byte to a shared counter.
+type countingWriter struct {
+	writer  io.Writer
+	written *atomic.Int64
+}
+
+func (writer countingWriter) Write(buffer []byte) (int, error) {
+	written, err := writer.writer.Write(buffer)
+	writer.written.Add(int64(written))
+	return written, err
 }
 
 // stallingWriter fails a write that makes no progress inside stallTimeout.

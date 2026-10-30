@@ -8,7 +8,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 )
 
-// RestoreAfterTraffic restores a stopped Sleepy VM after new traffic.
+// RestoreAfterTraffic records a wake request after new traffic.
 func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.Event) (restoreError error) {
 	if manager.traffic == nil {
 		return nil
@@ -37,48 +37,16 @@ func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.E
 		}
 	}()
 
-	return manager.restoreSleeping(ctx, desired, observed)
-}
-
-// wakeSleepingVirtualMachine restores a Sleepy VM that sleeps with saved state.
-// It does nothing for any other VM.
-func (manager *Manager) wakeSleepingVirtualMachine(ctx context.Context, identifier string) error {
-	if manager.traffic == nil {
+	// A locked source keeps the request: its migration then fails at stop, and the VM wakes after unlock.
+	if observed.SleepState == SleepStateAwake || desired.Generation > observed.Generation || manager.isDestinationReserved(desired.ID) {
 		return nil
 	}
-	virtualMachine := manager.newVirtualMachine(identifier)
-	unlock, err := virtualMachine.lock(ctx)
-	if err != nil {
+	desired.Generation++
+	if err := manager.store.writeDesired(desired); err != nil {
 		return err
 	}
-	defer unlock()
-
-	desired, observed, err := virtualMachine.records()
-	if err != nil {
-		return err
-	}
-	if desired.State != StateRunning || desired.Specification.Rescue.Enabled || desired.Specification.SleepAfterIdleSeconds <= 0 {
-		return nil
-	}
-	return manager.restoreSleeping(ctx, desired, observed)
-}
-
-// restoreSleeping restores the saved state of a stopped Sleepy VM.
-func (manager *Manager) restoreSleeping(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
-	networkInterface, err := manager.network.Ensure(ctx, manager.networkRequest(desired))
-	if err != nil {
-		return err
-	}
-	machine := runtimeMachine(desired, networkInterface)
-	status, err := manager.runtime.Inspect(ctx, machine)
-	if err != nil {
-		return err
-	}
-	if status.State != StateStopped || !status.HasSavedState {
-		return nil
-	}
-
-	return manager.restoreSavedState(ctx, desired, machine, &observed, newOperationID(), StateRunning)
+	manager.stopSleepUpload(desired.ID)
+	return nil
 }
 
 // stopAfterIdle saves and stops a Sleepy VM when network traffic remains idle.
@@ -126,7 +94,7 @@ func (manager *Manager) stopAfterIdle(
 	}
 
 	if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseSaveState, func() error {
-		return manager.runtime.SaveAndStop(ctx, machine)
+		return manager.saveAndStop(ctx, machine)
 	}); err != nil {
 		manager.stopTrafficWatch(target)
 		return false, err
@@ -143,7 +111,7 @@ func (manager *Manager) stopAfterIdle(
 		return false, nil
 	}
 
-	return true, manager.writeAppliedState(desired, observed, StateStopped)
+	return true, manager.writeAppliedState(desired, observed, StateStopped, SleepStateSleeping)
 }
 
 // resetIdle starts the idle time of a Sleepy VM again after it starts.

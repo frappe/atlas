@@ -138,11 +138,11 @@ func TestRescueStopStartAndRestartPreserveSession(t *testing.T) {
 func TestRescueRequiresDiskAndBlocksResize(t *testing.T) {
 	manager, _, storage := rescueMachine(t)
 	ctx := context.Background()
-	storage.missingDisk = true
+	storage.hasDisk = false
 	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("missing original disk: %v", err)
 	}
-	storage.missingDisk = false
+	storage.hasDisk = true
 	if err := manager.RequestRescue(ctx, "machine-1", testRescueImage()); err != nil {
 		t.Fatal(err)
 	}

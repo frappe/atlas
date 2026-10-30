@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -149,7 +151,7 @@ func TestAdvanceDestinationChecksCapacityForTheResize(t *testing.T) {
 	sourceShapeOnly := func(context.Context) (AvailableCapacity, error) {
 		return AvailableCapacity{MemoryMiB: 2048, StorageMiB: 4096}, nil
 	}
-	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, sourceShapeOnly, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, &fakeKernelStore{}, sourceShapeOnly, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +271,7 @@ func TestAdvanceDestinationRejectsInsufficientCapacity(t *testing.T) {
 	machines := newFakeMigrationHost(t)
 	source := &fakeSourceOperations{prepareDefinition: virtualMachineDefinition("vm-1"), prepareState: vm.StateRunning}
 	noCapacity := func(context.Context) (AvailableCapacity, error) { return AvailableCapacity{}, nil }
-	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, noCapacity, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err := newManager(machines, source, &fakeMigrationStorage{}, &fakeKernelStore{}, noCapacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +300,7 @@ func TestDestinationCapacityCheckAndReservationAreSerialized(t *testing.T) {
 		return AvailableCapacity{MemoryMiB: availableMemoryMiB, StorageMiB: 1 << 20}, nil
 	}
 	var err error
-	migrationManager, err = newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, capacity, 0, nil, telemetry.NewRegistry(nil))
+	migrationManager, err = newManager(machines, &fakeSourceOperations{}, &fakeMigrationStorage{}, &fakeKernelStore{}, capacity, 0, nil, telemetry.NewRegistry(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,6 +444,33 @@ func TestRequestFinishConflictsWithAbort(t *testing.T) {
 	}
 }
 
+func TestAbortConflictsAfterTheDestinationBooted(t *testing.T) {
+	migrationManager, machines, _ := newMigrationManager(t)
+	store := writeReadyDestination(t, machines, nil)
+
+	if err := migrationManager.AbortDestination(t.Context(), "mig-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("abort of a booted destination = %v, want ErrConflict", err)
+	}
+	if record, _ := store.readDestination("vm-1"); record.State != destinationReady {
+		t.Fatalf("state = %s, want ready", record.State)
+	}
+
+	// A paused memory restore and an asleep offloaded VM have not run the guest, so they can still roll back.
+	for _, mutate := range []func(*destinationRecord){
+		func(r *destinationRecord) { r.HasMemorySnapshot = true },
+		func(r *destinationRecord) {
+			definition := virtualMachineDefinition("vm-1")
+			definition.Sleep = sleepMigration(t, vm.SleepStateDeepSleeping)
+			r.Definition = &definition
+		},
+	} {
+		writeReadyDestination(t, machines, mutate)
+		if err := migrationManager.AbortDestination(t.Context(), "mig-1"); err != nil {
+			t.Fatalf("abort of a destination whose guest did not run = %v", err)
+		}
+	}
+}
+
 func TestRunTransferAbortsBeforeStop(t *testing.T) {
 	migrationManager, machines, source := newMigrationManager(t)
 	transfer := migrationManager.disks.(*fakeMigrationStorage)
@@ -557,7 +586,7 @@ func TestAbortRestoresSourceWhenTheStopReplyWasLost(t *testing.T) {
 		if err := store.writeDestination(record); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.requestAbort(t.Context(), "vm-1"); err != nil {
+		if err := manager.requestAbort(t.Context(), "vm-1", false); err != nil {
 			t.Fatal(err)
 		}
 		manager.runTransfer(t.Context(), "vm-1")
@@ -568,6 +597,61 @@ func TestAbortRestoresSourceWhenTheStopReplyWasLost(t *testing.T) {
 		if sourceMachines.restoreCalls != 1 || sourceMachines.restoreMemory != memory {
 			t.Fatalf("memory=%t: source restored %d times with memory=%t", memory, sourceMachines.restoreCalls, sourceMachines.restoreMemory)
 		}
+	}
+}
+
+func TestDiscardAfterAnOperatorRestoredTheSource(t *testing.T) {
+	sourceManager, sourceMachines, _ := newMigrationManager(t)
+	seedSourceVM(t, sourceManager, sourceMachines, vm.StateRunning, 1)
+	if _, err := sourceManager.StopSource(t.Context(), "mig-1", "vm-1", 1, false); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := sourceManager.RestoreSource(t.Context(), "mig-1", "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sourceMachines.restoreCalls != 1 || sourceManager.IsSourceLocked("vm-1") {
+		t.Fatalf("restore calls = %d, locked = %t", sourceMachines.restoreCalls, sourceManager.IsSourceLocked("vm-1"))
+	}
+
+	// The lost destination comes back at ready with a booted guest.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		if r.Method == http.MethodDelete {
+			err = sourceManager.UnlockSource(r.Context(), "mig-1", "vm-1")
+		} else {
+			err = sourceManager.StartSourceRollback(r.Context(), "mig-1", "vm-1")
+		}
+		switch {
+		case errors.Is(err, vm.ErrNotFound):
+			w.WriteHeader(http.StatusNotFound)
+		case err != nil:
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	manager, machines, _ := newMigrationManager(t)
+	manager.source = NewSourceClient(0, nil)
+	store := writeReadyDestination(t, machines, func(r *destinationRecord) {
+		r.Source = server.URL
+		r.SourceStopped = true
+	})
+
+	if err := manager.AbortDestination(t.Context(), "mig-1"); !errors.Is(err, vm.ErrConflict) {
+		t.Fatalf("abort = %v, want ErrConflict", err)
+	}
+	if err := manager.DiscardDestination(t.Context(), "mig-1"); err != nil {
+		t.Fatal(err)
+	}
+	manager.runTransfer(t.Context(), "vm-1")
+	if record, _ := store.readDestination("vm-1"); record.State != destinationAborted {
+		t.Fatalf("state = %s, want aborted", record.State)
+	}
+	if sourceMachines.restoreCalls != 1 {
+		t.Fatalf("source restored %d times, want 1", sourceMachines.restoreCalls)
 	}
 }
 
@@ -670,6 +754,37 @@ func TestCreateDestinationReplacesACleanAbortedRemnant(t *testing.T) {
 	}
 	if record.ID != "mig-2" || record.Status != StatusRunning || record.Phase != PhasePreparing {
 		t.Fatalf("record = %+v", record)
+	}
+}
+
+func TestRemoveAbortedDestinationsKeepsRecentAndCompletedRecords(t *testing.T) {
+	migrationManager, machines, _ := newMigrationManager(t)
+	store := writeTerminalDestination(t, machines, destinationAborted)
+	if err := migrationManager.RemoveAbortedDestinations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.has(store.destinationPath("vm-1")) {
+		t.Fatal("a recent aborted record was removed")
+	}
+
+	jail := filepath.Join(filepath.Dir(store.migrationDirectory("vm-1")), "firecracker")
+	if err := os.Mkdir(jail, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	migrationManager.now = func() time.Time { return time.Now().Add(abortedRecordRetention + time.Hour) }
+	if err := migrationManager.RemoveAbortedDestinations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if store.has(filepath.Dir(store.migrationDirectory("vm-1"))) {
+		t.Fatal("an old aborted remnant was kept")
+	}
+
+	writeTerminalDestination(t, machines, destinationCompleted)
+	if err := migrationManager.RemoveAbortedDestinations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.has(store.destinationPath("vm-1")) {
+		t.Fatal("a completed record was removed")
 	}
 }
 

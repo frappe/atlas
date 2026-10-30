@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ type fakeRuntime struct {
 	diskRefresh    int
 	diskLimitMiBps int
 	inspectError   error
+	onInspect      func()
 	restoreError   error
 	// restoreFailureState is the state a failed saved-state restore leaves behind.
 	restoreFailureState State
@@ -51,9 +53,28 @@ type fakeRuntime struct {
 	diskError          error
 	guestCheckError    error
 	guestChecks        int
+	savedDirectory     string
+	savedIdentity      string
+}
+
+func (runtime *fakeRuntime) SavedState(context.Context, RuntimeMachine) (SavedState, error) {
+	if !runtime.hasSavedState {
+		return SavedState{}, ErrNotFound
+	}
+	return SavedState{Directory: runtime.savedDirectory, Identity: runtime.savedIdentity}, nil
+}
+
+func (runtime *fakeRuntime) InstallSavedState(_ context.Context, _ RuntimeMachine, directory, identity string) error {
+	runtime.hasSavedState = true
+	runtime.savedDirectory = directory
+	runtime.savedIdentity = identity
+	return nil
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
+	if runtime.onInspect != nil {
+		runtime.onInspect()
+	}
 	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState}, runtime.inspectError
 }
 
@@ -207,7 +228,7 @@ func (network *fakeNetwork) Release(context.Context, NetworkReleaseRequest) erro
 }
 
 type fakeStorage struct {
-	missingDisk        bool
+	hasDisk            bool
 	runtime            *fakeRuntime
 	resizes            int
 	releases           int
@@ -217,7 +238,7 @@ type fakeStorage struct {
 }
 
 func (storage *fakeStorage) HasDisk(context.Context, string) (bool, error) {
-	return !storage.missingDisk, nil
+	return storage.hasDisk, nil
 }
 
 func (storage *fakeStorage) DiskUsage(context.Context, string) (DiskUsage, error) {
@@ -231,6 +252,9 @@ func (storage *fakeStorage) ResizeDisk(context.Context, string, int) error {
 
 func (storage *fakeStorage) Release(context.Context, string) error {
 	storage.releases++
+	if storage.releaseError == nil {
+		storage.hasDisk = false
+	}
 	return storage.releaseError
 }
 
@@ -248,11 +272,29 @@ func (fakeSnapshots) Stage(context.Context, SnapshotRequest) (StagedSnapshot, er
 	return StagedSnapshot{}, nil
 }
 
+func (fakeSnapshots) StageSleepMemory(context.Context, string, string) error        { return nil }
+func (fakeSnapshots) StageSleepDisk(context.Context, SnapshotRequest, string) error { return nil }
+func (fakeSnapshots) DeleteSnapshot(context.Context, string) error                  { return nil }
+func (fakeSnapshots) UploadSleepMemory(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error) {
+	return SleepArtifact{}, nil
+}
+func (fakeSnapshots) UploadSleepDisk(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error) {
+	return SleepArtifact{}, nil
+}
+
+func (fakeSnapshots) DownloadSleepMemory(context.Context, string, []string, SleepArtifact) error {
+	return nil
+}
+
+func (fakeSnapshots) RestoreSleepDisk(context.Context, string, []string, SleepArtifact) error {
+	return nil
+}
+
 func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeStorage) {
 	t.Helper()
 	runtime := &fakeRuntime{state: StateStopped}
 	network := &fakeNetwork{}
-	storage := &fakeStorage{runtime: runtime}
+	storage := &fakeStorage{hasDisk: true, runtime: runtime}
 	manager, err := NewManager(
 		ManagerConfig{MachinesDirectory: t.TempDir(), UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
 		ManagerDependencies{
@@ -541,7 +583,7 @@ func TestSetComputeConflictsWithADestroyedVirtualMachine(t *testing.T) {
 	}
 }
 
-func TestNewManagerRejectsUnknownAndTrailingRecordData(t *testing.T) {
+func TestReadRejectsUnknownAndTrailingRecordData(t *testing.T) {
 	for _, data := range []string{
 		`{"schema_version":1,"id":"machine-1","unknown":true}`,
 		`{"schema_version":1,"id":"machine-1"} {}`,
@@ -555,12 +597,8 @@ func TestNewManagerRejectsUnknownAndTrailingRecordData(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(machineDirectory, "config.json"), []byte(data), 0o640); err != nil {
 			t.Fatal(err)
 		}
-		_, err := NewManager(
-			ManagerConfig{MachinesDirectory: directory},
-			ManagerDependencies{Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{}, Traffic: &traffic.Monitor{}, Telemetry: telemetry.NewRegistry(nil)},
-		)
-		if err == nil {
-			t.Fatalf("NewManager accepted record %s", data)
+		if _, err := newRecordStore(directory).readDesired("machine-1"); err == nil {
+			t.Fatalf("read accepted record %s", data)
 		}
 	}
 }
@@ -581,27 +619,90 @@ func TestListSkipsIncompleteRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	information, err := manager.List(context.Background())
+	information, invalid, err := manager.List(context.Background())
 	if err != nil {
 		t.Fatalf("List = %v", err)
 	}
-	if len(information) != 1 || information[0].ID != "machine-1" {
+	if len(information) != 1 || information[0].ID != "machine-1" || len(invalid) != 0 {
 		t.Fatalf("information = %+v", information)
 	}
 }
 
-// A record that is present but corrupt is a host fault, not a VM in flux.
-func TestListReportsCorruptRecords(t *testing.T) {
+// A corrupt record takes only its own VM out of management. Every other VM
+// stays listed, and the daemon still starts.
+func TestACorruptRecordAffectsOnlyItsVirtualMachine(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
-	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
-		t.Fatal(err)
+	for _, identifier := range []string{"machine-1", "machine-2"} {
+		if _, err := manager.Create(context.Background(), identifier, testSpecification()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(manager.store.observedPath("machine-1"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := manager.List(context.Background()); err == nil {
-		t.Fatal("List accepted a corrupt record")
+	information, invalid, err := manager.List(context.Background())
+	if err != nil || len(information) != 1 || information[0].ID != "machine-2" || len(invalid) != 1 || invalid[0] != "machine-1" {
+		t.Fatalf("List = %+v, %v, %v", information, invalid, err)
+	}
+	if _, err := NewManager(manager.configuration, ManagerDependencies{
+		Runtime: &fakeRuntime{}, Network: &fakeNetwork{}, Storage: &fakeStorage{}, Snapshots: fakeSnapshots{},
+		Telemetry: telemetry.NewRegistry(nil),
+	}); err != nil {
+		t.Fatalf("startup with a corrupt record = %v", err)
+	}
+}
+
+// A desired record that cannot be read may hold a user ID, so no new VM gets one.
+func TestAllocationWaitsForAnUnreadableDesiredRecord(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manager.store.desiredPath("machine-1"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.Create(context.Background(), "machine-2", testSpecification()); err == nil {
+		t.Fatal("a VM was created while an unreadable record could hold its user ID")
+	}
+}
+
+func TestAnInvalidRecordIsNotWritten(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(manager.store.observedPath("machine-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.store.writeObserved("machine-1", ObservedRecord{State: StateRunning}); err == nil {
+		t.Fatal("an observed record without an update time was written")
+	}
+	after, err := os.ReadFile(manager.store.observedPath("machine-1"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("the stored record changed: %v", err)
+	}
+}
+
+func TestAnObservedGenerationAheadOfDesiredFailsOnlyItsVirtualMachine(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.Generation = 99
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.Information(context.Background(), "machine-1"); err == nil {
+		t.Fatal("Information accepted an observed generation ahead of desired")
 	}
 }
 
@@ -823,6 +924,31 @@ func TestRequestRescueExitIsANoOpWhenNeverRescued(t *testing.T) {
 	}
 }
 
+func TestRetryKeepsTheLastErrorUntilTheOperationCompletes(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.inspectError = errors.New("runtime unavailable")
+	if err := manager.Reconcile(context.Background(), "machine-1"); err == nil {
+		t.Fatal("reconcile succeeded while inspection failed")
+	}
+
+	// The network phase of the retry succeeds before inspect runs again.
+	runtime.inspectError = nil
+	runtime.onInspect = func() {
+		if observed, _ := manager.store.readObserved("machine-1"); observed.Error == nil {
+			t.Error("the retry cleared the last error before the operation completed")
+		}
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if observed, _ := manager.store.readObserved("machine-1"); observed.Error != nil {
+		t.Fatalf("completed operation kept error %+v", observed.Error)
+	}
+}
+
 func TestInspectFailureStoresSafeAndLocalErrors(t *testing.T) {
 	manager, runtime, _, _ := newTestManager(t)
 	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
@@ -901,9 +1027,6 @@ func TestNewManagerStartsWithLeftoverTemporaryDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := manager.store.validateAll(); err != nil {
-		t.Fatalf("validateAll = %v", err)
-	}
 	identifiers, err := manager.store.listIDs()
 	if err != nil {
 		t.Fatal(err)
@@ -977,12 +1100,36 @@ func TestStartWakesASleepingVirtualMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.hasSavedState = true
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.writeAppliedState(desired, &observed, StateStopped, SleepStateSleeping); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := manager.SetPowerState(context.Background(), "machine-1", StateRunning); err != nil {
 		t.Fatal(err)
 	}
+	if runtime.restores != 0 {
+		t.Fatal("start restored synchronously")
+	}
+	if err := reconcileSleeping(t.Context(), manager, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
 	if runtime.restores != 1 || runtime.state != StateRunning {
 		t.Fatalf("restores = %d, state = %s, want one restore to running", runtime.restores, runtime.state)
+	}
+	information, err := manager.Information(context.Background(), "machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if information.SleepState != SleepStateAwake {
+		t.Fatalf("sleep state = %q, want awake", information.SleepState)
 	}
 }
 

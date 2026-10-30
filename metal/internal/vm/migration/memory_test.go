@@ -208,7 +208,7 @@ func TestMemorySourceIsBoundToStoppedFinalSnapshot(t *testing.T) {
 	manager, machines, _ := newMigrationManager(t)
 	machines.create("vm-1", testSpecification())
 	setObservedState(t, machines, "vm-1", vm.StateRunning)
-	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); err != nil {
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.OpenSourceMemorySnapshotFile(t.Context(), "mig-1", "vm-1", 1, "memory"); !errors.Is(err, vm.ErrConflict) {
@@ -393,7 +393,7 @@ func TestMemoryStopFailsASourceWithoutMemory(t *testing.T) {
 	manager, machines, _ := newMigrationManager(t)
 	machines.create("vm-1", testSpecification())
 	setObservedState(t, machines, "vm-1", vm.StateRunning)
-	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1"); err != nil {
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", false); err != nil {
 		t.Fatal(err)
 	}
 	machines.saveMemoryError = vm.ErrConflict

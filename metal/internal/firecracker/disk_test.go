@@ -69,3 +69,12 @@ func TestRescueLimitsSplitEvenly(t *testing.T) {
 		}
 	}
 }
+
+func TestDriveRequestDiscardsOnlyOnWritableDrives(t *testing.T) {
+	if !driveRequest(0, storage.Drive{Path: "/rootfs.img", Root: true}, vm.Disk{}, 1).Discard {
+		t.Fatal("writable drive has no discard")
+	}
+	if driveRequest(1, storage.Drive{Path: "/seed.img", ReadOnly: true}, vm.Disk{}, 1).Discard {
+		t.Fatal("read-only drive has discard")
+	}
+}

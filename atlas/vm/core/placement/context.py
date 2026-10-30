@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from datetime import timedelta
 from hashlib import sha256
@@ -10,7 +11,11 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
-from atlas.vm.core.placement.affinity import AffinityUnsatisfied, load_affinity_matching
+from atlas.vm.core.placement.affinity import (
+	RESERVED_MIGRATION_STATUSES,
+	AffinityUnsatisfied,
+	load_affinity_matching,
+)
 from atlas.vm.core.placement.models import (
 	CurrentPlacement,
 	FleetUsage,
@@ -21,7 +26,6 @@ from atlas.vm.core.placement.models import (
 from atlas.vm.core.placement.transaction import is_read_committed
 
 CAPACITY_MAXIMUM_AGE = timedelta(minutes=2)
-PLACEMENT_RATE_WINDOW = timedelta(minutes=5)
 # Keep reservations longer than capacity samples.
 RESERVATION_MAXIMUM_AGE = timedelta(minutes=15)
 # Snapshots rank hosts. Locked reads recheck capacity.
@@ -49,6 +53,30 @@ def remember_pool_is_full(requirements: PlacementRequirements) -> None:
 	)
 
 
+def has_hosts_without_fresh_capacity(architecture: str) -> bool:
+	"""Return whether a ready host of the architecture sent no capacity sample within the maximum age."""
+	hosts = frappe.get_all(
+		"Metal Server",
+		filters={
+			"status": "Running",
+			"is_provisioning_completed": 1,
+			"is_in_maintenance": 0,
+			"architecture": architecture,
+		},
+		pluck="name",
+	)
+	if not hosts:
+		return False
+
+	fresh_hosts = frappe.get_all(
+		"Metal Server Usage",
+		filters={"server": ("in", hosts), "creation": (">=", now_datetime() - CAPACITY_MAXIMUM_AGE)},
+		pluck="server",
+		distinct=True,
+	)
+	return len(set(fresh_hosts)) < len(hosts)
+
+
 def is_pool_known_full(requirements: PlacementRequirements) -> bool:
 	"""Return whether this shape is at least as large as a recent failed shape."""
 	entry = frappe.cache().get_value(_full_pool_key(requirements))
@@ -67,6 +95,7 @@ class PlacementContext:
 		sleepy_vm_overcommit_factor: float,
 		exclude_servers: set[str] | None = None,
 		*,
+		allowed_servers: set[str] | None = None,
 		cache_snapshot: bool = False,
 		deadline: float | None = None,
 		use_dedicated_sleepy_vm_hosts: bool = True,
@@ -91,6 +120,7 @@ class PlacementContext:
 		self.last_probe_was_contended = False
 		self._deadline = deadline
 		self._excluded_servers = frozenset(exclude_servers or ())
+		self._allowed_servers = frozenset(allowed_servers) if allowed_servers is not None else None
 		self._created_at = now_datetime()
 		self._selected_host: str | None = None
 		self.usage = self._load_fleet_usage(cache_snapshot)
@@ -107,22 +137,22 @@ class PlacementContext:
 		"""Return the selected and locked host name."""
 		return self._selected_host
 
-	def get_placement_rate(self, host_name: str | None = None) -> float:
-		"""Return VM creations per minute over five minutes, including drafts."""
-		host = self._find_snapshot_host(host_name) if host_name is not None else None
-		if host_name is not None:
-			count = host.placement_count if host else 0
-		else:
-			count = self.usage.placement_count
+	def _is_candidate(self, host_name: str) -> bool:
+		"""Return whether this placement may choose the host. Without an allowed set, every host that is not excluded is a candidate."""
+		if host_name in self._excluded_servers:
+			return False
 
-		return count / (PLACEMENT_RATE_WINDOW.total_seconds() / 60)
+		if self._allowed_servers is None:
+			return True
+
+		return host_name in self._allowed_servers
 
 	def try_select(self, host_name: str, *, wait: bool = False) -> bool:
 		"""Hold a host lock only if its current capacity fits the request."""
 		self.last_probe_was_contended = False
 		if self._selected_host is not None:
 			raise RuntimeError("A placement host is already selected.")
-		if host_name in self._excluded_servers or not self._find_snapshot_host(host_name):
+		if not self._is_candidate(host_name) or not self._find_snapshot_host(host_name):
 			return False
 
 		self.probe_count += 1
@@ -239,89 +269,16 @@ class PlacementContext:
 		frappe.db.after_rollback.add(release)
 
 	def _host_has_capacity(self, host_name: str) -> bool:
-		"""Check host capacity while holding its placement lock."""
+		"""Check committed memory and disk of one host while holding its placement lock."""
 		memory_mib = self.requirements.memory_mib
 		disk_mib = self.requirements.disk_mib
 		if self.current_placement and self.current_placement.host_name == host_name:
 			memory_mib -= self.current_placement.memory_mib
 			disk_mib -= self.current_placement.disk_mib
-		sleepy_host_filter = self._sleepy_host_filter()
-		# The interpolated filter is a literal fragment. No caller value reaches the query.
-		rows = frappe.db.sql(  # nosemgrep
-			f"""
-				SELECT server.name
-				FROM `tabMetal Server` AS server
-				WHERE server.name = %(host_name)s
-					AND server.status = 'Running'
-					AND server.is_provisioning_completed = 1
-					AND server.is_in_maintenance = 0
-					AND server.architecture = %(architecture)s
-					{sleepy_host_filter}
-					AND COALESCE((
-						SELECT
-							GREATEST(
-								sample.available_memory_mib
-									- COALESCE((
-										SELECT SUM(vm.memory_mib)
-										FROM `tabVirtual Machine` AS vm
-										WHERE vm.server = server.name
-											AND vm.creation >= %(reservation_cutoff)s
-											AND (vm.is_draft = 1 OR vm.creation > sample.creation)
-									), 0)
-									- COALESCE((
-										SELECT SUM(IF(migration.target_memory_mib > 0, migration.target_memory_mib, vm.memory_mib))
-										FROM `tabVirtual Machine Migration` AS migration
-										INNER JOIN `tabVirtual Machine` AS vm
-											ON vm.name = migration.virtual_machine
-										WHERE migration.destination_metal_server = server.name
-											AND migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-									), 0),
-								0
-							) >= %(memory_mib)s
-							AND GREATEST(
-								sample.available_storage_mib
-									- COALESCE((
-										SELECT SUM(vm.disk_mib)
-										FROM `tabVirtual Machine` AS vm
-										WHERE vm.server = server.name
-											AND vm.creation >= %(reservation_cutoff)s
-											AND (vm.is_draft = 1 OR vm.creation > sample.creation)
-									), 0)
-									- COALESCE((
-										SELECT SUM(IF(migration.target_memory_mib > 0, migration.target_disk_mib, vm.disk_mib))
-										FROM `tabVirtual Machine Migration` AS migration
-										INNER JOIN `tabVirtual Machine` AS vm
-											ON vm.name = migration.virtual_machine
-										WHERE migration.destination_metal_server = server.name
-											AND migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-									), 0),
-								0
-							) >= %(disk_mib)s
-						FROM `tabMetal Server Usage` AS sample
-						WHERE sample.server = server.name
-							AND sample.creation >= %(capacity_cutoff)s
-						ORDER BY sample.creation DESC, sample.name DESC
-						LIMIT 1
-					), 0) = 1
-				""",
-			{
-				"host_name": host_name,
-				"architecture": self.requirements.architecture,
-				"is_sleepy": int(self.requirements.is_sleepy),
-				"memory_mib": memory_mib,
-				"disk_mib": disk_mib,
-				"capacity_cutoff": self._created_at - CAPACITY_MAXIMUM_AGE,
-				"reservation_cutoff": self._created_at - RESERVATION_MAXIMUM_AGE,
-			},
-		)
-		return bool(rows)
 
-	def _sleepy_host_filter(self) -> str:
-		"""Keep the sleepy pool apart only while the site asks for dedicated hosts."""
-		if not self.use_dedicated_sleepy_vm_hosts:
-			return ""
-
-		return "AND server.is_sleepy_vm_host = %(is_sleepy)s"
+		# CPU can be oversubscribed, so only memory and disk decide.
+		rows = self._load_capacity_rows(host_name)
+		return bool(rows) and rows[0].free_memory_mib >= memory_mib and rows[0].free_storage_mib >= disk_mib
 
 	def _find_snapshot_host(self, host_name: str) -> HostUsage | None:
 		return next((host for host in self.usage.hosts if host.name == host_name), None)
@@ -375,7 +332,7 @@ class PlacementContext:
 	def _has_room(self, row: frappe._dict) -> bool:
 		"""Return whether a snapshot row reports room for the request, as a strategy checks it."""
 		return (
-			row.name not in self._excluded_servers
+			self._is_candidate(row.name)
 			and row.free_memory_mib >= self.requirements.memory_mib
 			and row.free_storage_mib >= self.requirements.disk_mib
 		)
@@ -398,130 +355,172 @@ class PlacementContext:
 		)
 
 	def _load_snapshot_rows(self) -> list[frappe._dict]:
-		"""Load current capacity and rank data for the required host pool."""
-		sleepy_host_filter = self._sleepy_host_filter()
-		# The interpolated filter is a literal fragment. No caller value reaches the query.
-		rows = frappe.db.sql(  # nosemgrep
-			f"""
-			WITH eligible_servers AS (
-				SELECT server.name, server.architecture, server.is_sleepy_vm_host
-				FROM `tabMetal Server` AS server
-				WHERE server.status = 'Running'
-					AND server.is_provisioning_completed = 1
-					AND server.is_in_maintenance = 0
-					AND server.architecture = %(architecture)s
-					{sleepy_host_filter}
-			),
-			ranked_sample AS (
-				SELECT
-					sample.*,
-					ROW_NUMBER() OVER (
-						PARTITION BY sample.server
-						ORDER BY sample.creation DESC, sample.name DESC
-					) AS sample_rank
-				FROM `tabMetal Server Usage` AS sample
-				INNER JOIN eligible_servers AS server ON server.name = sample.server
-				WHERE sample.creation >= %(capacity_cutoff)s
-			),
-			latest_sample AS (
-				SELECT * FROM ranked_sample WHERE sample_rank = 1
-			),
-			reserved_usage AS (
-				SELECT
-					vm.server,
-					SUM(vm.cpu_millicores) AS cpu_millicores,
-					SUM(vm.memory_mib) AS memory_mib,
-					SUM(vm.disk_mib) AS storage_mib
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN latest_sample AS sample ON sample.server = vm.server
-				WHERE vm.creation >= %(reservation_cutoff)s
-					AND (vm.is_draft = 1 OR vm.creation > sample.creation)
-				GROUP BY vm.server
-			),
-			tenant_usage AS (
-				SELECT vm.server, COUNT(*) AS tenant_vm_count
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN eligible_servers AS server ON server.name = vm.server
-				WHERE vm.tenant_id = %(tenant_id)s
-				GROUP BY vm.server
-			),
-			sleepy_usage AS (
-				SELECT vm.server, SUM(vm.memory_mib) AS sleepy_reserved_memory_mib
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN eligible_servers AS server ON server.name = vm.server
-				WHERE %(is_sleepy)s = 1 AND vm.sleep_after_idle_seconds > 0
-				GROUP BY vm.server
-			),
-			rate_usage AS (
-				SELECT vm.server, COUNT(*) AS placement_count
-				FROM `tabVirtual Machine` AS vm
-				INNER JOIN eligible_servers AS server ON server.name = vm.server
-				WHERE vm.creation >= %(rate_cutoff)s
-				GROUP BY vm.server
-			),
-			migration_usage AS (
-				SELECT
-					migration.destination_metal_server AS server,
-					SUM(IF(migration.target_memory_mib > 0, migration.target_cpu_millicores, vm.cpu_millicores))
-						AS cpu_millicores,
-					SUM(IF(migration.target_memory_mib > 0, migration.target_memory_mib, vm.memory_mib))
-						AS memory_mib,
-					SUM(IF(migration.target_memory_mib > 0, migration.target_disk_mib, vm.disk_mib))
-						AS storage_mib
-				FROM `tabVirtual Machine Migration` AS migration
-				INNER JOIN `tabVirtual Machine` AS vm ON vm.name = migration.virtual_machine
-				WHERE migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
-				GROUP BY migration.destination_metal_server
-			)
-			SELECT
-				server.name,
-				server.architecture,
-				server.is_sleepy_vm_host,
-				sample.creation AS sample_created_at,
-				sample.total_cpu_millicores,
-				sample.total_memory_mib,
-				sample.total_storage_mib,
-				GREATEST(
-					sample.available_cpu_millicores
-						- COALESCE(reserved_usage.cpu_millicores, 0)
-						- COALESCE(migration_usage.cpu_millicores, 0),
-					0
-				) AS free_cpu_millicores,
-				GREATEST(
-					sample.available_memory_mib
-						- COALESCE(reserved_usage.memory_mib, 0)
-						- COALESCE(migration_usage.memory_mib, 0),
-					0
-				) AS free_memory_mib,
-				GREATEST(
-					sample.available_storage_mib
-						- COALESCE(reserved_usage.storage_mib, 0)
-						- COALESCE(migration_usage.storage_mib, 0),
-					0
-				) AS free_storage_mib,
-				COALESCE(tenant_usage.tenant_vm_count, 0) AS tenant_vm_count,
-				COALESCE(sleepy_usage.sleepy_reserved_memory_mib, 0) AS sleepy_reserved_memory_mib,
-				COALESCE(rate_usage.placement_count, 0) AS placement_count
-			FROM eligible_servers AS server
-			INNER JOIN latest_sample AS sample ON sample.server = server.name
-			LEFT JOIN reserved_usage ON reserved_usage.server = server.name
-			LEFT JOIN tenant_usage ON tenant_usage.server = server.name
-			LEFT JOIN sleepy_usage ON sleepy_usage.server = server.name
-			LEFT JOIN rate_usage ON rate_usage.server = server.name
-			LEFT JOIN migration_usage ON migration_usage.server = server.name
-			ORDER BY server.name
-			""",
-			{
-				"architecture": self.requirements.architecture,
-				"is_sleepy": int(self.requirements.is_sleepy),
-				"tenant_id": self.requirements.tenant_id,
-				"capacity_cutoff": self._created_at - CAPACITY_MAXIMUM_AGE,
-				"reservation_cutoff": self._created_at - RESERVATION_MAXIMUM_AGE,
-				"rate_cutoff": self._created_at - PLACEMENT_RATE_WINDOW,
-			},
-			as_dict=True,
-		)
+		"""Load the capacity rows of the host pool with the sleepy memory that strategies rank by."""
+		rows = self._load_capacity_rows()
+		if not rows:
+			return rows
+
+		sleepy_memory = self._sum_sleepy_memory([row.name for row in rows])
+		for row in rows:
+			row.sleepy_reserved_memory_mib = sleepy_memory[row.name]
 		return rows
+
+	def _load_capacity_rows(self, host_name: str | None = None) -> list[frappe._dict]:
+		"""Return each eligible host with a fresh sample and the capacity it has left, by host name.
+
+		A sample can be 2 minutes old. Free capacity subtracts what it cannot include yet: drafts,
+		VMs created after it, and the shapes of migrations into the host.
+		"""
+		hosts = self._load_eligible_hosts(host_name)
+		samples = self._load_latest_samples(list(hosts))
+		reservations = self._load_reservations(samples)
+
+		rows = []
+		for name in sorted(samples):
+			sample = samples[name]
+			reserved = self._sum_resources(reservations[name])
+			free = Resources(
+				sample.available_cpu_millicores, sample.available_memory_mib, sample.available_storage_mib
+			).reserve(reserved.cpu_millicores, reserved.memory_mib, reserved.storage_mib)
+			rows.append(
+				frappe._dict(
+					name=name,
+					architecture=hosts[name].architecture,
+					is_sleepy_vm_host=hosts[name].is_sleepy_vm_host,
+					sample_created_at=sample.creation,
+					total_cpu_millicores=sample.total_cpu_millicores,
+					total_memory_mib=sample.total_memory_mib,
+					total_storage_mib=sample.total_storage_mib,
+					free_cpu_millicores=free.cpu_millicores,
+					free_memory_mib=free.memory_mib,
+					free_storage_mib=free.storage_mib,
+				)
+			)
+		return rows
+
+	def _load_eligible_hosts(self, host_name: str | None = None) -> dict[str, frappe._dict]:
+		"""Return the running, set-up hosts of the required architecture and pool, by name."""
+		filters = {
+			"status": "Running",
+			"is_provisioning_completed": 1,
+			"is_in_maintenance": 0,
+			"architecture": self.requirements.architecture,
+		}
+		if self.use_dedicated_sleepy_vm_hosts:
+			filters["is_sleepy_vm_host"] = int(self.requirements.is_sleepy)
+		if host_name:
+			filters["name"] = host_name
+
+		hosts = frappe.get_all(
+			"Metal Server", filters=filters, fields=["name", "architecture", "is_sleepy_vm_host"]
+		)
+		return {host.name: host for host in hosts}
+
+	def _load_latest_samples(self, host_names: list[str]) -> dict[str, frappe._dict]:
+		"""Return the newest capacity sample of each host, when it is at most 2 minutes old."""
+		if not host_names:
+			return {}
+
+		samples = frappe.get_all(
+			"Metal Server Usage",
+			filters={
+				"server": ("in", host_names),
+				"creation": (">=", self._created_at - CAPACITY_MAXIMUM_AGE),
+			},
+			fields=[
+				"server",
+				"creation",
+				"total_cpu_millicores",
+				"total_memory_mib",
+				"total_storage_mib",
+				"available_cpu_millicores",
+				"available_memory_mib",
+				"available_storage_mib",
+			],
+			order_by="creation desc, name desc",
+		)
+		latest: dict[str, frappe._dict] = {}
+		for sample in samples:
+			latest.setdefault(sample.server, sample)
+		return latest
+
+	def _load_reservations(self, samples: dict[str, frappe._dict]) -> defaultdict[str, list[Resources]]:
+		"""Return what the sample of each host cannot include yet, as one shape per VM."""
+		reservations: defaultdict[str, list[Resources]] = defaultdict(list)
+		if not samples:
+			return reservations
+
+		new_virtual_machines = frappe.get_all(
+			"Virtual Machine",
+			filters={
+				"server": ("in", list(samples)),
+				"creation": (">=", self._created_at - RESERVATION_MAXIMUM_AGE),
+			},
+			fields=["server", "creation", "is_draft", "cpu_millicores", "memory_mib", "disk_mib"],
+		)
+		for virtual_machine in new_virtual_machines:
+			if (
+				virtual_machine.is_draft
+				or virtual_machine.creation > samples[virtual_machine.server].creation
+			):
+				reservations[virtual_machine.server].append(
+					Resources(
+						virtual_machine.cpu_millicores, virtual_machine.memory_mib, virtual_machine.disk_mib
+					)
+				)
+
+		for migration in self._load_incoming_migrations(list(samples)):
+			reservations[migration.server].append(self._get_migration_shape(migration))
+		return reservations
+
+	@staticmethod
+	def _load_incoming_migrations(host_names: list[str]) -> list[frappe._dict]:
+		"""Return each migration that reserves capacity on one of the hosts, with its VM shape."""
+		migration = frappe.qb.DocType("Virtual Machine Migration")
+		virtual_machine = frappe.qb.DocType("Virtual Machine")
+		query = (
+			frappe.qb.from_(migration)
+			.join(virtual_machine)
+			.on(virtual_machine.name == migration.virtual_machine)
+			.select(
+				migration.destination_metal_server.as_("server"),
+				migration.target_cpu_millicores,
+				migration.target_memory_mib,
+				migration.target_disk_mib,
+				virtual_machine.tenant_id,
+				virtual_machine.cpu_millicores,
+				virtual_machine.memory_mib,
+				virtual_machine.disk_mib,
+			)
+			.where(
+				migration.destination_metal_server.isin(host_names)
+				& migration.status.isin(RESERVED_MIGRATION_STATUSES)
+			)
+		)
+		return query.run(as_dict=True)
+
+	@staticmethod
+	def _get_migration_shape(migration: frappe._dict) -> Resources:
+		"""Return the target shape of a migration that resizes the VM, else the current VM shape."""
+		if migration.target_memory_mib > 0:
+			return Resources(
+				migration.target_cpu_millicores, migration.target_memory_mib, migration.target_disk_mib
+			)
+		return Resources(migration.cpu_millicores, migration.memory_mib, migration.disk_mib)
+
+	def _sum_sleepy_memory(self, host_names: list[str]) -> Counter[str]:
+		"""Sum the memory of sleepy VMs on each host, which only a sleepy placement ranks by."""
+		memory: Counter[str] = Counter()
+		if not self.requirements.is_sleepy:
+			return memory
+
+		for virtual_machine in frappe.get_all(
+			"Virtual Machine",
+			filters={"server": ("in", host_names), "sleep_after_idle_seconds": (">", 0)},
+			fields=["server", "memory_mib"],
+		):
+			memory[virtual_machine.server] += virtual_machine.memory_mib
+		return memory
 
 	def _build_fleet_usage(self, rows: list[frappe._dict]) -> FleetUsage:
 		"""Build the immutable view a strategy reads, dropping excluded hosts."""
@@ -541,20 +540,16 @@ class PlacementContext:
 					row.free_memory_mib,
 					row.free_storage_mib,
 				),
-				tenant_vm_count=row.tenant_vm_count,
 				sleepy_reserved_memory_mib=row.sleepy_reserved_memory_mib,
-				placement_count=row.placement_count,
 			)
 			for row in rows
-			if row.name not in self._excluded_servers
+			if self._is_candidate(row.name)
 		)
 		return FleetUsage(
 			hosts=hosts,
 			total=self._sum_resources(host.total for host in hosts),
 			free=self._sum_resources(host.free for host in hosts),
-			tenant_vm_count=sum(host.tenant_vm_count for host in hosts),
 			sleepy_reserved_memory_mib=sum(host.sleepy_reserved_memory_mib for host in hosts),
-			placement_count=sum(host.placement_count for host in hosts),
 		)
 
 	@staticmethod

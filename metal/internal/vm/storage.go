@@ -1,6 +1,9 @@
 package vm
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Storage manages virtual machine disks.
 type Storage interface {
@@ -17,15 +20,37 @@ type DiskUsage struct {
 	UsedMiB int `json:"used_mib"`
 }
 
-// Snapshots stages machine image snapshots.
+// Snapshots stages and transfers virtual machine snapshots.
 type Snapshots interface {
 	Stage(context.Context, SnapshotRequest) (StagedSnapshot, error)
+	StageSleepMemory(context.Context, string, string) error
+	StageSleepDisk(context.Context, SnapshotRequest, string) error
+	DeleteSnapshot(context.Context, string) error
+	UploadSleepMemory(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error)
+	UploadSleepDisk(context.Context, string, SleepArtifactTarget, *SleepUploadProgress) (SleepArtifact, error)
+	DownloadSleepMemory(ctx context.Context, directory string, sources []string, artifact SleepArtifact) error
+	RestoreSleepDisk(ctx context.Context, identifier string, sources []string, artifact SleepArtifact) error
 }
 
-// SnapshotRequest identifies the virtual machine and image to stage.
+// SleepUploadProgress counts artifact bytes read for compression and upload.
+type SleepUploadProgress struct {
+	UploadedBytes atomic.Int64
+	TotalBytes    atomic.Int64
+}
+
+// SleepArtifact binds a remote object to its uncompressed content.
+type SleepArtifact struct {
+	SizeBytes       int64  `json:"size_bytes"`
+	StoredSizeBytes int64  `json:"stored_size_bytes"`
+	SHA256          string `json:"sha256"`
+	// PartCount is how many signed parts hold the artifact, or 0 for one object.
+	PartCount int `json:"part_count,omitempty"`
+}
+
+// SnapshotRequest identifies the virtual machine and kernel to stage.
 type SnapshotRequest struct {
 	VirtualMachineID string
-	ImageReference   string
+	KernelSHA256     string
 }
 
 // StagedSnapshot describes a staged machine image.

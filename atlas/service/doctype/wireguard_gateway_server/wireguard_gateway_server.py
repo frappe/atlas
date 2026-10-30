@@ -17,6 +17,7 @@ from frappe.utils.synchronization import filelock
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
 from atlas.metal_server.core.atlas_peer import generate_private_key, get_public_key
+from atlas.service.core.telemetry import request_service_telemetry
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 if TYPE_CHECKING:
@@ -129,6 +130,31 @@ class WireguardGatewayServer(Document):
 			"is_draft": is_draft,
 			"api_url": f"https://{gateway.get_regional_domain()}",
 		}
+
+	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue Vector setup and a fresh Datum token for this node."""
+		_validate_system_manager()
+		request_service_telemetry(self)
+
+	@frappe.whitelist(methods=["POST"])
+	def update_package(self) -> None:
+		"""Queue an install of the published WireGuard gateway package on this node."""
+		_validate_system_manager()
+		if self.status != "Active":
+			frappe.throw(_("Wireguard Gateway Server {0} is not active.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_update_package",
+			queue="long",
+			timeout=3_600,
+			job_id=f"atlas||wireguard-gateway-server||package||{self.name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+		frappe.msgprint(_("WireGuard gateway package update has been queued. Please check after some time."))
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
@@ -253,6 +279,11 @@ class WireguardGatewayServer(Document):
 			deduplicate=True,
 			enqueue_after_commit=enqueue_after_commit,
 		)
+
+	def _update_package(self) -> None:
+		from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner
+
+		WireGuardGatewayProvisioner(self).update_package()
 
 	def _provision(self) -> None:
 		from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner

@@ -13,8 +13,8 @@ import (
 // snapshotEncoderConcurrency limits compression CPU on hosts that run customer VMs.
 const snapshotEncoderConcurrency = 1
 
-// compressArtifact streams an artifact through zstd and uploads each part while
-// it compresses the next.
+// compressArtifact streams an image artifact through zstd and uploads each part
+// while it compresses the next. Stored parts let a retry resume the upload.
 func (store *SnapshotStore) compressArtifact(
 	ctx context.Context,
 	snapshotID, artifact string,
@@ -23,22 +23,36 @@ func (store *SnapshotStore) compressArtifact(
 	request SnapshotArtifactUpload,
 	stored []storedPart,
 ) (int64, []UploadedPart, error) {
+	chunker := &partChunker{
+		directory: store.snapshotDirectory(snapshotID),
+		stored:    stored,
+		record: func(parts []storedPart) {
+			store.recordParts(snapshotID, artifact, request.UploadID, parts)
+		},
+	}
+	if err := store.compressParts(ctx, chunker, source, sizeBytes, request); err != nil {
+		return 0, nil, err
+	}
+	if chunker.skipped > 0 {
+		store.logger.Info("resumed a snapshot upload",
+			"snapshot_id", snapshotID, "artifact", artifact,
+			"parts", len(chunker.uploadedParts), "skipped_parts", chunker.skipped)
+	}
+	return chunker.storedBytes, chunker.uploadedParts, nil
+}
+
+// compressParts runs chunker over source. The chunker buffers at most two parts
+// in its directory: one it compresses and one it uploads.
+func (store *SnapshotStore) compressParts(ctx context.Context, chunker *partChunker, source io.Reader, sizeBytes int64, request SnapshotArtifactUpload) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	chunker := &partChunker{
-		store:         store,
-		ctx:           ctx,
-		snapshotID:    snapshotID,
-		artifact:      artifact,
-		uploadID:      request.UploadID,
-		parts:         request.Parts,
-		partSizeBytes: request.PartSizeBytes,
-		stored:        stored,
-		directory:     store.snapshotDirectory(snapshotID),
-		bufferedParts: make(chan bufferedPart),
-		uploadFailed:  make(chan struct{}),
-		uploaderDone:  make(chan struct{}),
-	}
+	chunker.store = store
+	chunker.ctx = ctx
+	chunker.parts = request.Parts
+	chunker.partSizeBytes = request.PartSizeBytes
+	chunker.bufferedParts = make(chan bufferedPart)
+	chunker.uploadFailed = make(chan struct{})
+	chunker.uploaderDone = make(chan struct{})
 	defer chunker.discard()
 
 	go chunker.uploadParts()
@@ -49,18 +63,9 @@ func (store *SnapshotStore) compressArtifact(
 	close(chunker.bufferedParts)
 	<-chunker.uploaderDone
 	if err != nil {
-		return 0, nil, err
+		return err
 	}
-	if chunker.uploadError != nil {
-		return 0, nil, chunker.uploadError
-	}
-
-	if chunker.skipped > 0 {
-		store.logger.Info("resumed a snapshot upload",
-			"snapshot_id", snapshotID, "artifact", artifact,
-			"parts", len(chunker.uploadedParts), "skipped_parts", chunker.skipped)
-	}
-	return chunker.storedBytes, chunker.uploadedParts, nil
+	return chunker.uploadError
 }
 
 // partChunker writes compressed parts to disk and hands them to its uploader
@@ -68,13 +73,12 @@ func (store *SnapshotStore) compressArtifact(
 type partChunker struct {
 	store         *SnapshotStore
 	ctx           context.Context
-	snapshotID    string
-	artifact      string
-	uploadID      string
 	parts         []SnapshotUploadPart
 	partSizeBytes int64
 	stored        []storedPart
 	directory     string
+	// record saves upload progress for a resume. It is nil when a retry starts again.
+	record func([]storedPart)
 
 	index   int
 	current *os.File
@@ -210,7 +214,7 @@ func (chunker *partChunker) uploadBufferedPart(buffered bufferedPart) error {
 		if _, err := buffered.file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		uploaded, err := chunker.store.uploadPartWithRetry(chunker.ctx, part, buffered.file, 0, buffered.length)
+		uploaded, err := chunker.store.uploadPartWithRetry(chunker.ctx, part, buffered.file, 0, buffered.length, nil)
 		if err != nil {
 			return err
 		}
@@ -220,7 +224,9 @@ func (chunker *partChunker) uploadBufferedPart(buffered bufferedPart) error {
 	chunker.storedBytes += buffered.length
 	chunker.uploadedParts = append(chunker.uploadedParts, UploadedPart{PartNumber: part.PartNumber, ETag: etag})
 	chunker.progress = append(chunker.progress, storedPart{PartNumber: part.PartNumber, ETag: etag, SizeBytes: buffered.length})
-	chunker.store.recordParts(chunker.snapshotID, chunker.artifact, chunker.uploadID, chunker.progress)
+	if chunker.record != nil {
+		chunker.record(chunker.progress)
+	}
 	return nil
 }
 

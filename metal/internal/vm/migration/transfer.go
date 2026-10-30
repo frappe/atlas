@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -24,6 +25,9 @@ var errTransferFailed = errors.New("migration transfer failed")
 
 // ErrNoMemoryToSave reports a memory snapshot request for a source that is not running or paused.
 var ErrNoMemoryToSave = errors.New("source has no guest memory to save")
+
+// ErrSourceWoke reports a sleeping source that received traffic before it stopped.
+var ErrSourceWoke = errors.New("sleeping source received traffic")
 
 // backgroundOperation cancels one VM's background worker and signals its exit.
 type backgroundOperation struct {
@@ -137,15 +141,25 @@ func (m *Manager) runTransfer(ctx context.Context, virtualMachineID string) {
 // advanceCopying copies an interval or enters stopping. Running sources send a
 // full first interval; other sources cut over first.
 func (m *Manager) advanceCopying(ctx context.Context, record destinationRecord) error {
+	if err := m.receiveKernel(ctx, record); err != nil {
+		return err
+	}
+
+	// A deep-sleeping source keeps its network during the full copy, so traffic can still wake it.
+	deepSleeping := record.hasSleepCheckpoint() && record.Definition.Sleep.State == vm.SleepStateDeepSleeping
 	last := lastCompletedSequence(record)
-	if last == 0 && record.SourceObservedState != vm.StateRunning {
+	if last == 0 && record.SourceObservedState != vm.StateRunning && !deepSleeping {
 		return m.enterStopping(ctx, record)
 	}
-	if last >= 1 && m.transferLimitReached(record) {
+	if last >= 1 && (deepSleeping || m.transferLimitReached(record)) {
 		return m.enterStopping(ctx, record)
 	}
 
 	snapshot, err := m.source.NextSnapshot(ctx, record.Source, record.ID, record.VirtualMachineID, last)
+	if deepSleeping && errors.Is(err, vm.ErrConflict) {
+		// An older source cannot snapshot a sleeping VM before it stops.
+		return m.enterStopping(ctx, record)
+	}
 	if err != nil {
 		return err
 	}
@@ -168,13 +182,14 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 		lastCompletedSequence(record),
 		record.HasMemorySnapshot,
 	)
-	if errors.Is(err, ErrNoMemoryToSave) {
+	if errors.Is(err, ErrNoMemoryToSave) || errors.Is(err, ErrSourceWoke) {
 		return m.failTransfer(ctx, record, "stop source: "+err.Error())
 	}
 	if err != nil {
 		return err
 	}
-	if final.Sequence < 1 || (record.HasMemorySnapshot && final.GUID == "") {
+	coma := record.hasSleepCheckpoint() && record.Definition.Sleep.State == vm.SleepStateComa
+	if !coma && (final.Sequence < 1 || (record.usesMemorySnapshot() && final.GUID == "")) {
 		return m.failTransfer(ctx, record, "source returned an invalid final sequence")
 	}
 
@@ -188,8 +203,10 @@ func (m *Manager) advanceStopping(ctx context.Context, record destinationRecord)
 	if record.State != destinationStopping {
 		return nil
 	}
-	if err := m.receiveFinalSnapshots(ctx, record, final); err != nil {
-		return err
+	if !coma {
+		if err := m.receiveFinalSnapshots(ctx, record, final); err != nil {
+			return err
+		}
 	}
 
 	_, err = m.mutateDestination(ctx, record.VirtualMachineID, func(destination *destinationRecord) {
@@ -322,7 +339,10 @@ func (m *Manager) streamInterval(ctx context.Context, record destinationRecord, 
 	); err != nil {
 		return 0, err
 	}
-	if err := m.disks.ReceiveSnapshotTLS(ctx, record.VirtualMachineID, record.Source); err != nil {
+	received := new(atomic.Int64)
+	m.receivedBytes.Store(record.VirtualMachineID, received)
+	defer m.receivedBytes.Delete(record.VirtualMachineID)
+	if err := m.disks.ReceiveSnapshotTLS(ctx, record.VirtualMachineID, record.Source, received); err != nil {
 		return 0, err
 	}
 	return snapshot.SizeBytes, nil
@@ -421,6 +441,9 @@ func hasInterval(intervals []TransferProgress, sequence int) bool {
 // applyDestinationState restores the memory snapshot paused, or cold-boots the received disk for
 // a disk-only migration or an allowed fallback.
 func (m *Manager) applyDestinationState(ctx context.Context, record destinationRecord) error {
+	if record.hasSleepCheckpoint() {
+		return m.failApply(ctx, record, m.host.ApplySleepMigration(record.VirtualMachineID, record.Definition.Sleep))
+	}
 	if record.usesMemorySnapshot() {
 		err := m.restoreMemorySnapshot(ctx, record)
 		if err == nil || !record.AllowDiskOnlyFallback || isWorkerCancelled(ctx, err) {

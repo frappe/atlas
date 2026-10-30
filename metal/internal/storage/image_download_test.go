@@ -27,12 +27,12 @@ func TestDownloadVerifiesDigestAndRedactsURL(t *testing.T) {
 	defer server.Close()
 
 	destination := &temporaryFileDestination{directory: t.TempDir()}
-	if err := downloadOnce(context.Background(), server.Client(), server.URL+"?signature=secret", hex.EncodeToString(digest[:]), destination); err != nil {
+	if err := downloadOnce(context.Background(), server.Client(), []string{server.URL + "?signature=secret"}, hex.EncodeToString(digest[:]), destination); err != nil {
 		t.Fatal(err)
 	}
 
 	destination = &temporaryFileDestination{directory: t.TempDir()}
-	if err := downloadOnce(context.Background(), server.Client(), server.URL+"?signature=secret", strings.Repeat("0", 64), destination); !errors.Is(err, ErrImageIntegrity) {
+	if err := downloadOnce(context.Background(), server.Client(), []string{server.URL + "?signature=secret"}, strings.Repeat("0", 64), destination); !errors.Is(err, ErrImageIntegrity) {
 		t.Fatalf("error = %v, want ErrImageIntegrity", err)
 	}
 	if got := redactURL(server.URL + "?signature=secret"); strings.Contains(got, "secret") {
@@ -97,7 +97,7 @@ func TestDownloadWritesInFullBuffers(t *testing.T) {
 	server := serveArtifact(t, content)
 
 	destination := &countingDestination{}
-	if err := downloadOnce(t.Context(), server.Client(), server.URL, hex.EncodeToString(digest[:]), destination); err != nil {
+	if err := downloadOnce(t.Context(), server.Client(), []string{server.URL}, hex.EncodeToString(digest[:]), destination); err != nil {
 		t.Fatal(err)
 	}
 	if destination.writes != 4 {
@@ -115,7 +115,7 @@ func TestDownloadDecodesAZstdArtifactWithItsContentSize(t *testing.T) {
 	server := serveArtifact(t, encoder.EncodeAll(content, nil))
 
 	destination := &countingDestination{}
-	if err := downloadOnce(t.Context(), server.Client(), server.URL, hex.EncodeToString(digest[:]), destination); err != nil {
+	if err := downloadOnce(t.Context(), server.Client(), []string{server.URL}, hex.EncodeToString(digest[:]), destination); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(destination.content.Bytes(), content) {
