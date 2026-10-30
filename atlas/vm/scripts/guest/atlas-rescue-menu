@@ -15,6 +15,18 @@ actsellistbox=black,cyan textbox=white,black acttextbox=black,cyan entry=white,b
 
 dialog() { whiptail "$@" 3>&1 1>&2 2>&3; }
 
+# A serial console has no window size, so ask the terminal where the cursor stops at the far corner.
+sync_serial_console_size() {
+  [[ $(tty) == /dev/ttyS* ]] || return 0
+  local settings rows columns
+  settings=$(stty -g)
+  stty raw -echo
+  printf '\e7\e[999;999H\e[6n\e8'
+  IFS='[;' read -r -d R -t 1 _ rows columns
+  stty "$settings"
+  [[ -n ${rows:-} && -n ${columns:-} ]] && stty rows "$rows" cols "$columns"
+}
+
 window_size() {
   read -r rows columns < <(stty size)
   # A serial terminal can report 0 0.
@@ -38,17 +50,6 @@ mount_state() {
     *,ro,*) echo read-only;;
     *) echo read-write;;
   esac
-}
-
-disk_summary() {
-  local state
-  state=$(mount_state)
-  echo "VM disk  $device  $(lsblk -dno SIZE,FSTYPE "$device" | xargs)"
-  if [[ $state == unmounted ]]; then
-    echo 'Not mounted'
-  else
-    echo "Mounted $state at $mount_path"
-  fi
 }
 
 # Show command output: nothing on a silent success, a dialog when short, and a pager when long.
@@ -204,42 +205,15 @@ edit_fstab() {
 
 choice=mount
 while true; do
-  disk_action='Mount your VM disk'
-  [[ $(mount_state) == unmounted ]] || disk_action='Unmount your VM disk'
-  window_size
-  list_height=$((height > 31 ? 22 : height - 9))
-  choice=$(dialog --title ' Atlas Rescue ' --notags --ok-button Select --cancel-button Exit --default-item "$choice" \
-    --menu "$(disk_summary)" $((list_height + 9)) "$width" "$list_height" \
-    heading-disk 'Your disk' \
-    mount " 1  $disk_action" \
-    usage ' 2  See what is using disk space' \
-    gap-1 '' \
-    heading-find 'Find the problem' \
-    errors ' 3  See errors from the last boot' \
-    logs ' 4  Read system logs' \
-    check ' 5  Check the disk for errors (no changes)' \
-    gap-2 '' \
-    heading-fix 'Fix the problem' \
-    repair ' 6  Repair disk errors' \
-    grow ' 7  Expand the filesystem to the full disk' \
-    fstab ' 8  Edit /etc/fstab (mount settings)' \
-    gap-3 '' \
-    heading-access 'Get back in' \
-    password ' 9  Reset a user password' \
-    keys "10  Add this VM's SSH keys to a user" \
-    firewall '11  Turn off the firewall in your system' \
-    gap-4 '' \
-    heading-advanced 'Advanced' \
-    chroot '12  Open a shell inside your system (chroot)' \
-    shell '13  Open a rescue shell') || break
+  sync_serial_console_size
+  disk_details=$(lsblk -dno SIZE,FSTYPE "$device" | xargs)
+  if ! choice=$(/usr/local/lib/atlas/rescue-menu-screen "$choice" "$disk_details" "$(mount_state)" 3>&1 1>&2 2>&3); then
+    echo 'This terminal cannot show the menu. Run atlas-rescue --help.'
+    exit 1
+  fi
+  [[ -n $choice ]] || break
   case "$choice" in
-    # whiptail cannot skip a row, so Enter on a heading or a gap moves to the next item.
-    heading-disk) choice=mount;;
-    gap-1|heading-find) choice=errors;;
-    gap-2|heading-fix) choice=repair;;
-    gap-3|heading-access) choice=password;;
-    gap-4|heading-advanced) choice=chroot;;
-    mount) if [[ $disk_action == Mount* ]]; then mount_disk; else unmount_disk; fi;;
+    mount) if [[ $(mount_state) == unmounted ]]; then mount_disk; else unmount_disk; fi;;
     usage) show_output 'Disk usage' usage;;
     errors) show_output 'Errors from the last boot' boot-errors;;
     logs) show_output 'System logs' logs;;

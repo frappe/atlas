@@ -49,6 +49,7 @@ EOF
 install_repair_menu() {
 	install -D -m 0755 "$script_directory/guest/atlas-rescue" "$rootfs_directory/usr/local/sbin/atlas-rescue"
 	install -D -m 0755 "$script_directory/guest/atlas-rescue-menu" "$rootfs_directory/usr/local/sbin/atlas-rescue-menu"
+	install -D -m 0755 "$script_directory/guest/rescue-menu-screen" "$rootfs_directory/usr/local/lib/atlas/rescue-menu-screen"
 	install -D -m 0755 "$script_directory/guest/rescue.py" "$rootfs_directory/usr/local/lib/atlas/rescue.py"
 	cat > "$rootfs_directory/etc/profile.d/atlas-rescue.sh" <<'PROFILE'
 if [ -t 0 ] && [ -t 1 ] && [ -z "${ATLAS_RESCUE_MENU_SHOWN:-}" ]; then
@@ -61,6 +62,7 @@ PROFILE
 }
 
 # The serial console has a temporary root password, because the VM's own login may be what is broken.
+# Its client is the Atlas web terminal, so it does not need the vt220 default of a serial getty.
 install_rescue_console() {
 	install -D -m 0755 "$script_directory/guest/rescue-console-password" "$rootfs_directory/usr/local/lib/atlas/rescue-console-password"
 	cat > "$rootfs_directory/etc/systemd/system/atlas-rescue-console.service" <<'SERVICE'
@@ -81,6 +83,8 @@ SERVICE
 [Unit]
 Requires=atlas-rescue-console.service
 After=atlas-rescue-console.service
+[Service]
+Environment=TERM=xterm-256color
 SERVICE
 	ln -sf /etc/systemd/system/atlas-rescue-console.service "$rootfs_directory/etc/systemd/system/multi-user.target.wants/atlas-rescue-console.service"
 }
