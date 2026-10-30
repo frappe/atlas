@@ -34,3 +34,4 @@ These are the next major changes. None of them is current behavior.
 | Topology-based placement | Place VMs by host topology, for example an anti-affinity rule that keeps replicas in different racks. | [Placement](../compute/placement.md) |
 | Network volumes | Attach storage that is not local to one host. | [Metal storage](../storage/host-storage.md) |
 | Liquid VM | Extend sleepy VMs so that a saved VM can move easily between hosts. | [VM runtime](../compute/runtime.md) |
+| Abuse protection | Export per-VM traffic metrics and logs from the hosts, and apply the restrictions that Central decides in the data plane. | [Abuse protection](../abuse/index.md) |
