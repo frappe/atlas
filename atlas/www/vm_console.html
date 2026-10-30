@@ -14,6 +14,7 @@
 	}
 	#atlas-overlay .box { max-width: 460px; padding: 24px; }
 	#atlas-overlay .title { font-size: 16px; margin-bottom: 8px; }
+	#atlas-overlay .hint { color: #9aa; }
 	#atlas-copied {
 		position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 8px);
 		padding: 6px 14px; border-radius: 8px; background: rgba(255, 255, 255, 0.12);
@@ -51,12 +52,12 @@
 	let ended = false;
 
 	// The token is one-time, so the session cannot be reopened from this page.
-	function end(title) {
+	function end(title, hint) {
 		if (ended) return;
 		ended = true;
 		overlayTitle.textContent = title;
 		overlay.style.display = "flex";
-		socket.disconnect();
+		try { socket.disconnect(); } catch (e) {}
 	}
 
 	const term = new Terminal({ cursorBlink: true, fontFamily: "monospace", fontSize: 13 });
@@ -64,6 +65,13 @@
 	term.loadAddon(fit);
 	term.open(document.getElementById("atlas-console"));
 	fit.fit();
+
+	// Console history can hold cursor queries. A reply to a replayed query would reach the shell as typed input.
+	const replayedQueries = term.parser.registerCsiHandler({ final: "n" }, () => true);
+	const firstKey = term.onKey(() => {
+		replayedQueries.dispose();
+		firstKey.dispose();
+	});
 
 	// Copies a selection when the mouse is released, like ttyd.
 	const copied = document.getElementById("atlas-copied");
@@ -96,16 +104,12 @@
 	socket.on("atlas_console_output", (data) =>
 		term.write(Uint8Array.from(atob(data), (c) => c.charCodeAt(0)))
 	);
-	socket.on("atlas_console_error", () => end("Console unavailable"));
+	socket.on("atlas_console_error", (message) => end("Console unavailable", message));
 	socket.on("atlas_console_closed", () => end("Console session ended"));
 	socket.on("disconnect", () => end("Console disconnected"));
 	socket.on("connect_error", () => end("Could not connect to the console"));
 
-	const encoder = new TextEncoder();
-	term.onData((data) => {
-		const bytes = Array.from(encoder.encode(data), (byte) => String.fromCharCode(byte)).join("");
-		socket.emit("atlas_console_input", btoa(bytes));
-	});
+	term.onData((data) => socket.emit("atlas_console_input", btoa(data)));
 
 	function sendResize() {
 		fit.fit();

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -112,7 +113,40 @@ func (b *SerialBroker) Persist(id string) error {
 		return ErrConsoleNotFound
 	}
 
-	return b.storeMaster(id, openConsole.master)
+	if err := b.storeMaster(id, openConsole.master); err != nil {
+		return err
+	}
+
+	return keepCarriageReturn(openConsole.master)
+}
+
+// keepCarriageReturn stops the PTY from turning Enter into a newline, because
+// programs such as whiptail need the carriage return that a terminal sends. It
+// must run after the unit starts, because TTYReset restores the default settings.
+// File.Fd would make the master blocking, so it uses the raw connection.
+func keepCarriageReturn(master *os.File) error {
+	connection, err := master.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("read console pty: %w", err)
+	}
+
+	var settingsError error
+	if err := connection.Control(func(descriptor uintptr) {
+		settings, err := unix.IoctlGetTermios(int(descriptor), unix.TCGETS)
+		if err != nil {
+			settingsError = err
+			return
+		}
+		settings.Iflag &^= unix.ICRNL
+		settingsError = unix.IoctlSetTermios(int(descriptor), unix.TCSETS, settings)
+	}); err != nil {
+		return fmt.Errorf("read console pty: %w", err)
+	}
+	if settingsError != nil {
+		return fmt.Errorf("set console pty settings: %w", settingsError)
+	}
+
+	return nil
 }
 
 // storeMaster keeps one stored descriptor for each VM.

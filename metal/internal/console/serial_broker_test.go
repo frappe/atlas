@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // fakeDescriptorStore retains a duplicate of each descriptor for a simulated restart, as systemd does.
@@ -122,6 +123,27 @@ func TestShutdownKeepsMastersSoAdoptRestoresRunningConsoles(t *testing.T) {
 }
 
 // Open must leave the master out of the store until the unit holds the slave.
+func TestPersistKeepsTheCarriageReturnOfEnter(t *testing.T) {
+	directory := t.TempDir()
+	broker := NewSerialBroker(directory, newFakeDescriptorStore())
+	defer broker.Shutdown()
+
+	if err := broker.Open("vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	slave := openSlave(t, directory, "vm-1")
+	if err := broker.Persist("vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Iflag&unix.ICRNL != 0 {
+		t.Fatal("the console PTY turns Enter into a newline")
+	}
+}
+
 func TestOpenStoresNothingUntilPersist(t *testing.T) {
 	directory := t.TempDir()
 	descriptorStore := newFakeDescriptorStore()
