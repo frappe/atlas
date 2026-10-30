@@ -71,6 +71,10 @@ The existing VM response adds optional `upload_percent` to each artifact under `
 - The phase and operation ID are written before each host call.
 - Destroy records progress per resource, so an interrupted destroy resumes.
 
+## Rescue mode
+
+The handbook owns [rescue mode](../../../docs/compute/rescue.md). `Specification.RescueImage` selects the next cold boot. `ObservedRecord.IsInRescueMode` reports the last boot, from `Runtime.IsInRescueMode`. Manager methods call `assertNotInRescueMode` for each change that the mode rejects.
+
 ## Migration
 
 The migration lifecycle lives in [internal/vm/migration/SPEC.md](migration/SPEC.md). This package does not import that package.

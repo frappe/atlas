@@ -31,6 +31,10 @@ line-length = 110
 target-version = "py314"
 extend-exclude = ["metal", "services/wg-mesh", "clients"]
 
+[tool.ruff.per-file-target-version]
+# Guest tools run with Ubuntu 24.04's Python, independently of the Atlas app.
+"atlas/vm/scripts/guest/*.py" = "py312"
+
 [tool.ruff.lint]
 select = [
     "F",

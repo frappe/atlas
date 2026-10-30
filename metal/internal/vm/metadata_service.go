@@ -44,7 +44,7 @@ func (specification Specification) MetadataServiceData(virtualMachineID, ipAddre
 	}
 
 	latest := map[string]any{"meta-data": metadata}
-	if specification.UserData != "" {
+	if specification.UserData != "" && specification.RescueImage == nil {
 		latest["user-data"] = specification.UserData
 	}
 	return map[string]any{"latest": latest}

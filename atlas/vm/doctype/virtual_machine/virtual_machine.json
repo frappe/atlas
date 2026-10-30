@@ -12,6 +12,8 @@
   "tenant_id",
   "is_privileged",
   "is_network_gateway",
+  "is_in_rescue_mode",
+  "is_rescue_mode_enabled",
   "column_break_status",
   "server",
   "virtual_machine_image",
@@ -80,6 +82,20 @@
    "fieldtype": "Data",
    "is_virtual": 1,
    "label": "Current State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_in_rescue_mode",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Is In Rescue Mode",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_rescue_mode_enabled",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Is Rescue Mode Enabled",
    "read_only": 1
   },
   {
@@ -414,7 +430,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-23 14:39:56.831096",
+ "modified": "2026-10-31 02:30:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

@@ -127,6 +127,7 @@ func TestReleasePromotesStagingClonesBeforeDestroy(t *testing.T) {
 	}
 
 	want := []string{
+		"destroy -r metal/vms/vm-1:rescue",
 		"get -Hp -r -t snapshot -o value clones metal/vms/vm-1",
 		"promote metal/staging/snap-1",
 		"destroy -r metal/vms/vm-1",

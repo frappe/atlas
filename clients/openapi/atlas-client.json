@@ -2152,7 +2152,9 @@
             },
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
+            "is_in_rescue_mode": false,
             "is_privileged": false,
+            "is_rescue_mode_enabled": false,
             "is_termination_protected": false,
             "network": {
               "firewall": {
@@ -2244,10 +2246,36 @@
             "title": "Image Id",
             "type": "string"
           },
+          "is_in_rescue_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Whether the last boot used the rescue image, or null when unavailable.",
+            "title": "Is In Rescue Mode"
+          },
           "is_privileged": {
             "description": "Whether the guest can reach every tenant through the mesh.",
             "title": "Is Privileged",
             "type": "boolean"
+          },
+          "is_rescue_mode_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Whether the next cold boot uses the rescue image, or null when unavailable.",
+            "title": "Is Rescue Mode Enabled"
           },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
@@ -5137,6 +5165,184 @@
           }
         },
         "summary": "Create console token",
+        "tags": [
+          "VM Actions"
+        ]
+      }
+    },
+    "/api/atlas/virtual-machines/{virtual_machine_id}/actions/disable-rescue-mode": {
+      "post": {
+        "description": "`is_rescue_mode_enabled` turns false now. The next restart boots the VM disk and removes the rescue disk. `is_in_rescue_mode` turns false after that boot.",
+        "operationId": "disable_virtual_machine_rescue_mode",
+        "parameters": [
+          {
+            "description": "Virtual machine ID.",
+            "in": "path",
+            "name": "virtual_machine_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VirtualMachineResponse"
+                }
+              }
+            },
+            "description": "The change is accepted. Poll the virtual machine route."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The resource does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Disable rescue mode",
+        "tags": [
+          "VM Actions"
+        ]
+      }
+    },
+    "/api/atlas/virtual-machines/{virtual_machine_id}/actions/enable-rescue-mode": {
+      "post": {
+        "description": "`is_rescue_mode_enabled` turns true now. The next restart boots the rescue image and attaches the VM disk as `/dev/vdb`. `is_in_rescue_mode` turns true after that boot. Rescue mode then blocks every change except a disk resize, a snapshot of the VM disk, a restart, power changes, and deletion.",
+        "operationId": "enable_virtual_machine_rescue_mode",
+        "parameters": [
+          {
+            "description": "Virtual machine ID.",
+            "in": "path",
+            "name": "virtual_machine_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VirtualMachineResponse"
+                }
+              }
+            },
+            "description": "The change is accepted. Poll the virtual machine route."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "No rescue image is configured."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Enable rescue mode",
         "tags": [
           "VM Actions"
         ]

@@ -19,6 +19,9 @@ const (
 	metadataServiceVersion = "V2"
 	rootDriveIdentifier    = "drive0"
 	rootDrivePath          = "/rootfs.img"
+	// The VM disk is the second drive in rescue mode.
+	rescuedDriveIdentifier = "drive1"
+	rescuedDrivePath       = "/disk.img"
 
 	// guestNetworkMask is the guest network size. Every guest is alone in its
 	// namespace, so one fixed mask serves them all.

@@ -933,6 +933,8 @@ class VirtualMachineDetailResponse(BaseModel):
 					"created_at": 1788834165,
 					"is_privileged": False,
 					"is_termination_protected": False,
+					"is_in_rescue_mode": False,
+					"is_rescue_mode_enabled": False,
 					"public_ipv4": None,
 					"public_ipv6": None,
 					"desired_state": "running",
@@ -969,6 +971,13 @@ class VirtualMachineDetailResponse(BaseModel):
 	created_at: int = Field(ge=0, description="Creation time as Unix seconds.")
 	is_privileged: bool = Field(description="Whether the guest can reach every tenant through the mesh.")
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
+	is_in_rescue_mode: bool | None = Field(
+		default=None, description="Whether the last boot used the rescue image, or null when unavailable."
+	)
+	is_rescue_mode_enabled: bool | None = Field(
+		default=None,
+		description="Whether the next cold boot uses the rescue image, or null when unavailable.",
+	)
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
 	desired_state: str | None = Field(description="State requested from the host, or null when unavailable.")
@@ -998,6 +1007,8 @@ class VirtualMachineDetailResponse(BaseModel):
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
+			is_in_rescue_mode=observed.is_in_rescue_mode if observed else None,
+			is_rescue_mode_enabled=desired.is_rescue_mode_enabled if desired else None,
 			desired_state=desired.state if desired else None,
 			current_state=get_current_state(virtual_machine, observed.state if observed else None),
 			error=observed.error.message if observed and observed.error else None,

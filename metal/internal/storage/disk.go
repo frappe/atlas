@@ -26,8 +26,59 @@ const (
 	blockDeviceRetryDelay = 50 * time.Millisecond
 )
 
-// PrepareBoot prepares a disk and kernel for a cold boot.
+// PrepareBoot prepares the disks and kernel for a cold boot. A normal boot
+// removes the rescue disk of a finished session, because its guest has stopped.
 func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request VirtualMachineStorageRequest) (BootConfiguration, error) {
+	if request.RescueImage != nil {
+		return store.prepareRescueBoot(ctx, request)
+	}
+	if err := store.releaseRescueDisk(ctx, request.VirtualMachineID); err != nil {
+		return BootConfiguration{}, err
+	}
+	return store.prepareImageBoot(ctx, request)
+}
+
+// prepareRescueBoot boots the rescue image from a new clone and attaches the VM
+// disk. A new clone keeps the root file system in step with a replaced image.
+func (store *VirtualMachineStore) prepareRescueBoot(ctx context.Context, request VirtualMachineStorageRequest) (BootConfiguration, error) {
+	if err := store.releaseRescueDisk(ctx, request.VirtualMachineID); err != nil {
+		return BootConfiguration{}, err
+	}
+	virtualMachineID := request.VirtualMachineID
+	request.VirtualMachineID = rescueDiskIdentifier(virtualMachineID)
+	request.Image = *request.RescueImage
+	request.ImageReference = request.Image.Name
+	request.DiskMiB = 0
+	configuration, err := store.prepareImageBoot(ctx, request)
+	if err != nil {
+		return BootConfiguration{}, err
+	}
+	if err := createBlockDevice(store.pool.virtualMachineDevicePath(virtualMachineID), filepath.Join(request.ChrootRoot, "disk.img"), request.UserID, request.GroupID); err != nil {
+		_ = store.releaseRescueDisk(context.WithoutCancel(ctx), virtualMachineID)
+		return BootConfiguration{}, err
+	}
+	configuration.Drives = append(configuration.Drives, Drive{Path: "/disk.img"})
+	return configuration, nil
+}
+
+// rescueDiskIdentifier names the rescue disk of one VM. A VM identifier cannot
+// hold a colon, so the name cannot match another VM.
+func rescueDiskIdentifier(virtualMachineID string) string {
+	return virtualMachineID + ":rescue"
+}
+
+// releaseRescueDisk removes the rescue disk. It has no snapshots to preserve.
+func (store *VirtualMachineStore) releaseRescueDisk(ctx context.Context, virtualMachineID string) error {
+	dataset := store.pool.virtualMachineDataset(rescueDiskIdentifier(virtualMachineID))
+	err := platform.Run(ctx, "zfs", "destroy", "-r", dataset)
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		return nil
+	}
+	return err
+}
+
+// prepareImageBoot prepares one image-backed disk and its kernel.
+func (store *VirtualMachineStore) prepareImageBoot(ctx context.Context, request VirtualMachineStorageRequest) (BootConfiguration, error) {
 	if err := os.MkdirAll(request.ChrootRoot, 0o755); err != nil {
 		return BootConfiguration{}, err
 	}
@@ -159,8 +210,12 @@ func (store *VirtualMachineStore) ResizeDisk(ctx context.Context, virtualMachine
 	return store.growDisk(ctx, virtualMachineID, diskMiB)
 }
 
-// Release removes the VM disk and keeps dependent staging clones.
+// Release removes the VM disk and its rescue disk, and keeps dependent staging clones.
 func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID string) error {
+	if err := store.releaseRescueDisk(ctx, virtualMachineID); err != nil {
+		return err
+	}
+
 	dataset := store.pool.virtualMachineDataset(virtualMachineID)
 
 	if err := store.promoteDependentClones(ctx, dataset); err != nil {

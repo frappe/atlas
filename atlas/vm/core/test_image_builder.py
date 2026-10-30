@@ -6,7 +6,11 @@ from unittest.mock import Mock, call, patch
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
-from atlas.vm.core.image_builder import build_ubuntu_image, publish_ubuntu_image
+from atlas.vm.core.image_builder import (
+	build_ubuntu_image,
+	get_available_ubuntu_images,
+	publish_ubuntu_image,
+)
 from atlas.vm.core.multipart_upload import MEBIBYTE
 
 
@@ -133,7 +137,7 @@ class TestUbuntuImageBuilder(UnitTestCase):
 
 
 class TestUbuntuImageBuilderIntegration(IntegrationTestCase):
-	def publish(self, title: str, image_sha256: str) -> Mock:
+	def publish(self, title: str, image_sha256: str, purpose="base") -> Mock:
 		with (
 			patch("atlas.vm.core.image_builder.get_sha256", side_effect=[image_sha256, "b" * 64]),
 			patch("atlas.vm.core.image_builder.Path.stat", return_value=SimpleNamespace(st_size=MEBIBYTE)),
@@ -141,7 +145,7 @@ class TestUbuntuImageBuilderIntegration(IntegrationTestCase):
 			patch("atlas.vm.core.image_builder.frappe.get_single"),
 			patch("atlas.vm.core.image_builder.upload_with_progress") as upload,
 		):
-			publish_ubuntu_image(title, "24.04", "amd64", Path("rootfs.img"), Path("kernel"))
+			publish_ubuntu_image(title, "24.04", "amd64", Path("rootfs.img"), Path("kernel"), purpose=purpose)
 		return upload
 
 	def test_each_build_retires_the_protected_build_before_it(self) -> None:
@@ -175,3 +179,44 @@ class TestUbuntuImageBuilderIntegration(IntegrationTestCase):
 			self.assertEqual(image.kernel, "b" * 64)
 			self.assertEqual(image.kernel_size_mib, 1)
 			self.assertEqual(image.version, 1)
+
+	def test_rescue_builds_remain_available_and_do_not_replace_a_matching_base_title(self) -> None:
+		title = f"test-rescue-{frappe.generate_hash(length=8)}"
+		self.publish(title, "a" * 64)
+		self.publish(title, "b" * 64, "rescue")
+		self.publish(title, "c" * 64, "rescue")
+		images = frappe.get_all(
+			"Virtual Machine Image",
+			filters={"title": title},
+			fields=["name", "status", "is_termination_protected"],
+		)
+		self.assertEqual(len(images), 3)
+		for image in images:
+			self.assertEqual((image.status, image.is_termination_protected), ("Available", 1))
+		self.assertEqual(len(get_available_ubuntu_images(title, "amd64", "rescue")), 2)
+		self.assertEqual(len(get_available_ubuntu_images(title, "amd64", "base")), 1)
+
+		selectable = frappe.get_list(
+			"Virtual Machine Image",
+			filters=[
+				["Virtual Machine Image", "title", "=", title],
+				["Virtual Machine Image", "enabled", "=", 1],
+				["Virtual Machine Image", "image_type", "=", "system"],
+				["Virtual Machine Image", "status", "=", "Available"],
+				["Virtual Machine Image", "memory_snapshot", "=", 0],
+				["Atlas Tag", "key", "=", "purpose"],
+				["Atlas Tag", "value", "=", "rescue"],
+			],
+		)
+		self.assertEqual(len(selectable), 2)
+
+		latest = frappe.db.get_value(
+			"Virtual Machine Image",
+			{"title": title, "image_sha256": "c" * 64},
+			["name", "cache_image"],
+			as_dict=True,
+		)
+		self.assertEqual(latest.cache_image, 1)
+		self.assertEqual(
+			frappe.db.get_single_value("Atlas Settings", "rescue_virtual_machine_image"), latest.name
+		)

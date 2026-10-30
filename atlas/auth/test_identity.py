@@ -25,6 +25,7 @@ from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import Virtual
 def build_image(tenant_id: int, image_type: str) -> VirtualMachineImage:
 	"""Return one image document that answers the tenant visibility rule."""
 	image = VirtualMachineImage.__new__(VirtualMachineImage)
+	image.tags = []
 	image.doctype = "Virtual Machine Image"
 	image.tenant_id = tenant_id
 	image.image_type = image_type

@@ -161,6 +161,7 @@ func (manager *Manager) reconcileActive(
 	if err != nil {
 		return err
 	}
+	observed.IsInRescueMode = manager.runtime.IsInRescueMode(desired.ID)
 	if previousState != StateRunning && status.State == StateRunning {
 		manager.resetIdle(desired)
 	}

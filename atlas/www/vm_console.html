@@ -66,6 +66,13 @@
 	term.open(document.getElementById("atlas-console"));
 	fit.fit();
 
+	// Console history can hold cursor queries. A reply to a replayed query would reach the shell as typed input.
+	const replayedQueries = term.parser.registerCsiHandler({ final: "n" }, () => true);
+	const firstKey = term.onKey(() => {
+		replayedQueries.dispose();
+		firstKey.dispose();
+	});
+
 	// Copies a selection when the mouse is released, like ttyd.
 	const copied = document.getElementById("atlas-copied");
 	let copiedTimer;

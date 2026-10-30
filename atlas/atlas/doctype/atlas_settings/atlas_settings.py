@@ -114,6 +114,7 @@ class AtlasSettings(Document):
 		public_ssh_key: DF.SmallText
 		region_id: DF.Int
 		region_name: DF.Data
+		rescue_virtual_machine_image: DF.Link | None
 		route53_access_key_id: DF.Data | None
 		route53_access_key_secret: DF.Password | None
 		route53_dns_zone_id: DF.Data | None

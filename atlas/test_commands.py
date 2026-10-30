@@ -99,6 +99,7 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			kernel_path,
 			"Site File",
 			False,
+			purpose="base",
 		)
 		destroy.assert_called_once_with()
 
@@ -122,7 +123,7 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 					path.write_bytes(b"build output")
 				build.return_value = (paths[0], paths[2])
 
-				def check_outputs(*args: object) -> None:
+				def check_outputs(*args: object, **kwargs: object) -> None:
 					self.assertTrue(all(path.exists() for path in paths))
 					if failure == "publish" and publish.call_count == 2:
 						raise RuntimeError("publish failed")
@@ -143,3 +144,32 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 					self.assertEqual(result.exit_code, 0, result.output)
 					self.assertFalse(any(path.exists() for path in paths))
 				self.assertEqual(publish.call_count, 2)
+
+
+class TestBuildUbuntuRescueImageCommand(UnitTestCase):
+	def test_rescue_command_builds_once_and_publishes_with_its_own_purpose(self) -> None:
+		with (
+			patch.object(commands, "is_image_available", side_effect=[True, False]) as available,
+			patch.object(
+				commands, "build_ubuntu_rescue_image", return_value=(Path("rootfs"), Path("kernel"))
+			) as build,
+			patch.object(commands, "_publish_image_to_sites") as publish,
+		):
+			result = CliRunner().invoke(
+				commands.build_ubuntu_rescue_image_command,
+				["--skip-existing"],
+				obj=command_context("existing.local", "new.local"),
+			)
+		self.assertEqual(result.exit_code, 0, result.output)
+		self.assertEqual(available.call_args.args, ("new.local", "ubuntu-24.04-rescue", "amd64", "rescue"))
+		build.assert_called_once_with(Path("dist"))
+		publish.assert_called_once_with(
+			["new.local"],
+			"ubuntu-24.04-rescue",
+			"24.04",
+			"amd64",
+			Path("rootfs"),
+			Path("kernel"),
+			"object-storage",
+			"rescue",
+		)

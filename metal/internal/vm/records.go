@@ -49,6 +49,7 @@ type ObservedRecord struct {
 	RestartGeneration       uint64           `json:"restart_generation"`
 	State                   State            `json:"state"`
 	SleepState              SleepState       `json:"sleep_state,omitempty"`
+	IsInRescueMode          bool             `json:"is_in_rescue_mode,omitempty"`
 	Phase                   string           `json:"phase,omitempty"`
 	OperationID             string           `json:"operation_id,omitempty"`
 	OperationStartedAt      time.Time        `json:"operation_started_at,omitempty"`

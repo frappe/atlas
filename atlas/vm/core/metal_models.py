@@ -147,6 +147,7 @@ class MetalDesiredState:
 	generation: int
 	restart_generation: int
 	state: str
+	is_rescue_mode_enabled: bool
 	compute: MetalCompute
 	disk: MetalDisk
 	image: MetalImage
@@ -228,6 +229,7 @@ class MetalObservedState:
 	restart_generation: int
 	state: str
 	sleep_state: str
+	is_in_rescue_mode: bool
 	last_request_at: str
 	phase: str
 	operation_id: str
@@ -373,6 +375,7 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
+		is_rescue_mode_enabled=boolean_field(value, "is_rescue_mode_enabled", default=False),
 		compute=MetalCompute(
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
 			memory_mib=integer_field(compute, "memory_mib"),
@@ -460,6 +463,7 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
 		sleep_state=sleep_state_field(value),
+		is_in_rescue_mode=boolean_field(value, "is_in_rescue_mode", default=False),
 		last_request_at=string_field(value, "last_request_at", default=""),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),
