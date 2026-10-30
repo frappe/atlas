@@ -27,10 +27,19 @@ A new section "Log Bucket" in the "Storage" tab, after "Object Storage".
 │ Bucket          log_bucket_name          Data │ Export Abuse Metrics                       │
 │ Endpoint URL    log_bucket_endpoint_url  Data │   is_abuse_metrics_enabled  Check          │
 │                                               │   writes [telemetry] abuse_metrics         │
+│                                               │ Record Abuse Logs                          │
+│                                               │   is_abuse_logs_enabled  Check             │
+│                                               │   writes [abuse] logs                      │
+│                                               │ Use NAT Port Ranges                        │
+│                                               │   is_nat_port_range_enabled  Check         │
+│                                               │   writes [nat] is_port_range_enabled       │
 ```
 
 - The fieldnames follow the `object_storage_*` fields.
 - `is_abuse_metrics_enabled` is off by default. An operator turns it on after the Datum release. See [telemetry](contract.md#telemetry).
+- `is_abuse_logs_enabled` is off by default. Metal records and uploads the `flow` and `sni` logs only when it is on. An operator turns it on only after the AUP and the privacy policy state the collection. See [log upload](contract.md#log-upload).
+- `is_nat_port_range_enabled` is off by default. It changes live NAT on the host. See [NAT port ranges](metrics.md#nat-port-ranges).
+- An operator turns on `is_abuse_metrics_enabled`, `is_nat_port_range_enabled` and `is_abuse_logs_enabled`, in that order. See [deploy order](contract.md#deploy-order).
 - Atlas Settings holds no log bucket key. The keys are on each Metal Server and Proxy Server.
 
 ### Metal Server and Proxy Server (layout change)

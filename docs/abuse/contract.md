@@ -15,7 +15,7 @@ Atlas and Metal exchange restrictions only in the VM network object. Atlas sends
 | Atlas to Metal | VM create, `PUT /v1/vms/{id}` | The network object with optional `restrictions` and `is_port_25_blocked` |
 | Atlas to Metal | `PUT /v1/vms/{id}/network` | The complete network object with the same fields. See [updates replace, not merge](../interfaces/metal-contract.md#updates-replace-not-merge). |
 | Metal to Atlas | The VM response | `desired.network` with the same fields, `desired.generation`, `observed.generation` and `observed.error` |
-| Atlas to Metal | `metald.toml` | Log bucket endpoint, bucket name, the host write key, and `[telemetry] abuse_metrics` |
+| Atlas to Metal | `metald.toml` | Log bucket endpoint, bucket name, the host write key, `[telemetry] abuse_metrics`, `[abuse] logs` and `[nat] is_port_range_enabled` |
 
 New fields of the network object:
 
@@ -151,11 +151,17 @@ Cargo owns a tenant-0 log bucket in each region. Cargo owns the object layout an
 
 | Log | Writer | Key |
 | --- | --- | --- |
-| `nat`, see [NAT log](metrics.md#nat-log) | Metal host | The write key of the host |
+| `flow`, see [flow log](metrics.md#flow-log) | Metal host | The write key of the host |
 | `sni`, see [SNI log](metrics.md#sni-log) | Metal host | The write key of the host |
+| `nat-ranges`, see [NAT port ranges](metrics.md#nat-port-ranges) | Metal host | The write key of the host |
 | `proxy-access` | HTTP proxy node | The write key of the proxy node |
 
 - Each writer compresses its log with zstd and uploads one object every 5 min. The object key is in the [Cargo object layout ↗](https://github.com/frappe/cargo/blob/develop/docs/abuse-logs.md#object-layout).
+- A `nat-ranges` object holds the rows since the last upload. A host uploads it only when it has rows. The full table each day gives at least one object each day.
+- Metal writes and uploads the `flow` and `sni` logs only when `metald.toml` has `[abuse] logs = true`. The default is false. Atlas writes the value from the Atlas Settings check `is_abuse_logs_enabled`, in the same way as `abuse_metrics`. Layout: [Atlas Settings](layouts.md#atlas-settings-layout-change).
+- The `nat-ranges` log and the `proxy-access` upload do not need this switch. `nat-ranges` holds no customer traffic.
+- Metal writes `nat-ranges` rows only when `metald.toml` has `[nat] is_port_range_enabled = true`. The default is false. Atlas writes the value from the Atlas Settings check `is_nat_port_range_enabled`, in the same way. See [NAT port ranges](metrics.md#nat-port-ranges).
+- `metald.toml` has two optional values for the flow log: `[abuse] flow_map_entries`, default 262144, and `[abuse] flow_entries_per_vm`, default 10000. Atlas does not write them. A host without them uses the defaults.
 - Each writer has its own write key. See [log bucket keys](#log-bucket-keys).
 - Atlas has no read key and does not read the logs.
 - The writer deletes the local file only after a confirmed upload.
@@ -193,9 +199,19 @@ Log times must be traceable for CERT-In. No NIC or NPL time server is set today 
 
 ## Deploy order
 
-The deploy order of all components is in [Central deploy order ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). For Atlas:
+The deploy order of all components, in three phases, is in [Central deploy order ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). These are the Atlas items of each phase, in order.
 
-1. The Atlas app: the restriction and port 25 routes, the create fields, key provisioning and the Atlas Settings fields. A Frappe patch makes a write key for each existing Metal Server and Proxy Server, and Atlas writes it into `metald.toml` and `proxy-control.toml` in the same way as at setup.
-2. Metal: `restrictions` and `is_port_25_blocked` in the network object, the `metal_abuse` chain, the counters behind `abuse_metrics`, and log upload.
-3. The HTTP proxy: the tombstone and log upload.
-4. After the Datum release, an operator turns on `is_abuse_metrics_enabled`.
+Phase 1: Flow log and counters. Data collection, and one data plane change: the NAT port ranges. No detection and no action. It starts after the Datum release and the Cargo log bucket.
+
+1. The Atlas app: log write key provisioning, the Atlas Settings "Log Bucket" section, `is_abuse_metrics_enabled`, `is_abuse_logs_enabled` and `is_nat_port_range_enabled`. A Frappe patch makes a write key for each existing Metal Server and Proxy Server, and Atlas writes it into `metald.toml` and `proxy-control.toml` in the same way as at setup. Atlas placement puts no more VMs on a host than its [NAT slot](metrics.md#nat-port-ranges) count.
+2. Metal: the counters behind `abuse_metrics`, the [flow log](metrics.md#flow-log) and the [SNI log](metrics.md#sni-log) behind `[abuse] logs`, the [NAT port ranges](metrics.md#nat-port-ranges) and their log behind `[nat] is_port_range_enabled`, and log upload. A metald patch gives a NAT slot to each existing VM.
+3. The HTTP proxy: access log upload.
+4. After the AUP and the privacy policy state the collection, an operator turns on `is_abuse_metrics_enabled`, `is_nat_port_range_enabled` and `is_abuse_logs_enabled`, in that order. Atlas Settings apply to every host in the region. After each switch, the operator checks host CPU, NAT errors and object sizes before the next switch. The operator checks the object sizes against the [storage estimates](metrics.md#flow-log).
+
+Phase 2: Findings and restrictions. Central acts on sample findings, abuse reports and operator actions. There is no Watcher yet.
+
+1. The Atlas app: the [restriction API](#restriction-api), the [port 25 API](#port-25-api), and the `restrictions` and `is_port_25_blocked` create fields.
+2. Metal: `restrictions` and `is_port_25_blocked` in the network object, and the [`metal_abuse` chain](enforcement.md#metal_abuse-chain).
+3. The HTTP proxy: the [tombstone](enforcement.md#http-proxy).
+
+Phase 3: Watcher. There is no Atlas change. Watcher reads the Phase 1 data.
