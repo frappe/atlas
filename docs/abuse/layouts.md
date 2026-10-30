@@ -10,8 +10,9 @@ Roles: `Atlas Admin` writes and `Atlas Investigator` reads. There is no new Atla
 
 Decided:
 
-1. Restrictions and `is_port_25_blocked` live in the Metal VM network object. Atlas keeps no restriction record. See [restrictions in the network object](enforcement.md#restrictions-in-the-network-object).
-2. `smtp_outbound` renders in `metal_abuse` only for a VM whose network has `is_port_25_blocked`. A missing field means open. Central sets the field on create, and with the [port 25 API](contract.md#port-25-api).
+1. Restrictions and `is_mail_ports_blocked` live in the Metal VM network object. Atlas keeps no restriction record. See [restrictions in the network object](enforcement.md#restrictions-in-the-network-object).
+2. The `mail_ports` block renders in `metal_abuse` only for a VM whose network has `is_mail_ports_blocked`. A missing field means open. Central sets the field on create, and with the [mail ports API](contract.md#mail-ports-api).
+5. Virtual Machine State mirrors three network values from Metal for the [`vm.network` event](contract.md#events-to-central). It holds no restriction list.
 3. Atlas has no detection settings. Thresholds and feeds are in [Watcher thresholds ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#thresholds). Profiles and exceptions are in [Central profiles ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#profiles).
 4. Atlas gets the log bucket write keys from Cargo. No operator copies a key. See [log bucket keys](contract.md#log-bucket-keys).
 
@@ -42,6 +43,24 @@ A new section "Log Bucket" in the "Storage" tab, after "Object Storage".
 - An operator turns on `is_abuse_metrics_enabled`, `is_nat_port_range_enabled` and `is_abuse_logs_enabled`, in that order. See [deploy order](contract.md#deploy-order).
 - Atlas Settings holds no log bucket key. The keys are on each Metal Server and Proxy Server.
 
+### Atlas Settings: Protection (layout change)
+
+A new section "Protection" in the "Networking" tab, after "Warpgate".
+
+```text
+{Networking}
+│ [Protection]                                                                              │
+│ Metal Hosts                                   │ IPv6 Router                                │
+│   protect_mode_metal  Select                  │   protect_mode_ipv6_router  Select         │
+│ HTTP Proxy                                    │ WireGuard Gateway                          │
+│   protect_mode_http_proxy  Select             │   protect_mode_wireguard_gateway  Select   │
+│                                               │   options for all four: count / drop       │
+```
+
+- Each field is `count` by default. See [rollout](protection.md#rollout).
+- Atlas writes `protect_mode_metal` to `[protect] mode` in `metald.toml` on each host, and each other field to `[protect] mode` in the config of that service.
+- An operator sets `drop` for one service at a time, after at least 7 days of counters.
+
 ### Metal Server and Proxy Server (layout change)
 
 A new collapsed section "Log Bucket" on both DocTypes. On Metal Server it goes after "Wireguard". On Proxy Server it goes after "Runtime".
@@ -57,6 +76,22 @@ A new collapsed section "Log Bucket" on both DocTypes. On Metal Server it goes a
 - Atlas sets all three fields when it creates or rotates the key. See [log bucket keys](contract.md#log-bucket-keys).
 - The key can write but not read. Atlas has no read key.
 
+### Virtual Machine State (layout change)
+
+A new section "Network" after "Sleep". Host sync copies the three fields from Metal. See [events to Central](contract.md#events-to-central).
+
+```text
+│ [Network]                                                                                 │
+│ Desired Generation                            │ Network Error                              │
+│   network_desired_generation  Int RO          │   network_error  Small Text RO             │
+│ Observed Generation                           │                                            │
+│   network_observed_generation  Int RO         │                                            │
+```
+
+- The fields mirror `desired.generation`, `observed.generation` and the message of `observed.error` of the VM in Metal.
+- A change of one of them runs the `vm.network` Webhook.
+- A host with an old Metal leaves them empty.
+
 ### Virtual Machine (layout change)
 
 Two new virtual fields, both read only. Atlas reads them from Metal, like `routes`.
@@ -65,8 +100,8 @@ Two new virtual fields, both read only. Atlas reads them from Metal, like `route
 │ [Network]                                                                                 │
 │ ...                                           │ ...                                        │
 │                                               │ Accessible via WireGuard Gateway           │
-│                                               │ Port 25 Blocked                            │
-│                                               │   is_port_25_blocked  Check RO virtual     │
+│                                               │ Mail Ports Blocked                         │
+│                                               │   is_mail_ports_blocked  Check RO virtual  │
 │                                                                                           │
 │ [ ]  (the section with routes)                                                            │
 │ Routes          routes          Code RO virtual                                           │
@@ -77,7 +112,7 @@ Two new virtual fields, both read only. Atlas reads them from Metal, like `route
 │ Metadata        metadata        Code RO virtual                                           │
 ```
 
-- The tenant API and Desk cannot edit either field. Only the [restriction API](contract.md#restriction-api), the [port 25 API](contract.md#port-25-api) and the emergency action change them.
+- The tenant API and Desk cannot edit either field. Only the [restriction API](contract.md#restriction-api), the [mail ports API](contract.md#mail-ports-api) and the emergency actions change them.
 - An expired entry stays in `restrictions` until the next change of the VM network. Metal already skips it.
 
 Desk actions in a new "Abuse" group, for `Atlas Admin` only. See [operator emergency restriction](enforcement.md#operator-emergency-restriction).
@@ -98,3 +133,19 @@ Desk actions in a new "Abuse" group, for `Atlas Admin` only. See [operator emerg
 - Atlas makes the entry ID: `atlas-` and a random suffix.
 - Atlas adds a Comment on the VM with the user, the kind and the reason.
 - "Lift Restriction" asks for one entry ID from `restrictions` and a reason. It lifts that entry only, and adds a Comment.
+
+"Isolate Tenant" is a Desk action on the Virtual Machine list, in the same "Abuse" group, for `Atlas Admin` only. See [operator emergency restriction](enforcement.md#operator-emergency-restriction).
+
+```text
+┌ Isolate Tenant ───────────────────────────────────────────────────────────────────────────┐
+│ Tenant ID       tenant_id       Int          │ Expires At      expires_at      Datetime   │
+│   required, not 0                            │                                            │
+│ Reason          reason          Small Text, required                                      │
+│                                                                 [Cancel]  [Isolate Tenant]│
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- Atlas refuses tenant 0.
+- Atlas makes one entry ID, `atlas-` and a random suffix, and applies an `isolate` entry with that ID to each VM of the tenant, one VM at a time, in a background job.
+- Atlas adds a Comment on each VM with the user, the entry ID and the reason.
+- "Lift Tenant Isolation" asks for the tenant ID, the entry ID and a reason. It lifts that entry on each VM of the tenant, and adds a Comment on each VM.

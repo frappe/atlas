@@ -30,16 +30,20 @@ The metald telemetry registry rejects samples with churning labels, `virtual_mac
 | `vm_abuse_receive_bytes_total` | Counter | `scope`, `protocol` | Bytes that the VM receives |
 | `vm_abuse_tcp_initiated_total` | Counter | None | SYN without ACK to public destinations |
 | `vm_abuse_tcp_answered_total` | Counter | None | Initiated TCP flows that got a SYN-ACK |
+| `vm_abuse_tcp_reset_total` | Counter | None | TCP packets with the RST flag that the VM sends to public destinations |
 | `vm_abuse_udp_first_packets_total` | Counter | None | UDP packets to a public destination that is not in the flow table |
 | `vm_abuse_destinations` | Gauge | `port_class`, `window` | Distinct public destinations in the window |
 | `vm_abuse_ports_per_destination_max` | Gauge | None | The highest number of distinct destination ports to one public address in the last 60 s |
 | `vm_abuse_flows_per_destination_max` | Gauge | `port_class` | The highest number of new flows to one public address in the last 10 min |
 | `vm_abuse_unanswered_pairs` | Gauge | None | Distinct public address and port pairs with no answer in the last 1 h |
-| `vm_abuse_smtp_blocked_total` | Counter | None | New TCP flows to port 25 that the [`smtp_outbound` block](enforcement.md#metal_abuse-chain) dropped |
+| `vm_abuse_mail_blocked_total` | Counter | `direction` | New TCP flows on ports 25, 465 and 587 that the [`mail_ports` block](enforcement.md#metal_abuse-chain) dropped |
+| `vm_abuse_smtp_sessions_total` | Counter | `port_class` | New TCP flows from the VM to public destinations in the `smtp` and `submission` classes. Flows that the `mail_ports` block drops are not in this series. |
 | `vm_abuse_stratum_flows_total` | Counter | None | New flows with a [stratum match](#stratum-match) |
 | `vm_abuse_amplification_bytes_total` | Counter | `direction`, `port` | Public UDP bytes on a port in the `amplification` class |
 | `vm_abuse_flow_rows_dropped_total` | Counter | None | New flows that got no [flow log](#flow-log) entry, because the VM was at its entry cap |
 | `vm_abuse_public_address` | Gauge | `address` | 1 for each public address that the VM has for itself |
+| `vm_abuse_conntrack_limited_total` | Counter | `tenant_id` | New flows that the [per-VM conntrack limit](protection.md#conntrack) dropped |
+| `vm_abuse_guard_dropped_total` | Counter | `rule`, `tenant_id` | Packets that the [VM guard](protection.md#vm-guard) dropped |
 
 Labels:
 
@@ -47,9 +51,29 @@ Labels:
 - `protocol` is `tcp`, `udp`, `icmp` or `other`.
 - `port_class` is a name from [port classes](#port-classes). On `vm_abuse_destinations`, it can also be `all`: every public destination, on any port.
 - `window` is `60s` or `10m`.
-- `direction` is `transmit` or `receive`. `transmit` counts public UDP bytes that the VM sends from a source port in the `amplification` class. `receive` counts public UDP bytes that the VM receives to a destination port in that class.
+- `direction` on `vm_abuse_amplification_bytes_total` is `transmit` or `receive`. `transmit` counts public UDP bytes that the VM sends from a source port in the `amplification` class. `receive` counts public UDP bytes that the VM receives to a destination port in that class.
+- `direction` on `vm_abuse_mail_blocked_total` is `outbound` or `inbound`. `outbound` counts flows from the VM to a remote mail port. `inbound` counts flows from a remote to a mail port of the VM.
+- `rule` and `tenant_id` are in [protection counters](protection.md#counters-and-alerts).
 - `port` is the port number from the `amplification` class. Watcher uses it to name the protocol.
 - `address` is a public IPv4 or IPv6 address that the VM has for itself. It is never the shared host address. Watcher checks these addresses against DNSBLs and shared abuse databases. See [Watcher feeds ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#feeds).
+
+Watcher rate rules on outbound public traffic read these metrics:
+
+| Rule | Metric |
+| --- | --- |
+| Packets a second | `vm_abuse_transmit_packets_total{scope="public"}` |
+| UDP packets a second | `vm_abuse_transmit_packets_total{scope="public", protocol="udp"}` |
+| ICMP packets a second | `vm_abuse_transmit_packets_total{scope="public", protocol="icmp"}` |
+| TCP SYN a second | `vm_abuse_tcp_initiated_total` |
+| TCP RST a second | `vm_abuse_tcp_reset_total` |
+| Distinct destination addresses a second | `vm_abuse_destinations{port_class="all", window="60s"}` |
+| SMTP sessions a minute | `vm_abuse_smtp_sessions_total` |
+
+- The packet monitor in `track_traffic.c` already counts packets, bytes, ICMP, UDP, SYN and RST for each VM. The `vm_abuse_*` versions count public traffic only.
+- Distinct destinations and SMTP sessions are new counters.
+- The thresholds are in [Watcher thresholds ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#thresholds).
+
+The SMTP rules count SMTP sessions, not messages. A session is a new TCP flow to the `smtp` or `submission` class. To count messages, Metal must read the SMTP content. TLS hides that content, and the platform does not read it.
 
 Maps:
 
@@ -72,7 +96,7 @@ Each match adds 1 to `vm_abuse_stratum_flows_total`. Metal does not block the fl
 
 ## Port classes
 
-A port class is a fixed list of ports in metald. Metal uses it only for the `port_class` labels and for the `port` label of `vm_abuse_amplification_bytes_total`. Metal does not block these ports.
+A port class is a fixed list of ports in metald. Metal uses it only for the `port_class` labels and for the `port` label of `vm_abuse_amplification_bytes_total`. Metal does not block a port because of its class. The [`mail_ports` block](enforcement.md#metal_abuse-chain) has its own fixed list: 25, 465 and 587.
 
 | Class | Protocol | Ports |
 | --- | --- | --- |
@@ -255,7 +279,7 @@ python3 -I atlas-abuse-baseline.py merge abuse-baseline-*.json --csv fleet.csv
 
 ::: details Code to change
 
-- [Traffic counters](../../metal/internal/network/traffic/bpf/track_traffic.c) count a SYN-ACK as a SYN today. Add the new counters and maps here, and read them in the [packet monitor](../../metal/internal/network/traffic/monitor.go).
+- [Traffic counters](../../metal/internal/network/traffic/bpf/track_traffic.c) count a SYN-ACK as a SYN today. Add the new counters and maps here, and read them in the [packet monitor](../../metal/internal/network/traffic/monitor.go). `vm_abuse_smtp_sessions_total` skips the mail ports while the VM network has `is_mail_ports_blocked`.
 - The [metald config](../../metal/cmd/metald/config.go) reads `[telemetry] abuse_metrics`, `[abuse] logs`, `[abuse] flow_map_entries`, `[abuse] flow_entries_per_vm` and `[nat] is_port_range_enabled`.
 - Flow map: add the LRU flow map, the sketch map and the per-VM counter map to [track_traffic.c](../../metal/internal/network/traffic/bpf/track_traffic.c). Both TCX programs update the flow map, and apply the per-VM cap when they create an entry. The [packet monitor](../../metal/internal/network/traffic/monitor.go) reads the map each minute, writes the change of each changed entry and the summary rows to the `flow` log, and deletes the entries with no packet for 2 min.
 - SNAT ranges: the network allocator ([nat.go](../../metal/internal/network/nat.go), next to `publicIPv4Steps`) renders the range rule of each VM before the host masquerade from [install-metald.sh](../../atlas/scripts/install-metald.sh) and [net-setup.sh](../../metal/internal/vm/scripts/net-setup.sh), when `[nat] is_port_range_enabled` is true. iptables accepts a port range only with a protocol match such as `-p tcp` or `-p udp`, so each VM gets one rule for each protocol.

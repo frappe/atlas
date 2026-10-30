@@ -8,26 +8,29 @@ Central calls Atlas only from `central/central/integrations/atlas.py`. The Centr
 
 ## Metal and Atlas
 
-Atlas and Metal exchange restrictions only in the VM network object. Atlas sends no restriction data in [host sync](../region/host-sync.md), and Metal reports none there.
+Atlas and Metal exchange restrictions only in the VM network object. Atlas sends no restriction data in [host sync](../region/host-sync.md). Metal reports there only the generations and the error of each VM, for the [`vm.network` event](#events-to-central).
 
 | Direction | Channel | Content |
 | --- | --- | --- |
-| Atlas to Metal | VM create, `PUT /v1/vms/{id}` | The network object with optional `restrictions` and `is_port_25_blocked` |
+| Atlas to Metal | VM create, `PUT /v1/vms/{id}` | The network object with optional `restrictions` and `is_mail_ports_blocked` |
 | Atlas to Metal | `PUT /v1/vms/{id}/network` | The complete network object with the same fields. See [updates replace, not merge](../interfaces/metal-contract.md#updates-replace-not-merge). |
 | Metal to Atlas | The VM response | `desired.network` with the same fields, `desired.generation`, `observed.generation` and `observed.error` |
-| Atlas to Metal | `metald.toml` | Log bucket endpoint, bucket name, the host write key, `[telemetry] abuse_metrics`, `[abuse] logs` and `[nat] is_port_range_enabled` |
+| Metal to Atlas | Host sync, `POST /v1/sync` | For each VM in `virtual_machines`: optional `network_desired_generation`, `network_observed_generation` and `network_error` |
+| Atlas to Metal | `metald.toml` | Log bucket endpoint, bucket name, the host write key, `[telemetry] abuse_metrics`, `[abuse] logs`, `[nat] is_port_range_enabled` and `[protect] mode` |
+
+`metald.toml` also has the optional values `[protect] exempt_prefixes` and `[abuse] conntrack_entries_per_vm`. Atlas does not write them. See [rollout](protection.md#rollout).
 
 New fields of the network object:
 
 | Field | Value |
 | --- | --- |
 | `restrictions` | Optional list of entries, next to `firewall`. Each entry has `id`, `kind`, `parameters`, optional `expires_at` and `case_reference`. See [restriction kinds](enforcement.md#restriction-kinds). |
-| `is_port_25_blocked` | Optional boolean. A missing field means open. See [metal_abuse chain](enforcement.md#metal_abuse-chain). |
+| `is_mail_ports_blocked` | Optional boolean. A missing field means open. See [metal_abuse chain](enforcement.md#metal_abuse-chain). |
 
 - Metal validates the entries before it saves the spec. It rejects an unknown `kind`, and a `port_block` with no `ports`.
 - Metal ignores unknown request fields (`decodeJSONRequest` in [request_json.go](../../metal/internal/api/request_json.go)). So an old Metal saves the network without the new fields, and its reply has no `restrictions` key. Atlas reads this as an old Metal. See [restriction API](#restriction-api).
-- A new Metal always returns `restrictions`, as `[]` when the VM has none, and `is_port_25_blocked`, as `false` when it is not set.
-- On VM create, Atlas does not fail the create when the reply has no `restrictions` key, because the VM exists. The create response then has no `restrictions` and no `is_port_25_blocked`. Central sees this and acts. See [Central restriction states ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#restriction-states).
+- A new Metal always returns `restrictions`, as `[]` when the VM has none, and `is_mail_ports_blocked`, as `false` when it is not set.
+- On VM create, Atlas does not fail the create when the reply has no `restrictions` key, because the VM exists. The create response then has no `restrictions` and no `is_mail_ports_blocked`. Central sees this and acts. See [Central restriction states ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#restriction-states).
 - Metal reads its saved VM records with `DisallowUnknownFields` ([records.go](../../metal/internal/vm/records.go)). A host that saved a restriction cannot go back to an old metald. A migration target must also run the new metald. Atlas placement does not check the metald version, so every host gets the new Metal before Central sends restrictions.
 
 ## Restriction API
@@ -74,7 +77,7 @@ The response of each route:
 | Field | Value |
 | --- | --- |
 | `restrictions` | The `restrictions` list of the VM, from the desired network in Metal's reply |
-| `is_port_25_blocked` | From the desired network. `false` when the field is missing. |
+| `is_mail_ports_blocked` | From the desired network. `false` when the field is missing. |
 | `desired_generation` | `desired.generation` from Metal |
 | `observed_generation` | `observed.generation` from Metal |
 | `host_error` | The message of `observed.error` from Metal, or `null` |
@@ -90,7 +93,7 @@ The response of each route:
 			"case_reference": "AC-00192"
 		}
 	],
-	"is_port_25_blocked": true,
+	"is_mail_ports_blocked": true,
 	"desired_generation": 42,
 	"observed_generation": 41,
 	"host_error": null
@@ -112,8 +115,8 @@ Changed routes, with optional fields only:
 
 | Route | New fields |
 | --- | --- |
-| VM create | `restrictions`: inherited entries, in the apply format, each with its own `idempotency_key` and `case_reference`. `is_port_25_blocked`. Both are top-level fields of the create payload, like `firewall`. Atlas puts them in the Metal network object. |
-| `GET` VM | `restrictions`, `is_port_25_blocked`, `desired_generation`, `observed_generation` and `host_error`. Atlas reads them from Metal, like routes. The Central repair scan uses them. |
+| VM create | `restrictions`: inherited entries, in the apply format, each with its own `idempotency_key` and `case_reference`. `is_mail_ports_blocked`. Both are top-level fields of the create payload, like `firewall`. Atlas puts them in the Metal network object. |
+| `GET` VM | `restrictions`, `is_mail_ports_blocked`, `desired_generation`, `observed_generation` and `host_error`. Atlas reads them from Metal, like routes. The Central repair scan uses them. |
 
 Atlas accepts the two create fields only from a Central identity (`require_central_identity()` in [identity.py](../../atlas/auth/identity.py)). Any other caller that sends them gets `403`. The create route stays open to tenants.
 
@@ -124,16 +127,70 @@ Where the code goes. Follow [add a route](../develop/atlas-app.md#add-a-route):
 - The domain logic in `VirtualMachineService`, not in the route.
 - Regenerate the [API clients](../interfaces/api-clients.md) after the change.
 
-## Port 25 API
+## Mail ports API
 
 | Endpoint | Use |
 | --- | --- |
-| `PUT /api/atlas/virtual-machines/<id>/port-25` | Set `is_port_25_blocked` in the VM network object. `central_only`. The body is `{"is_blocked": true}` or `{"is_blocked": false}`. |
+| `PUT /api/atlas/virtual-machines/<id>/mail-ports` | Set `is_mail_ports_blocked` in the VM network object. `central_only`. The body is `{"is_blocked": true}` or `{"is_blocked": false}`. |
 
+- The block covers TCP ports 25, 465 and 587, in both directions, for remote addresses outside the mesh. See [metal_abuse chain](enforcement.md#metal_abuse-chain).
 - Atlas uses the same lock and the same read, merge and replace path as the [restriction API](#restriction-api).
 - The response is the same as the response of the restriction API.
 - The old Metal check, the tenant 0 guard and the lock timeout are the same.
-- Central clears the block when it accepts a Port 25 Request, and sets it again when it revokes the request.
+- Central clears the block when it accepts a Mail Port Request, and sets it again when it revokes the request.
+
+## Events to Central
+
+Atlas tells Central when the network of a VM changes on the host. Central then does not wait for its repair scan.
+
+The existing pattern: `DELIVERIES` in [state_webhook.py](../../atlas/vm/core/state_webhook.py) sends `vm.state` and `vm.state.deleted` from the Virtual Machine State DocType, through a Frappe Webhook, to `central.api.state_delivery.receive`. `configure_state_webhooks` creates the Webhooks.
+
+Virtual Machine State gets three optional fields. They mirror Metal. Atlas keeps no restriction list. Layout: [Virtual Machine State](layouts.md#virtual-machine-state-layout-change).
+
+| Field | Value |
+| --- | --- |
+| `network_desired_generation` | `desired.generation` of the VM in Metal |
+| `network_observed_generation` | `observed.generation` of the VM in Metal |
+| `network_error` | The message of `observed.error`, or empty |
+
+- Metal adds the three values to each VM in the host sync response (`virtualMachineStateResponse` in [controller_sync.go](../../metal/internal/api/controller_sync.go)). An old Metal does not send them, and Atlas keeps the fields empty.
+- The generations are the generations of the complete VM spec. A change that is not a network change also moves them.
+- Host sync stores the values in `store_reported_states` ([vm_state.py](../../atlas/vm/core/vm_state.py)). Today it saves the document, and so runs the Webhook, only when `status` or `server` changes. It writes other values with one bulk update, which runs no Webhook. It must also save the document when one of the three fields changes.
+- Host sync runs every 10 s. So Central learns of a change within about 10 s.
+
+A third delivery in `DELIVERIES`:
+
+| Item | Value |
+| --- | --- |
+| Event | `vm.network` |
+| Document event | `on_update` |
+| Condition | `network_desired_generation`, `network_observed_generation` or `network_error` changed |
+| Payload | `event`, `virtual_machine`, `server`, `desired_generation`, `observed_generation`, `host_error`, `observed_at` |
+
+```json
+{
+	"event": "vm.network",
+	"virtual_machine": "vm-0a1b2c3d4e",
+	"server": "metal-bom-01",
+	"desired_generation": 42,
+	"observed_generation": 42,
+	"host_error": "",
+	"observed_at": "2026-11-12 10:00:05"
+}
+```
+
+- `DELIVERIES` is keyed by the document event today, and the Webhook name comes from that key. `vm.network` also uses `on_update`, so it needs its own key and its own Webhook name, for example `Virtual Machine State - Network - Central - 1`. It also needs its own payload. Today all deliveries share one payload.
+- A rerun of `configure_state_webhooks` adds the Webhook.
+
+So Central learns at once when:
+
+- Metal applies a network change: the observed generation moves.
+- Metal reports an error: `network_error` changes.
+- An Atlas operator changes a restriction: the desired generation moves. See [operator emergency restriction](enforcement.md#operator-emergency-restriction).
+
+Central handles `vm.network`: it reads `GET` VM and runs the same steps as its repair scan. The repair scan stays as the backup.
+
+Deploy: Central ignores an unknown event (`unsupported event` in `central/integrations/state_delivery.py`). So Central ships the handler first. Then Atlas reruns `configure_state_webhooks`.
 
 ## Telemetry
 
@@ -210,8 +267,14 @@ Phase 1: Flow log and counters. Data collection, and one data plane change: the 
 
 Phase 2: Findings and restrictions. Central acts on sample findings, abuse reports and operator actions. There is no Watcher yet.
 
-1. The Atlas app: the [restriction API](#restriction-api), the [port 25 API](#port-25-api), and the `restrictions` and `is_port_25_blocked` create fields.
-2. Metal: `restrictions` and `is_port_25_blocked` in the network object, and the [`metal_abuse` chain](enforcement.md#metal_abuse-chain).
-3. The HTTP proxy: the [tombstone](enforcement.md#http-proxy).
+The [core service protection](protection.md) items do not need Phase 1 data. Each new nft rule ships in `count` mode. See [rollout](protection.md#rollout).
+
+1. The Atlas app: the [restriction API](#restriction-api), the [mail ports API](#mail-ports-api), the `restrictions` and `is_mail_ports_blocked` create fields, and the tenant isolate Desk action. See [operator emergency restriction](enforcement.md#operator-emergency-restriction).
+2. The Atlas app: the three Virtual Machine State fields and the `vm.network` delivery. See [events to Central](#events-to-central). Atlas reruns `configure_state_webhooks` only after Central ships the `vm.network` handler.
+3. Metal: `restrictions` and `is_mail_ports_blocked` in the network object, the [`metal_abuse` chain](enforcement.md#metal_abuse-chain), the generations in host sync, the [VM guard](protection.md#vm-guard), the [per-VM conntrack limit](protection.md#conntrack), the [host baseline](protection.md#host-and-service-vm-baseline) sysctl values, and the host nft protection rules in `count` mode.
+4. The service VMs (HTTP proxy, IPv6 router and WireGuard gateway): the baseline and the nft protection rules in `count` mode.
+5. The HTTP proxy: the [tombstone](enforcement.md#http-proxy), the limit for each host, and the [handshake timeout](protection.md#tls-handshake-floods).
+6. Insights: the [protection alerts](protection.md#counters-and-alerts).
+7. The last Phase 2 step: an operator moves the protection rules to `drop`, one service at a time. See [rollout](protection.md#rollout).
 
 Phase 3: Watcher. There is no Atlas change. Watcher reads the Phase 1 data.
