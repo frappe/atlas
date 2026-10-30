@@ -11,7 +11,7 @@ Roles: `Atlas Admin` writes and `Atlas Investigator` reads. There is no new Atla
 Decided:
 
 1. `smtp_outbound` is the only default block. It renders in `metal_abuse` for every VM, with no VM Restriction row. `is_port_25_allowed` on the VM is its only exception. Central sets it when it accepts an unblock.
-2. Atlas has no detection settings. Thresholds, profiles, feeds and exceptions are in [Central detection ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#detection).
+2. Atlas has no detection settings. Thresholds and feeds are in [Watcher thresholds ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#thresholds). Profiles and exceptions are in [Central profiles ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#profiles).
 
 ### VM Restriction
 

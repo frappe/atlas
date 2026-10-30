@@ -4,7 +4,7 @@ Status: planned. Atlas does not implement this yet. See [abuse protection](index
 
 Metal counts the traffic of each VM and exports the counts to Datum as metrics. Metal also writes the SNI log and the NAT log, and uploads them to the Cargo log bucket. Metal does not compare a count with a threshold, and it does not make a finding.
 
-Central reads the metrics and the logs, and finds abuse. Finding codes, thresholds, windows, profiles and feeds are in [Central detection ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#detection).
+Watcher, a Cargo module in each region, reads the metrics and the logs, finds abuse and sends findings to Central. Its inputs are in [Watcher inputs ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#inputs). Finding codes, thresholds, windows and feeds are in [Watcher finding codes ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#finding-codes). Profiles are in [Central profiles ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#profiles).
 
 Metal never reads the content of guest traffic. It reads only the TLS ClientHello and, for the [stratum match](#stratum-match), the first payload bytes of a new flow. The acceptable use policy (AUP) and the privacy policy must say so.
 
@@ -14,7 +14,9 @@ A new TCX program and new maps sit next to [track_traffic.c](../../metal/interna
 
 Metal counts only the traffic that the guest starts. It never counts a reply as a new flow. Today `track_traffic.c` counts a SYN-ACK as a SYN. The new `tcp_initiated` counter counts a SYN without ACK.
 
-Metal exports the counters at the metald telemetry interval, 30 s by default. Each series has the label `virtual_machine`, with the Atlas VM name. Metal exports the counters of every VM, tenant-0 VMs included.
+Metal exports the counters at the metald telemetry interval, 30 s by default. Each series has the label `virtual_machine`, with the Atlas VM ID, for example `vm-0a1b2c3d4e`. Metal exports the counters of every VM, tenant-0 VMs included.
+
+The metald telemetry registry rejects samples with churning labels, `virtual_machine` included. The registry exempts metrics with the `vm_abuse_` prefix from this check, because Datum stores them in a table with a 30-day TTL. All other metrics keep the check.
 
 | Metric | Type | Labels | Value |
 | --- | --- | --- | --- |
@@ -32,6 +34,7 @@ Metal exports the counters at the metald telemetry interval, 30 s by default. Ea
 | `vm_abuse_smtp_blocked_total` | Counter | None | New TCP flows to port 25 that the [`smtp_outbound` block](enforcement.md#metal_abuse-chain) dropped |
 | `vm_abuse_stratum_flows_total` | Counter | None | New flows with a [stratum match](#stratum-match) |
 | `vm_abuse_amplification_bytes_total` | Counter | `direction`, `port` | Public UDP bytes on a port in the `amplification` class |
+| `vm_abuse_public_address` | Gauge | `address` | 1 for each public address that the VM has for itself |
 
 Labels:
 
@@ -40,7 +43,8 @@ Labels:
 - `port_class` is a name from [port classes](#port-classes). On `vm_abuse_destinations`, it can also be `all`: every public destination, on any port.
 - `window` is `60s` or `10m`.
 - `direction` is `transmit` or `receive`. `transmit` counts public UDP bytes that the VM sends from a source port in the `amplification` class. `receive` counts public UDP bytes that the VM receives to a destination port in that class.
-- `port` is the port number from the `amplification` class. Central uses it to name the protocol.
+- `port` is the port number from the `amplification` class. Watcher uses it to name the protocol.
+- `address` is a public IPv4 or IPv6 address that the VM has for itself. It is never the shared host MASQUERADE address. Watcher checks these addresses against DNSBLs and shared abuse databases. See [Watcher feeds ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#feeds).
 
 Maps:
 
@@ -50,7 +54,7 @@ Maps:
 
 Counters reset when metald restarts. A reader treats a lower value as a reset, not as a negative rate.
 
-Datum keeps other series forever. Cargo puts the `vm_abuse_*` series in a separate Datum table with a 30-day TTL, and gives Central a read-only user for it. See [Cargo per-VM metrics ↗](https://github.com/frappe/cargo/blob/develop/docs/abuse-logs.md#per-vm-metrics).
+Datum keeps other series forever. Datum puts the `vm_abuse_*` series in a separate table with a 30-day TTL. Cargo creates the read-only user `watcher` on the Datum Server for Watcher. See [Cargo per-VM metrics ↗](https://github.com/frappe/cargo/blob/develop/docs/abuse-logs.md#per-vm-metrics).
 
 These metrics are the only exception to the [telemetry rule](../operate/telemetry.md#metrics) that collectors exclude VM interfaces. The rule stays for all other series.
 
@@ -72,7 +76,7 @@ A port class is a fixed list of ports in metald. Metal uses it only for the `por
 | `amplification` | UDP | 53, 123, 161, 389, 1900, 11211 |
 | `mining` | TCP | 3333, 4444, 5555, 7777, 14444 |
 
-Central uses this list to turn a class into explicit ports for a [`port_block` restriction](enforcement.md#restriction-kinds). Atlas does not know port classes. A change to the list is a metald change and a Central change.
+Central uses this list to turn a class into explicit ports for a [`port_block` restriction](enforcement.md#restriction-kinds). Atlas does not know port classes. A change to the list is a metald change, a Watcher change and a Central change.
 
 ## SNI log
 
@@ -89,7 +93,7 @@ Limits:
 
 SNI rows can be personal data. Keep them in the region. The AUP and the privacy policy must state the collection before the SNI log is switched on.
 
-Metal uploads the log to the Cargo log bucket every 5 min. See [log upload](contract.md#log-upload).
+Metal uploads the log to the Cargo log bucket every 5 min. See [log upload](contract.md#log-upload). Watcher reads it with the bucket read key. See [Watcher inputs ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#inputs).
 
 ## NAT log
 
@@ -97,11 +101,13 @@ The NAT log has one row for each conntrack `NEW` and `DESTROY` event of a VM beh
 
 A complaint about a shared IPv4 address names only the address, the port and the time. The NAT log finds the VM.
 
-Metal uploads the log to the Cargo log bucket every 5 min. See [log upload](contract.md#log-upload).
+A VM with a dedicated public address does not go through the host MASQUERADE, so its flows are not in the NAT log. Thus the Watcher C2 and Tor feed matches cover only VMs behind shared NAT. See [Watcher feeds ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#feeds).
+
+Metal uploads the log to the Cargo log bucket every 5 min. See [log upload](contract.md#log-upload). Watcher reads it with the bucket read key. Watcher checks the public source addresses against shared abuse databases, and finds the VM for an address, a port and a time. See [Watcher attribution ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#attribution).
 
 ## Baseline script
 
-Until the per-VM metrics are in Datum, [atlas-abuse-baseline.py](../../scripts/atlas-abuse-baseline.py) gives per-VM rates from the 10 s metric samples that Metal keeps today. An operator runs it on every Metal host from 2 to 7 November 2026. Agents do not run it. How Central uses the result is in [Central calibration ↗](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#calibration).
+Until the per-VM metrics are in Datum, [atlas-abuse-baseline.py](../../scripts/atlas-abuse-baseline.py) gives per-VM rates from the 10 s metric samples that Metal keeps today. An operator runs it on every Metal host from 2 to 7 November 2026. Agents do not run it. How Watcher uses the result is in [Watcher calibration ↗](https://github.com/frappe/cargo/blob/develop/docs/watcher.md#calibration).
 
 The samples include mesh traffic and count a SYN-ACK as a SYN, so the script gives upper bounds only.
 
@@ -116,5 +122,6 @@ python3 -I atlas-abuse-baseline.py merge abuse-baseline-*.json --csv fleet.csv
 
 - [Traffic counters](../../metal/internal/network/traffic/bpf/track_traffic.c) count a SYN-ACK as a SYN today.
 - [System telemetry](../../metal/internal/telemetry/system/system.go) skips VM interfaces. The `vm_abuse_*` exporter is separate from it.
+- The [telemetry registry](../../metal/internal/telemetry/registry.go) rejects samples with a label in `churningLabels`. Exempt metrics with the `vm_abuse_` prefix from this check. All other metrics keep the check.
 
 :::

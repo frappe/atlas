@@ -32,7 +32,7 @@ Changed routes, with optional fields only:
 | --- | --- |
 | VM create | `restrictions`: inherited restrictions, in the apply format. Each has its own `idempotency_key` and `case_reference`. |
 | VM update, `central_only` | `is_port_25_allowed` |
-| `GET` VM and `PATCH .../network` responses | `restrictions`: name, kind, status, case reference and expiry |
+| `GET` VM and `PATCH .../network` responses | `restrictions`: name, kind, status, case reference and expiry. Optional `idempotency_key`, `lifted_by` and `applied_by_user`, so the Central repair scan can apply the same update as a missed `vm.restriction` event. |
 
 Only Central can set these fields, because the tenant API must not change restrictions. Regenerate the [API clients](../interfaces/api-clients.md) after the change.
 
@@ -96,7 +96,7 @@ Atlas sends the event through the signed Frappe Webhook path in `atlas/vm/core/s
 
 Metal exports the `vm_abuse_*` metrics for each VM to Datum at the metald telemetry interval. The metric names and labels are in [counters](metrics.md#counters).
 
-Cargo keeps the series in a separate Datum table. Central reads them with a read-only user. See [Cargo per-VM metrics ↗](https://github.com/frappe/cargo/blob/develop/docs/abuse-logs.md#per-vm-metrics).
+Cargo keeps the series in a separate Datum table. Watcher reads them with the read-only user `watcher`. See [Cargo per-VM metrics ↗](https://github.com/frappe/cargo/blob/develop/docs/abuse-logs.md#per-vm-metrics).
 
 ## Log upload
 

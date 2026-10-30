@@ -54,7 +54,9 @@ METRICS = (
 
 PERCENTILES = (("p1", 1.0), ("p10", 10.0), ("p50", 50.0), ("p90", 90.0), ("p99", 99.0), ("p999", 99.9))
 
-# Starting values from the Central thresholds (spec/ABUSE.md#thresholds). The planned counters are in
+# Starting values from the Watcher thresholds:
+# https://github.com/frappe/cargo/blob/develop/docs/watcher.md#thresholds
+# The planned counters are in
 # docs/abuse/metrics.md#counters. Shape conditions that need counters Metal does not have yet (answer
 # ratios, public/private split) are left out, so a hit here is an upper bound on what the real rule would do.
 RULES = {
