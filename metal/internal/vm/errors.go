@@ -11,6 +11,9 @@ var ErrNotFound = errors.New("vm: not found")
 // ErrConflict indicates that the current state blocks an operation.
 var ErrConflict = errors.New("vm: conflict")
 
+// ErrRescueMode indicates that rescue mode does not allow an operation.
+var ErrRescueMode = errors.New("vm: in rescue mode")
+
 // ErrInUse indicates that a host artifact still has dependent virtual machines.
 var ErrInUse = errors.New("vm: in use")
 

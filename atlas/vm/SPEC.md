@@ -17,7 +17,8 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/placement/affinity.py` | Affinity rule types, their validation, and their stored JSON form. |
 | `core/vm_migration.py` and `core/vm_resize.py` | Host moves and shape changes. |
 | `core/metal_client.py` and `core/metal_models.py` | Metal transport, errors, and typed responses. |
-| `core/image_builder.py` and `scripts/build_ubuntu*_image.sh` | Independent base and rescue recipes, shared guest setup, and purpose-specific publication. |
+| `core/image_builder.py` and `scripts/build_ubuntu*_image.sh` | Base and rescue recipes, shared guest setup, and publication. |
+| `scripts/guest/rescue.py` and `scripts/guest/atlas-rescue-menu` | Repair tools and the menu in the rescue image. |
 | `core/vm_image_transfer.py`, `core/vm_image_deletion.py`, and `core/multipart_upload.py` | Image publication and removal. |
 | `core/vm_state.py` and `core/state_webhook.py` | Last host reports and messages to Central. |
 | `doctype/virtual_machine_image/` | Durable image records and visibility. |
@@ -56,14 +57,6 @@ This file identifies code owners and rules that a code change must preserve. The
 - For image transfer or deletion, start in the image owner above. Read [image records](../../docs/storage/image-records.md).
 - For guest network values and public addresses, read [VM records](../../docs/compute/vm-records.md), [host networking](../../docs/networking/host-networking.md), and [public IPs](../../docs/networking/public-ips.md).
 - For Central notifications, read [VM state updates](../../docs/interfaces/vm-state-updates.md) and the [tenant API](../../docs/interfaces/tenant-api.md).
-
-## Rescue
-
-`VirtualMachineService.set_rescue` selects the newest enabled, Available image tagged `purpose=rescue` for the VM architecture for a new session and resolves the pinned artifact identity for URL renewal. `MetalRescue` carries host state. The DocType and tenant API enforce permissions. See [rescue mode](../../docs/compute/rescue.md) for image selection and recovery behavior.
-
-Responses from older Metal hosts can omit rescue fields. The parser defaults missing fields to inactive rescue and rejects malformed values.
-
-`scripts/guest/rescue.py` owns guided operations and offline inventory. The menu invokes that CLI. Managed operations share a systemd unit and file lock; the expert shell bypasses that lock. `core/test_rescue_tools.py` covers disk access, password input, discovery, and job completion.
 
 ## Validation
 

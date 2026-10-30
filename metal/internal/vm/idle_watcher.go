@@ -28,7 +28,7 @@ func (manager *Manager) RestoreAfterTraffic(ctx context.Context, event traffic.E
 		return err
 	}
 	target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
-	if event.Target != target || desired.State != StateRunning || desired.Specification.Rescue.Enabled || desired.Specification.SleepAfterIdleSeconds <= 0 {
+	if event.Target != target || desired.State != StateRunning || desired.Specification.SleepAfterIdleSeconds <= 0 {
 		return nil
 	}
 	defer func() {
@@ -59,8 +59,9 @@ func (manager *Manager) stopAfterIdle(
 	operationID string,
 ) (bool, error) {
 	if manager.traffic == nil ||
+		observed.IsInRescueMode || desired.Specification.RescueImage != nil ||
 		desired.State != StateRunning ||
-		desired.Specification.Rescue.Enabled || desired.Specification.SleepAfterIdleSeconds <= 0 ||
+		desired.Specification.SleepAfterIdleSeconds <= 0 ||
 		status.State != StateRunning ||
 		observed.Generation != desired.Generation ||
 		observed.SpecificationGeneration != desired.SpecificationGeneration ||

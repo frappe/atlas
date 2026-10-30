@@ -208,6 +208,14 @@ func (manager *fakeVirtualMachineManager) Resize(_ context.Context, id string, c
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) EnableRescueMode(context.Context, string, vm.Image) error {
+	return nil
+}
+
+func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, string) error {
+	return nil
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {
@@ -1294,48 +1302,4 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z", "max_samples=9", "max_samples=2001", "max_samples=all"} {
 		do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?"+query, "", http.StatusBadRequest)
 	}
-}
-
-func (manager *fakeVirtualMachineManager) RequestRescue(_ context.Context, id string, image vm.Image) error {
-	machine, found := manager.virtualMachines[id]
-	if !found {
-		return vm.ErrNotFound
-	}
-	machine.info.Rescue = vm.Rescue{Enabled: true, Image: image}
-	return nil
-}
-
-func (manager *fakeVirtualMachineManager) RequestRescueExit(_ context.Context, id string) error {
-	machine, found := manager.virtualMachines[id]
-	if !found {
-		return vm.ErrNotFound
-	}
-	machine.info.Rescue = vm.Rescue{}
-	return nil
-}
-
-func TestRescueAPIRequiresExplicitModeAndColdImage(t *testing.T) {
-	server := newTestServer(t)
-	do(t, server, http.MethodPut, "/v1/vms/vm-1", validCreateRequest, http.StatusAccepted)
-	for _, body := range []string{`{}`, `{"enabled":true}`, `{"enabled":false,"image":{}}`, `{"enabled":"true"}`} {
-		do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", body, http.StatusBadRequest)
-	}
-	var create map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(validCreateRequest), &create); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"enabled":true,"image":` + string(create["image"]) + `}`
-	result := do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", body, http.StatusAccepted)
-	var response virtualMachineResponse
-	if err := json.Unmarshal(result.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if !response.Desired.Rescue.Enabled || response.Desired.Rescue.Image == nil {
-		t.Fatal("missing rescue selection")
-	}
-	if strings.Contains(result.Body.String(), "https://") {
-		t.Fatal("response leaked artifact URL")
-	}
-	do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":false}`, http.StatusAccepted)
-	do(t, server, http.MethodPut, "/v1/vms/vm-1/rescue", `{"enabled":false,"unknown":1}`, http.StatusAccepted)
 }

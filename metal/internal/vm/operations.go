@@ -5,7 +5,6 @@ import (
 	"errors"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -35,80 +34,76 @@ func (manager *Manager) RequestRestart(ctx context.Context, identifier string) e
 	return nil
 }
 
-// RequestRescue selects a rescue image without changing the desired power state.
-func (manager *Manager) RequestRescue(ctx context.Context, identifier string, image Image) error {
+// EnableRescueMode stores the rescue image. The next cold boot uses it.
+func (manager *Manager) EnableRescueMode(ctx context.Context, identifier string, image Image) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
-		if record.State != StateRunning && record.State != StateStopped {
-			return false, ErrConflict
-		}
-		if record.Specification.Rescue.Enabled {
-			current := record.Specification.Rescue.Image
-			if current.Name != image.Name || current.Architecture != image.Architecture ||
-				!strings.EqualFold(current.RootfsSHA256, image.RootfsSHA256) ||
-				!strings.EqualFold(current.KernelSHA256, image.KernelSHA256) {
-				return false, ErrConflict
-			}
-			if current.RootfsURL == image.RootfsURL && current.KernelURL == image.KernelURL {
-				return false, nil
-			}
-			record.Specification.Rescue.Image.RootfsURL = image.RootfsURL
-			record.Specification.Rescue.Image.KernelURL = image.KernelURL
-			return true, nil
-		}
-		observed, err := manager.store.readObserved(identifier)
-		if err != nil {
-			return false, err
-		}
-		if record.RescueGeneration != observed.RescueGeneration {
-			return false, ErrConflict
-		}
-		if image.Architecture != record.Specification.Image.Architecture || image.MemorySnapshot {
+		if record.State == StateDestroyed || image.Architecture != record.Specification.Image.Architecture {
 			return false, ErrConflict
 		}
 		hasDisk, err := manager.storage.HasDisk(ctx, identifier)
 		if err != nil {
 			return false, err
 		}
-		if !hasDisk {
+		observed, err := manager.store.readObserved(identifier)
+		if err != nil {
+			return false, err
+		}
+		// A VM in a coma gets its disk back when this change wakes it.
+		if !hasDisk && observed.SleepState != SleepStateComa {
 			return false, ErrConflict
 		}
-		record.Specification.Rescue = Rescue{Enabled: true, Image: image}
-		record.RescueGeneration++
+		record.Specification.RescueImage = &image
 		return true, nil
 	})
 }
 
-// RequestRescueExit selects normal boot without changing the desired power state.
-func (manager *Manager) RequestRescueExit(ctx context.Context, identifier string) error {
+// DisableRescueMode clears the rescue image. The next cold boot uses the VM disk.
+func (manager *Manager) DisableRescueMode(ctx context.Context, identifier string) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
-		if !record.Specification.Rescue.Enabled {
+		if record.Specification.RescueImage == nil {
 			return false, nil
 		}
-		if record.State != StateRunning && record.State != StateStopped {
-			return false, ErrConflict
-		}
-		record.Specification.Rescue = Rescue{}
-		record.RescueGeneration++
+		record.Specification.RescueImage = nil
 		return true, nil
 	})
+}
+
+// assertNotInRescueMode rejects a change that rescue mode does not allow.
+func (manager *Manager) assertNotInRescueMode(identifier string) error {
+	observed, err := manager.store.readObserved(identifier)
+	if err != nil {
+		return err
+	}
+	if observed.IsInRescueMode {
+		return ErrRescueMode
+	}
+	return nil
 }
 
 // SetCompute stores the complete requested compute configuration.
 func (manager *Manager) SetCompute(ctx context.Context, identifier string, compute Compute) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if record.State == StateDestroyed {
 			return false, ErrConflict
 		}
 
-		shapeChanged := !record.Specification.hasSameResources(compute, record.Specification.DiskMiB)
+		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
+			record.Specification.MemoryMiB != compute.MemoryMiB
 		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
 		if !shapeChanged && !timeoutChanged && record.State == StateRunning {
 			return false, nil
 		}
 
 		if shapeChanged {
-			if err := manager.ensureResizable(*record); err != nil {
+			observed, err := manager.store.readObserved(identifier)
+			if err != nil {
 				return false, err
+			}
+			if observed.State != StateStopped {
+				return false, ErrConflict
 			}
 			record.Specification.CPUMillicores = compute.CPUMillicores
 			record.Specification.MemoryMiB = compute.MemoryMiB
@@ -124,9 +119,6 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 // SetDisk stores the complete requested disk configuration.
 func (manager *Manager) SetDisk(ctx context.Context, identifier string, diskMiB int, limits Disk) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
-		if record.Specification.Rescue.Enabled && diskMiB != record.Specification.DiskMiB {
-			return false, ErrConflict
-		}
 		if diskMiB < record.Specification.DiskMiB {
 			return false, ErrConflict
 		}
@@ -143,14 +135,23 @@ func (manager *Manager) SetDisk(ctx context.Context, identifier string, diskMiB 
 // Resize stores the complete compute and disk shape in one desired-record write.
 func (manager *Manager) Resize(ctx context.Context, identifier string, compute Compute, diskMiB int) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if record.State == StateDestroyed || diskMiB < record.Specification.DiskMiB {
 			return false, ErrConflict
 		}
 
-		shapeChanged := !record.Specification.hasSameResources(compute, diskMiB)
+		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
+			record.Specification.MemoryMiB != compute.MemoryMiB ||
+			record.Specification.DiskMiB != diskMiB
 		if shapeChanged {
-			if err := manager.ensureResizable(*record); err != nil {
+			observed, err := manager.store.readObserved(identifier)
+			if err != nil {
 				return false, err
+			}
+			if observed.State != StateStopped {
+				return false, ErrConflict
 			}
 		}
 
@@ -171,25 +172,6 @@ func (manager *Manager) Resize(ctx context.Context, identifier string, compute C
 	})
 }
 
-func (specification Specification) hasSameResources(compute Compute, diskMiB int) bool {
-	return specification.CPUMillicores == compute.CPUMillicores &&
-		specification.MemoryMiB == compute.MemoryMiB && specification.DiskMiB == diskMiB
-}
-
-func (manager *Manager) ensureResizable(record DesiredRecord) error {
-	if record.Specification.Rescue.Enabled {
-		return ErrConflict
-	}
-	observed, err := manager.store.readObserved(record.ID)
-	if err != nil {
-		return err
-	}
-	if observed.State != StateStopped {
-		return ErrConflict
-	}
-	return nil
-}
-
 // SetNetwork stores the complete requested network configuration.
 func (manager *Manager) SetNetwork(ctx context.Context, identifier string, configuration NetworkConfiguration) error {
 	unlock, err := manager.operationLocks.Lock(ctx, identifier)
@@ -198,6 +180,9 @@ func (manager *Manager) SetNetwork(ctx context.Context, identifier string, confi
 	}
 	defer unlock()
 	if err := manager.assertNotSourceLocked(identifier); err != nil {
+		return err
+	}
+	if err := manager.assertNotInRescueMode(identifier); err != nil {
 		return err
 	}
 	manager.allocationMutex.Lock()
@@ -231,6 +216,9 @@ func (manager *Manager) SetNetwork(ctx context.Context, identifier string, confi
 // ReplaceSSHKeys stores the complete desired SSH key list.
 func (manager *Manager) ReplaceSSHKeys(ctx context.Context, identifier string, sshKeys []string) (bool, error) {
 	_, err := manager.mutateAndReport(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if slices.Equal(record.Specification.SSHKeys, sshKeys) {
 			return false, nil
 		}
@@ -246,6 +234,9 @@ func (manager *Manager) ReplaceSSHKeys(ctx context.Context, identifier string, s
 // ReplaceMetadata stores the complete desired guest metadata map.
 func (manager *Manager) ReplaceMetadata(ctx context.Context, identifier string, metadata map[string]string) (bool, error) {
 	_, err := manager.mutateAndReport(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if maps.Equal(record.Specification.Metadata, metadata) {
 			return false, nil
 		}
@@ -309,9 +300,6 @@ func (manager *Manager) CreateSnapshot(ctx context.Context, identifier string) (
 	observed, err := manager.store.readObserved(identifier)
 	if err != nil {
 		return StagedSnapshot{}, err
-	}
-	if desired.Specification.Rescue.Enabled || desired.RescueGeneration != observed.RescueGeneration {
-		return StagedSnapshot{}, ErrConflict
 	}
 	operationID := newOperationID()
 	machine := runtimeMachine(desired, observed.NetworkInterface)

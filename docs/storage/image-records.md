@@ -17,11 +17,11 @@ A `Virtual Machine Kernel` record stores one kernel under its SHA-256 value. Eve
 
 The Ubuntu builder publishes a kernel and root filesystem as a new Available System image. Each build gets a new record and its own rootfs path. A build with an unchanged kernel reuses its kernel record.
 
-Each base image build uses the latest Ubuntu cloud image release and the newest kernel that Ubuntu supports for that release. For an LTS release, this is the HWE (hardware enablement) kernel. The build log shows the download URLs.
+Each Ubuntu image build uses the latest Ubuntu cloud image release and the newest kernel that Ubuntu supports for that release: the HWE (hardware enablement) kernel for 22.04 and 24.04, and the generic kernel for 26.04. The rescue image uses the 24.04 steps. The build log shows the download URLs.
 
 The builder checks earlier Available images with the same title, architecture, and purpose tag. If one has the same digests, the build changes nothing.
 
-After base image publication, the builder retires the earlier base images. Rescue builds retain earlier images. See [rescue image preparation](../compute/rescue.md).
+After base image publication, the builder retires the earlier base images. Rescue builds keep earlier images. See [rescue mode](../compute/rescue.md).
 
 Atlas protects each new System image from termination. The base image builder removes this protection from earlier base images before it retires them.
 

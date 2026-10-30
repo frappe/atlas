@@ -164,10 +164,6 @@ func (runtime *Runtime) Stop(ctx context.Context, input vm.RuntimeMachine) error
 
 // SaveAndStop saves guest memory and stops Firecracker.
 func (runtime *Runtime) SaveAndStop(ctx context.Context, input vm.RuntimeMachine) error {
-	if input.Specification.Rescue.Enabled {
-		return vm.ErrConflict
-	}
-
 	return runtime.newMachine(input).saveAndStop(ctx)
 }
 
@@ -229,11 +225,7 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	if status.State != vm.StateRunning && status.State != vm.StatePaused {
 		return nil
 	}
-	paths := []string{rootDrivePath}
-	if input.Specification.Rescue.Enabled {
-		paths = append(paths, "/disk.img")
-	}
-	limiter := driveRateLimiter(input.Specification.Disk, len(paths))
+	limiter := driveRateLimiter(input.Specification.Disk)
 	if limiter == nil {
 		limiter = &api.RateLimiter{}
 	}
@@ -245,17 +237,18 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 		limiter.Ops = &api.TokenBucket{}
 	}
 
-	client := api.New(runtime.configuration.socketPath(input.ID))
-	for index, path := range paths {
-		if err := client.PatchDrive(ctx, api.PartialDrive{
-			DriveID:     fmt.Sprintf("drive%d", index),
-			PathOnHost:  path,
-			RateLimiter: limiter,
-		}); err != nil {
-			return err
-		}
+	drive := api.PartialDrive{DriveID: rootDriveIdentifier, PathOnHost: rootDrivePath, RateLimiter: limiter}
+	if runtime.IsInRescueMode(input.ID) {
+		drive.DriveID, drive.PathOnHost = rescuedDriveIdentifier, rescuedDrivePath
 	}
-	return nil
+	return api.New(runtime.configuration.socketPath(input.ID)).PatchDrive(ctx, drive)
+}
+
+// IsInRescueMode reports whether the jail holds the rescued drive. A stop keeps
+// the jail, and a cold boot or memory restore replaces it.
+func (runtime *Runtime) IsInRescueMode(identifier string) bool {
+	_, err := os.Stat(filepath.Join(runtime.configuration.chrootRoot(identifier), rescuedDrivePath))
+	return err == nil
 }
 
 // GetUsage reads CPU and disk use from the unit cgroup and memory from the

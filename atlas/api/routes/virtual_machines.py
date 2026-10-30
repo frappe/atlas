@@ -24,7 +24,6 @@ from atlas.api.models import (
 	MetadataReplacementPayload,
 	NetworkUpdatePayload,
 	PublicIPAssignmentPayload,
-	RescuePayload,
 	ResizePayload,
 	SnapshotPayload,
 	SSHKeysReplacementPayload,
@@ -280,23 +279,32 @@ def restart_virtual_machine(virtual_machine_id: str) -> ApiResult[VirtualMachine
 	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
 
 
-@virtual_machine_configuration.put("<virtual_machine_id>/rescue")
+@virtual_machine_actions.post("<virtual_machine_id>/actions/enable-rescue-mode")
 @api_docs(
-	request_example={"enabled": True},
 	responses={
 		**ACCEPTED_RESPONSE,
-		409: {"description": "The VM state does not allow this rescue transition."},
+		409: {"description": "No rescue image is configured."},
 	},
 )
-def set_virtual_machine_rescue(
-	virtual_machine_id: str, payload: RescuePayload
-) -> ApiResult[VirtualMachineResponse]:
-	"""Set rescue mode.
+def enable_virtual_machine_rescue_mode(virtual_machine_id: str) -> ApiResult[VirtualMachineResponse]:
+	"""Enable rescue mode.
 
-	Running VMs restart into rescue. Stopped VMs stay stopped. Stop paused VMs first. The original disk is unmounted; repairs write directly to it. Take a snapshot before repair. Reboot and Stop/Start preserve rescue. Explicit exit returns to normal boot and discards the rescue disk. Poll the VM detail route for rescue progress.
+	`is_rescue_mode_enabled` turns true now. The next restart boots the rescue image and attaches the VM disk as `/dev/vdb`. `is_in_rescue_mode` turns true after that boot. Rescue mode then blocks every change except a disk resize, a snapshot of the VM disk, a restart, power changes, and deletion.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
-	virtual_machine.set_rescue(payload.enabled)
+	virtual_machine.enable_rescue_mode()
+	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
+
+
+@virtual_machine_actions.post("<virtual_machine_id>/actions/disable-rescue-mode")
+@api_docs(responses=ACCEPTED_RESPONSE)
+def disable_virtual_machine_rescue_mode(virtual_machine_id: str) -> ApiResult[VirtualMachineResponse]:
+	"""Disable rescue mode.
+
+	`is_rescue_mode_enabled` turns false now. The next restart boots the VM disk and removes the rescue disk. `is_in_rescue_mode` turns false after that boot.
+	"""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	virtual_machine.disable_rescue_mode()
 	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
 
 

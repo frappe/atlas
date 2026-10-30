@@ -31,9 +31,9 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 - `sleep.go` reuses snapshot staging, upload retries, verified downloads, and zstd for [sleep snapshots](../../../docs/compute/sleepy-vms.md#upload-saved-snapshots). Memory extraction accepts only the three regular saved-state files. Disk restore publishes a verified staging volume and never replaces an existing VM disk. [Sleep storage tests](sleep_test.go) check immutable staging, archive safety, and checksum-verified round trips.
 - A warm key includes image identity, exact VM shape, and Firecracker compatibility. Warm memory and Firecracker state stay on the host.
 
-## Rescue storage
+## Rescue disk
 
-`PrepareBoot` provisions a rescue image through the normal disk path under `<pool>/vms/rescue/<vm>`. `AttachedVirtualMachineID` exposes the original disk as the secondary drive. Existing disks are reused across boots. `ReleaseRescueDisk` uses normal disk cleanup after the guest stops. `Release` removes both VM-owned disks. See [rescue mode](../../../docs/compute/rescue.md).
+`PrepareBoot` clones the rescue image to `<pool>/vms/<vm>:rescue` at each rescue boot and adds the VM disk as the second drive. A normal boot and `Release` remove that clone. See [rescue mode](../../../docs/compute/rescue.md).
 
 ## Validation
 

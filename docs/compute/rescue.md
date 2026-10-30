@@ -1,85 +1,75 @@
 # Rescue mode
 
-Rescue boots a separate Ubuntu image and attaches the original VM disk as `/dev/vdb`. The original disk starts unmounted. Use rescue when the installed system cannot boot, SSH access fails, the filesystem needs repair, or files must be copied before a rebuild.
+Rescue mode boots a separate image and attaches the VM disk as `/dev/vdb`, unmounted. Use it to repair a guest that cannot boot or to copy files out.
 
-The [Atlas VM bootstrap](../../scripts/atlas-vm/README.md) builds and publishes a normal System image tagged `purpose=rescue`. On entry, Atlas selects the newest enabled, Available rescue image for the VM architecture and sends its reference to Metal. An active session keeps the selected image.
+## Configure the rescue image
 
-For another installation, run `pilot frappe --site SITE build-ubuntu-rescue-image --storage site-file --skip-existing`. The bench user needs sudo access to the rescue-image builder.
+Run `pilot frappe --site SITE build-ubuntu-rescue-image`. Run it on an amd64 host. It builds an Ubuntu 24.04 amd64 image with the repair tools, turns on **Cache Image**, and sets **Rescue Virtual Machine Image** in Atlas Settings. Each amd64 host then keeps the image, so a later boot does not depend on its download URL. See [system images](../storage/image-records.md#system-images) for how a new build affects earlier images. Until this setting has an image, `enable-rescue-mode` returns 409.
 
-## Enter rescue
+## Enter and leave
 
-A VM administrator or operator selects **Rescue Mode** on the VM page. Site-scoped access does not grant a VM console or disk repair access. The VM must be running or stopped. Entry preserves that desired power state. A stopped VM stays stopped until Start is selected.
+| Step | Tenant API | Result |
+|---|---|---|
+| Enter | `POST /actions/enable-rescue-mode`, then `POST /actions/restart` | The VM boots the rescue image. |
+| Leave | `POST /actions/disable-rescue-mode`, then `POST /actions/restart` | The VM boots its own disk. Metal removes the rescue disk. |
 
-Take an ordinary VM snapshot before making repairs. Rescue does not create a checkpoint or provide undo. Repairs write directly to the original disk.
+A stop and start also applies the change. So does any other cold boot, such as a guest crash or a host restart.
 
-The rescue image and its boot disk remain selected across reboot, Stop/Start, and host restart. Use **Exit rescue** to return to the original disk. Exit preserves the desired power state and deletes the rescue boot disk. Copy files stored on that disk elsewhere before exit.
+`is_rescue_mode_enabled` reports what the next cold boot uses. It changes at once. Metal stores the rescue image in `config.json`.
 
-Object-storage download URLs expire after 24 hours. To renew expired URLs, repeat the rescue entry request through the API. Atlas renews URLs for the pinned image, even if a newer rescue image is available.
+`is_in_rescue_mode` reports whether the last boot used the rescue image. It does not change until that boot. Metal stores it in `status.json`.
 
-The pinned image must still be enabled and Available in Atlas. URL renewal does not start a stopped VM.
+A restart is pending while the two values differ. Migrations are rejected while either value is true.
 
-## Connect and repair
+Repairs write directly to the VM disk. Take a snapshot before you repair it. A snapshot always captures the VM disk, not the rescue disk, and can run before or during rescue mode.
 
-Open the VM console or connect by SSH with a configured VM key. SSH password authentication is disabled.
+## Repair the disk
 
-The serial login banner shows a random root password for the current rescue boot. It remains available to a viewer who connects after boot. It changes on the next boot. Only root can read the banner file inside the guest.
+Open the SSH console, or connect with a key that the VM already has. The TTY console shows a temporary root password for this boot in its login banner.
 
-For browser console access through a site alias, deploy the Pilot commit linked in [realtime proxy configuration](console.md#configure-the-realtime-proxy) and regenerate nginx configuration.
+A terminal login opens the repair menu. The menu shows the disk and its mount state, and asks for each choice in a dialog. It unmounts or remounts the disk when a tool needs that, after it asks you. Select **Exit** to leave it, and run `atlas-rescue-menu` to open it again.
 
-For an SSH public-key denial, use the serial console to run `journalctl -b --grep=atlas-ssh-metadata`. Metadata failures report the token, key-list, or key request stage and the exception type. HTTP failures also report the status code. Tokens, keys, response bodies, and exception text are not logged. Successful requests and an empty key list are silent. The shared helper supplies these diagnostics in both normal and rescue images.
+| Menu item | What it does |
+|---|---|
+| Mount or Unmount your VM disk | Mounts at `/mnt/original`, read-write or read-only. |
+| See what is using disk space | Shows byte and inode usage. |
+| See errors from the last boot | Shows error messages from the last boot of the installed system. |
+| Read system logs | Shows the installed journal or recent text logs. |
+| Check the disk for errors | Runs `e2fsck -n`. It makes no changes. |
+| Repair disk errors | Runs automatic safe ext4 repairs. |
+| Expand the filesystem | Runs `e2fsck -f -p`, then `resize2fs`, after a disk resize. |
+| Edit /etc/fstab | Saves a backup, opens the file in an editor, then checks it. |
+| Reset a user password | Sets a new password for an installed account. |
+| Add this VM's SSH keys | Adds the VM keys to an installed account. Existing keys stay. |
+| Turn off the firewall | Turns off ufw, firewalld, nftables, iptables, and netfilter-persistent at the next normal boot. The firewall in Atlas does not change. |
+| Open a shell inside your system | Opens a root shell in the installed system with `chroot`. |
+| Open a rescue shell | Opens a root shell in the rescue system. |
 
-Interactive serial login opens the repair menu. `atlas-rescue-menu` opens it again. `atlas-rescue status` reports disk access, mounts, and the latest managed operation. The CLI and menu use the same tools.
+Each item also works as a command. Run `atlas-rescue --help` for the list and `atlas-rescue status` for mounts and the latest job.
 
-| Tool | Operation |
-| --- | --- |
-| Mount | Mount the original disk at `/mnt/original`. Read-only mounts use `ro,noload` to avoid journal replay. |
-| Filesystem check | Inspect with `atlas-rescue fsck`. Use `--repair` to request automatic safe ext4 repairs. The disk must be unmounted. A failed mount inspection blocks the operation. |
-| Chroot | Bind runtime filesystems and open the installed system shell. Bind mounts are removed when the shell exits. |
-| Linux password reset | Run `atlas-rescue passwd USER`. A locked account requires an explicit `--unlock`. This does not reset a Frappe password or change SSH policy. |
-| SSH keys | Add current VM keys to an explicitly selected installed account. Existing keys remain. |
-| Logs | Read the installed persistent journal or recent text logs. |
-| Filesystem growth | Run `atlas-rescue resize` on an unmounted ext4 disk after its block device has already grown. |
-| Disk usage | Inspect both byte and inode usage. |
-| Copy out | Discover Frappe sites and copy recovery material to a selected destination. |
-| Expert shell | Run manual recovery commands with root access. |
-| Exit | Unmount the original disk and show how to exit through Atlas. Reboot remains in rescue. |
+Filesystem checks, repairs, and growth run as systemd jobs, so they continue after a disconnect. Run `atlas-rescue wait` to follow one again. Guided changes support whole-disk ext4 only. Use the shell for other layouts.
 
-Run `atlas-rescue umount` before switching between writable repair tools and read-only logs, disk usage, or copy-out. Guided tools refuse an existing mount with a different access mode.
+Metal creates a new rescue disk at each boot, so files on it are lost at a restart.
 
-Guided modification supports standard Atlas whole-disk ext4 volumes. Other layouts require manual inspection. LVM, encryption, RAID, partitioned disks, XFS, and Btrfs do not have guided repair workflows.
+## What rescue mode allows
 
-Filesystem checks, growth, and copy-out run as managed systemd jobs. They survive terminal disconnects. Reconnect and run `atlas-rescue status` for the log and result. Managed tools serialize their operations. An arbitrary command in the expert shell can bypass that coordination. Do not reboot or change mounts during an active operation.
+| Allowed | Rejected with 409 |
+|---|---|
+| Disk resize with `PATCH /disk`. Select **Expand the filesystem** after it. | Pause |
+| Restart, start, stop, and resume | Compute changes and `POST /actions/resize` |
+| Snapshot of the VM disk | Migrations |
+| Enable and disable rescue mode | |
+| Delete | Network, public IP, SSH key, and metadata changes |
+| Read routes and the console | Sleep state changes |
 
-Password input is hidden and passed to the password tool over standard input. Passwords are not placed in command arguments or operation logs. Password reset refuses accounts with a non-login shell.
+Metal rejects these with the code `in_rescue_mode`. It also rejects a migration while the rescue image is stored. Before that restart, the VM otherwise works as normal.
 
-## Copy out Frappe data
+A VM in rescue mode never sleeps. Enabling rescue mode wakes a sleeping VM, and the VM stays awake until it restarts into rescue mode. Its sleep settings apply again after rescue mode ends. Metal does not give the guest its user data while the rescue image is stored.
 
-Run `atlas-rescue copy-out` to inspect the offline inventory. Discovery reads paths without executing installed application code. It identifies site configuration, public and private files, backups, app code, bench configuration, migration artifacts, and standard local database directories.
+## Upgrade and rollback
 
-Run `atlas-rescue copy-out --destination PATH` to start a managed export. The destination must be empty and outside the original disk. Use a separate mounted disk or remote filesystem, or pull files directly with SSH from a workstation. Files stored on the rescue disk are temporary and disappear on exit.
+Only a VM with a stored rescue image or in rescue mode has rescue fields in its records. An older `metald` cannot read those records, so leave rescue mode before you install an older binary.
 
-The private export directory includes a manifest with present and missing components, file sizes, and SHA-256 hashes for regular files. It lists symbolic links and special files separately. It does not read FIFOs or device nodes to compute hashes. Export refuses a source whose parent links escape the original filesystem. An interrupted export remains marked incomplete. Configuration files can contain credentials. Keep the export private.
+## Code
 
-Raw database files are preservation copies, not validated portable backups. External databases, external volumes, and nonstandard data locations require separate recovery. Rescue does not start a database, repair a Frappe site, run migrations, or change a site's configuration automatically.
-
-## Restrictions and failures
-
-Migration, snapshots, and CPU, memory, or disk resizing remain blocked until rescue exit is applied. Automatic idle sleep is disabled while rescue is selected. Entry and exit invalidate saved guest memory.
-
-The dialog reports the selected mode, host state, and operation errors. If a state read fails, polling stops and actions stay disabled. Select **Retry status** to reconnect. An accepted request can fail while downloading an image, stopping the guest, preparing storage, or booting. Correct the cause and retry the action.
-
-## Upgrade and recovery
-
-Metal records the `recognize_rescue_state` patch before it loads VM state. Existing VM records need no conversion. Once this build writes state, older binaries can reject its rescue fields, including fields on VMs that have not entered rescue.
-
-Use the normal Metal upgrade action. If the candidate has an unapplied patch, the upgrade script keeps that binary when its readiness checks fail. Correct the failure and retry, or install a compatible fixed build. Do not manually reinstall a binary from before the rescue patch. Exiting rescue does not make the stored records compatible with that binary.
-
-This release recovery rule does not undo guest disk repairs. Use ordinary backups or snapshots for guest data recovery.
-
-## Code and validation
-
-The [VM manager](../../metal/internal/vm/SPEC.md) owns rescue selection and reconciliation under the VM operation lock. The [storage package](../../metal/internal/storage/SPEC.md) prepares the rescue boot disk through the normal image provisioning path and attaches the original disk. The [Firecracker runtime](../../metal/internal/firecracker/SPEC.md) owns cold boot and console access. [Atlas](../../atlas/vm/core/vm_service.py) selects the image and sends controller requests.
-
-Validation covers entry and exit in both power states, reboot, Stop/Start, cleanup retries, image URL renewal, original-disk preservation, console access, and repair tools. Unit tests do not establish guest and ZFS behavior.
-
-Use the expert shell for network and cloud-init repair.
+The [VM manager](../../metal/internal/vm/SPEC.md) owns the rules. The [storage package](../../metal/internal/storage/SPEC.md) owns the rescue disk. The [Firecracker runtime](../../metal/internal/firecracker/SPEC.md) reports the mode from the jail.

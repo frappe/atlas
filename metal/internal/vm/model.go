@@ -20,13 +20,8 @@ type Specification struct {
 	Hostname              string               `json:"hostname"`
 	UserData              string               `json:"user_data"`
 	Metadata              map[string]string    `json:"metadata"`
-	Rescue                Rescue               `json:"rescue,omitzero"`
-}
-
-// Rescue selects a boot image while retaining the original disk.
-type Rescue struct {
-	Enabled bool  `json:"enabled"`
-	Image   Image `json:"image,omitempty"`
+	// RescueImage selects the image for the next cold boot. The VM disk becomes the second drive.
+	RescueImage *Image `json:"rescue_image,omitempty"`
 }
 
 // Compute is the requested compute configuration of one VM.
@@ -239,10 +234,8 @@ func isObservedState(state State) bool {
 
 // Information describes a virtual machine.
 type Information struct {
-	Rescue                          Rescue
-	ObservedRescueEnabled           bool
-	DesiredRescueGeneration         uint64
-	ObservedRescueGeneration        uint64
+	IsInRescueMode                  bool
+	IsRescueModeEnabled             bool
 	ID                              string
 	State                           State
 	DesiredState                    State

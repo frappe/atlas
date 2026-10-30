@@ -10,7 +10,7 @@ from frappe.utils import get_datetime, now_datetime
 from rq.timeouts import JobTimeoutException
 
 from atlas.atlas.core.background_jobs import run_as_admin
-from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.telemetry.events import count, observe
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
@@ -66,27 +66,24 @@ class MigrationService:
 		metal_server_drain: str | None = None,
 	) -> str:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
-		from atlas.vm.core.vm_service import VirtualMachineService
-
 		if is_vm_migration_paused_for_create():
 			frappe.throw(_("VM migrations are paused."), exc=AtlasUserError)
 
-		source = frappe.get_doc("Virtual Machine", virtual_machine.name)
-		source.check_permission("write")
-		cls.validate_source(source)
-		service = VirtualMachineService(source)
-		information = service.require_information()
-		service.ensure_rescue_inactive(information)
-		if information.observed.state not in LIVE_STATES:
+		if virtual_machine.is_in_rescue_mode or virtual_machine.is_rescue_mode_enabled:
 			frappe.throw(
-				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(source.name),
+				_("Disable rescue mode and restart the Virtual Machine first."), exc=AtlasConflictError
+			)
+
+		if virtual_machine.current_state not in LIVE_STATES:
+			frappe.throw(
+				_("Virtual Machine {0} must be running, stopped, or paused to migrate.").format(
+					virtual_machine.name
+				),
 				exc=AtlasUserError,
 			)
 		locked: VirtualMachine = frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
 		locked.check_permission("write")
 		cls.validate_source(locked)
-		if locked.server != source.server:
-			frappe.throw(_("The Virtual Machine host changed. Retry the migration."), exc=AtlasUserError)
 		migration = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Migration",
@@ -124,7 +121,7 @@ class MigrationService:
 
 	@staticmethod
 	def validate_source(virtual_machine: VirtualMachine) -> None:
-		"""Check stored migration eligibility without contacting Metal under the row lock."""
+		"""Reject a VM that cannot start a migration."""
 		if virtual_machine.active_migration:
 			frappe.throw(
 				_("Virtual Machine {0} is already migrating.").format(virtual_machine.name),

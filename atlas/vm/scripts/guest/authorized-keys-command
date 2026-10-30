@@ -1,6 +1,4 @@
 #!/usr/bin/python3
-import syslog
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 METADATA_BASE = "http://169.254.169.254/latest"
@@ -18,26 +16,17 @@ def fetch(path, token="", method="GET", headers=None):
 
 
 def main():
-    stage = "token"
     try:
         token = fetch(
             "api/token",
             method="PUT",
             headers={"X-metadata-token-ttl-seconds": TOKEN_TTL_SECONDS},
         )
-        stage = "key-list"
         for entry in fetch("meta-data/public-keys/", token).splitlines():
             index = entry.partition("=")[0]
             if index:
-                stage = "key"
                 print(fetch(f"meta-data/public-keys/{index}/openssh-key", token))
-    except Exception as error:
-        message = f"atlas-ssh-metadata: stage={stage} error={type(error).__name__}"
-        if isinstance(error, HTTPError):
-            message += f" status={error.code}"
-        elif isinstance(error, URLError) and isinstance(error.reason, Exception):
-            message += f" reason={type(error.reason).__name__}"
-        syslog.syslog(syslog.LOG_AUTHPRIV | syslog.LOG_WARNING, message)
+    except Exception:
         return
 
 

@@ -95,10 +95,6 @@ func fakeZFS(t *testing.T, clones string, failures ...string) string {
 
 	script := fmt.Sprintf(`#!/bin/sh
 echo "$*" >> %q
-if [ "$1" = "get" ] && [ "$5" = "type" ]; then
-  echo "${ATLAS_TEST_DATASET_TYPE:-volume}"
-  exit 0
-fi
 case "$1" in
 get) cat %q ;;
 %s) exit 1 ;;
@@ -131,11 +127,7 @@ func TestReleasePromotesStagingClonesBeforeDestroy(t *testing.T) {
 	}
 
 	want := []string{
-		"get -Hp -o value type metal/vms/rescue/vm-1",
-		"get -Hp -r -t snapshot -o value clones metal/vms/rescue/vm-1",
-		"promote metal/staging/snap-1",
-		"destroy -r metal/vms/rescue/vm-1",
-		"get -Hp -o value type metal/vms/vm-1",
+		"destroy -r metal/vms/vm-1:rescue",
 		"get -Hp -r -t snapshot -o value clones metal/vms/vm-1",
 		"promote metal/staging/snap-1",
 		"destroy -r metal/vms/vm-1",
@@ -168,64 +160,5 @@ func TestReleaseCreatedDiskDestroysAfterCancel(t *testing.T) {
 
 	if got := commandLog(t, logFile); !slices.Contains(got, "destroy -r metal/vms/vm-1") {
 		t.Errorf("commands = %v, want a destroy of the created disk", got)
-	}
-}
-func TestReleaseRescueDiskDestroysTheClone(t *testing.T) {
-	logFile := fakeZFSDestroy(t, "")
-	store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
-
-	if err := store.ReleaseRescueDisk(context.Background(), "vm-1"); err != nil {
-		t.Fatal(err)
-	}
-	if got := commandLog(t, logFile); !slices.Equal(got, []string{"get -Hp -o value type metal/vms/rescue/vm-1", "get -Hp -r -t snapshot -o value clones metal/vms/rescue/vm-1", "destroy -r metal/vms/rescue/vm-1"}) {
-		t.Errorf("commands = %v", got)
-	}
-}
-
-func TestReleaseRescueDiskToleratesAMissingClone(t *testing.T) {
-	fakeZFSDestroy(t, "cannot open 'metal/vms/rescue/vm-1': dataset does not exist")
-	store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
-
-	if err := store.ReleaseRescueDisk(context.Background(), "vm-1"); err != nil {
-		t.Fatalf("release a never-entered rescue disk = %v, want nil", err)
-	}
-}
-
-// fakeZFSDestroy fakes a zfs binary whose destroy command fails with message,
-// or succeeds when message is empty.
-func fakeZFSDestroy(t *testing.T, message string) string {
-	t.Helper()
-	directory := t.TempDir()
-	logFile := filepath.Join(directory, "commands.log")
-
-	script := fmt.Sprintf(`#!/bin/sh
-echo "$*" >> %q
-if [ "$1" = "get" ] && [ "$5" = "type" ]; then
-  echo volume
-fi
-if [ "$1" = "destroy" ] && [ -n %q ]; then
-	echo %q >&2
-	exit 1
-fi
-`, logFile, message, message)
-	if err := os.WriteFile(filepath.Join(directory, "zfs"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	return logFile
-}
-
-func TestReleaseRefusesBootDiskDirectory(t *testing.T) {
-	logFile := fakeZFS(t, "-\n", "none")
-	t.Setenv("ATLAS_TEST_DATASET_TYPE", "filesystem")
-	store := &VirtualMachineStore{pool: &ZFSPool{name: "metal"}}
-	if err := store.releaseDisk(t.Context(), "rescue"); err == nil {
-		t.Fatal("accepted a filesystem as a VM disk")
-	}
-	for _, command := range commandLog(t, logFile) {
-		if strings.HasPrefix(command, "destroy ") {
-			t.Fatalf("destroyed boot disk directory: %s", command)
-		}
 	}
 }

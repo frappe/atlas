@@ -126,6 +126,7 @@ def publish_ubuntu_image(
 			"image_size_mib": bytes_to_mib(image_path.stat().st_size),
 			"image_stored_size_mib": bytes_to_mib(compressed_image_path.stat().st_size),
 			"kernel": kernel_sha256,
+			"cache_image": int(purpose == "rescue"),
 			"tags": [
 				{"key": "purpose", "value": purpose},
 				{"key": "os", "value": "Ubuntu"},
@@ -137,6 +138,7 @@ def publish_ubuntu_image(
 	).insert(set_name=image_name)
 
 	if purpose == "rescue":
+		frappe.db.set_single_value("Atlas Settings", "rescue_virtual_machine_image", image_name)
 		return
 
 	# Every System image is protected at insert. The builder owns the build it replaces.
@@ -156,7 +158,12 @@ def get_available_ubuntu_images(
 		pluck="name",
 	)
 	images = [frappe.get_doc("Virtual Machine Image", name) for name in names]
-	return [image for image in images if {tag.key: tag.value for tag in image.tags}.get("purpose") == purpose]
+	# An image without a purpose tag predates the tag and is a base image.
+	return [
+		image
+		for image in images
+		if {tag.key: tag.value for tag in image.tags}.get("purpose", "base") == purpose
+	]
 
 
 def store_kernel(

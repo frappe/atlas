@@ -19,6 +19,9 @@ const (
 	metadataServiceVersion = "V2"
 	rootDriveIdentifier    = "drive0"
 	rootDrivePath          = "/rootfs.img"
+	// The VM disk is the second drive in rescue mode.
+	rescuedDriveIdentifier = "drive1"
+	rescuedDrivePath       = "/disk.img"
 
 	// guestNetworkMask is the guest network size. Every guest is alone in its
 	// namespace, so one fixed mask serves them all.
@@ -62,7 +65,7 @@ func configure(
 	}
 
 	for driveIndex, drive := range bootConfiguration.Drives {
-		request := driveRequest(driveIndex, drive, specification.Disk, len(bootConfiguration.Drives))
+		request := driveRequest(driveIndex, drive, specification.Disk)
 		if err := client.PutDrive(operationContext, request); err != nil {
 			return err
 		}

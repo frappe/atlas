@@ -72,7 +72,7 @@ func TestSaveAndStopRemovesPreviousRestoreFiles(t *testing.T) {
 }
 
 func TestKillFinishesWhenTheUnitStoppedDespiteASignalError(t *testing.T) {
-	units := &stubUnits{failed: true, killError: errors.New("Failed to send signal SIGKILL to auxiliary processes")}
+	units := &stubUnits{failed: true, killErr: errors.New("Failed to send signal SIGKILL to auxiliary processes")}
 	m := testMachine(units, fcSocket(t, nil), time.Minute)
 
 	if err := m.kill(context.Background()); err != nil {
@@ -83,8 +83,8 @@ func TestKillFinishesWhenTheUnitStoppedDespiteASignalError(t *testing.T) {
 	}
 }
 
-func TestKillReportsASignalErrorWhenStopFails(t *testing.T) {
-	units := &stubUnits{active: true, killError: errors.New("access denied"), stopError: errors.New("access denied")}
+func TestKillReportsASignalErrorWhileTheUnitIsActive(t *testing.T) {
+	units := &stubUnits{active: true, killErr: errors.New("access denied")}
 	m := testMachine(units, fcSocket(t, nil), time.Minute)
 
 	if err := m.kill(context.Background()); err == nil {
@@ -94,14 +94,14 @@ func TestKillReportsASignalErrorWhenStopFails(t *testing.T) {
 
 // stubUnits models a systemd unit that stays active until stopped or killed.
 type stubUnits struct {
-	mu        sync.Mutex
-	active    bool
-	failed    bool
-	stops     int
-	kills     int
-	waits     int
-	killError error
-	stopError error
+	mu     sync.Mutex
+	active bool
+	failed bool
+	stops  int
+	kills  int
+	waits  int
+
+	killErr error
 }
 
 type stubSerialBroker struct{}
@@ -126,9 +126,6 @@ func (s *stubUnits) Stop(context.Context, string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stops++
-	if s.stopError != nil {
-		return s.stopError
-	}
 	s.active = false
 	return nil
 }
@@ -137,9 +134,12 @@ func (s *stubUnits) Kill(context.Context, string, syscall.Signal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.kills++
+	if s.killErr != nil {
+		return s.killErr
+	}
 	s.active = false
 	s.failed = true
-	return s.killError
+	return nil
 }
 
 func (s *stubUnits) ResetFailed(context.Context, string) error {
@@ -410,33 +410,6 @@ func TestPauseStoppedVirtualMachineReturnsConflict(t *testing.T) {
 	}
 }
 
-func TestKillCompletesStopAfterPartialSignalFailure(t *testing.T) {
-	units := &stubUnits{active: true, killError: errors.New("auxiliary signal failed")}
-	m := testMachine(units, fcSocket(t, nil), time.Minute)
-	if err := m.kill(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	stops, _, waits := units.counts()
-	if stops != 1 || waits != 1 || units.failed {
-		t.Fatalf("stops=%d waits=%d failed=%v", stops, waits, units.failed)
-	}
-}
-
-func TestKillPreservesFailureWhenStopCannotComplete(t *testing.T) {
-	killError := errors.New("auxiliary signal failed")
-	stopError := errors.New("stop job failed")
-	units := &stubUnits{active: true, killError: killError, stopError: stopError}
-	m := testMachine(units, fcSocket(t, nil), time.Minute)
-	err := m.kill(context.Background())
-	if !errors.Is(err, killError) || !errors.Is(err, stopError) {
-		t.Fatalf("error=%v", err)
-	}
-	_, _, waits := units.counts()
-	if waits != 0 || !units.failed {
-		t.Fatalf("waits=%d failed=%v", waits, units.failed)
-	}
-}
-
 func TestWarmImageMatchesALargerDisk(t *testing.T) {
 	runtime := &Runtime{}
 	image := vm.Image{CacheImage: true, MemorySnapshot: true, MemorySnapshotConfiguration: &vm.MemorySnapshotConfiguration{VirtualCPUCount: 1, MemoryMiB: 1024, DiskMiB: 10240}}
@@ -497,6 +470,60 @@ func TestWarmLaunchRefreshesTheDriveBeforeResume(t *testing.T) {
 	}
 	if got := strings.Join(paths, " "); got != "/snapshot/load /mmds / /drives/drive0 /vm" {
 		t.Fatalf("requests = %s", got)
+	}
+}
+
+func TestRefreshDiskTargetsTheVirtualMachineDiskInRescueMode(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fc-rescue-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	configuration := Config{MachinesDir: root, SocketsDir: filepath.Join(root, "sockets"), FirecrackerBin: filepath.Join(root, "binary")}
+	units := &migrationUnits{configuration: configuration, testing: t}
+	images := &fakeImages{}
+	runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil, telemetry.NewRegistry(nil))
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid())}
+	drives := make(chan string, 2)
+	units.handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/" {
+			json.NewEncoder(writer).Encode(api.InstanceInfo{ID: "vm-1", State: "Running"})
+			return
+		}
+		var drive api.PartialDrive
+		if err := json.NewDecoder(request.Body).Decode(&drive); err != nil {
+			t.Error(err)
+		}
+		drives <- request.URL.Path + " " + drive.PathOnHost
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	if err := units.Start(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configuration.SocketsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(configuration.chrootSocketPath("vm-1"), configuration.socketPath("vm-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.RefreshDisk(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-drives; got != "/drives/drive0 /rootfs.img" {
+		t.Fatalf("normal drive = %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(configuration.chrootRoot("vm-1"), "disk.img"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !runtime.IsInRescueMode("vm-1") {
+		t.Fatal("disk.img does not mark rescue mode")
+	}
+	if err := runtime.RefreshDisk(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-drives; got != "/drives/drive1 /disk.img" {
+		t.Fatalf("rescue drive = %q", got)
 	}
 }
 

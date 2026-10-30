@@ -86,8 +86,7 @@ def build_metal_information() -> SimpleNamespace:
 	"""Return one Metal record with a desired and an observed half."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
-			rescue=SimpleNamespace(enabled=False, image=None, access=""),
-			rescue_generation=0,
+			is_rescue_mode_enabled=False,
 			state="running",
 			disk=SimpleNamespace(throughput_mibps=100, iops=500),
 			network=SimpleNamespace(
@@ -110,9 +109,8 @@ def build_metal_information() -> SimpleNamespace:
 			),
 		),
 		observed=SimpleNamespace(
-			rescue=SimpleNamespace(enabled=False),
-			rescue_generation=0,
 			state="stopped",
+			is_in_rescue_mode=False,
 			disk=SimpleNamespace(used_mib=8123),
 			network=SimpleNamespace(mac="52:54:00:12:34:56"),
 			error=SimpleNamespace(message="boot failed"),

@@ -37,7 +37,6 @@ type savedStateRequirement struct {
 	UserID                   uint32
 	SpecificationGeneration  uint64
 	RestartGeneration        uint64
-	RescueGeneration         uint64
 	FirecrackerCompatibility string
 	MigratedShape            *vm.MemorySnapshotConfiguration
 }
@@ -56,7 +55,6 @@ type savedStateMetadata struct {
 	MemoryFileSizeBytes      int64                           `json:"memory_file_size_bytes"`
 	TapMACAddress            string                          `json:"tap_mac_address,omitempty"`
 	Shape                    *vm.MemorySnapshotConfiguration `json:"shape,omitempty"`
-	RescueGeneration         uint64                          `json:"rescue_generation"`
 }
 
 type savedState struct {
@@ -212,7 +210,6 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		UserID:                   machine.UserID,
 		SpecificationGeneration:  machine.SpecificationGeneration,
 		RestartGeneration:        machine.RestartGeneration,
-		RescueGeneration:         machine.RescueGeneration,
 		FirecrackerCompatibility: runtime.firecrackerCompatibility(),
 		CreatedAt:                time.Now().UTC(),
 		StateFileName:            memorySnapshotStateFileName,
@@ -271,8 +268,6 @@ func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequir
 		return fmt.Errorf("saved state specification generation %d does not match %d", metadata.SpecificationGeneration, requirement.SpecificationGeneration)
 	case metadata.RestartGeneration != requirement.RestartGeneration:
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
-	case metadata.RescueGeneration != requirement.RescueGeneration:
-		return fmt.Errorf("saved state rescue generation %d does not match %d", metadata.RescueGeneration, requirement.RescueGeneration)
 	case requirement.MigratedShape == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
 		return fmt.Errorf("%w: saved state Firecracker compatibility %q does not match %q", errSavedStateIncompatible, metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
 	}

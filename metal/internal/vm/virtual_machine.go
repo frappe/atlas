@@ -63,6 +63,5 @@ func runtimeMachine(record DesiredRecord, networkInterface NetworkInterface) Run
 		NetworkInterface:        networkInterface,
 		SpecificationGeneration: record.SpecificationGeneration,
 		RestartGeneration:       record.RestartGeneration,
-		RescueGeneration:        record.RescueGeneration,
 	}
 }

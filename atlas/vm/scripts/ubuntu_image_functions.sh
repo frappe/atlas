@@ -1,3 +1,30 @@
+# Shared steps of the Ubuntu image recipes. A recipe sets these variables before it calls build_rootfs:
+#   output, kernel_output  where to write the root file system and the kernel
+#   script_directory       the folder that holds this file and guest/
+#   series, series_url     the Ubuntu release and its cloud image folder
+#   rootfs_name            the cloud image file name, without its extension
+#   kernel_package         the metapackage that selects the boot kernel
+
+archive_url="https://archive.ubuntu.com/ubuntu"
+
+step() { echo "==> $*"; }
+
+prepare_build() {
+	local command
+	for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd zcat ar depmod; do
+		command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
+	done
+
+	image_path=$(realpath -m "$output")
+	kernel_path=$(realpath -m "$kernel_output")
+	work_path=$(mktemp -d)
+	rootfs_directory="$work_path/rootfs"
+	trap 'rm -rf "$work_path"' EXIT
+
+	mkdir -p "$(dirname "$image_path")"
+	mkdir -p "$(dirname "$kernel_path")"
+}
+
 fetch() {
 	local url=$1
 	local checksum=$2
@@ -7,6 +34,36 @@ fetch() {
 	curl -fL --progress-bar --output "$path" "$url"
 	echo "$checksum  $path" | sha256sum --check --status
 	step "verified $(basename "$path")"
+}
+
+# Use the dated folder of the latest release, so a release published during the build cannot mix files.
+fetch_rootfs() {
+	local serial release_url checksum
+	serial=$(curl -fsSL "$series_url/release/unpacked/build-info.txt" | sed -n 's/^serial=//p')
+	release_url="$series_url/release-$serial"
+	checksum=$(curl -fsSL "$release_url/SHA256SUMS" | awk -v file="*$rootfs_name.squashfs" '$2 == file { print $1 }')
+	fetch "$release_url/$rootfs_name.squashfs" "$checksum" "$1"
+}
+
+package_field() {
+	awk -v name="$1" -v field="$2:" '
+		$1 == "Package:" { found = ($2 == name) }
+		found && $1 == field { print $2 }' "$packages_path"
+}
+
+fetch_package() {
+	local filename checksum
+	filename=$(package_field "$1" Filename)
+	checksum=$(package_field "$1" SHA256)
+	fetch "$archive_url/$filename" "$checksum" "$2"
+}
+
+# Kernel image packages compress their data with zstd and modules packages do not. zstd -f passes plain data through.
+extract_package() {
+	local member
+	member=$(ar t "$1" | grep '^data\.tar')
+	mkdir -p "$2"
+	ar p "$1" "$member" | zstd -dcf | tar -x --keep-directory-symlink -C "$2"
 }
 
 extract_vmlinux() {
@@ -19,7 +76,7 @@ extract_vmlinux() {
 		return 1
 	fi
 
-	# zstd rejects trailing bzImage data after writing the kernel; validate the ELF header.
+	# zstd writes the full kernel before it rejects the trailing bzImage data. Validate the ELF output below.
 	tail -c "+$((offset + 1))" "$image" | zstd -cdq > "$output" 2>/dev/null || true
 	if [ "$(head -c 4 "$output" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
 		echo "decompressed kernel is not an ELF vmlinux" >&2
@@ -72,8 +129,8 @@ Gateway=fe80::1
 EOF
 }
 
-# DefaultDependencies=no lets metadata run before cloud-init completes. Ordering
-# this unit before cloud-init creates a cycle that prevents SSH host key generation.
+# DefaultDependencies=no lets the mesh address skip sysinit.target, which cloud-init holds for seconds.
+# Never order this unit before cloud-init.service: systemd breaks the cycle by dropping cloud-init, so no SSH host keys.
 install_metadata_service() {
 	install -d -m 0755 "$rootfs_directory/etc/cloud/cloud.cfg.d"
 	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-hostname.cfg" <<'EOF'
@@ -120,6 +177,44 @@ install_ssh_metadata() {
 AuthorizedKeysCommand /usr/local/lib/atlas/authorized-keys-command
 AuthorizedKeysCommandUser nobody
 EOF
+}
+
+install_kernel() {
+	packages_path="$work_path/Packages"
+	curl -fsSL "$archive_url/dists/$series-updates/main/binary-amd64/Packages.gz" | zcat > "$packages_path"
+	# The kernel metapackage depends first on the versioned image, such as linux-image-7.0.0-38-generic.
+	kernel_version=$(package_field "$kernel_package" Depends | sed -E 's/^linux-image-//; s/,$//')
+
+	fetch_package "linux-image-$kernel_version" "$work_path/kernel.deb"
+	extract_package "$work_path/kernel.deb" "$work_path/kernel"
+	step "extract uncompressed vmlinux"
+	extract_vmlinux "$work_path/kernel/boot/vmlinuz-$kernel_version" "$kernel_path.part" || {
+		echo "could not extract an ELF vmlinux from the Ubuntu kernel" >&2
+		exit 1
+	}
+	mv "$kernel_path.part" "$kernel_path"
+	echo "$kernel_version" > "$kernel_path.release"
+	step "extracted $(basename "$kernel_path")"
+
+	# Docker and BPF need modules that match the kernel, whatever the root file system ships.
+	fetch_package "linux-modules-$kernel_version" "$work_path/modules.deb"
+	extract_package "$work_path/modules.deb" "$rootfs_directory"
+	depmod -b "$rootfs_directory" "$kernel_version"
+}
+
+# Every Atlas Ubuntu image starts from these steps, so all of them boot and connect the same way.
+build_rootfs() {
+	local rootfs_path="$work_path/rootfs.squashfs"
+	fetch_rootfs "$rootfs_path"
+	step "extract root file system"
+	unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
+
+	install_kernel
+	install_cloud_init_datasource
+	install_guest_network
+	install_metadata_service
+	install_serial_console
+	install_ssh_metadata
 }
 
 package_rootfs() {

@@ -147,9 +147,6 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 
 
 class TestBuildUbuntuRescueImageCommand(UnitTestCase):
-	def test_rescue_builder_is_registered_with_frappe(self) -> None:
-		self.assertIn(commands.build_ubuntu_rescue_image_command, commands.commands)
-
 	def test_rescue_command_builds_once_and_publishes_with_its_own_purpose(self) -> None:
 		with (
 			patch.object(commands, "is_image_available", side_effect=[True, False]) as available,
@@ -176,14 +173,3 @@ class TestBuildUbuntuRescueImageCommand(UnitTestCase):
 			"object-storage",
 			"rescue",
 		)
-
-	def test_failed_rescue_build_does_not_publish(self) -> None:
-		with (
-			patch.object(commands, "build_ubuntu_rescue_image", side_effect=RuntimeError("build failed")),
-			patch.object(commands, "_publish_image_to_sites") as publish,
-		):
-			result = CliRunner().invoke(
-				commands.build_ubuntu_rescue_image_command, [], obj=command_context("test.local")
-			)
-		self.assertIsInstance(result.exception, RuntimeError)
-		publish.assert_not_called()

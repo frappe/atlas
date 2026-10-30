@@ -1,10 +1,2 @@
-Atlas Rescue
-
-Run sudo atlas-rescue-menu for guided repair, or sudo atlas-rescue status.
-The original disk is /dev/vdb. Inspect actual mounts before repair.
-Repairs write directly to the disk. Take a snapshot before making changes.
-
-Long managed repair/export jobs survive terminal disconnection. Read their result with atlas-rescue status. Arbitrary expert-shell commands are not managed jobs.
-
-Reboot and Stop/Start keep rescue selected. Use Atlas > Rescue Mode > Exit rescue to boot normally. Exit deletes the rescue disk; copy notes and exports elsewhere first. Changes to the original disk are kept.
-SSH authentication remains keys-only. The console shows a boot-local password.
+Atlas Rescue. Your VM disk is /dev/vdb. Run atlas-rescue-menu to open the repair menu.
+To boot normally, disable rescue mode and reboot the machine.

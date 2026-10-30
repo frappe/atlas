@@ -11,7 +11,6 @@ type Storage interface {
 	DiskUsage(context.Context, string) (DiskUsage, error)
 	ResizeDisk(context.Context, string, int) error
 	Release(context.Context, string) error
-	ReleaseRescueDisk(context.Context, string) error
 }
 
 // DiskUsage contains disk size and allocation values.

@@ -38,7 +38,6 @@ The generated [Metal API reference](/api/metal/) lists each route. Rules:
 
 - Use PUT when a request replaces desired state, so a repeat is safe.
 - Use POST only for an action that runs on each call, such as a restart, or to create a resource.
-- The rescue PUT requires an explicit `enabled` boolean and a validated cold image when enabling. Desired responses include the pinned image identity without signed URLs. Desired and observed rescue generations expose transition progress. See [rescue mode](../../../docs/compute/rescue.md).
 - The network PUT requires the complete network object, including `firewall`.
 - `vm_sleep_state.go` owns POST and PATCH `/v1/vms/:id/sleep-state`. POST accepts artifact PUT and GET URLs. PATCH accepts the snapshot ID and replacement GET URLs. See [sleep snapshot uploads](../../../docs/compute/sleepy-vms.md#upload-saved-snapshots).
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.

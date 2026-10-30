@@ -71,11 +71,9 @@ The existing VM response adds optional `upload_percent` to each artifact under `
 - The phase and operation ID are written before each host call.
 - Destroy records progress per resource, so an interrupted destroy resumes.
 
-## Rescue
+## Rescue mode
 
-The handbook owns [rescue behavior](../../../docs/compute/rescue.md). `RescueGeneration` identifies each mode transition. Runtime and storage preserve the same session across cold boots. Reconciliation stops the guest before deleting its rescue disk. Entry and exit invalidate saved memory. Rescue suppresses original user data and idle sleep.
-
-Migration, snapshots, and resource resizing reject active rescue or an unapplied exit. Reboot and Stop/Start preserve rescue selection. `rescue_test.go` covers power state, cleanup retry, URL refresh, and guest stops.
+The handbook owns [rescue mode](../../../docs/compute/rescue.md). `Specification.RescueImage` selects the next cold boot. `ObservedRecord.IsInRescueMode` reports the last boot, from `Runtime.IsInRescueMode`. Manager methods call `assertNotInRescueMode` for each change that the mode rejects.
 
 ## Migration
 

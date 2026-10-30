@@ -29,7 +29,6 @@ var all = []Patch{
 	{Name: "move_image_kernels_to_kernel_store", Apply: moveImageKernelsToKernelStore},
 	{Name: "initialize_sleep_migration", Apply: initializeSleepMigration},
 	{Name: "rename_comatose_sleep_state_to_coma", Apply: renameComatoseSleepStateToComa},
-	{Name: "recognize_rescue_state", Apply: recognizeRescueState},
 }
 
 // Names returns the patch names in the order they run.

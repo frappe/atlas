@@ -9,7 +9,7 @@ import (
 )
 
 func TestDriveRateLimiterConvertsLimits(t *testing.T) {
-	limiter := driveRateLimiter(vm.Disk{ThroughputMiBps: 40, IOPS: 2000}, 1)
+	limiter := driveRateLimiter(vm.Disk{ThroughputMiBps: 40, IOPS: 2000})
 	if limiter == nil {
 		t.Fatal("limiter must be set")
 	}
@@ -23,7 +23,7 @@ func TestDriveRateLimiterConvertsLimits(t *testing.T) {
 
 // A temporary migration limit caps combined read and write throughput only.
 func TestDriveRateLimiterThroughputOnly(t *testing.T) {
-	limiter := driveRateLimiter(vm.Disk{ThroughputMiBps: 64}, 1)
+	limiter := driveRateLimiter(vm.Disk{ThroughputMiBps: 64})
 	if limiter == nil || limiter.Bandwidth == nil {
 		t.Fatal("bandwidth limit must be set")
 	}
@@ -37,10 +37,10 @@ func TestDriveRateLimiterThroughputOnly(t *testing.T) {
 
 // A zero limit is unlimited, so Firecracker must receive no bucket for it.
 func TestDriveRateLimiterSkipsUnlimitedValues(t *testing.T) {
-	if limiter := driveRateLimiter(vm.Disk{}, 1); limiter != nil {
+	if limiter := driveRateLimiter(vm.Disk{}); limiter != nil {
 		t.Fatalf("limiter = %+v, want none", limiter)
 	}
-	if limiter := driveRateLimiter(vm.Disk{IOPS: 500}, 1); limiter.Bandwidth != nil {
+	if limiter := driveRateLimiter(vm.Disk{IOPS: 500}); limiter.Bandwidth != nil {
 		t.Fatalf("bandwidth = %+v, want none", limiter.Bandwidth)
 	}
 }
@@ -48,7 +48,7 @@ func TestDriveRateLimiterSkipsUnlimitedValues(t *testing.T) {
 // Firecracker's default cache type drops guest flushes, which loses the last
 // writes of a guest that syncs before its disk is photographed.
 func TestDriveRequestIsWriteBackCached(t *testing.T) {
-	request := driveRequest(0, storage.Drive{Path: "/rootfs.img", Root: true}, vm.Disk{}, 1)
+	request := driveRequest(0, storage.Drive{Path: "/rootfs.img", Root: true}, vm.Disk{})
 
 	if request.CacheType != api.CacheTypeWriteback {
 		t.Fatalf("cache type = %q, want %q", request.CacheType, api.CacheTypeWriteback)
@@ -58,23 +58,11 @@ func TestDriveRequestIsWriteBackCached(t *testing.T) {
 	}
 }
 
-func TestRescueLimitsSplitEvenly(t *testing.T) {
-	for _, iops := range []int{1, 3, 2000, 2001} {
-		limiter := driveRateLimiter(vm.Disk{ThroughputMiBps: 1, IOPS: iops}, 2)
-		if limiter.Bandwidth.Size != 512*1024 || limiter.Bandwidth.RefillTime != 1000 {
-			t.Fatalf("bandwidth = %+v", limiter.Bandwidth)
-		}
-		if 2*limiter.Ops.Size*1000 != int64(iops)*limiter.Ops.RefillTime {
-			t.Fatalf("IOPS %d: per-drive bucket = %+v", iops, limiter.Ops)
-		}
-	}
-}
-
 func TestDriveRequestDiscardsOnlyOnWritableDrives(t *testing.T) {
-	if !driveRequest(0, storage.Drive{Path: "/rootfs.img", Root: true}, vm.Disk{}, 1).Discard {
+	if !driveRequest(0, storage.Drive{Path: "/rootfs.img", Root: true}, vm.Disk{}).Discard {
 		t.Fatal("writable drive has no discard")
 	}
-	if driveRequest(1, storage.Drive{Path: "/seed.img", ReadOnly: true}, vm.Disk{}, 1).Discard {
+	if driveRequest(1, storage.Drive{Path: "/seed.img", ReadOnly: true}, vm.Disk{}).Discard {
 		t.Fatal("read-only drive has discard")
 	}
 }

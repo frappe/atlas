@@ -918,21 +918,6 @@ class VirtualMachineGuest(BaseModel):
 	metadata: dict[str, str] = Field(description="Custom guest metadata.")
 
 
-class RescuePayload(StrictModel):
-	"""Select rescue mode. Atlas chooses the image for each new session."""
-
-	enabled: bool = Field(strict=True, description="Enter rescue when true; exit when false.")
-
-
-class VirtualMachineRescue(BaseModel):
-	"""Requested and applied rescue mode from the assigned host."""
-
-	enabled: bool = Field(description="Requested rescue mode.")
-	observed_enabled: bool = Field(description="Last successfully applied rescue mode.")
-	pending: bool = Field(description="Whether the host has an unapplied rescue selection.")
-	image_ref: str | None = Field(description="Image pinned to this rescue session, or null.")
-
-
 class VirtualMachineDetailResponse(BaseModel):
 	"""One virtual machine with its state, addresses, and guest configuration."""
 
@@ -948,6 +933,8 @@ class VirtualMachineDetailResponse(BaseModel):
 					"created_at": 1788834165,
 					"is_privileged": False,
 					"is_termination_protected": False,
+					"is_in_rescue_mode": False,
+					"is_rescue_mode_enabled": False,
 					"public_ipv4": None,
 					"public_ipv6": None,
 					"desired_state": "running",
@@ -984,6 +971,13 @@ class VirtualMachineDetailResponse(BaseModel):
 	created_at: int = Field(ge=0, description="Creation time as Unix seconds.")
 	is_privileged: bool = Field(description="Whether the guest can reach every tenant through the mesh.")
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
+	is_in_rescue_mode: bool | None = Field(
+		default=None, description="Whether the last boot used the rescue image, or null when unavailable."
+	)
+	is_rescue_mode_enabled: bool | None = Field(
+		default=None,
+		description="Whether the next cold boot uses the rescue image, or null when unavailable.",
+	)
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
 	desired_state: str | None = Field(description="State requested from the host, or null when unavailable.")
@@ -993,9 +987,6 @@ class VirtualMachineDetailResponse(BaseModel):
 	disk: VirtualMachineDisk = Field(description="Disk configuration and usage.")
 	network: VirtualMachineNetwork = Field(description="Network configuration and addresses.")
 	guest: VirtualMachineGuest = Field(description="Guest configuration.")
-	rescue: VirtualMachineRescue | None = Field(
-		default=None, description="Rescue selection and progress, or null when host state is unavailable."
-	)
 
 	@classmethod
 	def from_document_and_metal(
@@ -1016,17 +1007,8 @@ class VirtualMachineDetailResponse(BaseModel):
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
-			rescue=VirtualMachineRescue(
-				enabled=desired.rescue.enabled,
-				observed_enabled=observed.rescue.enabled,
-				pending=(
-					desired.rescue_generation != observed.rescue_generation
-					or desired.rescue.enabled != observed.rescue.enabled
-				),
-				image_ref=desired.rescue.image.ref if desired.rescue.image else None,
-			)
-			if desired and observed
-			else None,
+			is_in_rescue_mode=observed.is_in_rescue_mode if observed else None,
+			is_rescue_mode_enabled=desired.is_rescue_mode_enabled if desired else None,
 			desired_state=desired.state if desired else None,
 			current_state=get_current_state(virtual_machine, observed.state if observed else None),
 			error=observed.error.message if observed and observed.error else None,

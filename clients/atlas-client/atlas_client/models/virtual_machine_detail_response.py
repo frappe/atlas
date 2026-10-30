@@ -19,7 +19,6 @@ if TYPE_CHECKING:
   from ..models.virtual_machine_disk import VirtualMachineDisk
   from ..models.virtual_machine_guest import VirtualMachineGuest
   from ..models.virtual_machine_network import VirtualMachineNetwork
-  from ..models.virtual_machine_rescue import VirtualMachineRescue
 
 
 
@@ -51,7 +50,8 @@ class VirtualMachineDetailResponse:
             public_ipv6 (None | PublicIPResponse): Attached public IPv6 allocation, or null.
             tags (VirtualMachineDetailResponseTags): Resource tags as key-value pairs.
             tenant_id (int): Tenant that owns the virtual machine.
-            rescue (None | Unset | VirtualMachineRescue): Rescue selection and progress, or null when host state is
+            is_in_rescue_mode (bool | None | Unset): Whether the last boot used the rescue image, or null when unavailable.
+            is_rescue_mode_enabled (bool | None | Unset): Whether the next cold boot uses the rescue image, or null when
                 unavailable.
      """
 
@@ -72,7 +72,8 @@ class VirtualMachineDetailResponse:
     public_ipv6: None | PublicIPResponse
     tags: VirtualMachineDetailResponseTags
     tenant_id: int
-    rescue: None | Unset | VirtualMachineRescue = UNSET
+    is_in_rescue_mode: bool | None | Unset = UNSET
+    is_rescue_mode_enabled: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -86,7 +87,6 @@ class VirtualMachineDetailResponse:
         from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
         from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
         from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
-        from ..models.virtual_machine_rescue import VirtualMachineRescue # noqa: PLC0415
         architecture = self.architecture.value
 
         compute = self.compute.to_dict()
@@ -131,13 +131,17 @@ class VirtualMachineDetailResponse:
 
         tenant_id = self.tenant_id
 
-        rescue: dict[str, Any] | None | Unset
-        if isinstance(self.rescue, Unset):
-            rescue = UNSET
-        elif isinstance(self.rescue, VirtualMachineRescue):
-            rescue = self.rescue.to_dict()
+        is_in_rescue_mode: bool | None | Unset
+        if isinstance(self.is_in_rescue_mode, Unset):
+            is_in_rescue_mode = UNSET
         else:
-            rescue = self.rescue
+            is_in_rescue_mode = self.is_in_rescue_mode
+
+        is_rescue_mode_enabled: bool | None | Unset
+        if isinstance(self.is_rescue_mode_enabled, Unset):
+            is_rescue_mode_enabled = UNSET
+        else:
+            is_rescue_mode_enabled = self.is_rescue_mode_enabled
 
 
         field_dict: dict[str, Any] = {}
@@ -161,8 +165,10 @@ class VirtualMachineDetailResponse:
             "tags": tags,
             "tenant_id": tenant_id,
         })
-        if rescue is not UNSET:
-            field_dict["rescue"] = rescue
+        if is_in_rescue_mode is not UNSET:
+            field_dict["is_in_rescue_mode"] = is_in_rescue_mode
+        if is_rescue_mode_enabled is not UNSET:
+            field_dict["is_rescue_mode_enabled"] = is_rescue_mode_enabled
 
         return field_dict
 
@@ -176,7 +182,6 @@ class VirtualMachineDetailResponse:
         from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
         from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
         from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
-        from ..models.virtual_machine_rescue import VirtualMachineRescue # noqa: PLC0415
         d = dict(src_dict)
         architecture = VirtualMachineDetailResponseArchitecture(d.pop("architecture"))
 
@@ -274,24 +279,24 @@ class VirtualMachineDetailResponse:
 
         tenant_id = d.pop("tenant_id")
 
-        def _parse_rescue(data: object) -> None | Unset | VirtualMachineRescue:
+        def _parse_is_in_rescue_mode(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            try:
-                if not isinstance(data, dict):
-                    raise TypeError()
-                rescue_type_0 = VirtualMachineRescue.from_dict(data)
+            return cast(bool | None | Unset, data)
+
+        is_in_rescue_mode = _parse_is_in_rescue_mode(d.pop("is_in_rescue_mode", UNSET))
 
 
+        def _parse_is_rescue_mode_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
 
-                return rescue_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(None | Unset | VirtualMachineRescue, data)
-
-        rescue = _parse_rescue(d.pop("rescue", UNSET))
+        is_rescue_mode_enabled = _parse_is_rescue_mode_enabled(d.pop("is_rescue_mode_enabled", UNSET))
 
 
         virtual_machine_detail_response = cls(
@@ -312,7 +317,8 @@ class VirtualMachineDetailResponse:
             public_ipv6=public_ipv6,
             tags=tags,
             tenant_id=tenant_id,
-            rescue=rescue,
+            is_in_rescue_mode=is_in_rescue_mode,
+            is_rescue_mode_enabled=is_rescue_mode_enabled,
         )
 
 

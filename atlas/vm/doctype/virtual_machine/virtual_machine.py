@@ -165,6 +165,18 @@ class VirtualMachine(Document):
 		return information.observed.state if information else "unknown"
 
 	@property
+	def is_in_rescue_mode(self) -> bool:
+		"""Return whether the last boot used the rescue image."""
+		information = self.get_metal_vm_info()
+		return bool(information and information.observed.is_in_rescue_mode)
+
+	@property
+	def is_rescue_mode_enabled(self) -> bool:
+		"""Return whether the next cold boot uses the rescue image."""
+		information = self.get_metal_vm_info()
+		return bool(information and information.desired.is_rescue_mode_enabled)
+
+	@property
 	def desired_state(self) -> str | None:
 		"""Return the state Metal was asked to reach."""
 		information = self.get_metal_vm_info()
@@ -412,6 +424,13 @@ class VirtualMachine(Document):
 			allow_disk_only_fallback=bool(cint(allow_disk_only_fallback)),
 		)
 
+	def ensure_not_in_rescue_mode(self) -> None:
+		"""Reject a change before it reaches a provider, because Metal would reject it later."""
+		if self.is_in_rescue_mode:
+			frappe.throw(
+				_("Disable rescue mode and restart the Virtual Machine first."), exc=AtlasConflictError
+			)
+
 	def ensure_not_migrating(self) -> None:
 		"""Reject a mutable action while a migration owns this VM."""
 		if self.active_migration:
@@ -463,9 +482,6 @@ class VirtualMachine(Document):
 		if memory_snapshot_configuration and not memory_snapshot:
 			frappe.throw(_("Memory snapshot configuration needs a memory snapshot."), exc=AtlasUserError)
 
-		service = VirtualMachineService(self)
-		service.ensure_rescue_inactive(service.require_information())
-
 		from atlas.vm.core.vm_image_transfer import VirtualMachineImageTransferService
 
 		return VirtualMachineImageTransferService().create_from_virtual_machine(
@@ -506,6 +522,7 @@ class VirtualMachine(Document):
 	def attach_public_ip(self, version: int, allocation: str) -> None:
 		"""Store one public IP attachment intent."""
 		self.check_permission("write")
+		self.ensure_not_in_rescue_mode()
 		from atlas.metal_server.core.public_ip_service import PublicIPService
 
 		PublicIPService().attach(self, int(version), allocation)
@@ -514,6 +531,7 @@ class VirtualMachine(Document):
 	def detach_public_ip(self, version: int) -> None:
 		"""Store one public IP detach intent."""
 		self.check_permission("write")
+		self.ensure_not_in_rescue_mode()
 		from atlas.metal_server.core.public_ip_service import PublicIPService
 
 		PublicIPService().detach(self, int(version))
@@ -632,30 +650,26 @@ class VirtualMachine(Document):
 		self.ensure_not_migrating()
 		VirtualMachineService(self).set_power_state(state)
 
-	@frappe.whitelist(methods=["GET"])
-	def read_rescue(self) -> dict[str, Any]:
-		"""Return live rescue state for the operator action."""
-		self.check_permission("read")
-		return VirtualMachineService(self).require_information().as_dict()
-
-	@frappe.whitelist(methods=["POST"])
-	def set_rescue(self, enabled: bool) -> dict[str, Any]:
-		"""Enter or exit rescue without starting a stopped VM."""
-		self.check_permission("write")
-		self.ensure_not_migrating()
-		if self.is_draft or self.is_terminating:
-			frappe.throw(
-				_("Wait until the Virtual Machine is ready before changing rescue mode."), exc=AtlasUserError
-			)
-		enabled = strict_bool(enabled, "enabled")
-		return VirtualMachineService(self).set_rescue(enabled)
-
 	@frappe.whitelist(methods=["POST"])
 	def reboot(self) -> None:
 		"""Request an in-place VM restart."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		VirtualMachineService(self).request_restart()
+
+	@frappe.whitelist(methods=["POST"])
+	def enable_rescue_mode(self) -> None:
+		"""Use the rescue image from the next cold boot."""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		VirtualMachineService(self).enable_rescue_mode()
+
+	@frappe.whitelist(methods=["POST"])
+	def disable_rescue_mode(self) -> None:
+		"""Use the VM disk from the next cold boot."""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		VirtualMachineService(self).disable_rescue_mode()
 
 	@frappe.whitelist(methods=["POST"])
 	def fetch_firecracker_log(self) -> dict:
@@ -672,7 +686,7 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def get_console_token(self, mode: str = "tty") -> dict[str, str]:
 		"""Issue a one-time token to open this VM console in tty or ssh mode."""
-		self.check_permission("write")
+		self.check_permission("read")
 		if mode not in {"tty", "ssh"}:
 			frappe.throw(_("Console mode must be tty or ssh."))
 		from atlas.vm.core.console_token import issue_console_token

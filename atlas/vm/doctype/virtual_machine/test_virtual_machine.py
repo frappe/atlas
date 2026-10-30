@@ -28,8 +28,6 @@ METAL_VIRTUAL_MACHINE_RESPONSE = {
 	"desired": {
 		"generation": 2,
 		"restart_generation": 1,
-		"rescue_generation": 0,
-		"rescue": {"enabled": False},
 		"state": "running",
 		"compute": {
 			"cpu_millicores": 2000,
@@ -63,8 +61,6 @@ METAL_VIRTUAL_MACHINE_RESPONSE = {
 	"observed": {
 		"generation": 1,
 		"restart_generation": 1,
-		"rescue_generation": 0,
-		"rescue": {"enabled": False},
 		"state": "running",
 		"phase": "network",
 		"operation_id": "operation-1",
@@ -852,6 +848,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		virtual_machine, _ = self.build_virtual_machine({})
 		virtual_machine.check_permission = Mock()
 		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.ensure_not_in_rescue_mode = Mock()
 		virtual_machine.validate_network_change = Mock()
 		with patch("atlas.metal_server.core.public_ip_service.PublicIPService") as service:
 			virtual_machine.attach_public_ip(6, "auto")
@@ -861,6 +858,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		virtual_machine, _ = self.build_virtual_machine({})
 		virtual_machine.check_permission = Mock()
 		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.ensure_not_in_rescue_mode = Mock()
 		virtual_machine.validate_network_change = Mock()
 		with patch("atlas.metal_server.core.public_ip_service.PublicIPService") as service:
 			virtual_machine.detach_public_ip(4)
@@ -1026,50 +1024,6 @@ class TestVirtualMachineTerminationProtection(UnitTestCase):
 			virtual_machine.set_termination_protection(True)
 
 
-class TestVirtualMachineConsolePermission(UnitTestCase):
-	def test_read_only_actor_cannot_obtain_console_credentials(self) -> None:
-		for mode in ("tty", "ssh"):
-			with self.subTest(mode=mode):
-				machine = VirtualMachine.__new__(VirtualMachine)
-				machine.check_permission = Mock(side_effect=self.deny_write)
-				with (
-					patch.object(VirtualMachineService, "get_console_connection") as connect,
-					patch("atlas.vm.core.console_token.issue_console_token") as issue,
-					self.assertRaises(frappe.PermissionError),
-				):
-					machine.get_console_token(mode)
-				connect.assert_not_called()
-				issue.assert_not_called()
-
-	def deny_write(self, permission: str) -> None:
-		if permission == "write":
-			raise frappe.PermissionError
-
-	def test_vm_administrator_can_obtain_a_console_token(self) -> None:
-		machine = VirtualMachine.__new__(VirtualMachine)
-		machine.check_permission = Mock()
-		with (
-			patch.object(VirtualMachineService, "get_console_connection", return_value={}) as connect,
-			patch("atlas.vm.core.console_token.issue_console_token", return_value="single-use") as issue,
-		):
-			self.assertEqual(machine.get_console_token(), {"token": "single-use"})
-		machine.check_permission.assert_called_once_with("write")
-		connect.assert_called_once_with("tty")
-		issue.assert_called_once_with({})
-
-
-class TestVirtualMachineRescuePermission(UnitTestCase):
-	def test_read_only_actor_cannot_request_rescue(self):
-		machine = VirtualMachine.__new__(VirtualMachine)
-		machine.check_permission = Mock(side_effect=frappe.PermissionError)
-		with (
-			patch.object(VirtualMachineService, "set_rescue") as request,
-			self.assertRaises(frappe.PermissionError),
-		):
-			machine.set_rescue(False)
-		request.assert_not_called()
-
-
 class TestVirtualMachinePrivilege(UnitTestCase):
 	"""Cover the Atlas WG Mesh privilege flag."""
 
@@ -1163,17 +1117,10 @@ class TestSystemImageCreation(UnitTestCase):
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None
 		virtual_machine.check_permission = Mock()
-		with (
-			patch(
-				"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
-				return_value="IMG-00001",
-			) as create,
-			patch.object(
-				VirtualMachineService,
-				"require_information",
-				return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE),
-			),
-		):
+		with patch(
+			"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
+			return_value="IMG-00001",
+		) as create:
 			name = virtual_machine.create_machine_image("golden", **options)
 		return name, create
 

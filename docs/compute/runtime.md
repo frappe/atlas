@@ -73,7 +73,3 @@ The runtime returns restore errors to the VM manager. The manager owns [wake rec
 - [Runtime tests](../../metal/internal/firecracker/machine_test.go) check start and stop behavior.
 
 :::
-
-## Forced-stop errors
-
-If systemd reports a signal error during a forced stop, Metal requests a unit stop and waits for that job to complete. It clears the failed unit state only after termination completes. If the stop job also fails, Metal returns both errors and preserves any saved memory for recovery.

@@ -284,3 +284,7 @@ func waitSleepAPIResult(t *testing.T, finished <-chan error) {
 		t.Fatal("transfer did not finish")
 	}
 }
+
+func (runtime *sleepAPIRuntime) IsInRescueMode(string) bool {
+	return false
+}
