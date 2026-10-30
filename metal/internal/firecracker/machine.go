@@ -81,6 +81,11 @@ func (m *machine) state(ctx context.Context, status platform.Status) (vm.State, 
 // its own disk. A later start cold boots the existing disk. It never restores VM
 // saved state.
 func (m *machine) Start(ctx context.Context) error {
+	if m.input.Specification.RescueImage != nil {
+		m.runtime.countBoot("cold", "")
+		return m.coldBoot(ctx)
+	}
+
 	startedAt := time.Now()
 	hasDisk, err := m.runtime.virtualMachineStorage.HasDisk(ctx, m.input.ID)
 	if err != nil {
@@ -367,7 +372,11 @@ func (m *machine) cleanupSystemd(ctx context.Context) error {
 
 // recordImageUse marks the image as used without failing a started VM.
 func (m *machine) recordImageUse() {
-	if err := m.runtime.imageStore.RecordImageUse(m.input.Specification.Image.Name, time.Now()); err != nil {
+	image := m.input.Specification.Image
+	if m.input.Specification.RescueImage != nil {
+		image = *m.input.Specification.RescueImage
+	}
+	if err := m.runtime.imageStore.RecordImageUse(image.Name, time.Now()); err != nil {
 		m.runtime.logger.Error("record image use failed", "virtual_machine_id", m.input.ID, "error", err)
 	}
 }

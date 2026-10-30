@@ -36,6 +36,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 			{ text: 'Change SSH keys', link: '/docs/compute/ssh-keys' },
 			{ text: 'Open a console', link: '/docs/compute/console' },
 			{ text: 'Sleepy VMs', link: '/docs/compute/sleepy-vms' },
+			{ text: 'Rescue mode', link: '/docs/compute/rescue' },
 			{ text: 'Move a VM', link: '/docs/compute/migration' },
 			{ text: 'Move a VM: host steps', link: '/docs/compute/migration-engine' },
 		],

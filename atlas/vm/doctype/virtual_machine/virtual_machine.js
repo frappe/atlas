@@ -19,6 +19,9 @@ frappe.ui.form.on("Virtual Machine", {
 		const ACTIONS = __("Actions");
 		const DANGEROUS = __("Dangerous Actions");
 		const DIAGNOSTICS = __("Diagnostics");
+		const ACTIONS_DIVIDER = "divider";
+		let has_actions = false;
+		let needs_actions_divider = false;
 
 		// A string action calls that method on the document. A function opens a dialog.
 		[
@@ -41,14 +44,28 @@ frappe.ui.form.on("Virtual Machine", {
 				true,
 				DIAGNOSTICS,
 			],
+			[
+				__("View Migration"),
+				() =>
+					frappe.set_route(
+						"Form",
+						"Virtual Machine Migration",
+						frm.doc.active_migration
+					),
+				is_migrating,
+				ACTIONS,
+			],
+			ACTIONS_DIVIDER,
 			[__("Start VM"), "start", is_stopped, ACTIONS, __("Starting...")],
 			[__("Stop VM"), "stop", is_running || is_paused, ACTIONS, __("Stopping...")],
 			[__("Reboot VM"), "reboot", is_running, ACTIONS, __("Rebooting...")],
 			[__("Pause VM"), "pause", is_running, ACTIONS, __("Pausing...")],
 			[__("Resume VM"), "resume", is_paused, ACTIONS, __("Resuming...")],
+			ACTIONS_DIVIDER,
 			[__("Snapshot VM"), () => showCreateMachineImageDialog(frm), true, ACTIONS],
 			[__("Resize Disk"), () => showResizeDiskDialog(frm), true, ACTIONS],
 			[__("Edit Disk Limits"), () => showEditDiskLimitsDialog(frm), true, ACTIONS],
+			ACTIONS_DIVIDER,
 			[__("Resize VM"), () => showResizeDialog(frm), true, ACTIONS],
 			[
 				__("Edit Sleep Configuration"),
@@ -56,10 +73,12 @@ frappe.ui.form.on("Virtual Machine", {
 				true,
 				ACTIONS,
 			],
+			ACTIONS_DIVIDER,
 			[__("Edit SSH Keys"), () => showEditSSHKeysDialog(frm), true, ACTIONS],
 			[__("Edit Metadata"), () => showEditMetadataDialog(frm), true, ACTIONS],
-			[__("Edit Network Throughput"), () => showEditThroughputDialog(frm), true, ACTIONS],
+			ACTIONS_DIVIDER,
 			[__("Edit Firewall"), () => showEditFirewallDialog(frm), true, ACTIONS],
+			[__("Edit Network Throughput"), () => showEditThroughputDialog(frm), true, ACTIONS],
 			[
 				__("Attach Public IPv4"),
 				() => showAttachPublicIPDialog(frm, 4),
@@ -84,6 +103,7 @@ frappe.ui.form.on("Virtual Machine", {
 				Boolean(frm.doc.public_ipv6 || frm.doc.routed_ipv6),
 				ACTIONS,
 			],
+			[__("Edit Routes"), () => showRoutesDialog(frm), true, ACTIONS],
 			[
 				frm.doc.is_accessible_via_wireguard_gateway
 					? __("Disable WG Gateway Access")
@@ -92,24 +112,27 @@ frappe.ui.form.on("Virtual Machine", {
 				!frm.doc.is_network_gateway,
 				ACTIONS,
 			],
-			[__("Edit Routes"), () => showRoutesDialog(frm), true, ACTIONS],
+			ACTIONS_DIVIDER,
+			[
+				frm.doc.is_rescue_mode_enabled
+					? __("Disable Rescue Mode")
+					: __("Enable Rescue Mode"),
+				() =>
+					setRescueMode(
+						frm,
+						frm.doc.is_rescue_mode_enabled
+							? "disable_rescue_mode"
+							: "enable_rescue_mode"
+					),
+				(is_live || current_state === "failed") && !is_migrating,
+				ACTIONS,
+			],
 			[
 				frm.doc.is_termination_protected
 					? __("Disable Termination Protection")
 					: __("Enable Termination Protection"),
 				() => setTerminationProtection(frm),
 				true,
-				ACTIONS,
-			],
-			[
-				__("View Migration"),
-				() =>
-					frappe.set_route(
-						"Form",
-						"Virtual Machine Migration",
-						frm.doc.active_migration
-					),
-				is_migrating,
 				ACTIONS,
 			],
 			// Only a tenant 0 VM can hold the Atlas WG Mesh privilege.
@@ -134,9 +157,24 @@ frappe.ui.form.on("Virtual Machine", {
 				DANGEROUS,
 			],
 			[__("Terminate VM"), () => terminateVirtualMachine(frm), true, DANGEROUS],
-		].forEach(([label, action, condition, group, freeze_message]) => {
+		].forEach((entry) => {
+			if (entry === ACTIONS_DIVIDER) {
+				needs_actions_divider = has_actions;
+				return;
+			}
+
+			const [label, action, condition, group, freeze_message] = entry;
 			if (!condition) {
 				return;
+			}
+
+			// A group can be empty in some states, so draw its divider before its first item.
+			if (group === ACTIONS) {
+				if (needs_actions_divider) {
+					frm.page.add_divider_to_button_group(ACTIONS);
+				}
+				needs_actions_divider = false;
+				has_actions = true;
 			}
 
 			const call = () =>
@@ -185,6 +223,18 @@ function setTerminationProtection(frm) {
 				freeze_message: __("Saving..."),
 			})
 			.then(() => frm.reload_doc())
+	);
+}
+
+function setRescueMode(frm, method) {
+	frappe.confirm(
+		method === "enable_rescue_mode"
+			? __("Boot {0} from the rescue image at its next restart?", [frm.doc.name.bold()])
+			: __("Boot {0} from its own disk at its next restart?", [frm.doc.name.bold()]),
+		() =>
+			frm
+				.call({ method, doc: frm.doc, freeze: true, freeze_message: __("Saving...") })
+				.then(() => frm.reload_doc())
 	);
 }
 

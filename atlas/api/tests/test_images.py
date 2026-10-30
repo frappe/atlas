@@ -99,6 +99,13 @@ class TestImageAccess(IntegrationTestCase):
 		self.assertNotIn(self.other_image, names)
 		self.assertIn(self.zero_tenant_image, names)
 
+	def test_a_rescue_image_stays_hidden_from_tenants(self) -> None:
+		rescue = insert_image(0, "system", tags=[{"key": "purpose", "value": "rescue"}])
+
+		self.assertNotIn(rescue, self.list_names(TENANT_ID))
+		self.assertNotIn(rescue, self.list_names(TENANT_ID, tag="purpose:rescue"))
+		self.assertFalse(frappe.get_doc("Virtual Machine Image", rescue).is_visible_to_tenant(TENANT_ID))
+
 	def test_the_system_type_returns_only_system_images(self) -> None:
 		names = self.list_names(TENANT_ID, "system")
 

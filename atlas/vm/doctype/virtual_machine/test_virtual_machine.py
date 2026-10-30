@@ -848,6 +848,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		virtual_machine, _ = self.build_virtual_machine({})
 		virtual_machine.check_permission = Mock()
 		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.ensure_not_in_rescue_mode = Mock()
 		virtual_machine.validate_network_change = Mock()
 		with patch("atlas.metal_server.core.public_ip_service.PublicIPService") as service:
 			virtual_machine.attach_public_ip(6, "auto")
@@ -857,6 +858,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		virtual_machine, _ = self.build_virtual_machine({})
 		virtual_machine.check_permission = Mock()
 		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.ensure_not_in_rescue_mode = Mock()
 		virtual_machine.validate_network_change = Mock()
 		with patch("atlas.metal_server.core.public_ip_service.PublicIPService") as service:
 			virtual_machine.detach_public_ip(4)

@@ -17,6 +17,8 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/placement/affinity.py` | Affinity rule types, their validation, and their stored JSON form. |
 | `core/vm_migration.py` and `core/vm_resize.py` | Host moves and shape changes. |
 | `core/metal_client.py` and `core/metal_models.py` | Metal transport, errors, and typed responses. |
+| `core/image_builder.py` and `scripts/build_ubuntu*_image.sh` | Base and rescue recipes, shared guest setup, and publication. |
+| `scripts/guest/rescue.py`, `scripts/guest/atlas-rescue-menu`, and `scripts/guest/rescue-menu-screen` | Repair tools, menu actions, and the main menu screen in the rescue image. |
 | `core/vm_image_transfer.py`, `core/vm_image_deletion.py`, and `core/multipart_upload.py` | Image publication and removal. |
 | `core/vm_state.py` and `core/state_webhook.py` | Last host reports and messages to Central. |
 | `doctype/virtual_machine_image/` | Durable image records and visibility. |

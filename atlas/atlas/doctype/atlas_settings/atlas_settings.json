@@ -1,7 +1,6 @@
 {
  "actions": [],
  "allow_bulk_edit": 1,
- "allow_rename": 1,
  "creation": "2026-08-31 21:49:05.811875",
  "default_view": "List",
  "doctype": "DocType",
@@ -135,21 +134,23 @@
   "object_storage_access_key_id",
   "object_storage_secret_access_key",
   "object_storage_signed_url_expiry",
-  "vm_scheduler_tab",
+  "miscellaneous_tab",
   "placement_strategy_section",
   "placement_strategy",
   "affinity_matching",
   "column_break_dxsw",
   "use_dedicated_sleepy_vm_hosts",
   "sleepy_vm_overcommit_factor",
-  "migration_section",
-  "is_vm_migration_paused",
   "section_break_azkc",
   "auto_spawn_metal_server",
   "column_break_tckj",
   "default_metal_machine_size",
   "column_break_jfub",
   "default_metal_machine_image",
+  "rescue_mode_section",
+  "rescue_virtual_machine_image",
+  "migration_section",
+  "is_vm_migration_paused",
   "investigation_tab",
   "investigation_agent_section",
   "investigation_model",
@@ -875,11 +876,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "vm_scheduler_tab",
-   "fieldtype": "Tab Break",
-   "label": "VM Scheduler"
-  },
-  {
    "fieldname": "section_break_azkc",
    "fieldtype": "Section Break",
    "label": "Metal Auto-spawn Config"
@@ -912,6 +908,17 @@
    "fieldtype": "Autocomplete",
    "label": "Default Metal Machine Image",
    "mandatory_depends_on": "eval: doc.auto_spawn_metal_server"
+  },
+  {
+   "fieldname": "rescue_mode_section",
+   "fieldtype": "Section Break",
+   "label": "Rescue Mode"
+  },
+  {
+   "fieldname": "rescue_virtual_machine_image",
+   "fieldtype": "Link",
+   "label": "Rescue Virtual Machine Image",
+   "options": "Virtual Machine Image"
   },
   {
    "fieldname": "column_break_jfub",
@@ -1032,10 +1039,10 @@
    "label": "Enable Investigation"
   },
   {
+   "description": "A read-only ClickHouse user on the regional Datum database. The agents read metrics and logs with it.",
    "fieldname": "telemetry_query_section",
    "fieldtype": "Section Break",
-   "label": "Telemetry Query",
-   "description": "A read-only ClickHouse user on the regional Datum database. The agents read metrics and logs with it."
+   "label": "Telemetry Query"
   },
   {
    "fieldname": "telemetry_query_url",
@@ -1061,13 +1068,18 @@
    "fieldname": "telemetry_query_password",
    "fieldtype": "Password",
    "label": "Password"
+  },
+  {
+   "fieldname": "miscellaneous_tab",
+   "fieldtype": "Tab Break",
+   "label": "Miscellaneous"
   }
  ],
  "grid_page_length": 50,
- "index_web_pages_for_search": 1,
  "issingle": 1,
+ "link_display_mode": "Search",
  "links": [],
- "modified": "2026-10-29 00:05:00.000000",
+ "modified": "2026-10-31 01:37:03.934302",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

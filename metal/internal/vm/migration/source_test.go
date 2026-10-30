@@ -479,6 +479,29 @@ func TestLockSourceRejectsAMissingVirtualMachine(t *testing.T) {
 	}
 }
 
+func TestLockSourceRejectsRescueMode(t *testing.T) {
+	manager, machines, _ := newMigrationManager(t)
+	machines.create("vm-1", testSpecification())
+	if err := machines.WriteObserved("vm-1", vm.ObservedRecord{State: vm.StateRunning, IsInRescueMode: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", false); !errors.Is(err, vm.ErrRescueMode) {
+		t.Fatalf("rescue mode migration = %v", err)
+	}
+	if err := machines.WriteObserved("vm-1", vm.ObservedRecord{State: vm.StateRunning}); err != nil {
+		t.Fatal(err)
+	}
+	desired, err := machines.ReadDesired("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired.Specification.RescueImage = &vm.Image{Name: "rescue"}
+	machines.desired["vm-1"] = desired
+	if _, err := manager.LockSource(t.Context(), "mig-1", "vm-1", false); !errors.Is(err, vm.ErrRescueMode) {
+		t.Fatalf("stored rescue image migration = %v", err)
+	}
+}
+
 func TestLockSourceRequiresOffloadedVMToWakeFirst(t *testing.T) {
 	for _, state := range []vm.SleepState{vm.SleepStateDeepSleeping, vm.SleepStateComa} {
 		manager, machines, _ := newMigrationManager(t)

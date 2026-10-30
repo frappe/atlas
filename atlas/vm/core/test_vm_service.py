@@ -11,6 +11,7 @@ from atlas.vm.core.models import Route, VirtualMachineCreateRequest
 from atlas.vm.core.placement import OutOfCapacity, PlacementStrategy
 from atlas.vm.core.vm_service import (
 	InsufficientHostCapacity,
+	MetalOperationError,
 	VirtualMachineCreateError,
 	VirtualMachineService,
 )
@@ -24,6 +25,7 @@ def build_image(tenant_id: int, image_type: str = "machine") -> VirtualMachineIm
 	image = VirtualMachineImage.__new__(VirtualMachineImage)
 	image.tenant_id = tenant_id
 	image.image_type = image_type
+	image.tags = []
 	image.title = "Worker snapshot"
 	image.enabled = 1
 	image.validate_is_available = Mock()
@@ -424,3 +426,19 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 			service.apply_network_changes({"public_network_throughput_mibps": 25})
 
 		update_network.assert_called_once_with({"public_network_throughput_mibps": 25})
+
+
+class TestVirtualMachineRescueMode(UnitTestCase):
+	def test_enabling_needs_a_configured_image(self) -> None:
+		service = VirtualMachineService(SimpleNamespace(name="vm-1", tenant_id=7))
+		with (
+			patch("atlas.vm.core.vm_service.frappe.db.get_single_value", return_value=None),
+			self.assertRaises(AtlasConflictError),
+		):
+			service.enable_rescue_mode()
+
+	def test_only_the_rescue_mode_conflict_is_a_tenant_conflict(self) -> None:
+		with self.assertRaises(AtlasConflictError):
+			VirtualMachineService.raise_metal_error(MetalClientError("", status=409, code="in_rescue_mode"))
+		with self.assertRaises(MetalOperationError):
+			VirtualMachineService.raise_metal_error(MetalClientError("", status=409, code="conflict"))

@@ -16,14 +16,15 @@ type virtualMachineResponse struct {
 
 // desiredVirtualMachineResponse is the stored controller intent.
 type desiredVirtualMachineResponse struct {
-	Generation        uint64                      `json:"generation"`
-	RestartGeneration uint64                      `json:"restart_generation"`
-	State             string                      `json:"state"`
-	Compute           computeResponse             `json:"compute"`
-	Disk              diskResponse                `json:"disk"`
-	Image             virtualMachineImageResponse `json:"image"`
-	Network           networkResponse             `json:"network"`
-	Guest             guestResponse               `json:"guest"`
+	Generation          uint64                      `json:"generation"`
+	RestartGeneration   uint64                      `json:"restart_generation"`
+	State               string                      `json:"state"`
+	IsRescueModeEnabled bool                        `json:"is_rescue_mode_enabled"`
+	Compute             computeResponse             `json:"compute"`
+	Disk                diskResponse                `json:"disk"`
+	Image               virtualMachineImageResponse `json:"image"`
+	Network             networkResponse             `json:"network"`
+	Guest               guestResponse               `json:"guest"`
 }
 
 // observedVirtualMachineResponse is the state reached by the host and any
@@ -33,6 +34,7 @@ type observedVirtualMachineResponse struct {
 	RestartGeneration uint64                  `json:"restart_generation"`
 	State             string                  `json:"state"`
 	SleepState        string                  `json:"sleep_state,omitempty"`
+	IsInRescueMode    bool                    `json:"is_in_rescue_mode"`
 	SleepSnapshot     *vm.SleepSnapshotStatus `json:"sleep_snapshot,omitempty"`
 	LastRequestAt     string                  `json:"last_request_at,omitempty"`
 	Phase             string                  `json:"phase,omitempty"`
@@ -152,9 +154,10 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 	return virtualMachineResponse{
 		ID: information.ID,
 		Desired: desiredVirtualMachineResponse{
-			Generation:        information.DesiredGeneration,
-			RestartGeneration: information.DesiredRestartGeneration,
-			State:             string(information.DesiredState),
+			Generation:          information.DesiredGeneration,
+			RestartGeneration:   information.DesiredRestartGeneration,
+			State:               string(information.DesiredState),
+			IsRescueModeEnabled: information.IsRescueModeEnabled,
 			Compute: computeResponse{
 				CPUMillicores:         information.CPUMillicores,
 				MemoryMiB:             information.MemoryMiB,
@@ -188,6 +191,7 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			RestartGeneration: information.ObservedRestartGeneration,
 			State:             string(information.State),
 			SleepState:        string(information.SleepState),
+			IsInRescueMode:    information.IsInRescueMode,
 			SleepSnapshot:     information.SleepSnapshot,
 			LastRequestAt:     formatRFC3339(information.LastRequestAt),
 			Phase:             information.Phase,

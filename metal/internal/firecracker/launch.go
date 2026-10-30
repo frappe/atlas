@@ -28,6 +28,7 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		UserID:           configuration.UserID,
 		GroupID:          configuration.GroupID,
 		DiskMiB:          configuration.Specification.DiskMiB,
+		RescueImage:      configuration.Specification.RescueImage,
 	})
 	if err != nil {
 		return err

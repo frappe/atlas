@@ -34,9 +34,58 @@ func (manager *Manager) RequestRestart(ctx context.Context, identifier string) e
 	return nil
 }
 
+// EnableRescueMode stores the rescue image. The next cold boot uses it.
+func (manager *Manager) EnableRescueMode(ctx context.Context, identifier string, image Image) error {
+	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if record.State == StateDestroyed || image.Architecture != record.Specification.Image.Architecture {
+			return false, ErrConflict
+		}
+		hasDisk, err := manager.storage.HasDisk(ctx, identifier)
+		if err != nil {
+			return false, err
+		}
+		observed, err := manager.store.readObserved(identifier)
+		if err != nil {
+			return false, err
+		}
+		// A VM in a coma gets its disk back when this change wakes it.
+		if !hasDisk && observed.SleepState != SleepStateComa {
+			return false, ErrConflict
+		}
+		record.Specification.RescueImage = &image
+		return true, nil
+	})
+}
+
+// DisableRescueMode clears the rescue image. The next cold boot uses the VM disk.
+func (manager *Manager) DisableRescueMode(ctx context.Context, identifier string) error {
+	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if record.Specification.RescueImage == nil {
+			return false, nil
+		}
+		record.Specification.RescueImage = nil
+		return true, nil
+	})
+}
+
+// assertNotInRescueMode rejects a change that rescue mode does not allow.
+func (manager *Manager) assertNotInRescueMode(identifier string) error {
+	observed, err := manager.store.readObserved(identifier)
+	if err != nil {
+		return err
+	}
+	if observed.IsInRescueMode {
+		return ErrRescueMode
+	}
+	return nil
+}
+
 // SetCompute stores the complete requested compute configuration.
 func (manager *Manager) SetCompute(ctx context.Context, identifier string, compute Compute) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if record.State == StateDestroyed {
 			return false, ErrConflict
 		}
@@ -86,6 +135,9 @@ func (manager *Manager) SetDisk(ctx context.Context, identifier string, diskMiB 
 // Resize stores the complete compute and disk shape in one desired-record write.
 func (manager *Manager) Resize(ctx context.Context, identifier string, compute Compute, diskMiB int) error {
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if record.State == StateDestroyed || diskMiB < record.Specification.DiskMiB {
 			return false, ErrConflict
 		}
@@ -130,6 +182,9 @@ func (manager *Manager) SetNetwork(ctx context.Context, identifier string, confi
 	if err := manager.assertNotSourceLocked(identifier); err != nil {
 		return err
 	}
+	if err := manager.assertNotInRescueMode(identifier); err != nil {
+		return err
+	}
 	manager.allocationMutex.Lock()
 	defer manager.allocationMutex.Unlock()
 	record, err := manager.store.readDesired(identifier)
@@ -161,6 +216,9 @@ func (manager *Manager) SetNetwork(ctx context.Context, identifier string, confi
 // ReplaceSSHKeys stores the complete desired SSH key list.
 func (manager *Manager) ReplaceSSHKeys(ctx context.Context, identifier string, sshKeys []string) (bool, error) {
 	_, err := manager.mutateAndReport(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if slices.Equal(record.Specification.SSHKeys, sshKeys) {
 			return false, nil
 		}
@@ -176,6 +234,9 @@ func (manager *Manager) ReplaceSSHKeys(ctx context.Context, identifier string, s
 // ReplaceMetadata stores the complete desired guest metadata map.
 func (manager *Manager) ReplaceMetadata(ctx context.Context, identifier string, metadata map[string]string) (bool, error) {
 	_, err := manager.mutateAndReport(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if err := manager.assertNotInRescueMode(identifier); err != nil {
+			return false, err
+		}
 		if maps.Equal(record.Specification.Metadata, metadata) {
 			return false, nil
 		}

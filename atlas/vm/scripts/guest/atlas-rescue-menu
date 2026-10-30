@@ -1,0 +1,233 @@
+#!/bin/bash
+set -uo pipefail
+[[ -t 0 && -t 1 ]] || exit 0
+if ! command -v whiptail >/dev/null || [[ ${TERM:-dumb} == dumb ]]; then
+  echo 'This terminal cannot show the menu. Run atlas-rescue --help.'
+  exit 0
+fi
+
+device=/dev/vdb
+mount_path=/mnt/original
+tool=(sudo /usr/local/sbin/atlas-rescue)
+export NEWT_COLORS='root=,black border=cyan,black window=white,black shadow=,black title=brightcyan,black
+button=black,cyan actbutton=black,cyan compactbutton=white,black listbox=white,black actlistbox=black,cyan
+actsellistbox=black,cyan textbox=white,black acttextbox=black,cyan entry=white,black label=white,black'
+
+dialog() { whiptail "$@" 3>&1 1>&2 2>&3; }
+
+# A serial console has no window size, so ask the terminal where the cursor stops at the far corner.
+sync_serial_console_size() {
+  [[ $(tty) == /dev/ttyS* ]] || return 0
+  local settings rows columns
+  settings=$(stty -g)
+  stty raw -echo
+  printf '\e7\e[999;999H\e[6n\e8'
+  IFS='[;' read -r -d R -t 1 _ rows columns
+  stty "$settings"
+  [[ -n ${rows:-} && -n ${columns:-} ]] && stty rows "$rows" cols "$columns"
+}
+
+window_size() {
+  read -r rows columns < <(stty size)
+  # A serial terminal can report 0 0.
+  [[ ${rows:-0} -gt 0 ]] || rows=24
+  [[ ${columns:-0} -gt 0 ]] || columns=80
+  height=$((rows > 34 ? 32 : rows - 2))
+  width=$((columns > 76 ? 72 : columns - 4))
+}
+
+# Height of a dialog that holds this text and one row of buttons.
+text_height() { echo $(($(fold -s -w $((width - 4)) <<<"$1" | wc -l) + 6)); }
+
+message() { window_size; dialog --title "$1" --msgbox "$2" "$(text_height "$2")" "$width"; }
+ask() { window_size; dialog --title "$1" --yesno "$2" "$(text_height "$2")" "$width"; }
+
+mount_state() {
+  local options
+  options=$(findmnt -rn -S "$device" -o OPTIONS)
+  case ",$options," in
+    ,,) echo unmounted;;
+    *,ro,*) echo read-only;;
+    *) echo read-write;;
+  esac
+}
+
+# Show command output: nothing on a silent success, a dialog when short, and a pager when long.
+show_output() {
+  local title=$1 output status lines
+  shift
+  output=$(mktemp)
+  "${tool[@]}" "$@" >"$output" 2>&1
+  status=$?
+  [[ $status -eq 0 ]] || title="$title failed"
+  window_size
+  lines=$(fold -s -w $((width - 6)) "$output" | wc -l)
+  if ((lines > height - 8)); then
+    clear
+    less -X -P 'Arrows scroll. Press q to return to the menu.' "$output"
+  elif [[ -s $output ]]; then
+    dialog --title "$title" --msgbox "$(cat "$output")" $((lines + 8)) "$width"
+  fi
+  rm -f "$output"
+  return "$status"
+}
+
+# Run a job that continues after a disconnect, and show its live output.
+run_job() {
+  local title=$1 status
+  shift
+  clear
+  echo "$title. This continues if you disconnect."
+  echo
+  if ! "${tool[@]}" "$@" >/dev/null; then
+    read -r -p 'Press Enter to return to the menu.' _
+    return 1
+  fi
+  "${tool[@]}" wait
+  status=$?
+  echo
+  read -r -p 'Press Enter to return to the menu.' _
+  return "$status"
+}
+
+# Run a tool that needs the terminal, then return to the menu.
+run_in_terminal() {
+  clear
+  "${tool[@]}" "$@"
+  echo
+  read -r -p 'Press Enter to return to the menu.' _
+}
+
+mount_disk() {
+  local mode
+  window_size
+  mode=$(dialog --title ' Mount your VM disk ' --notags --menu "How should your VM disk open at $mount_path?" 10 "$width" 2 \
+    rw 'Read and write, to repair it' ro 'Read only, to look around safely') || return 1
+  if [[ $mode == rw ]]; then show_output 'Mount' mount; else show_output 'Mount' mount --read-only; fi
+}
+
+unmount_disk() {
+  ask ' Unmount your VM disk ' "Unmount your VM disk from $mount_path?" && show_output 'Unmount' umount
+}
+
+# Run a tool quietly, and explain a failure before the menu redraws.
+run_step() {
+  local output
+  output=$("${tool[@]}" "$@" 2>&1) && return 0
+  message ' That did not work ' "$output"
+  return 1
+}
+
+require_unmounted() {
+  [[ $(mount_state) == unmounted ]] && return 0
+  ask ' Unmount first ' "This tool needs your VM disk unmounted. Unmount it now?" || return 1
+  run_step umount
+}
+
+# Call this after the user confirms, so that a cancel leaves the disk unchanged.
+require_writable() {
+  case $(mount_state) in
+    read-write) return 0;;
+    read-only) run_step umount || return 1;;
+  esac
+  run_step mount
+}
+
+# Sets selected_user and selected_user_state from the installed accounts.
+choose_user() {
+  local users name state items=()
+  if ! users=$("${tool[@]}" users 2>&1); then
+    message ' That did not work ' "$users"
+    return 1
+  fi
+  while IFS=$'\t' read -r name state; do
+    [[ -n $name ]] && items+=("$name" "$state")
+  done <<<"$users"
+  if ((${#items[@]} == 0)); then
+    message ' No accounts ' 'No login accounts were found on your VM disk.'
+    return 1
+  fi
+  window_size
+  selected_user=$(dialog --title "$1" --menu 'Select an account on your VM disk:' "$height" "$width" $((height - 8)) "${items[@]}") || return 1
+  selected_user_state=$(awk -F'\t' -v name="$selected_user" '$1 == name { print $2 }' <<<"$users")
+}
+
+check_filesystem() { require_unmounted && run_job 'Checking the disk for errors, with no changes' fsck; }
+
+repair_filesystem() {
+  require_unmounted || return 1
+  ask ' Repair disk errors ' 'This changes your VM disk. Take a snapshot first if the data matters. Continue?' || return 1
+  run_job 'Repairing disk errors' fsck --repair --yes
+}
+
+grow_filesystem() {
+  require_unmounted || return 1
+  ask ' Expand the filesystem ' 'Expand the filesystem to use the full disk?' || return 1
+  run_job 'Expanding the filesystem' resize --yes
+}
+
+reset_password() {
+  choose_user ' Reset a user password ' || return 1
+  local arguments=(passwd "$selected_user" --yes) question="Set a new password for $selected_user?"
+  if [[ $selected_user_state == locked ]]; then
+    question="$selected_user is locked. Unlock it and set a new password?"
+    arguments+=(--unlock)
+  fi
+  ask ' Reset a user password ' "$question" || return 1
+  require_writable || return 1
+  run_in_terminal "${arguments[@]}"
+}
+
+add_ssh_keys() {
+  choose_user ' Add SSH keys ' || return 1
+  ask ' Add SSH keys ' "Add this VM's SSH keys to $selected_user? Existing keys stay." || return 1
+  require_writable || return 1
+  show_output 'Add SSH keys' add-keys "$selected_user" --yes
+}
+
+open_chroot() {
+  ask ' Open a shell inside your system ' 'Open a root shell inside your system? Type exit to come back here.' || return 1
+  require_writable || return 1
+  run_in_terminal chroot --yes
+}
+
+turn_off_firewall() {
+  ask ' Turn off the firewall ' 'Turn off the firewall in your system from its next normal boot? The firewall in Atlas does not change.' || return 1
+  require_writable || return 1
+  show_output 'Turn off the firewall' disable-firewall --yes
+}
+
+edit_fstab() {
+  ask ' Edit /etc/fstab ' 'Open /etc/fstab in an editor? A backup is saved first.' || return 1
+  require_writable || return 1
+  run_in_terminal edit-fstab
+}
+
+choice=mount
+while true; do
+  sync_serial_console_size
+  disk_details=$(lsblk -dno SIZE,FSTYPE "$device" | xargs)
+  if ! choice=$(/usr/local/lib/atlas/rescue-menu-screen "$choice" "$disk_details" "$(mount_state)" 3>&1 1>&2 2>&3); then
+    echo 'This terminal cannot show the menu. Run atlas-rescue --help.'
+    exit 1
+  fi
+  [[ -n $choice ]] || break
+  case "$choice" in
+    mount) if [[ $(mount_state) == unmounted ]]; then mount_disk; else unmount_disk; fi;;
+    usage) show_output 'Disk usage' usage;;
+    errors) show_output 'Errors from the last boot' boot-errors;;
+    logs) show_output 'System logs' logs;;
+    check) check_filesystem;;
+    repair) repair_filesystem;;
+    grow) grow_filesystem;;
+    fstab) edit_fstab;;
+    password) reset_password;;
+    keys) add_ssh_keys;;
+    firewall) turn_off_firewall;;
+    chroot) open_chroot;;
+    shell) clear; echo 'Type exit to return to the menu.'; "${tool[@]}" shell;;
+  esac
+done
+clear
+echo 'Run atlas-rescue-menu to open the menu again.'
+echo 'To boot normally, disable rescue mode and reboot the machine.'

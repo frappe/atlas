@@ -59,6 +59,7 @@ func (manager *Manager) stopAfterIdle(
 	operationID string,
 ) (bool, error) {
 	if manager.traffic == nil ||
+		observed.IsInRescueMode || desired.Specification.RescueImage != nil ||
 		desired.State != StateRunning ||
 		desired.Specification.SleepAfterIdleSeconds <= 0 ||
 		status.State != StateRunning ||

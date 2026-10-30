@@ -44,6 +44,10 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - `end` stops the unit, closes the console, removes the MMDS key, and deletes session files. Each step tolerates missing parts.
 - A failed `sshSessionUnits.Wait` does not end a session, because metald shutdown closes the D-Bus connection.
 
+## Rescue mode
+
+[Rescue mode](../../../docs/compute/rescue.md) always cold boots. `disk.img` in the jail marks a rescue boot. `RefreshDisk` targets that drive while it exists.
+
 ## Firecracker API client
 
 The client sends JSON over a Unix socket. One lock per socket path covers the whole exchange because Firecracker rejects concurrent requests. Keep-alives are disabled because a new process can reuse the path. Non-2xx responses return `*Error`, even when the fault body cannot be decoded. Snapshot and drive paths are relative to the guest chroot.

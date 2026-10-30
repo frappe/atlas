@@ -279,6 +279,35 @@ def restart_virtual_machine(virtual_machine_id: str) -> ApiResult[VirtualMachine
 	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
 
 
+@virtual_machine_actions.post("<virtual_machine_id>/actions/enable-rescue-mode")
+@api_docs(
+	responses={
+		**ACCEPTED_RESPONSE,
+		409: {"description": "No rescue image is configured."},
+	},
+)
+def enable_virtual_machine_rescue_mode(virtual_machine_id: str) -> ApiResult[VirtualMachineResponse]:
+	"""Enable rescue mode.
+
+	`is_rescue_mode_enabled` turns true now. The next restart boots the rescue image and attaches the VM disk as `/dev/vdb`. `is_in_rescue_mode` turns true after that boot. Rescue mode then blocks every change except a disk resize, a snapshot of the VM disk, a restart, power changes, and deletion.
+	"""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	virtual_machine.enable_rescue_mode()
+	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
+
+
+@virtual_machine_actions.post("<virtual_machine_id>/actions/disable-rescue-mode")
+@api_docs(responses=ACCEPTED_RESPONSE)
+def disable_virtual_machine_rescue_mode(virtual_machine_id: str) -> ApiResult[VirtualMachineResponse]:
+	"""Disable rescue mode.
+
+	`is_rescue_mode_enabled` turns false now. The next restart boots the VM disk and removes the rescue disk. `is_in_rescue_mode` turns false after that boot.
+	"""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	virtual_machine.disable_rescue_mode()
+	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
+
+
 @virtual_machine_actions.post("<virtual_machine_id>/actions/resize")
 @api_docs(
 	request_example={"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},

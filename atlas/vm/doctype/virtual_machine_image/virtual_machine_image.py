@@ -185,6 +185,8 @@ class VirtualMachineImage(Document):
 
 	def is_visible_to_tenant(self, tenant_id: int) -> bool:
 		"""Return whether one tenant can read and boot this image."""
+		if any(tag.key == "purpose" and tag.value == "rescue" for tag in self.tags):
+			return False
 		return self.is_shared or self.tenant_id == tenant_id
 
 	@property
