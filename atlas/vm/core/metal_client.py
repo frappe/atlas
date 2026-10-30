@@ -51,6 +51,11 @@ class MetalClientError(Exception):
 		"""Report whether the host has no room for a compute or disk increase."""
 		return self.status == 409 and self.code == "insufficient_capacity"
 
+	@property
+	def is_in_rescue_mode(self) -> bool:
+		"""Report whether rescue mode does not allow the request."""
+		return self.status == 409 and self.code == "in_rescue_mode"
+
 
 class MetalClient:
 	"""Call the Metal API on one bare-metal Server."""
@@ -210,6 +215,29 @@ class MetalClient:
 			"PUT",
 			f"/v1/vms/{quote(virtual_machine_id, safe='')}/power",
 			json={"state": state},
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
+	def set_virtual_machine_rescue_mode(
+		self, virtual_machine_id: str, image: dict[str, Any]
+	) -> MetalVirtualMachine:
+		"""Store the rescue image for the next cold boot."""
+		response = self._request(
+			"PUT",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/rescue-mode",
+			json={"image": image},
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
+	def delete_virtual_machine_rescue_mode(self, virtual_machine_id: str) -> MetalVirtualMachine:
+		"""Clear the rescue image for the next cold boot."""
+		response = self._request(
+			"DELETE",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/rescue-mode",
 			expected_status=202,
 			uncertain_on_failure=True,
 		)

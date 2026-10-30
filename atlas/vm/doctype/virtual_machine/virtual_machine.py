@@ -165,6 +165,18 @@ class VirtualMachine(Document):
 		return information.observed.state if information else "unknown"
 
 	@property
+	def is_in_rescue_mode(self) -> bool:
+		"""Return whether the last boot used the rescue image."""
+		information = self.get_metal_vm_info()
+		return bool(information and information.observed.is_in_rescue_mode)
+
+	@property
+	def is_rescue_mode_enabled(self) -> bool:
+		"""Return whether the next cold boot uses the rescue image."""
+		information = self.get_metal_vm_info()
+		return bool(information and information.desired.is_rescue_mode_enabled)
+
+	@property
 	def desired_state(self) -> str | None:
 		"""Return the state Metal was asked to reach."""
 		information = self.get_metal_vm_info()
@@ -412,6 +424,13 @@ class VirtualMachine(Document):
 			allow_disk_only_fallback=bool(cint(allow_disk_only_fallback)),
 		)
 
+	def ensure_not_in_rescue_mode(self) -> None:
+		"""Reject a change before it reaches a provider, because Metal would reject it later."""
+		if self.is_in_rescue_mode:
+			frappe.throw(
+				_("Disable rescue mode and restart the Virtual Machine first."), exc=AtlasConflictError
+			)
+
 	def ensure_not_migrating(self) -> None:
 		"""Reject a mutable action while a migration owns this VM."""
 		if self.active_migration:
@@ -503,6 +522,7 @@ class VirtualMachine(Document):
 	def attach_public_ip(self, version: int, allocation: str) -> None:
 		"""Store one public IP attachment intent."""
 		self.check_permission("write")
+		self.ensure_not_in_rescue_mode()
 		from atlas.metal_server.core.public_ip_service import PublicIPService
 
 		PublicIPService().attach(self, int(version), allocation)
@@ -511,6 +531,7 @@ class VirtualMachine(Document):
 	def detach_public_ip(self, version: int) -> None:
 		"""Store one public IP detach intent."""
 		self.check_permission("write")
+		self.ensure_not_in_rescue_mode()
 		from atlas.metal_server.core.public_ip_service import PublicIPService
 
 		PublicIPService().detach(self, int(version))
@@ -635,6 +656,20 @@ class VirtualMachine(Document):
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		VirtualMachineService(self).request_restart()
+
+	@frappe.whitelist(methods=["POST"])
+	def enable_rescue_mode(self) -> None:
+		"""Use the rescue image from the next cold boot."""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		VirtualMachineService(self).enable_rescue_mode()
+
+	@frappe.whitelist(methods=["POST"])
+	def disable_rescue_mode(self) -> None:
+		"""Use the VM disk from the next cold boot."""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		VirtualMachineService(self).disable_rescue_mode()
 
 	@frappe.whitelist(methods=["POST"])
 	def fetch_firecracker_log(self) -> dict:

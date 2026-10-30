@@ -208,6 +208,14 @@ func (manager *fakeVirtualMachineManager) Resize(_ context.Context, id string, c
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) EnableRescueMode(context.Context, string, vm.Image) error {
+	return nil
+}
+
+func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, string) error {
+	return nil
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {

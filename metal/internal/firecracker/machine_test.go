@@ -473,6 +473,60 @@ func TestWarmLaunchRefreshesTheDriveBeforeResume(t *testing.T) {
 	}
 }
 
+func TestRefreshDiskTargetsTheVirtualMachineDiskInRescueMode(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fc-rescue-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	configuration := Config{MachinesDir: root, SocketsDir: filepath.Join(root, "sockets"), FirecrackerBin: filepath.Join(root, "binary")}
+	units := &migrationUnits{configuration: configuration, testing: t}
+	images := &fakeImages{}
+	runtime := NewRuntime(configuration, units, nil, images, images, &stubSerialBroker{}, nil, telemetry.NewRegistry(nil))
+	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid())}
+	drives := make(chan string, 2)
+	units.handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/" {
+			json.NewEncoder(writer).Encode(api.InstanceInfo{ID: "vm-1", State: "Running"})
+			return
+		}
+		var drive api.PartialDrive
+		if err := json.NewDecoder(request.Body).Decode(&drive); err != nil {
+			t.Error(err)
+		}
+		drives <- request.URL.Path + " " + drive.PathOnHost
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	if err := units.Start(t.Context(), "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configuration.SocketsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(configuration.chrootSocketPath("vm-1"), configuration.socketPath("vm-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.RefreshDisk(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-drives; got != "/drives/drive0 /rootfs.img" {
+		t.Fatalf("normal drive = %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(configuration.chrootRoot("vm-1"), "disk.img"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !runtime.IsInRescueMode("vm-1") {
+		t.Fatal("disk.img does not mark rescue mode")
+	}
+	if err := runtime.RefreshDisk(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-drives; got != "/drives/drive1 /disk.img" {
+		t.Fatalf("rescue drive = %q", got)
+	}
+}
+
 func TestMetadataRefreshKeepsTheHostTime(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "fc-metadata-")
 	if err != nil {

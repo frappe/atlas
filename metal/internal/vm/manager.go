@@ -266,6 +266,9 @@ func (manager *Manager) KernelSHA256s(_ context.Context) ([]string, error) {
 			return nil, err
 		}
 		kernels = append(kernels, desired.Specification.Image.KernelSHA256)
+		if desired.Specification.RescueImage != nil {
+			kernels = append(kernels, desired.Specification.RescueImage.KernelSHA256)
+		}
 	}
 	return kernels, nil
 }
@@ -377,6 +380,10 @@ func cloneSpecification(specification Specification) Specification {
 		configuration := *specification.Image.MemorySnapshotConfiguration
 		specification.Image.MemorySnapshotConfiguration = &configuration
 	}
+	if specification.RescueImage != nil {
+		image := *specification.RescueImage
+		specification.RescueImage = &image
+	}
 	return specification
 }
 
@@ -396,6 +403,8 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		State:                           observed.State,
 		DesiredState:                    desired.State,
 		SleepState:                      observed.SleepState,
+		IsInRescueMode:                  observed.IsInRescueMode,
+		IsRescueModeEnabled:             desired.Specification.RescueImage != nil,
 		Error:                           errorDetail,
 		CPUMillicores:                   desired.Specification.CPUMillicores,
 		MemoryMiB:                       desired.Specification.MemoryMiB,

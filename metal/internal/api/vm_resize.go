@@ -55,6 +55,9 @@ func (s *Server) resizeVirtualMachine(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if virtualMachine.IsInRescueMode {
+		return vm.ErrRescueMode
+	}
 	capacity, err := s.hostService.Capacity(c.Request().Context())
 	if err != nil {
 		return err

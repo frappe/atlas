@@ -21,6 +21,11 @@ func (manager *Manager) SetPowerState(ctx context.Context, identifier string, st
 	}
 
 	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if state == StatePaused {
+			if err := manager.assertNotInRescueMode(identifier); err != nil {
+				return false, err
+			}
+		}
 		return manager.changePowerState(record, state)
 	})
 }

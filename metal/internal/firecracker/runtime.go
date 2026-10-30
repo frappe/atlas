@@ -237,11 +237,18 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 		limiter.Ops = &api.TokenBucket{}
 	}
 
-	return api.New(runtime.configuration.socketPath(input.ID)).PatchDrive(ctx, api.PartialDrive{
-		DriveID:     rootDriveIdentifier,
-		PathOnHost:  rootDrivePath,
-		RateLimiter: limiter,
-	})
+	drive := api.PartialDrive{DriveID: rootDriveIdentifier, PathOnHost: rootDrivePath, RateLimiter: limiter}
+	if runtime.IsInRescueMode(input.ID) {
+		drive.DriveID, drive.PathOnHost = rescuedDriveIdentifier, rescuedDrivePath
+	}
+	return api.New(runtime.configuration.socketPath(input.ID)).PatchDrive(ctx, drive)
+}
+
+// IsInRescueMode reports whether the jail holds the rescued drive. A stop keeps
+// the jail, and a cold boot or memory restore replaces it.
+func (runtime *Runtime) IsInRescueMode(identifier string) bool {
+	_, err := os.Stat(filepath.Join(runtime.configuration.chrootRoot(identifier), rescuedDrivePath))
+	return err == nil
 }
 
 // GetUsage reads CPU and disk use from the unit cgroup and memory from the

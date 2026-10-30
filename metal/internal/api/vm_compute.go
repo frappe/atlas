@@ -36,6 +36,9 @@ func (s *Server) setVirtualMachineCompute(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if virtualMachine.IsInRescueMode {
+		return vm.ErrRescueMode
+	}
 	if err := s.validateComputeCapacity(c, request, virtualMachine); err != nil {
 		return err
 	}

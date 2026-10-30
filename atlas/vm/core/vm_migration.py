@@ -10,7 +10,7 @@ from frappe.utils import get_datetime, now_datetime
 from rq.timeouts import JobTimeoutException
 
 from atlas.atlas.core.background_jobs import run_as_admin
-from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.telemetry.events import count, observe
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility, timestamp_field
@@ -68,6 +68,11 @@ class MigrationService:
 		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		if is_vm_migration_paused_for_create():
 			frappe.throw(_("VM migrations are paused."), exc=AtlasUserError)
+
+		if virtual_machine.is_in_rescue_mode or virtual_machine.is_rescue_mode_enabled:
+			frappe.throw(
+				_("Disable rescue mode and restart the Virtual Machine first."), exc=AtlasConflictError
+			)
 
 		if virtual_machine.current_state not in LIVE_STATES:
 			frappe.throw(

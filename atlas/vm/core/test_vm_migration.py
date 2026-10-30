@@ -10,7 +10,7 @@ from frappe.tests import UnitTestCase
 from frappe.utils import now_datetime
 from rq.timeouts import JobTimeoutException
 
-from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.metal_models import MetalHostCompatibility
 from atlas.vm.core.vm_migration import MigrationService, run_migration
@@ -49,6 +49,8 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 		"is_terminating": 0,
 		"current_state": "running",
 		"desired_state": "running",
+		"is_in_rescue_mode": False,
+		"is_rescue_mode_enabled": False,
 		"architecture": "amd64",
 		"tenant_id": 7,
 		"is_network_gateway": 0,
@@ -86,6 +88,16 @@ class TestMigrationValidation(UnitTestCase):
 			with self.assertRaisesRegex(AtlasUserError, "incompatible"):
 				service.validate_compatibility("metal-2", "amd64", has_sleep_checkpoint=True)
 
+	def test_rejects_a_vm_in_rescue_mode(self) -> None:
+		for field in ("is_in_rescue_mode", "is_rescue_mode_enabled"):
+			with (
+				self.subTest(field),
+				patch("atlas.vm.core.vm_migration.is_vm_migration_paused_for_create", return_value=False),
+				patch("atlas.vm.core.placement.transaction.start_read_committed_transaction"),
+				self.assertRaisesRegex(AtlasConflictError, "rescue mode"),
+			):
+				MigrationService.create(source_vm(**{field: True}))
+
 	def test_rejects_an_already_migrating_vm(self) -> None:
 		with self.assertRaisesRegex(AtlasUserError, "already migrating"):
 			MigrationService.validate_source(source_vm(active_migration="mig-00001"))
@@ -106,7 +118,9 @@ class TestMigrationValidation(UnitTestCase):
 					return "running"
 
 			with self.assertRaisesRegex(RuntimeError, "Lock requested"):
-				MigrationService.create(Source(name="vm-00001"))
+				MigrationService.create(
+					Source(name="vm-00001", is_in_rescue_mode=False, is_rescue_mode_enabled=False)
+				)
 			lock.assert_called_once_with("Virtual Machine", "vm-00001", for_update=True)
 
 

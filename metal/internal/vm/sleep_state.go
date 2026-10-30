@@ -210,6 +210,9 @@ func (manager *Manager) updateSleepState(ctx context.Context, identifier string,
 		return err
 	}
 	defer unlock()
+	if err := manager.assertNotInRescueMode(identifier); err != nil {
+		return err
+	}
 	if manager.isMigrating(identifier) {
 		return ErrConflict
 	}

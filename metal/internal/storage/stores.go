@@ -211,6 +211,7 @@ type VirtualMachineStorageRequest struct {
 	GroupID          uint32
 	DiskMiB          int
 	SourceSnapshot   string
+	RescueImage      *vm.Image
 }
 
 // BootConfiguration contains the files that Firecracker needs to boot.

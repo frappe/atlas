@@ -16,6 +16,7 @@ import (
 )
 
 type fakeRuntime struct {
+	inRescueMode   bool
 	state          State
 	hasSavedState  bool
 	starts         int
@@ -78,9 +79,10 @@ func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeSta
 	return RuntimeStatus{State: runtime.state, HasSavedState: runtime.hasSavedState}, runtime.inspectError
 }
 
-func (runtime *fakeRuntime) Start(context.Context, RuntimeMachine) error {
+func (runtime *fakeRuntime) Start(_ context.Context, machine RuntimeMachine) error {
 	runtime.starts++
 	runtime.state = StateRunning
+	runtime.inRescueMode = machine.Specification.RescueImage != nil
 	return nil
 }
 
@@ -183,6 +185,10 @@ func (runtime *fakeRuntime) Remove(context.Context, RuntimeMachine) error {
 func (runtime *fakeRuntime) RefreshMetadata(context.Context, RuntimeMachine) error {
 	runtime.metadata++
 	return runtime.metadataError
+}
+
+func (runtime *fakeRuntime) IsInRescueMode(string) bool {
+	return runtime.inRescueMode
 }
 
 func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachine) error {

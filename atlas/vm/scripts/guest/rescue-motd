@@ -1,0 +1,2 @@
+Atlas Rescue. Your VM disk is /dev/vdb. Run atlas-rescue-menu to open the repair menu.
+To boot normally, disable rescue mode and reboot the machine.

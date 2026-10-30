@@ -23,7 +23,7 @@ from atlas.api.models import (
 	TerminationProtectionPayload,
 )
 from atlas.api.router import images
-from atlas.atlas.core.tags import read_tags_for
+from atlas.atlas.core.tags import find_names_with_tags, read_tags_for
 from atlas.auth.identity import get_current_tenant_id
 
 if TYPE_CHECKING:
@@ -47,6 +47,13 @@ def list_images(query: ImageListQuery) -> Page[ImageResponse]:
 		filters["image_type"] = query.image_type
 	if not add_tag_filter("Virtual Machine Image", query, filters):
 		return build_page([], query)
+
+	# A tenant uses a rescue image only through rescue mode.
+	rescue_images = find_names_with_tags("Virtual Machine Image", {"purpose": "rescue"})
+	if "name" in filters:
+		filters["name"] = ("in", [name for name in filters["name"][1] if name not in rescue_images])
+	elif rescue_images:
+		filters["name"] = ("not in", rescue_images)
 
 	rows: list[VirtualMachineImage] = frappe.get_list(
 		"Virtual Machine Image",

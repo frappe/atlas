@@ -269,6 +269,31 @@ class VirtualMachineService:
 			)
 		)
 
+	def enable_rescue_mode(self) -> None:
+		"""Store the configured rescue image for the next cold boot."""
+		image_name = frappe.db.get_single_value("Atlas Settings", "rescue_virtual_machine_image")
+		if not image_name or not frappe.db.exists(
+			"Virtual Machine Image", {"name": image_name, "enabled": 1, "status": "Available"}
+		):
+			frappe.throw(
+				_("VM rescue feature isn't available due to missing rescue system images"),
+				exc=AtlasConflictError,
+			)
+		image_request = frappe.get_doc("Virtual Machine Image", image_name).get_metal_image_request()
+		self.perform_metal_operation(
+			lambda metal_client: metal_client.set_virtual_machine_rescue_mode(
+				cast(str, self.virtual_machine.name), image_request
+			)
+		)
+
+	def disable_rescue_mode(self) -> None:
+		"""Clear the rescue image for the next cold boot."""
+		self.perform_metal_operation(
+			lambda metal_client: metal_client.delete_virtual_machine_rescue_mode(
+				cast(str, self.virtual_machine.name)
+			)
+		)
+
 	def get_metrics(
 		self, *, start: datetime | None = None, end: datetime | None = None, max_samples: int | None = None
 	) -> MetalVirtualMachineMetrics | None:
@@ -544,6 +569,10 @@ class VirtualMachineService:
 	@staticmethod
 	def raise_metal_error(error: MetalClientError) -> Never:
 		"""Raise one safe Metal failure at the Frappe boundary."""
+		if error.is_in_rescue_mode:
+			frappe.throw(
+				_("Disable rescue mode and restart the Virtual Machine first."), exc=AtlasConflictError
+			)
 		if error.is_insufficient_capacity:
 			frappe.throw(
 				_("The host has no room for this change. Stop the Virtual Machine and resize it to move it."),

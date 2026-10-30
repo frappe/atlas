@@ -169,6 +169,10 @@ func (m *Manager) LockSource(ctx context.Context, migrationID, virtualMachineID 
 	if observed.State == vm.StateFailed || observed.State == vm.StateUnknown {
 		return SourceDescription{}, vm.ErrConflict
 	}
+	// A stored rescue image would reach the destination without its cached image.
+	if observed.IsInRescueMode || desired.Specification.RescueImage != nil {
+		return SourceDescription{}, vm.ErrRescueMode
+	}
 	sleep, err := m.host.ReadSleepMigration(virtualMachineID)
 	if err != nil {
 		return SourceDescription{}, err
