@@ -173,7 +173,7 @@ An idle VM does not reach `stopped`, or new IP traffic does not restore it. Ping
 3. Run `systemctl show -p MainPID --value metal-vm@<id>.service`. An automatically stopped VM reports `0`.
 4. Check `<base_dir>/machines/<id>/saved-state/metadata.json`, `bpftool map show`, `ip netns exec metal-<id> bpftool link show`, and the metald journal.
 
-**Expected:** Host-to-guest IPv4 or IPv6 traffic updates `activity_by_user_id`. When observation is active, it also writes the VM user ID to `traffic_events`.
+**Expected:** Host-to-guest IPv4 or IPv6 traffic updates `activity_by_user_id`, except replies on TCP connections that the guest started and UDP replies from ports 53, 123, and 443. When observation is active, it also writes the VM user ID to `traffic_events`.
 
 **Recover:** Retry the connection because the first packet can be lost during restoration. Correct the timeout or the host eBPF fault and let reconciliation retry.
 

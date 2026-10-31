@@ -8,10 +8,26 @@
 #define ETHERNET_TYPE_OFFSET 12
 #define ETHERNET_TYPE_IPV4 0x0800
 #define ETHERNET_TYPE_IPV6 0x86DD
+#define IP_HEADER_OFFSET 14
+#define IPV4_FRAGMENT_OFFSET 20
 #define IPV4_PROTOCOL_OFFSET 23
+#define IPV4_SOURCE_OFFSET 26
+#define IPV4_DESTINATION_OFFSET 30
 #define IPV6_NEXT_HEADER_OFFSET 20
+#define IPV6_SOURCE_OFFSET 22
+#define IPV6_DESTINATION_OFFSET 38
+#define IPV6_TRANSPORT_OFFSET 54
 #define IP_PROTOCOL_ICMP 1
+#define IP_PROTOCOL_TCP 6
+#define IP_PROTOCOL_UDP 17
 #define IP_PROTOCOL_ICMPV6 58
+#define TCP_FLAGS_OFFSET 13
+#define TCP_FLAG_SYN 0x02
+#define TCP_FLAG_RST 0x04
+#define TCP_FLAG_ACK 0x10
+#define DNS_PORT 53
+#define NTP_PORT 123
+#define QUIC_PORT 443
 
 /*
  * Stores the last time meaningful network traffic was seen for the VM.
@@ -71,6 +87,28 @@ struct {
 	__uint(max_entries, 1 << 16);
 } traffic_events SEC(".maps");
 
+struct flow_key {
+	__u32 user_id;
+	__u8 guest_address[16];
+	__u8 peer_address[16];
+	__u16 guest_port;
+	__u16 peer_port;
+	__u8 protocol;
+	__u8 ip_version;
+	__u16 padding;
+};
+
+/*
+ * Records the TCP connections that the guest started, so their replies are not requests.
+ * A reply in a connection that this map loses counts as a request.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 1 << 18);
+	__type(key, struct flow_key);
+	__type(value, __u8);
+} guest_connections SEC(".maps");
+
 /* Set by the loader for the VM this program is attached to. */
 const volatile __u32 virtual_machine_user_id = 0;
 
@@ -91,54 +129,172 @@ static __always_inline struct traffic_counters *add_traffic_counters(void *count
 	return counters;
 }
 
-static __always_inline void count_sent_protocol(struct __sk_buff *packet, struct sent_counters *counters)
+struct ip_header {
+	__u8 protocol;
+	__u8 version;
+	__u16 transport_offset;
+};
+
+/* Only the first fragment holds a transport header, so a later one fails. */
+static __always_inline int read_ipv4_header(struct __sk_buff *packet, struct ip_header *header)
+{
+	__u8 first_header_byte;
+	__u16 fragment_offset_and_flags;
+
+	if (bpf_skb_load_bytes(packet, IP_HEADER_OFFSET, &first_header_byte, 1) < 0 ||
+	    (first_header_byte >> 4) != 4 || (first_header_byte & 15) < 5 ||
+	    bpf_skb_load_bytes(packet, IPV4_PROTOCOL_OFFSET, &header->protocol, 1) < 0)
+		return 0;
+	if (bpf_skb_load_bytes(packet, IPV4_FRAGMENT_OFFSET, &fragment_offset_and_flags, sizeof(fragment_offset_and_flags)) < 0 ||
+	    (__builtin_bswap16(fragment_offset_and_flags) & 0x1fff) != 0)
+		return 0;
+
+	header->version = 4;
+	header->transport_offset = IP_HEADER_OFFSET + (first_header_byte & 15) * 4;
+	return 1;
+}
+
+static __always_inline int read_ipv6_header(struct __sk_buff *packet, struct ip_header *header)
+{
+	__u8 first_header_byte;
+
+	if (bpf_skb_load_bytes(packet, IP_HEADER_OFFSET, &first_header_byte, 1) < 0 ||
+	    (first_header_byte >> 4) != 6 ||
+	    bpf_skb_load_bytes(packet, IPV6_NEXT_HEADER_OFFSET, &header->protocol, 1) < 0)
+		return 0;
+
+	header->version = 6;
+	header->transport_offset = IPV6_TRANSPORT_OFFSET;
+	return 1;
+}
+
+static __always_inline int read_ip_header(struct __sk_buff *packet, struct ip_header *header)
 {
 	__u16 ethernet_type;
-	__u8 protocol;
-	__u8 first_header_byte;
-	__u16 transport_offset;
 
 	if (bpf_skb_load_bytes(packet, ETHERNET_TYPE_OFFSET, &ethernet_type, sizeof(ethernet_type)) < 0)
-		return;
-	if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV4)) {
-		if (bpf_skb_load_bytes(packet, 14, &first_header_byte, 1) < 0 ||
-		    (first_header_byte >> 4) != 4 || (first_header_byte & 15) < 5 ||
-		    bpf_skb_load_bytes(packet, IPV4_PROTOCOL_OFFSET, &protocol, 1) < 0)
-			return;
-		transport_offset = 14 + (first_header_byte & 15) * 4;
-		__u16 fragment_offset_and_flags;
-		if (bpf_skb_load_bytes(packet, 20, &fragment_offset_and_flags, sizeof(fragment_offset_and_flags)) < 0 ||
-		    (__builtin_bswap16(fragment_offset_and_flags) & 0x1fff) != 0)
-			return;
-	} else if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV6)) {
-		if (bpf_skb_load_bytes(packet, 14, &first_header_byte, 1) < 0 ||
-		    (first_header_byte >> 4) != 6 ||
-		    bpf_skb_load_bytes(packet, IPV6_NEXT_HEADER_OFFSET, &protocol, 1) < 0)
-			return;
-		transport_offset = 54;
-	} else {
-		return;
-	}
+		return 0;
+	if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV4))
+		return read_ipv4_header(packet, header);
+	if (ethernet_type == __builtin_bswap16(ETHERNET_TYPE_IPV6))
+		return read_ipv6_header(packet, header);
+	return 0;
+}
 
-	if (protocol == IP_PROTOCOL_ICMP || protocol == IP_PROTOCOL_ICMPV6) {
+static __always_inline void count_sent_protocol(struct __sk_buff *packet, struct sent_counters *counters)
+{
+	struct ip_header header;
+
+	if (!read_ip_header(packet, &header))
+		return;
+
+	if (header.protocol == IP_PROTOCOL_ICMP || header.protocol == IP_PROTOCOL_ICMPV6) {
 		__sync_fetch_and_add(&counters->icmp_packets, 1);
 		return;
 	}
-	if (protocol == 17) {
+	if (header.protocol == IP_PROTOCOL_UDP) {
 		__sync_fetch_and_add(&counters->udp_packets, 1);
 		return;
 	}
-	if (protocol != 6)
+	if (header.protocol != IP_PROTOCOL_TCP)
 		return;
 
 	__u8 tcp_flags;
-	if (bpf_skb_load_bytes(packet, transport_offset + 13, &tcp_flags, 1) < 0)
+	if (bpf_skb_load_bytes(packet, header.transport_offset + TCP_FLAGS_OFFSET, &tcp_flags, 1) < 0)
 		return;
-	if (tcp_flags & 0x02) {
+	if (tcp_flags & TCP_FLAG_SYN) {
 		__sync_fetch_and_add(&counters->tcp_syn_packets, 1);
 	}
-	if (tcp_flags & 0x04)
+	if (tcp_flags & TCP_FLAG_RST)
 		__sync_fetch_and_add(&counters->tcp_rst_packets, 1);
+}
+
+static __always_inline int read_flow_addresses(
+	struct __sk_buff *packet,
+	const struct ip_header *header,
+	int is_sent_by_guest,
+	struct flow_key *key)
+{
+	__u8 *source = is_sent_by_guest ? key->guest_address : key->peer_address;
+	__u8 *destination = is_sent_by_guest ? key->peer_address : key->guest_address;
+
+	if (header->version == 4)
+		return bpf_skb_load_bytes(packet, IPV4_SOURCE_OFFSET, source, 4) >= 0 &&
+		       bpf_skb_load_bytes(packet, IPV4_DESTINATION_OFFSET, destination, 4) >= 0;
+	return bpf_skb_load_bytes(packet, IPV6_SOURCE_OFFSET, source, 16) >= 0 &&
+	       bpf_skb_load_bytes(packet, IPV6_DESTINATION_OFFSET, destination, 16) >= 0;
+}
+
+static __always_inline int is_tcp_connection_start(struct __sk_buff *packet, const struct ip_header *header)
+{
+	__u8 tcp_flags;
+
+	if (header->protocol != IP_PROTOCOL_TCP ||
+	    bpf_skb_load_bytes(packet, header->transport_offset + TCP_FLAGS_OFFSET, &tcp_flags, 1) < 0)
+		return 0;
+	return (tcp_flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) == TCP_FLAG_SYN;
+}
+
+/* Fails for a packet with no ports. Such a packet counts as a request. */
+static __always_inline int read_flow_key(
+	struct __sk_buff *packet,
+	int is_sent_by_guest,
+	struct flow_key *key,
+	int *is_connection_start)
+{
+	struct ip_header header;
+	__u16 ports[2];
+
+	if (!read_ip_header(packet, &header) ||
+	    (header.protocol != IP_PROTOCOL_TCP && header.protocol != IP_PROTOCOL_UDP) ||
+	    bpf_skb_load_bytes(packet, header.transport_offset, ports, sizeof(ports)) < 0 ||
+	    !read_flow_addresses(packet, &header, is_sent_by_guest, key))
+		return 0;
+
+	int guest_port_index = is_sent_by_guest ? 0 : 1;
+
+	key->user_id = virtual_machine_user_id;
+	key->guest_port = ports[guest_port_index];
+	key->peer_port = ports[1 - guest_port_index];
+	key->protocol = header.protocol;
+	key->ip_version = header.version;
+	*is_connection_start = is_tcp_connection_start(packet, &header);
+	return 1;
+}
+
+static __always_inline void record_guest_connection(struct __sk_buff *packet)
+{
+	struct flow_key key = {};
+	int is_connection_start;
+	__u8 is_recorded = 1;
+
+	if (read_flow_key(packet, 1, &key, &is_connection_start) && is_connection_start)
+		bpf_map_update_elem(&guest_connections, &key, &is_recorded, BPF_ANY);
+}
+
+/* UDP has no connection start, so only the ports of common client protocols mark a reply. */
+static __always_inline int is_udp_reply_port(__u16 peer_port)
+{
+	return peer_port == __builtin_bswap16(DNS_PORT) ||
+	       peer_port == __builtin_bswap16(NTP_PORT) ||
+	       peer_port == __builtin_bswap16(QUIC_PORT);
+}
+
+/* Also forgets a guest connection when a peer starts a new one on the same ports. */
+static __always_inline int is_reply_to_guest(struct __sk_buff *packet)
+{
+	struct flow_key key = {};
+	int is_connection_start;
+
+	if (!read_flow_key(packet, 0, &key, &is_connection_start))
+		return 0;
+	if (key.protocol == IP_PROTOCOL_UDP)
+		return is_udp_reply_port(key.peer_port);
+	if (is_connection_start) {
+		bpf_map_delete_elem(&guest_connections, &key);
+		return 0;
+	}
+	return bpf_map_lookup_elem(&guest_connections, &key) != 0;
 }
 
 /* Only IPv4 and IPv6 packets are considered activity. */
@@ -201,7 +357,7 @@ int track_guest_received(struct __sk_buff *packet)
 
 	__u32 user_id = virtual_machine_user_id;
 	add_traffic_counters(&rx_counters_by_user_id, user_id, packet->len);
-	if (is_icmp_packet(packet))
+	if (is_icmp_packet(packet) || is_reply_to_guest(packet))
 		return TCX_NEXT;
 
 	/* Update the VM's last activity timestamp. */
@@ -240,7 +396,7 @@ int track_guest_received(struct __sk_buff *packet)
 	return TCX_NEXT;
 }
 
-/* Counts only; activity and watch bookkeeping stays on the egress side. */
+/* Counts and records connections; activity and watch bookkeeping stays on the egress side. */
 SEC("tc")
 int track_guest_sent(struct __sk_buff *packet)
 {
@@ -251,6 +407,7 @@ int track_guest_sent(struct __sk_buff *packet)
 	struct traffic_counters *total = add_traffic_counters(&tx_counters_by_user_id, user_id, packet->len);
 	if (total)
 		count_sent_protocol(packet, (struct sent_counters *)total);
+	record_guest_connection(packet);
 
 	return TCX_NEXT;
 }
