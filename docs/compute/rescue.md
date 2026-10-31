@@ -36,7 +36,7 @@ A terminal login opens the repair menu. The menu shows the disk and its mount st
 | See errors from the last boot | Shows error messages from the last boot of the installed system. |
 | Read system logs | Shows the installed journal or recent text logs. |
 | Check the disk for errors | Runs `e2fsck -n`. It makes no changes. |
-| Repair disk errors | Runs automatic safe ext4 repairs. |
+| Repair disk errors | Runs `e2fsck -f -y`. It accepts every repair and can delete damaged files. |
 | Expand the filesystem | Runs `e2fsck -f -p`, then `resize2fs`, after a disk resize. |
 | Edit /etc/fstab | Saves a backup, opens the file in an editor, then checks it. |
 | Reset a user password | Sets a new password for an installed account. |

@@ -338,8 +338,10 @@ def check_or_resize_filesystem(command: str, *, repair: bool, worker: bool) -> N
 
 
 def _run_filesystem_repair(command: str, repair: bool) -> None:
+	# -p stops at damage that it cannot fix safely, so a repair accepts every fix.
+	mode = "-y" if repair else "-p" if command == "resize" else "-n"
 	# resize2fs refuses a filesystem that was mounted after its last forced check.
-	result = subprocess.run(["e2fsck", "-f", "-p" if repair or command == "resize" else "-n", DEVICE])
+	result = subprocess.run(["e2fsck", "-f", mode, DEVICE])
 	if result.returncode not in (0, 1, 2):
 		raise RuntimeError(
 			f"Filesystem check returned {result.returncode}; inspect the log before further repair."

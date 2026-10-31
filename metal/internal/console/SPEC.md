@@ -35,6 +35,7 @@ flowchart TB
 |---|---|
 | `Open` | Allocates the master and starts the drain. Keeps it out of the store. |
 | `Persist` | Adds the master to the store after the unit holds the slave. |
+| `KeepCarriageReturn` | Stops a VM console PTY from turning Enter into a newline. Do not use it for an SSH session, because `ssh` copies the setting to the guest terminal. |
 | `Attach` | Adds a viewer. The viewer follows the VM to its next console after a restart. |
 | `Close` | Releases the master. |
 | `Shutdown` | Releases local masters. |
@@ -55,7 +56,7 @@ Do not close a master while its VM runs. Linux then sends SIGHUP to Firecracker 
 
 ## Lifecycle
 
-A VM console lives from VM launch to VM stop. An SSH session console lives from session start to session end. The runtime calls `Open`, `Persist`, and `Close`. metald calls `Adopt` and `Shutdown`.
+A VM console lives from VM launch to VM stop. An SSH session console lives from session start to session end. The runtime calls `Open`, `Persist`, and `Close`, and `KeepCarriageReturn` for a VM console. metald calls `Adopt` and `Shutdown`.
 
 A viewer lives until it disconnects or is dropped. `Attach` owns its input goroutine, so input goes to the current console and a restart does not leave a second reader on the viewer.
 

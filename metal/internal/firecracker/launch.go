@@ -82,6 +82,9 @@ func (runtime *Runtime) prepareLaunch(ctx context.Context, configuration vm.Runt
 			"error", err,
 		)
 	}
+	if err := runtime.serialBroker.KeepCarriageReturn(configuration.ID); err != nil {
+		return err
+	}
 	if err := runtime.units.SetLimits(ctx, configuration.ID, resourceLimits(configuration.Specification)); err != nil {
 		return err
 	}
