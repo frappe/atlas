@@ -10,12 +10,12 @@ An explicit stop ends both states. Setting the timeout to `0` wakes a sleeping V
 
 **Going to sleep:**
 
-1. Metal watches traffic sent from the host to the VM.
+1. Metal watches requests sent from the host to the VM.
 2. Every 5 seconds, reconciliation checks running sleepy VMs with no pending change or error.
 3. After the idle timeout, Metal saves memory and device state under `machines/<id>/saved-state/` and stops Firecracker.
-4. Metal checks traffic again. If a packet arrived during the save, it restores the VM.
+4. Metal checks for requests again. If a request arrived during the save, it restores the VM.
 
-**Waking up.** An eBPF hook on the VM's `tap0` sees the next packet and tells Metal. Metal restores the saved state, and the VM carries on from where it stopped: open files and processes are intact.
+**Waking up.** An eBPF hook on the VM's `tap0` sees the next request and tells Metal. Metal restores the saved state, and the VM carries on from where it stopped: open files and processes are intact.
 
 ```mermaid
 sequenceDiagram
@@ -30,7 +30,9 @@ sequenceDiagram
     C->>V: Retry reaches the running VM
 ```
 
-Only real traffic counts: unicast IPv4 or IPv6 packets from the host to the VM, except ICMP. Traffic the VM sends, ICMP such as ping, ARP, and IPv6 multicast chatter do not keep it awake or wake it.
+Only incoming requests count: unicast IPv4 or IPv6 packets from the host to the VM, except ICMP and replies in flows that the VM started. Traffic the VM sends, the replies to it, ICMP such as ping, ARP, and IPv6 multicast chatter do not keep it awake or wake it.
+
+Requests through a connection that the VM started do not count, so a reverse tunnel out of the VM does not keep it awake or wake it. Metal keeps the flows in a limited map, and it loses them when `metald` restarts. A reply in a lost flow counts as a request.
 
 ## What the state looks like
 
@@ -187,7 +189,8 @@ Because most sleepy VMs are asleep at any time, the `balanced` strategy divides 
 - **Some actions throw the saved state away:** an explicit stop, a restart, a shape change, or deleting the VM. The next start is a normal boot.
 - **A failed runtime restore can lose memory.** See [wake recovery](#wake-an-offloaded-vm) for cold-boot fallback and retry behavior.
 - A `metald` restart resets the idle clock, so a VM can sleep later than expected, never earlier.
-- A start resets the idle clock, so a VM is never put to sleep before the guest has booted.
+- A start resets the idle clock. Boot traffic is not a request, so set a timeout longer than the guest's boot.
+- **Work without requests does not keep a VM awake.** A job in the guest pauses at the idle timeout and continues after the next wake. Set a timeout longer than such jobs.
 
 To check a sleepy VM, see [Automatic idle shutdown](../operate/metal.md#automatic-idle-shutdown-does-not-stop-or-restore-a-vm) in the Metal runbook.
 
