@@ -113,17 +113,25 @@ func (b *SerialBroker) Persist(id string) error {
 		return ErrConsoleNotFound
 	}
 
-	if err := b.storeMaster(id, openConsole.master); err != nil {
-		return err
+	return b.storeMaster(id, openConsole.master)
+}
+
+// KeepCarriageReturn stops a VM console PTY from turning Enter into a newline,
+// because programs such as whiptail need the carriage return that a terminal
+// sends. It must run after the unit starts, because TTYReset restores the default
+// settings. Do not use it for an SSH session: ssh copies the setting to the guest
+// terminal, where Enter then does not end a line.
+func (b *SerialBroker) KeepCarriageReturn(id string) error {
+	openConsole := b.currentConsole(id)
+	if openConsole == nil {
+		return ErrConsoleNotFound
 	}
 
 	return keepCarriageReturn(openConsole.master)
 }
 
-// keepCarriageReturn stops the PTY from turning Enter into a newline, because
-// programs such as whiptail need the carriage return that a terminal sends. It
-// must run after the unit starts, because TTYReset restores the default settings.
-// File.Fd would make the master blocking, so it uses the raw connection.
+// keepCarriageReturn uses the raw connection, because File.Fd would make the
+// master blocking.
 func keepCarriageReturn(master *os.File) error {
 	connection, err := master.SyscallConn()
 	if err != nil {

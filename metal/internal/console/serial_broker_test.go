@@ -122,8 +122,8 @@ func TestShutdownKeepsMastersSoAdoptRestoresRunningConsoles(t *testing.T) {
 	expectConsoleOutput(t, restarted, "vm-1", "output during restart")
 }
 
-// Open must leave the master out of the store until the unit holds the slave.
-func TestPersistKeepsTheCarriageReturnOfEnter(t *testing.T) {
+// ssh copies the PTY settings to the guest terminal, so Persist must not change them.
+func TestOnlyKeepCarriageReturnChangesTheEnterKey(t *testing.T) {
 	directory := t.TempDir()
 	broker := NewSerialBroker(directory, newFakeDescriptorStore())
 	defer broker.Shutdown()
@@ -132,18 +132,30 @@ func TestPersistKeepsTheCarriageReturnOfEnter(t *testing.T) {
 		t.Fatal(err)
 	}
 	slave := openSlave(t, directory, "vm-1")
+	turnsEnterIntoNewline := func() bool {
+		settings, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return settings.Iflag&unix.ICRNL != 0
+	}
+
 	if err := broker.Persist("vm-1"); err != nil {
 		t.Fatal(err)
 	}
-	settings, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
-	if err != nil {
+	if !turnsEnterIntoNewline() {
+		t.Fatal("Persist changed the PTY settings")
+	}
+
+	if err := broker.KeepCarriageReturn("vm-1"); err != nil {
 		t.Fatal(err)
 	}
-	if settings.Iflag&unix.ICRNL != 0 {
+	if turnsEnterIntoNewline() {
 		t.Fatal("the console PTY turns Enter into a newline")
 	}
 }
 
+// Open must leave the master out of the store until the unit holds the slave.
 func TestOpenStoresNothingUntilPersist(t *testing.T) {
 	directory := t.TempDir()
 	descriptorStore := newFakeDescriptorStore()
