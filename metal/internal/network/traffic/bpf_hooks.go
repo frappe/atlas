@@ -44,7 +44,7 @@ type bpfHooks struct {
 	events           *ebpf.Map
 	receivedCounters *ebpf.Map
 	sentCounters     *ebpf.Map
-	flowStarters     *ebpf.Map
+	guestConnections *ebpf.Map
 	reader           *ringbuf.Reader
 }
 
@@ -75,7 +75,7 @@ func (hooks *bpfHooks) open(capacity uint32) error {
 	if err != nil {
 		return errors.Join(err, hooks.activity.Close(), hooks.watch.Close(), hooks.receivedCounters.Close(), hooks.sentCounters.Close())
 	}
-	hooks.flowStarters, err = ebpf.NewMap(specification.Maps["flow_starters"].Copy())
+	hooks.guestConnections, err = ebpf.NewMap(specification.Maps["guest_connections"].Copy())
 	if err != nil {
 		return errors.Join(err, hooks.closeMaps())
 	}
@@ -157,7 +157,7 @@ func (hooks *bpfHooks) loadPrograms(userID uint32) (trafficPrograms, error) {
 			"watch_by_user_id":       hooks.watch,
 			"rx_counters_by_user_id": hooks.receivedCounters,
 			"tx_counters_by_user_id": hooks.sentCounters,
-			"flow_starters":          hooks.flowStarters,
+			"guest_connections":      hooks.guestConnections,
 			"traffic_events":         hooks.events,
 		},
 	})
@@ -256,7 +256,7 @@ func (hooks *bpfHooks) closeEventReader() error {
 // closeMaps releases all shared eBPF maps.
 func (hooks *bpfHooks) closeMaps() error {
 	var closeErrors []error
-	for _, kernelMap := range []*ebpf.Map{hooks.activity, hooks.watch, hooks.receivedCounters, hooks.sentCounters, hooks.flowStarters, hooks.events} {
+	for _, kernelMap := range []*ebpf.Map{hooks.activity, hooks.watch, hooks.receivedCounters, hooks.sentCounters, hooks.guestConnections, hooks.events} {
 		if kernelMap != nil {
 			closeErrors = append(closeErrors, kernelMap.Close())
 		}

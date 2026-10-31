@@ -25,8 +25,9 @@
 #define TCP_FLAG_SYN 0x02
 #define TCP_FLAG_RST 0x04
 #define TCP_FLAG_ACK 0x10
-#define FLOW_STARTED_BY_GUEST 1
-#define FLOW_STARTED_BY_PEER 2
+#define DNS_PORT 53
+#define NTP_PORT 123
+#define QUIC_PORT 443
 
 /*
  * Stores the last time meaningful network traffic was seen for the VM.
@@ -98,15 +99,15 @@ struct flow_key {
 };
 
 /*
- * Records who started each flow, so a reply to the guest is not a request.
- * A reply in a flow that this map loses counts as a request.
+ * Records the TCP connections that the guest started, so their replies are not requests.
+ * A reply in a connection that this map loses counts as a request.
  */
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 1 << 18);
 	__type(key, struct flow_key);
 	__type(value, __u8);
-} flow_starters SEC(".maps");
+} guest_connections SEC(".maps");
 
 /* Set by the loader for the VM this program is attached to. */
 const volatile __u32 virtual_machine_user_id = 0;
@@ -261,39 +262,39 @@ static __always_inline int read_flow_key(
 	return 1;
 }
 
-/* A UDP flow has no opening packet, so its first packet names the side that started it. */
-static __always_inline void record_guest_flow(struct __sk_buff *packet)
+static __always_inline void record_guest_connection(struct __sk_buff *packet)
 {
 	struct flow_key key = {};
 	int is_connection_start;
-	__u8 guest_started = FLOW_STARTED_BY_GUEST;
+	__u8 is_recorded = 1;
 
-	if (!read_flow_key(packet, 1, &key, &is_connection_start))
-		return;
-	if (is_connection_start || (key.protocol == IP_PROTOCOL_UDP && !bpf_map_lookup_elem(&flow_starters, &key)))
-		bpf_map_update_elem(&flow_starters, &key, &guest_started, BPF_ANY);
+	if (read_flow_key(packet, 1, &key, &is_connection_start) && is_connection_start)
+		bpf_map_update_elem(&guest_connections, &key, &is_recorded, BPF_ANY);
 }
 
-/* Also updates the map when a peer starts a flow. */
+/* UDP has no connection start, so only the ports of common client protocols mark a reply. */
+static __always_inline int is_udp_reply_port(__u16 peer_port)
+{
+	return peer_port == __builtin_bswap16(DNS_PORT) ||
+	       peer_port == __builtin_bswap16(NTP_PORT) ||
+	       peer_port == __builtin_bswap16(QUIC_PORT);
+}
+
+/* Also forgets a guest connection when a peer starts a new one on the same ports. */
 static __always_inline int is_reply_to_guest(struct __sk_buff *packet)
 {
 	struct flow_key key = {};
 	int is_connection_start;
-	__u8 peer_started = FLOW_STARTED_BY_PEER;
 
 	if (!read_flow_key(packet, 0, &key, &is_connection_start))
 		return 0;
+	if (key.protocol == IP_PROTOCOL_UDP)
+		return is_udp_reply_port(key.peer_port);
 	if (is_connection_start) {
-		bpf_map_delete_elem(&flow_starters, &key);
+		bpf_map_delete_elem(&guest_connections, &key);
 		return 0;
 	}
-
-	__u8 *started_by = bpf_map_lookup_elem(&flow_starters, &key);
-	if (started_by)
-		return *started_by == FLOW_STARTED_BY_GUEST;
-	if (key.protocol == IP_PROTOCOL_UDP)
-		bpf_map_update_elem(&flow_starters, &key, &peer_started, BPF_ANY);
-	return 0;
+	return bpf_map_lookup_elem(&guest_connections, &key) != 0;
 }
 
 /* Only IPv4 and IPv6 packets are considered activity. */
@@ -395,7 +396,7 @@ int track_guest_received(struct __sk_buff *packet)
 	return TCX_NEXT;
 }
 
-/* Counts and records flows; activity and watch bookkeeping stays on the egress side. */
+/* Counts and records connections; activity and watch bookkeeping stays on the egress side. */
 SEC("tc")
 int track_guest_sent(struct __sk_buff *packet)
 {
@@ -406,7 +407,7 @@ int track_guest_sent(struct __sk_buff *packet)
 	struct traffic_counters *total = add_traffic_counters(&tx_counters_by_user_id, user_id, packet->len);
 	if (total)
 		count_sent_protocol(packet, (struct sent_counters *)total);
-	record_guest_flow(packet);
+	record_guest_connection(packet);
 
 	return TCX_NEXT;
 }
