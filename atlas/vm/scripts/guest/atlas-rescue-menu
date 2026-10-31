@@ -156,7 +156,7 @@ check_filesystem() { require_unmounted && run_job 'Checking the disk for errors,
 
 repair_filesystem() {
   require_unmounted || return 1
-  ask ' Repair disk errors ' 'This changes your VM disk. Take a snapshot first if the data matters. Continue?' || return 1
+  ask ' Repair disk errors ' 'This accepts every repair and can delete damaged files. Take a snapshot first if the data matters. Continue?' || return 1
   run_job 'Repairing disk errors' fsck --repair --yes
 }
 
