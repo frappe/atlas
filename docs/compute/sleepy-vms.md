@@ -30,9 +30,11 @@ sequenceDiagram
     C->>V: Retry reaches the running VM
 ```
 
-Only incoming requests count: unicast IPv4 or IPv6 packets from the host to the VM, except ICMP and replies in flows that the VM started. Traffic the VM sends, the replies to it, ICMP such as ping, ARP, and IPv6 multicast chatter do not keep it awake or wake it.
+Only incoming requests count: unicast IPv4 or IPv6 packets from the host to the VM, except ICMP, replies on TCP connections that the VM started, and UDP replies from ports 53, 123, and 443 (DNS, NTP, and QUIC). Traffic the VM sends, these replies, ICMP such as ping, ARP, and IPv6 multicast chatter do not keep it awake or wake it.
 
-Requests through a connection that the VM started do not count, so a reverse tunnel out of the VM does not keep it awake or wake it. Metal keeps the flows in a limited map, and it loses them when `metald` restarts. A reply in a lost flow counts as a request.
+Requests through a TCP connection that the VM started do not count, so a reverse tunnel out of the VM does not keep it awake or wake it. Metal keeps these connections in a limited map, and it loses them when `metald` restarts. A reply on a lost connection counts as a request.
+
+All other UDP counts as a request, so a VM that calls another UDP service can stay awake.
 
 ## What the state looks like
 
