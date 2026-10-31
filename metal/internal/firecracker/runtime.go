@@ -51,6 +51,7 @@ type imageStore interface {
 type serialBroker interface {
 	Open(id string) error
 	Persist(id string) error
+	KeepCarriageReturn(id string) error
 	Close(id string) error
 	IsOpen(id string) bool
 	Attach(ctx context.Context, id string, client io.ReadWriter, resize <-chan console.Winsize) error

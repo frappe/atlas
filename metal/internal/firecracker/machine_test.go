@@ -106,10 +106,11 @@ type stubUnits struct {
 
 type stubSerialBroker struct{}
 
-func (*stubSerialBroker) Open(string) error    { return nil }
-func (*stubSerialBroker) Persist(string) error { return nil }
-func (*stubSerialBroker) Close(string) error   { return nil }
-func (*stubSerialBroker) IsOpen(string) bool   { return false }
+func (*stubSerialBroker) Open(string) error               { return nil }
+func (*stubSerialBroker) Persist(string) error            { return nil }
+func (*stubSerialBroker) KeepCarriageReturn(string) error { return nil }
+func (*stubSerialBroker) Close(string) error              { return nil }
+func (*stubSerialBroker) IsOpen(string) bool              { return false }
 func (*stubSerialBroker) Attach(context.Context, string, io.ReadWriter, <-chan console.Winsize) error {
 	return nil
 }
