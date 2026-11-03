@@ -102,7 +102,7 @@ network: {config: disabled}
 EOF
 
 	install -d -m 0755 "$rootfs_directory/etc/systemd/network"
-	# Keep this equal to meshMTU in metal/internal/network/mesh.go.
+	# Routes outside the mesh keep 1380. apply-metadata raises the link and the mesh route to meta-data/mesh-mtu.
 	cat > "$rootfs_directory/etc/systemd/network/10-atlas.network" <<'EOF'
 [Match]
 Name=eth0
@@ -112,11 +112,14 @@ MTUBytes=1380
 
 [Network]
 Address=172.16.0.2/24
-Gateway=172.16.0.1
 DNS=1.1.1.1
 DNS=1.0.0.1
 DNS=2606:4700:4700::1111
 DNS=2606:4700:4700::1001
+
+[Route]
+Gateway=172.16.0.1
+MTUBytes=1380
 
 [Route]
 Destination=169.254.169.254/32
@@ -126,6 +129,7 @@ Scope=link
 [Route]
 Destination=::/0
 Gateway=fe80::1
+MTUBytes=1380
 EOF
 }
 
