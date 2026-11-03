@@ -129,6 +129,12 @@ def apply_mesh_network(address, routes, mtu):
     # Netlink works before D-Bus starts. The drop-in preserves the state through networkd.
     if mtu:
         subprocess.run(["ip", "link", "set", "dev", "eth0", "mtu", str(mtu)], check=False)
+        # The kernel raises each IPv6 route that carried the old link MTU, so pin ::/0 again.
+        subprocess.run(
+            ["ip", "-6", "route", "replace", "default", "via", MESH_GATEWAY, "dev", "eth0"]
+            + ["proto", "static", "metric", "1024", "mtu", str(OUTSIDE_MESH_MTU)],
+            check=False,
+        )
     subprocess.run(["ip", "-6", "address", "replace", f"{address}/128", "dev", "eth0", "nodad"], check=False)
     subprocess.run(["ip", "-6", "route", "replace", MESH_PREFIX, "via", MESH_GATEWAY, "dev", "eth0"], check=False)
     for destination in routes:
