@@ -33,6 +33,7 @@ type firewallAudit struct {
 type meshRegistrar interface {
 	syncVM(ctx context.Context, request request) error
 	removeVM(ctx context.Context, address, interfaceName string) error
+	virtualMachineMTU() int
 }
 
 // trafficMonitor attaches packet monitoring to VM TAP devices.
@@ -368,7 +369,7 @@ func (allocator *LinuxAllocator) addMeshRegistration(ctx context.Context, reques
 	}
 
 	_, guestVirtualEthernet := virtualEthernetNames(request.UserID)
-	if err := runNetworkNamespaceSteps(ctx, namespaceName(request.VirtualMachineID), meshNamespaceSteps(guestVirtualEthernet, address)); err != nil {
+	if err := runNetworkNamespaceSteps(ctx, namespaceName(request.VirtualMachineID), meshNamespaceSteps(guestVirtualEthernet, address, allocator.mesh.virtualMachineMTU())); err != nil {
 		return fmt.Errorf("route mesh address %s: %w", address, err)
 	}
 	if err := allocator.mesh.syncVM(ctx, request); err != nil {
