@@ -219,14 +219,14 @@ def record_tool_call(
 	arguments = scrub_value(arguments)
 	outcome = {"error": scrub(str(error))} if error else {"result": result}
 	reference_doctype, reference_name = _get_reference(result)
-	is_auto_approved = frappe.db.get_value("Flow Session", ctx.session_id, "auto_approve")
+	approval_mode = frappe.db.get_value("Flow Session", ctx.session_id, "approval_mode")
 	InvestigationEntry.append_to(
 		Investigation.get_for_session(ctx.session_id),
 		kind=kind,
 		title=f"{tool} {', '.join(str(value) for value in arguments.values())}",
 		status=status,
 		user=ctx.user,
-		is_approved=needs_approval and not is_auto_approved,
+		is_approved=needs_approval and approval_mode != "Auto-approve",
 		reference_doctype=reference_doctype,
 		reference_name=reference_name,
 		detail=frappe.as_json({"arguments": arguments, **outcome})[:MAXIMUM_DETAIL_CHARACTERS],

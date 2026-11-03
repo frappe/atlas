@@ -75,7 +75,11 @@ def get_agents() -> list[Agent]:
 	if not model:
 		return []
 
-	knowledge = Knowledge(KNOWLEDGE_BASE, description="Atlas handbook, specifications, and incident reports.")
+	knowledge = None
+	if frappe.db.get_single_value("Flow Knowledge Settings", "embedding_model"):
+		knowledge = Knowledge(
+			KNOWLEDGE_BASE, description="Atlas handbook, specifications, and incident reports."
+		)
 	return [
 		Agent(
 			name=INVESTIGATOR_AGENT,
