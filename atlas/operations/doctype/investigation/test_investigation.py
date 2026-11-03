@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import frappe
 from frappe.flow import ToolContext
 from frappe.flow.lib.agent import with_app_prefix
@@ -27,8 +25,8 @@ class TestInvestigation(IntegrationTestCase):
 		self.context = ToolContext(session_id=session.name, agent="Flow", user="Administrator")
 
 	def test_central_starts_the_agent_that_atlas_declares(self) -> None:
-		with patch("frappe.db.get_single_value", return_value="model"):
-			agent_names = [agent.name for agent in get_agents()]
+		frappe.db.set_single_value("Atlas Settings", "investigation_model", "model")
+		agent_names = [agent.name for agent in get_agents()]
 
 		self.assertIn(with_app_prefix("atlas", INVESTIGATOR_AGENT), agent_names)
 
