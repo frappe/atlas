@@ -2,6 +2,8 @@
 
 `clients/` holds three generated Python clients and the OpenAPI documents that they come from. [openapi-python-client](https://github.com/openapi-generators/openapi-python-client) generates them. The clients are in Git, so a user can install one directly.
 
+`clients/atlas-cli` provides `atlasctl`, an operator CLI that uses the generated Atlas client.
+
 | Directory | Package | API |
 | --- | --- | --- |
 | `clients/atlas-client` | `atlas_client` | Atlas tenant API |
@@ -38,3 +40,38 @@ The client method names come from the OpenAPI operation IDs. Atlas uses the rout
 ## CI
 
 The `Tests` workflow regenerates each client in the job of its component: `Atlas`, `HTTP proxy`, and `WireGuard gateway`. Each job fails when the result is different from the committed client. Regenerate the client in the same commit as an API change.
+
+## Operator CLI
+
+`atlasctl` lists hosts, inspects VMs, and requests VM lifecycle actions through the Atlas API. Atlas checks the token permissions and tenant for each request.
+
+From the repository root, install both packages in a Python 3.11 or newer environment:
+
+```bash
+python -m pip install ./clients/atlas-client ./clients/atlas-cli
+```
+
+Set `ATLAS_BASE_URL` to the Atlas site URL, `ATLAS_TOKEN` to a Bearer token, and `ATLAS_TENANT_ID` to the tenant ID. The CLI reads the token from the environment. See [API authentication](security.md) for token requirements.
+
+```bash
+export ATLAS_BASE_URL=https://atlas.example.com
+export ATLAS_TENANT_ID=7
+atlasctl vms list --json
+atlasctl vms get vm-7-00001
+atlasctl vms restart vm-7-00001
+```
+
+Host listing requires a token with `scope=*` and tenant 0. A Central token can select tenant 0 with `atlasctl --tenant-id 0 hosts list`. Use `--base-url` and `--tenant-id` before the resource name to override the environment.
+
+| Command | Operation |
+| --- | --- |
+| `hosts list` | List hosts that are not deleted. |
+| `vms list` | List VMs for the selected tenant. |
+| `vms get <id>` | Read one VM and its current state. |
+| `vms start/stop/pause/resume/restart <id>` | Request one lifecycle action. |
+
+List commands read all pages. `--limit` sets the page size from 1 to 100, and `--tag key:value` selects matching resources. Use comma-separated pairs to require several tags. `--json` prints one JSON object. List output has an `items` array. Other commands print the API response object.
+
+Lifecycle actions report that the request was accepted. Use `vms get <id>` to check completion. Each HTTP request has a 30-second timeout. Requests are not retried. After a timeout, check the VM state before you repeat an action.
+
+The CLI returns exit status 0 on success and 2 on failure. Errors go to standard error. It uses the Atlas API for these commands and does not connect to hosts through SSH.

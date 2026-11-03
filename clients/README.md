@@ -1,6 +1,8 @@
 # Atlas API clients
 
-`clients/atlas-client`, `clients/atlas-proxy-client`, and `clients/atlas-wg-gateway-client` are generated. `scripts/generate-api-clients.sh` writes them. Read `docs/api-clients.md` for the generation steps.
+`clients/atlas-client`, `clients/atlas-proxy-client`, and `clients/atlas-wg-gateway-client` are generated. `scripts/generate-api-clients.sh` writes them. Read [the API client guide](../docs/interfaces/api-clients.md) for the generation steps.
+
+[`clients/atlas-cli`](atlas-cli/) is the operator CLI. It uses the generated Atlas client. Read its [guide](../docs/interfaces/api-clients.md#operator-cli) and [specification](atlas-cli/SPEC.md).
 
 ## Authentication
 

@@ -14,7 +14,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | [WG gateway](services/wg-gateway/SPEC.md) | `services/wg-gateway/` | Customer access to tenant VMs |
 | [Control cluster](services/control-cluster/SPEC.md) | `services/control-cluster/` | Authentication and replication for service control daemons |
 
-`clients/` holds the generated [API clients](docs/interfaces/api-clients.md). `llm/` and `.greptile/` hold review rules. `.vitepress/` builds the docs site.
+`clients/` holds the generated [API clients](docs/interfaces/api-clients.md) and the [operator CLI](clients/atlas-cli/SPEC.md). `llm/` and `.greptile/` hold review rules. `.vitepress/` builds the docs site.
 
 ## Rules
 
@@ -30,6 +30,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | Job | Runs for |
 |---|---|
 | Atlas | Every pull request |
+| Operator CLI | `clients/atlas-cli/` and `clients/atlas-client/` |
 | Metal | `metal/` |
 | WG Mesh | `services/wg-mesh/` |
 | Control cluster | `services/control-cluster/` |

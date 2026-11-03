@@ -1,0 +1,26 @@
+[project]
+name = "atlas-cli"
+version = "1.0.0"
+description = "Operator CLI for the Atlas API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "atlas-client==1.0.0",
+]
+
+[project.scripts]
+atlasctl = "atlas_cli.cli:main"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["atlas_cli"]

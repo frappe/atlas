@@ -15,6 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  operator-cli:
+    name: Operator CLI (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Find the changed paths
+        id: changes
+        run: .github/scripts/changed-paths.sh '^(clients/(atlas-cli|atlas-client)/|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
+
+      - name: Set up Python
+        if: steps.changes.outputs.matched == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the CLI
+        if: steps.changes.outputs.matched == 'true'
+        run: pip install ./clients/atlas-client ./clients/atlas-cli ruff==0.14.10
+
+      - name: Check the CLI
+        if: steps.changes.outputs.matched == 'true'
+        run: |
+          ruff check clients/atlas-cli
+          ruff format --check clients/atlas-cli
+          python -m unittest discover -s clients/atlas-cli/tests -v
+
   atlas:
     name: Atlas
     runs-on: ubuntu-latest
