@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/frappe/atlas/metal/internal/network"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 )
 
@@ -20,6 +21,8 @@ type Config struct {
 	// DefaultCPUTemplateError says why the host cannot run the built-in template. It is empty when it can.
 	DefaultCPUTemplateError string
 	RequireMigratedGuestSSH bool
+	// MeshMTU is the VM interface MTU on Atlas WG Mesh. MMDS publishes it to the guest.
+	MeshMTU int
 }
 
 // DefaultConfig returns the standard Firecracker host paths.
@@ -29,6 +32,7 @@ func DefaultConfig() Config {
 		SocketsDir:     "/run/metal",
 		JailerBin:      "/usr/bin/jailer",
 		FirecrackerBin: "/usr/bin/firecracker",
+		MeshMTU:        network.DefaultVMMTU,
 	}
 }
 

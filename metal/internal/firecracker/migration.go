@@ -106,7 +106,7 @@ func (runtime *Runtime) RestorePausedFrom(ctx context.Context, input vm.RuntimeM
 	if err := snapshot.restoreNetwork(ctx, input.NetworkInterface); err != nil {
 		return err
 	}
-	metadata := input.Specification.MetadataServiceData(input.ID, input.NetworkInterface.GuestIPAddress, input.NetworkInterface.MACAddress)
+	metadata := input.Specification.MetadataServiceData(input.ID, input.NetworkInterface.GuestIPAddress, input.NetworkInterface.MACAddress, runtime.configuration.MeshMTU)
 	if err := runtime.launchMemorySnapshot(ctx, input, "", snapshot.StatePath, snapshot.MemoryPath, metadata, false); err != nil {
 		return err
 	}

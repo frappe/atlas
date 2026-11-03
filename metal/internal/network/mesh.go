@@ -14,9 +14,15 @@ import (
 	platform "github.com/frappe/atlas/metal/internal/platform"
 )
 
-// meshMTU is the VM interface MTU required by Atlas WG Mesh. It leaves room for
-// the outer IPv6 header inside the WireGuard MTU.
-const meshMTU = 1380
+// DefaultVMMTU is the VM interface MTU on Atlas WG Mesh when metald.toml sets none.
+const DefaultVMMTU = 1380
+
+// meshHeaderBytes is the room a VM packet needs inside the WireGuard MTU: the
+// outer IPv6 header (40) and the gateway header (16).
+const meshHeaderBytes = 40 + 16
+
+// defaultTapMTU keeps the kernel tap MTU for IPv4 when the mesh MTU is smaller.
+const defaultTapMTU = 1500
 
 // meshGatewayAddress is the link-local address the guest routes the mesh through.
 const meshGatewayAddress = "fe80::1"
@@ -40,6 +46,8 @@ type MeshConfig struct {
 	WireGuardStatePath string
 	// ControllerAddress is the Atlas mesh address on wg0.
 	ControllerAddress string
+	// VMMTU is the MTU of the VM veth pair and guest interface.
+	VMMTU int
 }
 
 // Mesh registers virtual machine addresses with the Atlas WG Mesh CLI.
@@ -49,6 +57,7 @@ type Mesh struct {
 	wireGuardName      string
 	wireGuardStatePath string
 	controllerAddress  string
+	vmMTU              int
 
 	// A sync walks the whole route map, so unchanged registrations are cached.
 	registrationMutex sync.Mutex
@@ -69,6 +78,9 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 	if configuration.WireGuardStatePath == "" {
 		return nil, errors.New("Atlas WG Mesh peer state path is required")
 	}
+	if configuration.VMMTU < 1280 {
+		return nil, fmt.Errorf("VM MTU %d is below the 1280 IPv6 minimum", configuration.VMMTU)
+	}
 	if _, err := exec.LookPath(configuration.CommandPath); err != nil {
 		return nil, fmt.Errorf("Atlas WG Mesh CLI %s: %w", configuration.CommandPath, err)
 	}
@@ -79,6 +91,7 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 		wireGuardName:      configuration.WireGuardName,
 		wireGuardStatePath: configuration.WireGuardStatePath,
 		controllerAddress:  configuration.ControllerAddress,
+		vmMTU:              configuration.VMMTU,
 		registrations:      make(map[string]string),
 	}, nil
 }
@@ -107,6 +120,32 @@ func (mesh *Mesh) PrivateNetworkMAC() (string, error) {
 		return "", fmt.Errorf("uplink %s has no Ethernet MAC address", mesh.uplinkName)
 	}
 	return mac.String(), nil
+}
+
+// CheckVMMTU fails when a raised VM MTU and its mesh headers do not fit the
+// WireGuard MTU. The default stays allowed on a smaller wg0, as before.
+func (mesh *Mesh) CheckVMMTU() error {
+	if mesh.vmMTU <= DefaultVMMTU {
+		return nil
+	}
+
+	contents, err := os.ReadFile("/sys/class/net/" + mesh.wireGuardName + "/mtu")
+	if err != nil {
+		return fmt.Errorf("read %s MTU: %w", mesh.wireGuardName, err)
+	}
+	wireGuardMTU, err := strconv.Atoi(strings.TrimSpace(string(contents)))
+	if err != nil {
+		return fmt.Errorf("parse %s MTU: %w", mesh.wireGuardName, err)
+	}
+	if mesh.vmMTU+meshHeaderBytes > wireGuardMTU {
+		return fmt.Errorf("VM MTU %d needs a %s MTU of at least %d, not %d",
+			mesh.vmMTU, mesh.wireGuardName, mesh.vmMTU+meshHeaderBytes, wireGuardMTU)
+	}
+	return nil
+}
+
+func (mesh *Mesh) virtualMachineMTU() int {
+	return mesh.vmMTU
 }
 
 // Version returns the version of the Atlas WG Mesh CLI.
@@ -161,12 +200,13 @@ func (mesh *Mesh) ApplyPrivilegedAddresses(ctx context.Context, desired []string
 // creation, before the guest applies its own copy. A permanent tap0 neighbour
 // reaches a stopped guest. A zero proxy_delay answers the host at once, because
 // the mesh drops packets until the host learns the guest.
-func meshNamespaceSteps(guestVirtualEthernet, address string) [][]string {
+func meshNamespaceSteps(guestVirtualEthernet, address string, mtu int) [][]string {
 	return [][]string{
 		{"sysctl", "-q", "-w", "net.ipv6.conf.all.forwarding=1"},
 		{"sysctl", "-q", "-w", "net.ipv6.conf." + guestVirtualEthernet + ".proxy_ndp=1"},
 		{"sysctl", "-q", "-w", "net.ipv6.neigh." + guestVirtualEthernet + ".proxy_delay=0"},
-		{"ip", "link", "set", guestVirtualEthernet, "mtu", strconv.Itoa(meshMTU)},
+		{"ip", "link", "set", guestVirtualEthernet, "mtu", strconv.Itoa(mtu)},
+		{"ip", "link", "set", tapName, "mtu", strconv.Itoa(max(defaultTapMTU, mtu))},
 		{"ip", "-6", "addr", "replace", meshGatewayAddress + "/64", "dev", tapName, "nodad"},
 		{"ip", "-6", "route", "replace", address + "/128", "dev", tapName},
 		{"ip", "-6", "neigh", "replace", address, "lladdr", guestMACAddress, "dev", tapName, "nud", "permanent"},
@@ -190,7 +230,7 @@ func (mesh *Mesh) syncVM(ctx context.Context, request request) error {
 
 	arguments := []string{
 		"vm", "sync", "--interface", hostVirtualEthernet,
-		"--address", request.WireGuardMeshIPv6, "--mtu", strconv.Itoa(meshMTU),
+		"--address", request.WireGuardMeshIPv6, "--mtu", strconv.Itoa(mesh.vmMTU),
 	}
 	if request.IsNetworkGateway {
 		arguments = append(arguments, "--gateway")

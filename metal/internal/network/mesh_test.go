@@ -22,13 +22,14 @@ func stubMeshCommand(t *testing.T) string {
 func TestNewMeshNeedsACommandAndBothInterfaces(t *testing.T) {
 	complete := MeshConfig{
 		CommandPath: stubMeshCommand(t), WireGuardName: "wg0", UplinkName: "eno1.1878",
-		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json",
+		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json", VMMTU: DefaultVMMTU,
 	}
 	for name, incomplete := range map[string]MeshConfig{
 		"no command path": {WireGuardName: complete.WireGuardName, UplinkName: complete.UplinkName, WireGuardStatePath: complete.WireGuardStatePath},
 		"no WireGuard":    {CommandPath: complete.CommandPath, UplinkName: complete.UplinkName, WireGuardStatePath: complete.WireGuardStatePath},
 		"no uplink":       {CommandPath: complete.CommandPath, WireGuardName: complete.WireGuardName, WireGuardStatePath: complete.WireGuardStatePath},
 		"no peer state":   {CommandPath: complete.CommandPath, WireGuardName: complete.WireGuardName, UplinkName: complete.UplinkName},
+		"no VM MTU":       {CommandPath: complete.CommandPath, WireGuardName: complete.WireGuardName, UplinkName: complete.UplinkName, WireGuardStatePath: complete.WireGuardStatePath},
 	} {
 		if _, err := NewMesh(incomplete); err == nil {
 			t.Errorf("accepted a configuration with %s", name)
@@ -40,7 +41,7 @@ func TestNewMeshNeedsACommandAndBothInterfaces(t *testing.T) {
 }
 
 func TestMeshNamespaceStepsRouteTheGuestAddress(t *testing.T) {
-	steps := meshNamespaceSteps("vg-100", "fdaa:1:0:7::1")
+	steps := meshNamespaceSteps("vg-100", "fdaa:1:0:7::1", 8880)
 	lines := make([]string, len(steps))
 	for index, step := range steps {
 		lines[index] = strings.Join(step, " ")
@@ -50,7 +51,8 @@ func TestMeshNamespaceStepsRouteTheGuestAddress(t *testing.T) {
 		"sysctl -q -w net.ipv6.conf.all.forwarding=1",
 		"sysctl -q -w net.ipv6.conf.vg-100.proxy_ndp=1",
 		"sysctl -q -w net.ipv6.neigh.vg-100.proxy_delay=0",
-		"link set vg-100 mtu 1380",
+		"link set vg-100 mtu 8880",
+		"link set tap0 mtu 8880",
 		"addr replace fe80::1/64 dev tap0 nodad",
 		"route replace fdaa:1:0:7::1/128 dev tap0",
 		"neigh replace fdaa:1:0:7::1 lladdr 06:00:ac:10:00:02 dev tap0 nud permanent",
@@ -89,7 +91,7 @@ func TestGatewayRouteStepsSendHostTrafficToTheGuest(t *testing.T) {
 func TestNewMeshNeedsTheCommandOnTheHost(t *testing.T) {
 	if _, err := NewMesh(MeshConfig{
 		CommandPath: "/nonexistent/atlas-wg-mesh", WireGuardName: "wg0", UplinkName: "eno1.1878",
-		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json",
+		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json", VMMTU: DefaultVMMTU,
 	}); err == nil {
 		t.Error("accepted a command path that is not on the host")
 	}
@@ -106,7 +108,7 @@ func recordingMesh(t *testing.T) (*Mesh, string) {
 	}
 	mesh, err := NewMesh(MeshConfig{
 		CommandPath: command, WireGuardName: "wg0", UplinkName: "eno1", ControllerAddress: "fdaa:1::ffff:ffff:ffff:ffff",
-		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json",
+		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json", VMMTU: DefaultVMMTU,
 	})
 	if err != nil {
 		t.Fatal(err)

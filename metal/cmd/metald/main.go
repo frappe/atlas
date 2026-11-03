@@ -162,8 +162,12 @@ func connectMesh(options options) (*network.Mesh, error) {
 		ControllerAddress:  options.mesh.controllerAddress,
 		WireGuardName:      options.wireGuardName,
 		WireGuardStatePath: wireGuardStatePath(options),
+		VMMTU:              options.cfg.MeshMTU,
 	})
 	if err != nil {
+		return nil, fmt.Errorf("configure Atlas WG Mesh: %w", err)
+	}
+	if err := mesh.CheckVMMTU(); err != nil {
 		return nil, fmt.Errorf("configure Atlas WG Mesh: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), meshSetupTimeout)
