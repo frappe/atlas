@@ -65,6 +65,7 @@ ImageType = Literal["system", "machine"]
 PublicIPStatus = Literal["available", "reserved", "attaching", "attached", "detaching"]
 ImageStatus = Literal[
 	"pending",
+	"building",
 	"snapshotting",
 	"uploading",
 	"completing",
@@ -337,6 +338,18 @@ class ImageListQuery(ListQuery):
 	"""Page through images, and narrow them to one image type when asked."""
 
 	image_type: ImageType | None = Field(default=None, description="Return only this image type.")
+
+
+class ImageImportPayload(StrictModel):
+	"""The OCI image to import."""
+
+	reference: str = Field(
+		min_length=1, max_length=512, description="OCI image reference, such as `nginx:1.29-alpine`."
+	)
+	title: str = Field(default="", max_length=140, description="Display title. The default is the reference.")
+	image_type: ImageType = Field(
+		default="machine", description="Image visibility. Only tenant 0 can set `system`."
+	)
 
 
 class ImageDownloadQuery(StrictModel):

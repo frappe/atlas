@@ -961,6 +961,41 @@
         "title": "ImageDownloadResponse",
         "type": "object"
       },
+      "ImageImportPayload": {
+        "additionalProperties": false,
+        "description": "The OCI image to import.",
+        "properties": {
+          "image_type": {
+            "default": "machine",
+            "description": "Image visibility. Only tenant 0 can set `system`.",
+            "enum": [
+              "system",
+              "machine"
+            ],
+            "title": "Image Type",
+            "type": "string"
+          },
+          "reference": {
+            "description": "OCI image reference, such as `nginx:1.29-alpine`.",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "description": "Display title. The default is the reference.",
+            "maxLength": 140,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference"
+        ],
+        "title": "ImageImportPayload",
+        "type": "object"
+      },
       "ImageResponse": {
         "description": "A tenant virtual machine image.",
         "examples": [
@@ -1052,6 +1087,7 @@
             "description": "Current image lifecycle state.",
             "enum": [
               "pending",
+              "building",
               "snapshotting",
               "uploading",
               "completing",
@@ -3556,6 +3592,105 @@
           }
         },
         "summary": "List images",
+        "tags": [
+          "Images"
+        ]
+      }
+    },
+    "/api/atlas/images/import": {
+      "post": {
+        "description": "Builds an image of the calling tenant from a public OCI image in an allowed registry. Only tenant 0 can set `image_type` to `system`, which shares the image with every tenant. A second request for the same image digest returns the image that already has it. The image boots with its own entrypoint, and metadata keys named `env.<NAME>` set its environment.",
+        "operationId": "import_image",
+        "parameters": [
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "reference": "nginx:1.29-alpine",
+                "title": "Nginx"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/ImageImportPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageResponse"
+                }
+              }
+            },
+            "description": "The build runs. Poll the image route until it is available or failed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The tenant has too many builds running."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "Import OCI image",
         "tags": [
           "Images"
         ]
@@ -7325,7 +7460,7 @@
       "name": "Public IP"
     },
     {
-      "description": "Read and delete tenant virtual machine images.",
+      "description": "Import, read, and delete tenant virtual machine images.",
       "name": "Images"
     },
     {

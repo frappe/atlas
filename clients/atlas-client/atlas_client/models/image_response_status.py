@@ -3,6 +3,7 @@ from enum import StrEnum
 class ImageResponseStatus(StrEnum):
     ARCHIVED = "archived"
     AVAILABLE = "available"
+    BUILDING = "building"
     CLEANING = "cleaning"
     COMPLETING = "completing"
     DELETING = "deleting"

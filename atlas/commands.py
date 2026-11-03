@@ -33,6 +33,7 @@ from atlas.vm.core.image_builder import (
 	get_available_ubuntu_images,
 	publish_ubuntu_image,
 )
+from atlas.vm.core.oci_image_import import OCIImageImportService
 
 
 @click.command("configure-atlas")
@@ -171,6 +172,25 @@ def build_ubuntu_base_image(
 	_publish_image_to_sites(
 		target_sites, title, version, architecture, image_path, kernel_path, storage, minimal=minimal
 	)
+
+
+@click.command("import-oci-image")
+@click.argument("reference")
+@click.option("--title", default="")
+@click.option("--tenant-id", type=int, default=0, show_default=True)
+@click.option("--image-type", type=click.Choice(["system", "machine"]), default="machine", show_default=True)
+@pass_context
+def import_oci_image(context: CliCtxObj, reference: str, title: str, tenant_id: int, image_type: str) -> None:
+	"""Build an image from an OCI image, such as nginx:1.29-alpine. Only tenant 0 can build a System image."""
+	site = get_site(context)
+	try:
+		frappe.init(site)
+		frappe.connect()
+		image_name = OCIImageImportService().request(reference, tenant_id, title, image_type)
+		frappe.db.commit()
+		click.echo(f"{site}: image {image_name} is building")
+	finally:
+		frappe.destroy()
 
 
 @click.command("build-ubuntu-rescue-image")
@@ -354,6 +374,7 @@ commands = [
 	build_service_packages,
 	build_ubuntu_base_image,
 	build_ubuntu_rescue_image_command,
+	import_oci_image,
 	configure_atlas_wireguard,
 	deploy_dev_gateway,
 	start_dev_listener,

@@ -104,6 +104,10 @@ class AtlasSettings(Document):
 		object_storage_region: DF.Data | None
 		object_storage_secret_access_key: DF.Password | None
 		object_storage_signed_url_expiry: DF.Int
+		oci_rootfs_binary_hash: DF.Data | None
+		oci_rootfs_binary_x86_64_file: DF.Link | None
+		oci_rootfs_source_hash: DF.Data | None
+		oci_rootfs_version: DF.Data | None
 		placement_strategy: DF.Autocomplete
 		previous_proxy_cluster_password: DF.Password | None
 		previous_wireguard_gateway_cluster_password: DF.Password | None
