@@ -27,6 +27,15 @@ false) cpu_template_line="" ;;
 	exit 1
 	;;
 esac
+# An Atlas build from before the setting does not send it, so metald keeps its default.
+case "${VM_MESH_MTU:-}" in
+"") vm_mtu_line="" ;;
+*[!0-9]*)
+	echo "VM_MESH_MTU must be a number" >&2
+	exit 1
+	;;
+*) vm_mtu_line="vm_mtu = $VM_MESH_MTU" ;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
@@ -57,21 +66,23 @@ reported_version() {
 	echo "$tool_version"
 }
 
-# cpu_template_config_line returns the CPU template line of the config, or nothing.
-cpu_template_config_line() {
-	grep '^cpu_template_disabled[[:space:]]*=' "$config_file" || true
+# config_line returns the line of a key in the config, or nothing.
+config_line() {
+	grep "^$1[[:space:]]*=" "$config_file" || true
 }
 
-# set_cpu_template_line replaces the CPU template line. An empty argument removes it.
-set_cpu_template_line() {
-	sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
-	if [ -z "$1" ]; then
+# set_config_line replaces the line of a key in a config section. An empty line removes it.
+set_config_line() {
+	local section=$1 key=$2 line=$3
+
+	sed -i "/^$key[[:space:]]*=/d" "$config_file"
+	if [ -z "$line" ]; then
 		return
 	fi
-	if grep -q '^\[firecracker\]' "$config_file"; then
-		sed -i "/^\[firecracker\]/a $1" "$config_file"
+	if grep -q "^\\[$section\\]" "$config_file"; then
+		sed -i "/^\\[$section\\]/a $line" "$config_file"
 	else
-		printf '\n[firecracker]\n%s\n' "$1" >>"$config_file"
+		printf '\n[%s]\n%s\n' "$section" "$line" >>"$config_file"
 	fi
 }
 
@@ -165,7 +176,8 @@ restore_previous() {
 	else
 		sed -i '/^coordination_listen[[:space:]]*=/d' "$config_file"
 	fi
-	set_cpu_template_line "$previous_cpu_template_line"
+	set_config_line firecracker cpu_template_disabled "$previous_cpu_template_line"
+	set_config_line wg_mesh vm_mtu "$previous_vm_mtu_line"
 	exec 8>&-
 	systemctl reset-failed "$service" 2>/dev/null || true
 	if ! systemctl restart "$service" || ! service_is_stable; then
@@ -186,7 +198,8 @@ current_version=$(reported_version "$metald_binary")
 # A repeated upgrade after a success changes nothing.
 if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" &&
 	grep -qxF "$coordination_line" "$config_file" &&
-	[ "$(cpu_template_config_line)" = "$cpu_template_line" ] &&
+	[ "$(config_line cpu_template_disabled)" = "$cpu_template_line" ] &&
+	[ "$(config_line vm_mtu)" = "$vm_mtu_line" ] &&
 	[ "$(unit_property StatusText)" = "ready $new_version" ]; then
 	step "metald $new_version and atlas-wg-mesh are already installed and running"
 	exit 0
@@ -226,8 +239,10 @@ if [ -n "$previous_coordination_line" ]; then
 else
 	sed -i "/^listen[[:space:]]*=/a $coordination_line" "$config_file"
 fi
-previous_cpu_template_line=$(cpu_template_config_line)
-set_cpu_template_line "$cpu_template_line"
+previous_cpu_template_line=$(config_line cpu_template_disabled)
+previous_vm_mtu_line=$(config_line vm_mtu)
+set_config_line firecracker cpu_template_disabled "$cpu_template_line"
+set_config_line wg_mesh vm_mtu "$vm_mtu_line"
 exec 8>&-
 
 # Rename instead of overwrite. The running process keeps its own inode.

@@ -47,6 +47,7 @@ func configure(
 	specification vm.Specification,
 	bootConfiguration storage.BootConfiguration,
 	networkInterface network.Interface,
+	meshMTU int,
 ) error {
 	machineConfiguration := api.MachineConfig{
 		VCPUCount:  specification.VirtualCPUCount(),
@@ -103,6 +104,7 @@ func configure(
 		virtualMachineID,
 		networkInterface.GuestIPAddress,
 		networkInterface.MACAddress,
+		meshMTU,
 	))
 }
 

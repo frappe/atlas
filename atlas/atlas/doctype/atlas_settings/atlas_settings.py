@@ -44,6 +44,10 @@ OBJECT_STORAGE_FIELDS = (
 MINIMUM_SIGNED_URL_EXPIRY_SECONDS = 3600
 MAXIMUM_SIGNED_URL_EXPIRY_SECONDS = 604800
 
+DEFAULT_VM_MESH_MTU = 1380
+# WireGuard over IPv4 (60), the outer mesh IPv6 header (40), the gateway header (16) and 4 spare bytes.
+VM_MESH_OVERHEAD_BYTES = 120
+
 
 class AtlasSettings(Document):
 	"""Site-wide Atlas configuration and provider credentials."""
@@ -164,6 +168,11 @@ class AtlasSettings(Document):
 		wireguard_private_key: DF.Password | None
 		wireguard_public_key: DF.Data | None
 	# end: auto-generated types
+
+	@property
+	def vm_mesh_mtu(self) -> int:
+		"""Return the VM interface MTU on WG Mesh. A private network of 1500 or less keeps the default."""
+		return max(DEFAULT_VM_MESH_MTU, self.private_network_mtu - VM_MESH_OVERHEAD_BYTES)
 
 	@property
 	def resource_name_prefix(self) -> str:

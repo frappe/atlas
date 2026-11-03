@@ -21,6 +21,7 @@ func (runtime *Runtime) RefreshMetadata(ctx context.Context, input vm.RuntimeMac
 		input.ID,
 		input.NetworkInterface.GuestIPAddress,
 		input.NetworkInterface.MACAddress,
+		runtime.configuration.MeshMTU,
 	)
 	// A refresh right after a memory restore replaces the document that carried the host time.
 	vm.SetMetadataHostTime(metadata, time.Now())
