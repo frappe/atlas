@@ -181,6 +181,38 @@ jobs:
         if: steps.changes.outputs.matched == 'true'
         run: make build
 
+  oci-rootfs:
+    name: OCI rootfs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/oci-rootfs
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Find the changed paths
+        id: changes
+        working-directory: ${{ github.workspace }}
+        run: .github/scripts/changed-paths.sh '^(services/oci-rootfs/|\.github/(workflows/tests\.yml|scripts/changed-paths\.sh)$)'
+
+      - name: Set up Go
+        if: steps.changes.outputs.matched == 'true'
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: services/oci-rootfs/go.mod
+          cache-dependency-path: services/oci-rootfs/go.sum
+
+      - name: Build
+        if: steps.changes.outputs.matched == 'true'
+        run: make build
+
+      - name: Vet
+        if: steps.changes.outputs.matched == 'true'
+        run: go vet ./...
+
   wg-mesh:
     name: WG Mesh
     runs-on: ubuntu-latest
