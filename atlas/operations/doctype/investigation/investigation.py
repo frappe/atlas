@@ -140,12 +140,13 @@ class Investigation(Document):
 
 	def start_investigator(self) -> None:
 		"""Start the read-only investigator on the problem, as the investigator user."""
+		from frappe.flow.lib.agent import with_app_prefix
 		from frappe.flow.lib.session import new_session
 
 		previous_user = frappe.session.user
 		frappe.set_user(ensure_investigator_user())  # nosemgrep
 		try:
-			session = new_session(INVESTIGATOR_AGENT, title=self.title)
+			session = new_session(with_app_prefix("atlas", INVESTIGATOR_AGENT), title=self.title)
 			# Commit the link first: a short run can end, and look for it, before chat returns.
 			self.db_set({"status": "Running", "flow_session": session.name}, commit=True)
 			session.chat(self.prompt, on_complete=ON_FLOW_RUN_COMPLETE)
