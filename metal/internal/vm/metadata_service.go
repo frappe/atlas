@@ -14,7 +14,7 @@ const MetadataServiceSizeLimitBytes = 256 * 1024
 const metadataServiceReserveBytes = 8 * 1024
 
 // MetadataServiceData builds the MMDS document read by the guest.
-func (specification Specification) MetadataServiceData(virtualMachineID, ipAddress, macAddress string) map[string]any {
+func (specification Specification) MetadataServiceData(virtualMachineID, ipAddress, macAddress string, meshMTU int) map[string]any {
 	publicKeys := make(map[string]any, len(specification.SSHKeys))
 	for keyIndex, sshKey := range specification.SSHKeys {
 		publicKeys[strconv.Itoa(keyIndex)] = map[string]any{"openssh-key": sshKey}
@@ -38,6 +38,7 @@ func (specification Specification) MetadataServiceData(virtualMachineID, ipAddre
 	}
 	if specification.Network.WireGuardMeshIPv6 != "" {
 		metadata["mesh-ipv6"] = specification.Network.WireGuardMeshIPv6
+		metadata["mesh-mtu"] = strconv.Itoa(meshMTU)
 	}
 	if len(specification.Metadata) > 0 {
 		metadata["attributes"] = specification.Metadata
@@ -59,7 +60,7 @@ func SetMetadataHostTime(document map[string]any, now time.Time) {
 
 // validateMetadataServiceSize measures the document with the longest guest address values.
 func (specification Specification) validateMetadataServiceSize(virtualMachineID string) error {
-	data, err := json.Marshal(specification.MetadataServiceData(virtualMachineID, "255.255.255.255", "ff:ff:ff:ff:ff:ff"))
+	data, err := json.Marshal(specification.MetadataServiceData(virtualMachineID, "255.255.255.255", "ff:ff:ff:ff:ff:ff", 65535))
 	if err != nil {
 		return err
 	}

@@ -201,7 +201,7 @@ func TestRescueImageHidesUserData(t *testing.T) {
 	specification := testSpecification()
 	specification.UserData = "#cloud-config"
 	specification.RescueImage = &Image{Name: "rescue"}
-	latest := specification.MetadataServiceData("vm-1", "10.0.0.1", "02:00:00:00:00:01")["latest"].(map[string]any)
+	latest := specification.MetadataServiceData("vm-1", "10.0.0.1", "02:00:00:00:00:01", 1380)["latest"].(map[string]any)
 	if _, found := latest["user-data"]; found {
 		t.Fatal("rescue boot received user data")
 	}
