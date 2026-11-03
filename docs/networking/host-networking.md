@@ -19,7 +19,7 @@ flowchart LR
 | Guest MAC | `06:00:ac:10:00:02`, fixed so warm snapshots keep a valid MAC. |
 | Transit subnet | One `/30`, derived from the VM user ID. |
 | Veth names | Derived from the VM user ID. |
-| MTU | `1380` on the veth and guest `eth0`. |
+| MTU | `wg_mesh.vm_mtu` on the veth pair and guest `eth0`, `1380` by default. `tap0` keeps at least `1500`. See [mesh MTU](#mesh-mtu). |
 
 Metal needs no per-VM guest-address allocator. WG Mesh discovers which host owns a remote mesh address.
 
@@ -103,9 +103,17 @@ Every guest routes `::/0` through the host. The VM namespace routes decide which
 
 ## Guest address updates
 
-The guest's `atlas-metadata.service` reads Firecracker's metadata service, MMDS, every **250 ms**. It reads `meta-data/mesh-ipv6` and `meta-data/host-routes`, then writes a systemd-networkd drop-in.
+The guest's `atlas-metadata.service` reads Firecracker's metadata service, MMDS, every **250 ms**. It reads `meta-data/mesh-ipv6`, `meta-data/host-routes` and `meta-data/mesh-mtu`, then writes a systemd-networkd drop-in.
 
 This updates the address after warm resume. The image contains no per-VM network values. The same agent also steps the guest clock after a memory restore. See [guest clock after a memory restore](../compute/runtime.md#guest-clock-after-a-memory-restore).
+
+## Mesh MTU
+
+Each VM packet on the mesh is encrypted alone, so the VM MTU sets the VM-to-VM throughput. Atlas sets it from the **Private Network MTU** in Atlas Settings: the MTU less 120 bytes, and never less than `1380`. The 120 bytes hold WireGuard over IPv4 (60), the outer IPv6 header (40), the gateway header (16) and 4 spare bytes. For example, a 9000-byte private network gives `8880`.
+
+Install metald and Upgrade metald write the value to `wg_mesh.vm_mtu` in `metald.toml`. Metald applies it to the veth pair on the next reconciliation and publishes it in MMDS. The guest agent raises `eth0` and the `fdaa::/16` route to it. The IPv4 default route, `::/0` and the host routes keep `1380`, because they can lead to a 1500-byte network.
+
+Metald does not start when a raised value and its 56 header bytes do not fit the `wg0` MTU. To change the value, set the `wg0` MTU on every host in the region first, then change the setting and upgrade metald on every host. Older images keep `1380`. TCP between old and new images uses the smaller segment size.
 
 ## Limits and recovery
 

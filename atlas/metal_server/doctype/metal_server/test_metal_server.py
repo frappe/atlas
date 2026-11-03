@@ -629,6 +629,7 @@ class TestServer(UnitTestCase):
 				"PRIVATE_NETWORK_CIDR": "10.0.0.0/20",
 				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
 				"CPU_TEMPLATE_DISABLED": "false",
+				"VM_MESH_MTU": "1380",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(
@@ -795,6 +796,7 @@ class TestServer(UnitTestCase):
 				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
 				"COORDINATION_LISTEN_ADDRESS": "10.0.0.7:9001",
 				"CPU_TEMPLATE_DISABLED": "true",
+				"VM_MESH_MTU": "1380",
 			},
 		)
 
@@ -1339,6 +1341,7 @@ class TestServer(UnitTestCase):
 				wildcard_domain="example.test",
 				region_id=1,
 				private_network_mtu=1500,
+				vm_mesh_mtu=1380,
 				is_migration_on_wireguard=0,
 				private_network_cidr="10.0.0.0/20",
 				wireguard_ip_address="fdaa:1::ffff:ffff:ffff:ffff",

@@ -324,3 +324,12 @@ class TestVMMigrationNetworkChange(UnitTestCase):
 	def test_the_pause_flag_changes_only_through_the_list_action(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "Pause or Resume"):
 			self.validate({"is_vm_migration_paused"}, is_paused=True, has_running=False)
+
+
+class TestVMMeshMTU(UnitTestCase):
+	def test_only_a_jumbo_private_network_raises_the_vm_mesh_mtu(self) -> None:
+		for private_network_mtu, vm_mesh_mtu in ((1340, 1380), (1500, 1380), (9000, 8880)):
+			settings = frappe.get_doc(
+				{"doctype": "Atlas Settings", "private_network_mtu": private_network_mtu}
+			)
+			self.assertEqual(settings.vm_mesh_mtu, vm_mesh_mtu)
