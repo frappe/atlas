@@ -4,8 +4,8 @@ Atlas runs two [Flow](https://github.com/frappe/frappe/tree/develop/frappe/flow)
 
 | Agent | Who starts it | Can change state |
 | --- | --- | --- |
-| Atlas Investigator | Central, through `POST /api/atlas/investigations` | No. It has only read-only tools. |
-| Atlas Engineer Assistant | An Atlas engineer, in the Flow chat (`/flow`) | Yes, after the engineer approves each call in the chat. |
+| `atlas/Atlas Investigator` | Central, through `POST /api/atlas/investigations` | No. It has only read-only tools. |
+| `atlas/Atlas Engineer Assistant` | An Atlas engineer, in the Flow chat (`/flow`) | Yes, after the engineer approves each call in the chat. |
 
 No agent can terminate a VM, archive a host, delete a record, or read a password or a console token.
 
