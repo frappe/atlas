@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -357,10 +358,12 @@ func (destination *volumeDestination) destroy() {
 	_ = platform.Run(context.Background(), "zfs", "destroy", "-r", destination.dataset)
 }
 
-// newImageHTTPClient returns a client with timeouts suited to large artifacts.
-func newImageHTTPClient() *http.Client {
+// newImageHTTPClient returns a client with timeouts suited to large artifacts. It
+// reaches object storage over the private network when Atlas publishes an address.
+func newImageHTTPClient(logger *slog.Logger) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	dialer := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport.DialContext = platform.NewPrivateServiceDialer(dialer, logger).DialContext
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	transport.IdleConnTimeout = 90 * time.Second
