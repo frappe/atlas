@@ -9,11 +9,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/frappe/atlas/metal/internal/platform"
 )
 
 // maximumBatch is the most samples Datum accepts in one request.
@@ -39,9 +43,13 @@ type Client struct {
 	refreshAt  time.Time
 }
 
-// NewClient returns a client that reads the Datum URL and token from configFile.
-func NewClient(configFile string) *Client {
-	return &Client{configFile: configFile, httpClient: &http.Client{Timeout: requestTimeout}}
+// NewClient returns a client that reads the Datum URL and token from configFile. It
+// reaches Datum over the private network when Atlas publishes an address.
+func NewClient(configFile string, logger *slog.Logger) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := net.Dialer{Timeout: requestTimeout, KeepAlive: 30 * time.Second}
+	transport.DialContext = platform.NewPrivateServiceDialer(dialer, logger).DialContext
+	return &Client{configFile: configFile, httpClient: &http.Client{Transport: transport, Timeout: requestTimeout}}
 }
 
 // Send posts samples in batches that Datum accepts.
