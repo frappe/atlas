@@ -18,18 +18,18 @@ DNS_PROVIDER_FAILED = {
 	request_example={"address": "fdaa:1:0:0:0:0:0:7"},
 	responses={
 		204: {"description": "The name points to the address. Repeating the request is safe."},
-		400: {"description": "The name is not allowed, or the address is not private."},
+		400: {"description": "The name is not allowed, or the address does not suit the name."},
 		**DNS_PROVIDER_FAILED,
 	},
 )
 def set_dns_record(name: str, payload: DnsRecordPayload) -> ApiResult[None]:
 	"""Set DNS record.
 
-	Points one regional service name, such as `internal-s3.<domain>`, to a private address. The name must be one label directly under the Atlas domain, with an allowed prefix.
+	Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.
 	"""
 	require_tenant_zero_operator()
 	try:
-		get_dns_provider().upsert_service_record(name, payload.address)
+		get_dns_provider().upsert_service_record(name, payload.address, payload.ttl)
 	except DnsProviderError as error:
 		raise ApiError(str(error), code="dns_provider_error", status=502) from error
 	return ApiResult(None, status=204)

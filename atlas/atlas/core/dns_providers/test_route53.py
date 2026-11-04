@@ -282,34 +282,49 @@ class TestRoute53Provider(UnitTestCase):
 		change = provider.client.change_resource_record_sets.call_args.kwargs["ChangeBatch"]["Changes"][0]
 		self.assertEqual(change["ResourceRecordSet"]["Type"], "TXT")
 
-	def test_service_record_points_an_allowed_name_to_a_private_address(self) -> None:
+	def test_service_records_point_to_public_and_private_addresses(self) -> None:
 		provider = _build_provider()
 
-		provider.upsert_service_record("internal-s3.example.com", ip_address("fdaa:1::7"))
+		provider.upsert_service_record("s3-svc.example.com", ip_address("52.95.110.1"), 300)
+		provider.upsert_service_record("internal-s3-svc.example.com", ip_address("fdaa:1::7"), 300)
 
-		record = provider.client.change_resource_record_sets.call_args.kwargs["ChangeBatch"]["Changes"][0][
-			"ResourceRecordSet"
+		records = [
+			call.kwargs["ChangeBatch"]["Changes"][0]["ResourceRecordSet"]
+			for call in provider.client.change_resource_record_sets.call_args_list
 		]
 		self.assertEqual(
-			record,
-			{
-				"Name": "internal-s3.example.com",
-				"Type": "AAAA",
-				"TTL": 60,
-				"ResourceRecords": [{"Value": "fdaa:1::7"}],
-			},
+			records,
+			[
+				{
+					"Name": "s3-svc.example.com",
+					"Type": "A",
+					"TTL": 300,
+					"ResourceRecords": [{"Value": "52.95.110.1"}],
+				},
+				{
+					"Name": "internal-s3-svc.example.com",
+					"Type": "AAAA",
+					"TTL": 300,
+					"ResourceRecords": [{"Value": "fdaa:1::7"}],
+				},
+			],
 		)
 
-	def test_service_record_refuses_other_names_and_public_addresses(self) -> None:
+	def test_service_record_refuses_other_names_and_wrong_addresses(self) -> None:
 		provider = _build_provider()
 
 		for name, address in (
-			("proxy.example.com", "fdaa:1::7"),
-			("internal-s3.cargo.example.com", "fdaa:1::7"),
-			("internal-s3.example.org", "fdaa:1::7"),
-			("internal-s3.example.com", "1.1.1.1"),
+			("proxy.example.com", "52.95.110.1"),
+			("internal-proxy.example.com", "fdaa:1::7"),
+			("s3-svc.cargo.example.com", "52.95.110.1"),
+			("s3-svc.example.org", "52.95.110.1"),
+			("s3-svc.example.com", "fdaa:1::7"),
+			("internal-s3-svc.example.com", "52.95.110.1"),
+			("s3-svc.example.com", "224.0.0.1"),
+			("internal-s3-svc.example.com", "10.0.0.7"),
+			("internal-s3-svc.example.com", "::1"),
 		):
 			with self.subTest(name=name, address=address), self.assertRaises(AtlasUserError):
-				provider.upsert_service_record(name, ip_address(address))
+				provider.upsert_service_record(name, ip_address(address), 300)
 
 		provider.client.change_resource_record_sets.assert_not_called()
