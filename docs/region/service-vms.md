@@ -33,16 +33,19 @@ The service record and VM have different states. For example, the VM can exist w
 
 Cargo also starts as `Not Provisioned`. See [Cargo recovery](cargo.md#operate-and-recover) before replacing its VM.
 
-## Point a service name to a private address
+## Publish a service address
 
-A tenant-0 caller, such as Central or Cargo, can set an A or AAAA record for a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
+A tenant-0 caller, such as Cargo, can set an A or AAAA record for a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
 
 ```http
-PUT /api/atlas/dns-records/internal-s3.<domain>
+PUT /api/atlas/dns-records/s3-svc.<domain>
+{"address": "203.0.113.7", "ttl": 300}
+
+PUT /api/atlas/dns-records/internal-s3-svc.<domain>
 {"address": "fdaa:1:0:0:0:0:0:7"}
 ```
 
-The name must be one label directly under the Atlas domain, with a prefix from `SERVICE_RECORD_PREFIXES` in `atlas/atlas/core/dns_providers/base.py`. The address must be private. `DELETE` on the same path removes the A and AAAA records.
+The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. `DELETE` on the same path removes the A and AAAA records.
 
 ## Why a service can wait
 

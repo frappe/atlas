@@ -595,13 +595,21 @@
       },
       "DnsRecordPayload": {
         "additionalProperties": false,
-        "description": "The private address of one regional service name.",
+        "description": "The address of one regional service name.",
         "properties": {
           "address": {
-            "description": "Private IPv4 or IPv6 address. Atlas sets an A or AAAA record.",
+            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record.",
             "format": "ipvanyaddress",
             "title": "Address",
             "type": "string"
+          },
+          "ttl": {
+            "default": 300,
+            "description": "Record TTL in seconds.",
+            "maximum": 86400,
+            "minimum": 60,
+            "title": "Ttl",
+            "type": "integer"
           }
         },
         "required": [
@@ -3182,7 +3190,7 @@
         ]
       },
       "put": {
-        "description": "Points one regional service name, such as `internal-s3.<domain>`, to a private address. The name must be one label directly under the Atlas domain, with an allowed prefix.",
+        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.",
         "operationId": "set_dns_record",
         "parameters": [
           {
@@ -3231,7 +3239,7 @@
                 }
               }
             },
-            "description": "The name is not allowed, or the address is not private."
+            "description": "The name is not allowed, or the address does not suit the name."
           },
           "401": {
             "content": {

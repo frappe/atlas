@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from ipaddress import IPv4Address, IPv6Address
 from typing import TYPE_CHECKING, ClassVar
@@ -8,14 +7,14 @@ from typing import TYPE_CHECKING, ClassVar
 import frappe
 
 from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.mesh_address import MESH_NETWORK
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
-# Labels that regional services may set under the Atlas domain. Metal reads them to reach a service privately.
-SERVICE_RECORD_PREFIXES = ("internal-",)
-SERVICE_RECORD_TTL = 60
-DNS_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+# Regional services that tenant 0 may publish. Metal and Pilot dial `internal-<label>` over the mesh.
+SERVICE_RECORD_LABELS = ("s3-svc", "s3-admin-svc", "telemetry-svc", "telemetry-read-svc")
+INTERNAL_RECORD_PREFIX = "internal-"
 
 
 class DnsProviderError(Exception):
@@ -122,26 +121,24 @@ class DnsProvider(ABC):
 		"""Remove the TXT record for the name, if it exists."""
 		self.remove_record("TXT", name)
 
-	def upsert_service_record(self, name: str, address: IPv4Address | IPv6Address) -> None:
-		"""Point one regional service name to its private address."""
-		self._validate_service_record_name(name)
-		if not address.is_private:
-			raise AtlasUserError(f"{address} is not a private address.")
-		self.upsert_record("A" if address.version == 4 else "AAAA", name, [str(address)], SERVICE_RECORD_TTL)
+	def upsert_service_record(self, name: str, address: IPv4Address | IPv6Address, ttl: int) -> None:
+		"""Point a service name to its public address, or its `internal-` name to its mesh address."""
+		if self._is_internal_service_record(name):
+			if address not in MESH_NETWORK:
+				raise AtlasUserError(f"{name} needs a WG Mesh address in {MESH_NETWORK}.")
+		elif not address.is_global or address.is_multicast:
+			raise AtlasUserError(f"{name} needs a public address.")
+		self.upsert_record("A" if address.version == 4 else "AAAA", name, [str(address)], ttl)
 
 	def remove_service_record(self, name: str) -> None:
-		"""Remove the A and AAAA records of one regional service name."""
-		self._validate_service_record_name(name)
+		"""Remove the A and AAAA records of one service name."""
+		self._is_internal_service_record(name)
 		self.remove_record("A", name)
 		self.remove_record("AAAA", name)
 
-	def _validate_service_record_name(self, name: str) -> None:
+	def _is_internal_service_record(self, name: str) -> bool:
 		label, _, domain = name.partition(".")
-		if (
-			domain != self.domain_name
-			or not label.startswith(SERVICE_RECORD_PREFIXES)
-			or not DNS_LABEL.fullmatch(label)
-		):
-			raise AtlasUserError(
-				f"{name} must be one label under {self.domain_name} that starts with {', '.join(SERVICE_RECORD_PREFIXES)}."
-			)
+		service = label.removeprefix(INTERNAL_RECORD_PREFIX)
+		if domain != self.domain_name or service not in SERVICE_RECORD_LABELS:
+			raise AtlasUserError(f"{name} is not a service record name under {self.domain_name}.")
+		return service != label

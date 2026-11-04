@@ -1236,11 +1236,12 @@ class HostAccessResponse(BaseModel):
 
 
 class DnsRecordPayload(StrictModel):
-	"""The private address of one regional service name."""
+	"""The address of one regional service name."""
 
 	address: IPvAnyAddress = Field(
-		description="Private IPv4 or IPv6 address. Atlas sets an A or AAAA record."
+		description="Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record."
 	)
+	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
 
 
 class InvestigationPayload(StrictModel):
