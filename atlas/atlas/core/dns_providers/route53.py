@@ -7,13 +7,13 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from atlas.atlas.core.dns_providers import register
-from atlas.atlas.core.dns_providers.base import DnsProvider
+from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 
-class Route53Error(Exception):
+class Route53Error(DnsProviderError):
 	"""Raised when Route53 rejects a provider request."""
 
 
@@ -26,7 +26,6 @@ class Route53Provider(DnsProvider):
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		super().__init__(settings)
-		self.domain_name = self.settings.wildcard_domain.removeprefix("*.")
 		self.client = boto3.client(
 			"route53",
 			aws_access_key_id=self.settings.route53_access_key_id,

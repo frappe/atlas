@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import frappe
 
-from atlas.atlas.core.dns_providers.base import DnsProvider
+from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -38,4 +38,4 @@ def _load_implementations() -> None:
 	import atlas.atlas.core.dns_providers.route53
 
 
-__all__ = ["DnsProvider", "get_dns_provider", "register"]
+__all__ = ["DnsProvider", "DnsProviderError", "get_dns_provider", "register"]
