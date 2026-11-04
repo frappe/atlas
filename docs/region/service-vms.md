@@ -33,6 +33,17 @@ The service record and VM have different states. For example, the VM can exist w
 
 Cargo also starts as `Not Provisioned`. See [Cargo recovery](cargo.md#operate-and-recover) before replacing its VM.
 
+## Point a service name to a private address
+
+A tenant-0 caller, such as Central or Cargo, can set an A or AAAA record for a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
+
+```http
+PUT /api/atlas/dns-records/internal-s3.<domain>
+{"address": "fdaa:1:0:0:0:0:0:7"}
+```
+
+The name must be one label directly under the Atlas domain, with a prefix from `SERVICE_RECORD_PREFIXES` in `atlas/atlas/core/dns_providers/base.py`. The address must be private. `DELETE` on the same path removes the A and AAAA records.
+
 ## Why a service can wait
 
 Atlas queues a setup job after VM creation. If the VM is still a draft, the job leaves the service `Pending`. The scheduler queues it again.

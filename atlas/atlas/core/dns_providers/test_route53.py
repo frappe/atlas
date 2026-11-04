@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from unittest.mock import MagicMock
 
 from botocore.exceptions import ClientError
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.dns_providers.route53 import Route53Provider
+from atlas.atlas.core.exceptions import AtlasUserError
 
 
 class _FakeSettings:
@@ -279,3 +281,35 @@ class TestRoute53Provider(UnitTestCase):
 
 		change = provider.client.change_resource_record_sets.call_args.kwargs["ChangeBatch"]["Changes"][0]
 		self.assertEqual(change["ResourceRecordSet"]["Type"], "TXT")
+
+	def test_service_record_points_an_allowed_name_to_a_private_address(self) -> None:
+		provider = _build_provider()
+
+		provider.upsert_service_record("internal-s3.example.com", ip_address("fdaa:1::7"))
+
+		record = provider.client.change_resource_record_sets.call_args.kwargs["ChangeBatch"]["Changes"][0][
+			"ResourceRecordSet"
+		]
+		self.assertEqual(
+			record,
+			{
+				"Name": "internal-s3.example.com",
+				"Type": "AAAA",
+				"TTL": 60,
+				"ResourceRecords": [{"Value": "fdaa:1::7"}],
+			},
+		)
+
+	def test_service_record_refuses_other_names_and_public_addresses(self) -> None:
+		provider = _build_provider()
+
+		for name, address in (
+			("proxy.example.com", "fdaa:1::7"),
+			("internal-s3.cargo.example.com", "fdaa:1::7"),
+			("internal-s3.example.org", "fdaa:1::7"),
+			("internal-s3.example.com", "1.1.1.1"),
+		):
+			with self.subTest(name=name, address=address), self.assertRaises(AtlasUserError):
+				provider.upsert_service_record(name, ip_address(address))
+
+		provider.client.change_resource_record_sets.assert_not_called()

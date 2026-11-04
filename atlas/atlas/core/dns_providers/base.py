@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
+from ipaddress import IPv4Address, IPv6Address
 from typing import TYPE_CHECKING, ClassVar
 
 import frappe
 
+from atlas.atlas.core.exceptions import AtlasUserError
+
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
+
+# Labels that regional services may set under the Atlas domain. Metal reads them to reach a service privately.
+SERVICE_RECORD_PREFIXES = ("internal-",)
+SERVICE_RECORD_TTL = 60
+DNS_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+
+
+class DnsProviderError(Exception):
+	"""Raised when the DNS provider rejects a request."""
 
 
 class DnsProvider(ABC):
@@ -17,6 +30,7 @@ class DnsProvider(ABC):
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
+		self.domain_name = self.settings.wildcard_domain.removeprefix("*.")
 
 	@abstractmethod
 	def bootstrap(self) -> None:
@@ -107,3 +121,27 @@ class DnsProvider(ABC):
 	def remove_txt_record(self, name: str) -> None:
 		"""Remove the TXT record for the name, if it exists."""
 		self.remove_record("TXT", name)
+
+	def upsert_service_record(self, name: str, address: IPv4Address | IPv6Address) -> None:
+		"""Point one regional service name to its private address."""
+		self._validate_service_record_name(name)
+		if not address.is_private:
+			raise AtlasUserError(f"{address} is not a private address.")
+		self.upsert_record("A" if address.version == 4 else "AAAA", name, [str(address)], SERVICE_RECORD_TTL)
+
+	def remove_service_record(self, name: str) -> None:
+		"""Remove the A and AAAA records of one regional service name."""
+		self._validate_service_record_name(name)
+		self.remove_record("A", name)
+		self.remove_record("AAAA", name)
+
+	def _validate_service_record_name(self, name: str) -> None:
+		label, _, domain = name.partition(".")
+		if (
+			domain != self.domain_name
+			or not label.startswith(SERVICE_RECORD_PREFIXES)
+			or not DNS_LABEL.fullmatch(label)
+		):
+			raise AtlasUserError(
+				f"{name} must be one label under {self.domain_name} that starts with {', '.join(SERVICE_RECORD_PREFIXES)}."
+			)
