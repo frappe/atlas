@@ -20,6 +20,7 @@ from .create_virtual_machine_payload import CreateVirtualMachinePayload
 from .create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata
 from .create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags
 from .disk_update_payload import DiskUpdatePayload
+from .dns_record_payload import DnsRecordPayload
 from .download_image_artifact import DownloadImageArtifact
 from .firewall_payload import FirewallPayload
 from .firewall_response import FirewallResponse
@@ -116,6 +117,7 @@ __all__ = (
     "CreateVirtualMachinePayloadMetadata",
     "CreateVirtualMachinePayloadTags",
     "DiskUpdatePayload",
+    "DnsRecordPayload",
     "DownloadImageArtifact",
     "FirewallPayload",
     "FirewallResponse",

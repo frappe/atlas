@@ -7,13 +7,13 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from atlas.atlas.core.dns_providers import register
-from atlas.atlas.core.dns_providers.base import DnsProvider
+from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 
-class Route53Error(Exception):
+class Route53Error(DnsProviderError):
 	"""Raised when Route53 rejects a provider request."""
 
 
@@ -26,7 +26,6 @@ class Route53Provider(DnsProvider):
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		super().__init__(settings)
-		self.domain_name = self.settings.wildcard_domain.removeprefix("*.")
 		self.client = boto3.client(
 			"route53",
 			aws_access_key_id=self.settings.route53_access_key_id,
@@ -107,9 +106,17 @@ class Route53Provider(DnsProvider):
 		return self._zone_id(result["HostedZone"]["Id"])
 
 	@override
-	def upsert_record(self, record_type: str, name: str, values: list[str], ttl: int = 300) -> None:
-		"""Create the record if missing, or update it to match the given values."""
-		self._change_record("UPSERT", record_type, name, values, ttl)
+	def upsert_record(
+		self,
+		record_type: str,
+		name: str,
+		values: list[str],
+		ttl: int = 300,
+		replaced_type: str | None = None,
+	) -> None:
+		"""Create or update the record, and remove the `replaced_type` record of the name in one change batch."""
+		replaced_record = self._get_record(replaced_type, name) if replaced_type else None
+		self._change_record("UPSERT", record_type, name, values, ttl, replaced_record)
 
 	@override
 	def remove_record(self, record_type: str, name: str) -> None:
@@ -183,25 +190,28 @@ class Route53Provider(DnsProvider):
 		except (BotoCoreError, ClientError) as error:
 			raise Route53Error(f"Failed to delete proxy record {name}: {error}") from error
 
-	def _change_record(self, action: str, record_type: str, name: str, values: list[str], ttl: int) -> None:
+	def _change_record(
+		self,
+		action: str,
+		record_type: str,
+		name: str,
+		values: list[str],
+		ttl: int,
+		replaced_record: dict | None = None,
+	) -> None:
 		zone_id = self.create_zone(self.domain_name)
+		record = {
+			"Name": name,
+			"Type": record_type,
+			"TTL": ttl,
+			"ResourceRecords": [{"Value": value} for value in values],
+		}
+		changes = [{"Action": action, "ResourceRecordSet": record}]
+		if replaced_record:
+			changes.append({"Action": "DELETE", "ResourceRecordSet": replaced_record})
+
 		try:
-			self.client.change_resource_record_sets(
-				HostedZoneId=zone_id,
-				ChangeBatch={
-					"Changes": [
-						{
-							"Action": action,
-							"ResourceRecordSet": {
-								"Name": name,
-								"Type": record_type,
-								"TTL": ttl,
-								"ResourceRecords": [{"Value": value} for value in values],
-							},
-						}
-					]
-				},
-			)
+			self.client.change_resource_record_sets(HostedZoneId=zone_id, ChangeBatch={"Changes": changes})
 		except (BotoCoreError, ClientError) as error:
 			raise Route53Error(f"Failed to {action.lower()} {record_type} record {name}: {error}") from error
 
