@@ -310,6 +310,36 @@ class TestRoute53Provider(UnitTestCase):
 			],
 		)
 
+	def test_service_record_replaces_the_other_address_family_in_one_change(self) -> None:
+		provider = _build_provider()
+		old_record = {
+			"Name": "s3-svc.example.com.",
+			"Type": "A",
+			"TTL": 300,
+			"ResourceRecords": [{"Value": "52.95.110.1"}],
+		}
+		provider.client.list_resource_record_sets.return_value = {"ResourceRecordSets": [old_record]}
+
+		provider.upsert_service_record("s3-svc.example.com", ip_address("2600:1f18::7"), 60)
+
+		provider.client.change_resource_record_sets.assert_called_once_with(
+			HostedZoneId="Z123",
+			ChangeBatch={
+				"Changes": [
+					{
+						"Action": "UPSERT",
+						"ResourceRecordSet": {
+							"Name": "s3-svc.example.com",
+							"Type": "AAAA",
+							"TTL": 60,
+							"ResourceRecords": [{"Value": "2600:1f18::7"}],
+						},
+					},
+					{"Action": "DELETE", "ResourceRecordSet": old_record},
+				]
+			},
+		)
+
 	def test_service_record_refuses_other_names_and_wrong_addresses(self) -> None:
 		provider = _build_provider()
 

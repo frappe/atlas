@@ -45,7 +45,7 @@ PUT /api/atlas/dns-records/internal-s3-svc.<domain>
 {"address": "fdaa:1:0:0:0:0:0:7"}
 ```
 
-The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. `DELETE` on the same path removes the A and AAAA records.
+The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse. `DELETE` on the same path removes the A and AAAA records.
 
 ## Why a service can wait
 
