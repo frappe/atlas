@@ -10,7 +10,7 @@ METADATA_PATH_PREFIX = "/latest"
 DROP_IN_PATH = pathlib.Path("/run/systemd/network/10-atlas.network.d/mesh.conf")
 MESH_GATEWAY = "fe80::1"
 MESH_PREFIX = "fdaa::/16"
-# The host WireGuard addresses. The host may open TCP to its own VMs.
+# The host WireGuard addresses. A host may open TCP to a VM or ping it.
 HOST_PREFIX = "fdab::/16"
 # Matches the image routes outside the mesh, which can lead to a 1500-byte network.
 OUTSIDE_MESH_MTU = 1380
