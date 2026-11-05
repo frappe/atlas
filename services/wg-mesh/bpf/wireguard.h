@@ -154,6 +154,10 @@ int handle_wireguard_packet(struct __sk_buff *packet)
 	source = inner->saddr;
 	destination = inner->daddr;
 
+	/* The sending host checked that the VM answers this host. */
+	if (is_same_address(&destination, &config->wireguard_ipv6))
+		return is_vm_address(&source) ? remove_mesh_tunnel(packet) : TC_ACT_SHOT;
+
 	/* Only an old host sends a client packet for a local block. Gateway traffic uses its own tunnel. */
 	if (!is_vm_address(&destination))
 		return !is_vm_address(&source) && get_prefix_owner(&destination) ? receive_moved_prefix_packet(packet, config, &destination) : TC_ACT_SHOT;

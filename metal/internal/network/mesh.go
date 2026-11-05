@@ -30,7 +30,7 @@ const meshGatewayAddress = "fe80::1"
 // meshPrefix is the Atlas mesh address block.
 const meshPrefix = "fdaa::/16"
 
-// hostPrefix holds the host WireGuard addresses. The mesh lets a VM only answer TCP that its own host opened.
+// hostPrefix holds the host WireGuard addresses. The mesh lets a VM only answer a host.
 const hostPrefix = "fdab::/16"
 
 // gatewayTable holds the namespace route of a gateway VM. The host sends the

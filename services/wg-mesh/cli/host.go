@@ -127,7 +127,7 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 		return err
 	}
 
-	if err := prepareHost(uplinkName); err != nil {
+	if err := prepareHost(uplinkName, netip.AddrFrom16(config.WireGuardIPv6).String()); err != nil {
 		return err
 	}
 
@@ -170,7 +170,8 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 }
 
 // prepareHost sets the kernel state the mesh needs. peers sync sets the NDP mode.
-func prepareHost(uplinkName string) error {
+// Host traffic to a VM uses the WireGuard address as its source, because a VM can only answer that range.
+func prepareHost(uplinkName, wireGuardAddress string) error {
 	if err := runCommand("mountpoint", "-q", "/sys/fs/bpf"); err != nil {
 		if err := runCommand("mount", "-t", "bpf", "bpf", "/sys/fs/bpf"); err != nil {
 			return err
@@ -194,7 +195,7 @@ func prepareHost(uplinkName string) error {
 
 	for _, arguments := range [][]string{
 		{"sysctl", "-qw", "net.ipv6.conf.all.forwarding=1"},
-		{"ip", "-6", "route", "replace", meshRoutePrefix, "dev", uplinkName},
+		{"ip", "-6", "route", "replace", meshRoutePrefix, "dev", uplinkName, "src", wireGuardAddress},
 	} {
 		if err := runCommand(arguments[0], arguments[1:]...); err != nil {
 			return err
