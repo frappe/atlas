@@ -30,6 +30,9 @@ const meshGatewayAddress = "fe80::1"
 // meshPrefix is the Atlas mesh address block.
 const meshPrefix = "fdaa::/16"
 
+// hostPrefix holds the host WireGuard addresses. The mesh lets a VM only answer TCP that its own host opened.
+const hostPrefix = "fdab::/16"
+
 // gatewayTable holds the namespace route of a gateway VM. The host sends the
 // traffic a gateway carries into its namespace, and the main table would send
 // a destination outside the mesh straight back to the host.
@@ -211,6 +214,7 @@ func meshNamespaceSteps(guestVirtualEthernet, address string, mtu int) [][]strin
 		{"ip", "-6", "route", "replace", address + "/128", "dev", tapName},
 		{"ip", "-6", "neigh", "replace", address, "lladdr", guestMACAddress, "dev", tapName, "nud", "permanent"},
 		{"ip", "-6", "route", "replace", meshPrefix, "via", meshGatewayAddress, "dev", guestVirtualEthernet},
+		{"ip", "-6", "route", "replace", hostPrefix, "via", meshGatewayAddress, "dev", guestVirtualEthernet},
 		{"ip", "-6", "neigh", "replace", "proxy", address, "dev", guestVirtualEthernet},
 	}
 }

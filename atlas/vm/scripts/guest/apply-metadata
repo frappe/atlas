@@ -10,6 +10,8 @@ METADATA_PATH_PREFIX = "/latest"
 DROP_IN_PATH = pathlib.Path("/run/systemd/network/10-atlas.network.d/mesh.conf")
 MESH_GATEWAY = "fe80::1"
 MESH_PREFIX = "fdaa::/16"
+# The host WireGuard addresses. The host may open TCP to its own VMs.
+HOST_PREFIX = "fdab::/16"
 # Matches the image routes outside the mesh, which can lead to a 1500-byte network.
 OUTSIDE_MESH_MTU = 1380
 TOKEN_TTL_SECONDS = "21600"
@@ -106,6 +108,9 @@ def mesh_drop_in(address, routes, mtu):
         "IPv6AcceptRA=no\n"
         "\n[Route]\n"
         f"Destination={MESH_PREFIX}\n"
+        f"Gateway={MESH_GATEWAY}\n"
+        "\n[Route]\n"
+        f"Destination={HOST_PREFIX}\n"
         f"Gateway={MESH_GATEWAY}\n"
     )
     for destination in routes:

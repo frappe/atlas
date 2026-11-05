@@ -57,6 +57,7 @@ func TestMeshNamespaceStepsRouteTheGuestAddress(t *testing.T) {
 		"route replace fdaa:1:0:7::1/128 dev tap0",
 		"neigh replace fdaa:1:0:7::1 lladdr 06:00:ac:10:00:02 dev tap0 nud permanent",
 		"route replace fdaa::/16 via fe80::1 dev vg-100",
+		"route replace fdab::/16 via fe80::1 dev vg-100",
 		"neigh replace proxy fdaa:1:0:7::1 dev vg-100",
 	} {
 		if !strings.Contains(joined, wanted) {
