@@ -23,7 +23,8 @@ flowchart LR
     WG[wg0] -->|ingress| WH[WireGuard hook<br/>bpf/wireguard.h]
     UP[Private uplink] -->|ingress, egress| UH[Uplink hook<br/>bpf/uplink.h]
     PUB[Public interface] -->|ingress| PH[Public hook<br/>bpf/uplink.h]
-    VH & WH & UH & PH --- Maps[(Pinned maps)]
+    HV[mesh-tunnel veth] -->|ingress| HH[Host hook<br/>bpf/host.h]
+    VH & WH & UH & PH & HH --- Maps[(Pinned maps)]
 ```
 
 | Map | Holds |
@@ -48,7 +49,7 @@ A `remote_vms` entry stays until eviction or a valid `NOT_HERE` removes it. Only
 
 The VM hook checks each packet a VM sends, in this order:
 
-1. Drop traffic to the host range `fdab::/16`, except a TCP segment with ACK set from a local VM address to this host. The host can open TCP to its own VMs, and a VM can only answer.
+1. Drop traffic to the host range `fdab::/16`, except a reply from the VM's own address: a TCP segment with ACK set or an ICMPv6 echo reply. Any host can open TCP to a VM or ping it, and a VM can only answer. A reply to this host goes to Linux. A reply to another host goes in a mesh tunnel to that host.
 2. Send a destination that has a gateway route to its gateway.
 3. Drop a packet whose source address the VM does not own.
 4. Drop a packet to another tenant, unless one side is privileged.
@@ -57,6 +58,15 @@ The VM hook checks each packet a VM sends, in this order:
 7. Leave local delivery to Linux.
 8. Tunnel a known remote destination through WireGuard.
 9. Start an NDP lookup for an unknown destination. Each interface can start 10 lookups a second, with a burst of 50.
+
+## Host hook rules
+
+The host route `fdaa::/16 via fe80::1 dev mesh-host` uses the host WireGuard address as its source. A local VM has a more specific route, so only traffic to a remote VM enters the `mesh-host` and `mesh-tunnel` veth pair. The host hook runs on `mesh-tunnel` ingress:
+
+1. Tunnel a packet from the host WireGuard address through WireGuard, as for a VM packet. An unknown VM starts an NDP lookup.
+2. Send other traffic, such as from the Atlas controller, to the VM over the private uplink without encryption.
+
+The veth MTU is the `wg0` MTU minus 40, the size of the outer IPv6 header.
 
 ## Lookup (NDP)
 
@@ -79,6 +89,8 @@ The WireGuard hook handles packets between `fdab::/16` addresses only.
 | Packet arriving on `wg0` | Action |
 | --- | --- |
 | Tunnel to a local VM | Remove the outer IPv6 header and deliver. |
+| Tunnel from a VM to this host | Remove the outer IPv6 header and deliver to Linux. |
+| Tunnel from the sending host to a local VM | Remove the outer IPv6 header and deliver. A VM that is not here gets `NOT_HERE`. |
 | Foreign source to a local VM without a gateway route back | Drop. |
 | Tunnel to a VM that is not here | Reply `NOT_HERE` to the sender. |
 | Gateway tunnel | Deliver to the local gateway that the tunnel names. |

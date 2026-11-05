@@ -10,8 +10,15 @@ import (
 	"syscall"
 )
 
-// The VLAN route for VM destinations. Linux runs NDP for a remote VM on the uplink.
+// The host route for VM destinations. It leads into the host veth, whose hook tunnels the host's own traffic.
 const meshRoutePrefix = "fdaa::/16"
+
+// The host veth pair. The route enters hostVethName, and the hook runs on tunnelVethName ingress.
+const (
+	hostVethName       = "mesh-host"
+	tunnelVethName     = "mesh-tunnel"
+	hostGatewayAddress = "fe80::1"
+)
 
 // readHostConfig reads the host configuration from its interfaces.
 func readHostConfig(uplinkName, wireGuardName string) (hostConfig, error) {
