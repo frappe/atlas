@@ -98,16 +98,33 @@ static __always_inline int source_is_allowed(__u32 ifindex, const struct in6_add
 	return can_communicate(source, destination);
 }
 
-/* The host may open TCP to its own VMs. A VM may only answer, because a segment without ACK cannot open a connection. */
-static __always_inline int is_reply_to_this_host(__u32 ifindex, struct ipv6hdr *ip6, void *end)
+/* A host may open TCP to a VM or ping it. A VM may only answer: a TCP segment without ACK cannot open a connection. */
+static __always_inline int is_reply_to_host(__u32 ifindex, struct ipv6hdr *ip6, void *end)
+{
+	struct tcphdr *tcp = (void *)(ip6 + 1);
+	struct icmp6hdr *icmp = (void *)(ip6 + 1);
+
+	if (!is_owned_by(&ip6->saddr, ifindex))
+		return 0;
+	if (ip6->nexthdr == IPPROTO_TCP)
+		return (void *)(tcp + 1) <= end && tcp->ack;
+	if (ip6->nexthdr == IPPROTO_ICMPV6)
+		return (void *)(icmp + 1) <= end && icmp->icmp6_type == ICMPV6_ECHO_REPLY;
+
+	return 0;
+}
+
+/* Linux delivers a reply to this host. A remote host gets it in a mesh tunnel, because WireGuard accepts only host source addresses. */
+static __always_inline int send_reply_to_host(struct __sk_buff *packet, const struct in6_addr *host, __u32 inner_length)
 {
 	struct config *config = get_config();
-	struct tcphdr *tcp = (void *)(ip6 + 1);
 
-	if (!config || (void *)(tcp + 1) > end || ip6->nexthdr != IPPROTO_TCP || !tcp->ack)
-		return 0;
+	if (!config)
+		return TC_ACT_SHOT;
+	if (is_same_address(host, &config->wireguard_ipv6))
+		return TC_ACT_OK;
 
-	return is_same_address(&ip6->daddr, &config->wireguard_ipv6) && is_owned_by(&ip6->saddr, ifindex);
+	return add_mesh_tunnel(packet, config, host, inner_length, NULL);
 }
 
 SEC("tc")
@@ -129,7 +146,7 @@ int handle_vm_packet(struct __sk_buff *packet)
 		return TC_ACT_SHOT;
 
 	if (is_underlay_address(&destination))
-		return is_reply_to_this_host(packet->ifindex, ip6, end) ? TC_ACT_OK : TC_ACT_SHOT;
+		return is_reply_to_host(packet->ifindex, ip6, end) ? send_reply_to_host(packet, &destination, inner_length) : TC_ACT_SHOT;
 
 	if (!is_vm_address(&destination))
 	{

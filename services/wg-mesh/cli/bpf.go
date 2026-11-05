@@ -24,6 +24,7 @@ const (
 	uplinkEgressProgram  = "handle_uplink_egress"
 	vmProgram            = "handle_vm_packet"
 	wireGuardProgram     = "handle_wireguard_packet"
+	hostProgram          = "handle_host_packet"
 )
 
 // Must match PEER_LIMIT in bpf/maps.h.
