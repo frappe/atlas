@@ -15,6 +15,7 @@ from pydantic import (
 	ConfigDict,
 	Discriminator,
 	Field,
+	IPvAnyAddress,
 	StringConstraints,
 	Tag,
 	model_validator,
@@ -1232,6 +1233,15 @@ class HostAccessResponse(BaseModel):
 	host_id: str = Field(description="Metal Server ID, or `all`.")
 	email: str = Field(description="Email of the person, in lowercase.")
 	expires_at: datetime = Field(description="End of the access.")
+
+
+class DnsRecordPayload(StrictModel):
+	"""The address of one regional service name."""
+
+	address: IPvAnyAddress = Field(
+		description="Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record."
+	)
+	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
 
 
 class InvestigationPayload(StrictModel):
