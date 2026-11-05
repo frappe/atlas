@@ -43,6 +43,11 @@ def read_certificate(certificate_pem: str) -> CertificateDetails:
 	)
 
 
+def read_expiry(certificate_pem: str) -> datetime:
+	"""Return the leaf certificate expiry. A certificate authority carries no subject alternative name."""
+	return _load_leaf(certificate_pem).not_valid_after_utc
+
+
 def create_certificate_authority(identity: str) -> tuple[str, str]:
 	"""Create a regional certificate authority."""
 	private_key = create_private_key()
