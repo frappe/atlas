@@ -17,6 +17,7 @@ from atlas.atlas.core.tls.certificate import (
 	create_certificate_authority,
 	issue_certificate,
 	read_certificate,
+	read_expiry,
 	verify_issued_certificate,
 	verify_key_pair,
 )
@@ -85,9 +86,7 @@ def is_certificate_authority_expiring() -> bool:
 	)
 	if not certificate:
 		return False
-	return read_certificate(certificate).expires_on <= datetime.now(UTC) + timedelta(
-		days=CERTIFICATE_AUTHORITY_WARNING_DAYS
-	)
+	return read_expiry(certificate) <= datetime.now(UTC) + timedelta(days=CERTIFICATE_AUTHORITY_WARNING_DAYS)
 
 
 def ensure_atlas_client_certificate(settings: "AtlasSettings") -> bool:
