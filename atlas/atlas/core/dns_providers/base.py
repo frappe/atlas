@@ -57,8 +57,15 @@ class DnsProvider(ABC):
 		...
 
 	@abstractmethod
-	def upsert_record(self, record_type: str, name: str, values: list[str], ttl: int = 300) -> None:
-		"""Create the DNS record if missing, or update it to match the given values."""
+	def upsert_record(
+		self,
+		record_type: str,
+		name: str,
+		values: list[str],
+		ttl: int = 300,
+		replaced_type: str | None = None,
+	) -> None:
+		"""Create or update the DNS record, and remove the `replaced_type` record of the name in the same change."""
 		...
 
 	@abstractmethod
@@ -128,7 +135,8 @@ class DnsProvider(ABC):
 				raise AtlasUserError(f"{name} needs a WG Mesh address in {MESH_NETWORK}.")
 		elif not address.is_global or address.is_multicast:
 			raise AtlasUserError(f"{name} needs a public address.")
-		self.upsert_record("A" if address.version == 4 else "AAAA", name, [str(address)], ttl)
+		record_type, replaced_type = ("A", "AAAA") if address.version == 4 else ("AAAA", "A")
+		self.upsert_record(record_type, name, [str(address)], ttl, replaced_type)
 
 	def remove_service_record(self, name: str) -> None:
 		"""Remove the A and AAAA records of one service name."""
