@@ -90,7 +90,7 @@ jobs:
         if: steps.pilot-bench.outputs.cache-hit != 'true'
         working-directory: /home/runner/pilot/benches/frappe-bench
         run: |
-          pilot new-site test_site --admin-password admin --apps frappe
+          pilot new-site test_site --admin-password admin --apps frappe --skip-assets
           systemctl --user stop pilot-mariadb.service
 
       - name: Save the Pilot bench
@@ -103,14 +103,13 @@ jobs:
             ~/.config/systemd/user
           key: ${{ steps.pilot-bench.outputs.cache-primary-key }}
 
-      # `pilot install-app` also runs yarn and builds assets, which the tests do not need.
       - name: Install the app
         working-directory: /home/runner/pilot/benches/frappe-bench
         run: |
           systemctl --user start pilot-mariadb.service
           uv pip install --python env/bin/python -e "apps/frappe[test]"
           pilot get-app "$GITHUB_WORKSPACE" --branch "$GITHUB_SHA" --skip-assets
-          pilot frappe --site test_site install-app atlas
+          pilot install-app test_site atlas
         env:
           ATLAS_SKIP_HOST_BINARY_BUILD: '1'
 
