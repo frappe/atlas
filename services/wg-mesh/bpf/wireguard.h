@@ -154,6 +154,10 @@ int handle_wireguard_packet(struct __sk_buff *packet)
 	source = inner->saddr;
 	destination = inner->daddr;
 
+	/* A host sends its own traffic to a VM in a tunnel. WireGuard proved the sender. */
+	if (is_same_address(&source, &sender) && is_vm_address(&destination))
+		return is_local_vm(&destination) ? remove_mesh_tunnel(packet) : reply_not_here(packet, config, &destination, &sender);
+
 	/* The sending host checked that the VM answers this host. */
 	if (is_same_address(&destination, &config->wireguard_ipv6))
 		return is_vm_address(&source) ? remove_mesh_tunnel(packet) : TC_ACT_SHOT;
