@@ -12,7 +12,8 @@ This package owns metric collection and delivery. Services own their state and r
 |---|---|
 | `Registry` | Counters, last-value gauges, bounded observations, and collectors. |
 | `Pusher` | Periodic snapshots and retries. |
-| `Client` | Batched delivery to Datum. Rereads `datum_url` and `datum_token` from `metald.toml` every 24 hours, or when the token expires. |
+| `Client` | Batched delivery to Datum. Rereads `datum_url` and `datum_token` from `metald.toml` every 24 hours, or when the token expires. Dials through `platform.PrivateServiceDialer`. |
+| `DatumProxy` | Local CONNECT proxy at `DatumProxyAddress` for Vector. Allows only the configured Datum host and `maximumDatumTunnels` tunnels. |
 | `ProcessCollector` | metald process and build information. |
 | `system` package | Host collectors, grouped by subsystem. |
 | `WithRequestID`, `RequestID` | Carry the API request ID to the VM manager. |

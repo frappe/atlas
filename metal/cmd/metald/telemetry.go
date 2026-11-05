@@ -34,6 +34,6 @@ func newTelemetryPusher(
 	registry.Register("runtime", telemetry.CollectorFunc(sources.runtime.CollectTelemetry))
 	system.Register(registry, system.Config{Pool: options.pool, RestartCountUnits: options.telemetry.restartCountUnits, Systemd: units})
 
-	client := telemetry.NewClient(options.configFile)
+	client := telemetry.NewClient(options.configFile, logger)
 	return telemetry.NewPusher(registry, client, options.telemetry.interval, logger)
 }

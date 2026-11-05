@@ -593,6 +593,31 @@
         "title": "DiskUpdatePayload",
         "type": "object"
       },
+      "DnsRecordPayload": {
+        "additionalProperties": false,
+        "description": "The address of one regional service name.",
+        "properties": {
+          "address": {
+            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record.",
+            "format": "ipvanyaddress",
+            "title": "Address",
+            "type": "string"
+          },
+          "ttl": {
+            "default": 300,
+            "description": "Record TTL in seconds.",
+            "maximum": 86400,
+            "minimum": 60,
+            "title": "Ttl",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "title": "DnsRecordPayload",
+        "type": "object"
+      },
       "FirewallPayload": {
         "additionalProperties": false,
         "description": "The complete desired firewall configuration.",
@@ -3068,6 +3093,211 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/atlas/dns-records/{name}": {
+      "delete": {
+        "description": "Removes the A and AAAA records of one regional service name.",
+        "operationId": "remove_dns_record",
+        "parameters": [
+          {
+            "description": "Name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The name has no A or AAAA record. Removing twice is safe."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The name is not allowed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The resource does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The DNS provider rejected the change. The message is its error."
+          }
+        },
+        "summary": "Remove DNS record",
+        "tags": [
+          "DNS Records"
+        ]
+      },
+      "put": {
+        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.",
+        "operationId": "set_dns_record",
+        "parameters": [
+          {
+            "description": "Name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "address": "fdaa:1:0:0:0:0:0:7"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/DnsRecordPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The name points to the address. Repeating the request is safe."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The name is not allowed, or the address does not suit the name."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The resource does not exist."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The DNS provider rejected the change. The message is its error."
+          }
+        },
+        "summary": "Set DNS record",
+        "tags": [
+          "DNS Records"
+        ]
+      }
+    },
     "/api/atlas/hosts": {
       "get": {
         "description": "Returns the Metal hosts that are not deleted, with their tags, in title order. Pass `tag` to narrow them.",
@@ -7335,6 +7565,10 @@
     {
       "description": "Close Warpgate sessions of a person. Tenant 0 only.",
       "name": "Warpgate"
+    },
+    {
+      "description": "Point regional service names to their private addresses. Tenant 0 only.",
+      "name": "DNS Records"
     },
     {
       "description": "Hand a problem to the read-only investigator of the region and read its report. Tenant 0 only.",

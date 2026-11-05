@@ -500,6 +500,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
 	}).Run)
+	daemon.StartWorker(telemetry.NewDatumProxy(options.configFile, logger).Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), func(ctx context.Context, event traffic.Event) error {
 			if err := virtualMachineManager.RestoreAfterTraffic(ctx, event); err != nil {
