@@ -19,6 +19,7 @@ Package `platform` is the Metal boundary to host files, commands, and systemd. M
 | `Status`, `Result`, `Limits` | systemd state across the boundary. |
 | `FileDescriptorStore` | Open descriptors held by systemd across a restart. |
 | `RunWatchdog` | Pings the systemd watchdog while metald runs. |
+| `PrivateServiceDialer` | Dials the private address of `internal-<host>` and uses only private answers. It dials the public address when there is none or the private dial fails. |
 
 ## Host commands
 

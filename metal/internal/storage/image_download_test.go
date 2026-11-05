@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,7 +59,7 @@ func TestDownloadDoesNotRetryPermanentFailure(t *testing.T) {
 }
 
 func TestImageHTTPClientHasTimeout(t *testing.T) {
-	if timeout := newImageHTTPClient().Timeout; timeout <= 0 {
+	if timeout := newImageHTTPClient(slog.Default()).Timeout; timeout <= 0 {
 		t.Fatalf("timeout = %s, want a positive duration", timeout)
 	}
 }

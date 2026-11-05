@@ -47,6 +47,8 @@ PUT /api/atlas/dns-records/internal-s3-svc.<domain>
 
 The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse. `DELETE` on the same path removes the A and AAAA records.
 
+Metal looks up `internal-<host>` before it opens an image or snapshot connection to object storage. When the answer is a private address, Metal connects to that address and keeps the original host name for TLS and the presigned URL. When the answer is public, or the private connection fails, Metal uses the public address.
+
 ## Why a service can wait
 
 Atlas queues a setup job after VM creation. If the VM is still a draft, the job leaves the service `Pending`. The scheduler queues it again.
