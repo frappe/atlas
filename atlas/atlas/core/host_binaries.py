@@ -95,8 +95,13 @@ def publish_host_binaries() -> None:
 
 	This runs from `after_install` and `after_migrate`. A host that cannot build
 	the binaries cannot provision a server, so a missing requirement fails here
-	instead of at the first provision.
+	instead of at the first provision. `ATLAS_SKIP_HOST_BINARY_BUILD` skips it on
+	a site that provisions no server, such as a CI test site.
 	"""
+	if os.environ.get("ATLAS_SKIP_HOST_BINARY_BUILD"):
+		print("atlas: ATLAS_SKIP_HOST_BINARY_BUILD is set, skipped the host binary build")
+		return
+
 	pending_builds = []
 	for binary in HOST_BINARIES:
 		digest = source_digest(binary)
