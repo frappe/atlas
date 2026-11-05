@@ -48,7 +48,7 @@ A `remote_vms` entry stays until eviction or a valid `NOT_HERE` removes it. Only
 
 The VM hook checks each packet a VM sends, in this order:
 
-1. Drop traffic to the host range `fdab::/16`.
+1. Drop traffic to the host range `fdab::/16`, except a TCP segment with ACK set from a local VM address to this host. The host can open TCP to its own VMs, and a VM can only answer.
 2. Send a destination that has a gateway route to its gateway.
 3. Drop a packet whose source address the VM does not own.
 4. Drop a packet to another tenant, unless one side is privileged.

@@ -98,6 +98,18 @@ static __always_inline int source_is_allowed(__u32 ifindex, const struct in6_add
 	return can_communicate(source, destination);
 }
 
+/* The host may open TCP to its own VMs. A VM may only answer, because a segment without ACK cannot open a connection. */
+static __always_inline int is_reply_to_this_host(__u32 ifindex, struct ipv6hdr *ip6, void *end)
+{
+	struct config *config = get_config();
+	struct tcphdr *tcp = (void *)(ip6 + 1);
+
+	if (!config || (void *)(tcp + 1) > end || ip6->nexthdr != IPPROTO_TCP || !tcp->ack)
+		return 0;
+
+	return is_same_address(&ip6->daddr, &config->wireguard_ipv6) && is_owned_by(&ip6->saddr, ifindex);
+}
+
 SEC("tc")
 int handle_vm_packet(struct __sk_buff *packet)
 {
@@ -117,7 +129,7 @@ int handle_vm_packet(struct __sk_buff *packet)
 		return TC_ACT_SHOT;
 
 	if (is_underlay_address(&destination))
-		return TC_ACT_SHOT;
+		return is_reply_to_this_host(packet->ifindex, ip6, end) ? TC_ACT_OK : TC_ACT_SHOT;
 
 	if (!is_vm_address(&destination))
 	{
