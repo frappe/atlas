@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -58,7 +59,7 @@ type fakeHTTPServer struct {
 	stopped    chan struct{}
 }
 
-func (server *fakeHTTPServer) Start(string) error {
+func (server *fakeHTTPServer) Serve(net.Listener) error {
 	if server.startError != nil {
 		return server.startError
 	}
@@ -220,7 +221,7 @@ func TestDaemonShutdownDoesNotWaitForAServerExitThatServeConsumed(t *testing.T) 
 	failed := &fakeHTTPServer{startError: serveError, stopped: make(chan struct{})}
 	running := &fakeHTTPServer{stopped: make(chan struct{})}
 
-	if err := lifecycle.Serve(failed, running); !errors.Is(err, serveError) {
+	if err := lifecycle.Serve(listeningServer{server: failed}, listeningServer{server: running}); !errors.Is(err, serveError) {
 		t.Fatalf("serve error = %v, want %v", err, serveError)
 	}
 	if err := lifecycle.Shutdown(t.Context()); err != nil {
