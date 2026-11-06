@@ -4,12 +4,12 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/http"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/labstack/echo/v4"
 
 	"github.com/frappe/atlas/metal/internal/console"
 )
@@ -32,21 +32,20 @@ func (session *fakeSSHSession) Close() error {
 	return nil
 }
 
-// startConsoleServer serves the API on a local port and returns the router and console URL.
-func startConsoleServer(t *testing.T, path string, session *fakeSSHSession) (*echo.Echo, string) {
+// startConsoleServer serves the API on a local port and returns the server and console URL.
+func startConsoleServer(t *testing.T, path string, session *fakeSSHSession) (*http.Server, string) {
 	t.Helper()
 
 	manager := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}, sshSession: session}
-	router := newServer(t, manager).(*echo.Echo)
+	server := newHTTPServer(t, manager, newFakeRuntimeServices(), &fakeWireGuardManager{})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	router.Listener = listener
-	go func() { _ = router.Start("") }()
-	t.Cleanup(func() { _ = router.Close() })
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
 
-	return router, "ws://" + listener.Addr().String() + path
+	return server, "ws://" + listener.Addr().String() + path
 }
 
 // The Atlas bridge reconnects only after close code 1012, so a shutdown must send it.

@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // maximumJSONBodyBytes caps a request body, so a large upload cannot exhaust
@@ -16,7 +16,7 @@ const maximumJSONBodyBytes = 1 << 20
 
 // decodeJSONRequest decodes one JSON body and rejects trailing values. Unknown
 // fields are ignored, so Atlas can add an optional field before every host upgrades.
-func decodeJSONRequest(c echo.Context, value any) error {
+func decodeJSONRequest(c *echo.Context, value any) error {
 	request := c.Request()
 	request.Body = http.MaxBytesReader(c.Response(), request.Body, maximumJSONBodyBytes)
 	decoder := json.NewDecoder(request.Body)
@@ -33,7 +33,7 @@ func decodeJSONRequest(c echo.Context, value any) error {
 }
 
 // decodeOptionalJSON accepts an empty body and leaves the value unchanged.
-func decodeOptionalJSON(c echo.Context, value any) error {
+func decodeOptionalJSON(c *echo.Context, value any) error {
 	request := c.Request()
 	request.Body = http.MaxBytesReader(c.Response(), request.Body, maximumJSONBodyBytes)
 	data, err := io.ReadAll(request.Body)

@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
@@ -23,7 +23,7 @@ import (
 // @Failure 409 {object} errorResponse
 // @Failure 500 {object} errorResponse
 // @Router /v1/vms/{id}/sleep-state [post]
-func (s *Server) offloadVirtualMachineSleepState(c echo.Context) error {
+func (s *Server) offloadVirtualMachineSleepState(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func (s *Server) offloadVirtualMachineSleepState(c echo.Context) error {
 // @Failure 409 {object} errorResponse
 // @Failure 500 {object} errorResponse
 // @Router /v1/vms/{id}/sleep-state [patch]
-func (s *Server) refreshVirtualMachineSleepState(c echo.Context) error {
+func (s *Server) refreshVirtualMachineSleepState(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
