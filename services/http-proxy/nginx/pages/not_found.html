@@ -3,39 +3,181 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
 		<title>Site not found</title>
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..600&display=swap" />
 		<style>
-			html,
-			body {
-				height: 100%;
-				margin: 0;
+			:root {
+				--surface-base: oklch(1 0 0);
+				--surface-gray-2: oklch(0.964 0 0);
+				--surface-gray-3: oklch(0.946 0 0);
+				--surface-gray-9: oklch(0.341 0 0);
+				--surface-gray-10: oklch(0.205 0 0);
+				--ink-base: oklch(1 0 0);
+				--ink-gray-5: oklch(0.586 0 0);
+				--ink-gray-6: oklch(0.439 0 0);
+				--ink-gray-7: oklch(0.341 0 0);
+				--ink-gray-9: oklch(0.168 0 0);
+				--on-04: color-mix(in srgb, var(--ink-gray-9) 4%, transparent);
+				--on-05: color-mix(in srgb, var(--ink-gray-9) 5%, transparent);
+				--on-06: color-mix(in srgb, var(--ink-gray-9) 6%, transparent);
+				--on-08: color-mix(in srgb, var(--ink-gray-9) 8%, transparent);
+				--on-10: color-mix(in srgb, var(--ink-gray-9) 10%, transparent);
+				--on-12: color-mix(in srgb, var(--ink-gray-9) 12%, transparent);
+				--on-16: color-mix(in srgb, var(--ink-gray-9) 16%, transparent);
+				--on-20: color-mix(in srgb, var(--ink-gray-9) 20%, transparent);
+				--on-25: color-mix(in srgb, var(--ink-gray-9) 25%, transparent);
+				--on-40: color-mix(in srgb, var(--ink-gray-9) 40%, transparent);
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--surface-base: oklch(0.205 0 0);
+					--surface-gray-2: oklch(0.281 0 0);
+					--surface-gray-3: oklch(0.341 0 0);
+					--surface-gray-9: oklch(0.885 0 0);
+					--surface-gray-10: oklch(0.979 0 0);
+					--ink-base: oklch(0.205 0 0);
+					--ink-gray-5: oklch(0.58 0 0);
+					--ink-gray-6: oklch(0.683 0 0);
+					--ink-gray-7: oklch(0.754 0 0);
+					--ink-gray-9: oklch(0.979 0 0);
+				}
 			}
 			body {
-				display: grid;
-				place-items: center;
-				font-family: Inter, system-ui, sans-serif;
-				color: #222;
-				background: #fafafa;
+				margin: 0;
+				background: var(--surface-base);
+				color: var(--ink-gray-9);
+				font: 420 14px/1.5 Inter, system-ui, sans-serif;
+				font-variation-settings: "opsz" 24;
+				letter-spacing: 0.02em;
+				-webkit-font-smoothing: antialiased;
 			}
 			main {
+				box-sizing: border-box;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				min-height: 100dvh;
+				padding: 40px 24px;
 				text-align: center;
+				animation: rise 0.24s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+			}
+			svg {
+				width: 100%;
+				max-width: 320px;
+				height: auto;
+				margin-bottom: 32px;
+				fill: none;
+				stroke-linecap: round;
+				stroke-linejoin: round;
+			}
+			text {
+				font-size: 8.5px;
+				fill: var(--ink-gray-5);
 			}
 			h1 {
 				margin: 0 0 8px;
 				font-size: 20px;
 				font-weight: 600;
+				line-height: 1.15;
+				letter-spacing: 0.01em;
 			}
 			p {
-				margin: 0;
-				font-size: 15px;
-				color: #666;
+				margin: 0 0 16px;
+				color: var(--ink-gray-6);
+			}
+			div {
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: center;
+				gap: 8px;
+			}
+			a {
+				padding: 0 10px;
+				border-radius: 8px;
+				background: var(--surface-gray-2);
+				color: var(--ink-gray-7);
+				font-weight: 500;
+				line-height: 32px;
+				letter-spacing: 0.015em;
+				text-decoration: none;
+				transition: background-color 0.15s, transform 0.12s;
+			}
+			a:hover {
+				background: var(--surface-gray-3);
+			}
+			a:active {
+				transform: scale(0.97);
+			}
+			a:focus-visible {
+				outline: 2px solid var(--ink-gray-5);
+				outline-offset: 2px;
+			}
+			.solid {
+				background: var(--surface-gray-10);
+				color: var(--ink-base);
+			}
+			.solid:hover {
+				background: var(--surface-gray-9);
+			}
+			@keyframes rise {
+				from {
+					opacity: 0;
+					transform: translateY(6px);
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				main {
+					animation: none;
+				}
+				a {
+					transition: none;
+				}
 			}
 		</style>
 	</head>
 	<body>
 		<main>
+			<svg viewBox="20 0 260 165" aria-hidden="true">
+				<rect x="56" y="12" width="200" height="136" rx="14" fill="var(--on-04)" />
+				<rect x="48" y="20" width="200" height="136" rx="14" fill="var(--surface-base)" stroke="var(--on-12)" />
+				<rect x="40" y="28" width="200" height="136" rx="14" fill="var(--surface-base)" stroke="var(--on-20)" stroke-width="1.5" />
+				<path d="M40 42a14 14 0 0 1 14-14h172a14 14 0 0 1 14 14v12H40z" fill="var(--on-04)" />
+				<path d="M40 54h200" stroke="var(--on-08)" />
+				<circle cx="54" cy="41" r="2" fill="var(--on-25)" />
+				<circle cx="62" cy="41" r="2" fill="var(--on-16)" />
+				<circle cx="70" cy="41" r="2" fill="var(--on-10)" />
+				<rect x="84" y="33" width="142" height="16" rx="8" fill="var(--on-06)" />
+				<linearGradient id="bar-fade" gradientUnits="userSpaceOnUse" x1="204" x2="222" y1="0" y2="0">
+					<stop stop-color="white" />
+					<stop offset="1" stop-color="black" />
+				</linearGradient>
+				<mask id="bar-mask" maskUnits="userSpaceOnUse" x="84" y="33" width="142" height="16">
+					<rect x="84" y="33" width="142" height="16" fill="url(#bar-fade)" />
+				</mask>
+				<text x="92" y="43.8" mask="url(#bar-mask)">this domain</text>
+				<rect x="54" y="66" width="172" height="86" rx="8" stroke="var(--on-20)" stroke-width="1.5" stroke-dasharray="4 3" />
+				<circle cx="140" cy="109" r="22" fill="var(--on-05)" />
+				<circle cx="140" cy="109" r="15" fill="var(--surface-base)" stroke="var(--on-20)" stroke-width="1.5" />
+				<path transform="translate(132 101) scale(0.6667)" d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01" stroke="var(--on-40)" stroke-width="2.4" />
+				<circle cx="26" cy="54" r="3" fill="var(--on-10)" />
+				<path d="M268 120l2-4 2 4-4-2 4 0-4 2z" fill="var(--on-16)" />
+				<path d="M270 36v6m-3-3h6" stroke="var(--on-20)" stroke-width="1.5" />
+			</svg>
+
 			<h1>Site not found</h1>
 			<p>No site is configured for this domain.</p>
+
+			<div>
+				<a class="solid" href="https://dashboard.frappe.io">Go to Frappe Cloud</a>
+				<a href="">Try again</a>
+			</div>
 		</main>
+
+		<script>
+			if (location.hostname) document.querySelector("text").textContent = location.hostname
+		</script>
 	</body>
 </html>
