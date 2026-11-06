@@ -75,6 +75,7 @@ class VirtualMachineImage(Document):
 		source_virtual_machine: DF.Data | None
 		status: DF.Literal[
 			"Pending",
+			"Building",
 			"Snapshotting",
 			"Uploading",
 			"Completing",

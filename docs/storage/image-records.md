@@ -31,6 +31,43 @@ New Ubuntu System images set ext4 to remount the root filesystem read-only when 
 The remount does not repair the disk. See the [guest disk incident](../incidents/2026-09-24-guest-disk-corruption.md) for the reason behind this setting.
 :::
 
+## OCI images
+
+`POST /images/import` builds a Machine image of the calling tenant from a public OCI image, such as `nginx:1.29-alpine`. Tenant 0 can set `image_type` to `system`. The command `bench --site <site> import-oci-image <reference> [--tenant-id 0] [--image-type system]` does the same for an operator. Only the registries in `ALLOWED_REGISTRIES` are allowed.
+
+```text
+Atlas                               Builder VM (tenant 99999)
+  pin the reference to its digest
+  image status: Building
+  create the VM with user data  -->  download oci-rootfs
+                                     pull, unpack, write ext4
+  read the result every 30 s    <--  upload the zstd copy and the result
+  image status: Available or Failed
+  terminate the VM
+```
+
+The builder VM holds signed URLs only. A build that does not finish in 1 hour fails. A second request for the same digest and `oci-rootfs` version returns the first image. A tenant can run 2 builds at a time.
+
+The ext4 file is only as large as the image needs, and the guest grows it to the VM disk at boot.
+
+`guest-init` is PID 1 of the VM. It does the work of systemd, cloud-init, and sshd, so the image needs none of them:
+
+| Job | Behavior |
+| --- | --- |
+| Network | Reads the kernel `ip=` argument, then applies the mesh address and routes from metadata. |
+| Entrypoint | Runs the image entrypoint. A clean exit keeps the VM up. A failed exit stops its process group and restarts it, with a delay of up to 1 minute. |
+| Stop | Sends the image stop signal, waits up to 15 seconds, and then ends the other processes. |
+| Consoles | Serves SSH and SFTP with keys from metadata, and a root shell on the serial console. An image with no shell has no consoles. |
+| Disk | Grows ext4 at boot and after a disk resize. |
+
+Set these keys in the VM metadata:
+
+| Key | Effect |
+| --- | --- |
+| `env.<NAME>` | Sets a variable for the entrypoint and the consoles. The entrypoint reads it when it starts. |
+| `command` | A JSON array that replaces the image command. |
+| `ports` | Forwards guest ports to programs on `127.0.0.1`, such as `80:8080/tcp,53:5353/udp`. The protocol is `tcp` by default. A port cannot forward to itself. A change applies within 2 seconds. A removed TCP forward keeps its open connections, and a removed UDP forward stops at once. The program sees `127.0.0.1` as the client address. |
+
 ## Artifact storage
 
 The `artifact_storage` field selects the artifact location:

@@ -36,6 +36,8 @@ from .host_response import HostResponse
 from .host_response_tags import HostResponseTags
 from .image_download_response import ImageDownloadResponse
 from .image_download_response_artifact import ImageDownloadResponseArtifact
+from .image_import_payload import ImageImportPayload
+from .image_import_payload_image_type import ImageImportPayloadImageType
 from .image_response import ImageResponse
 from .image_response_architecture import ImageResponseArchitecture
 from .image_response_image_type import ImageResponseImageType
@@ -133,6 +135,8 @@ __all__ = (
     "HostResponseTags",
     "ImageDownloadResponse",
     "ImageDownloadResponseArtifact",
+    "ImageImportPayload",
+    "ImageImportPayloadImageType",
     "ImageResponse",
     "ImageResponseArchitecture",
     "ImageResponseImageType",
