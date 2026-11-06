@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
@@ -23,7 +23,7 @@ import (
 // @Failure	409		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/compute [put]
-func (s *Server) setVirtualMachineCompute(c echo.Context) error {
+func (s *Server) setVirtualMachineCompute(c *echo.Context) error {
 	var request computeRequest
 	if err := decodeJSONRequest(c, &request); err != nil {
 		return err
@@ -57,7 +57,7 @@ func (s *Server) setVirtualMachineCompute(c echo.Context) error {
 // validateComputeCapacity rejects a request the host cannot satisfy. Only the
 // increase is checked, because the VM already holds what it reserves. Virtual
 // CPU entitlement is oversubscribed and never limits a request.
-func (s *Server) validateComputeCapacity(c echo.Context, request computeRequest, current vm.Information) error {
+func (s *Server) validateComputeCapacity(c *echo.Context, request computeRequest, current vm.Information) error {
 	capacity, err := s.hostService.Capacity(c.Request().Context())
 	if err != nil {
 		return err

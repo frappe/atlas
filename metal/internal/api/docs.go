@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // Generate swagger.json for the embedded API documentation.
@@ -37,11 +37,11 @@ const docsPage = `<!doctype html>
 `
 
 // showDocumentation serves the API reference page.
-func (s *Server) showDocumentation(c echo.Context) error {
+func (s *Server) showDocumentation(c *echo.Context) error {
 	return c.HTML(http.StatusOK, docsPage)
 }
 
 // getOpenAPISpecification serves the embedded OpenAPI document.
-func (s *Server) getOpenAPISpecification(c echo.Context) error {
+func (s *Server) getOpenAPISpecification(c *echo.Context) error {
 	return c.JSONBlob(http.StatusOK, specification)
 }

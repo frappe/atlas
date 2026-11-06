@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -36,7 +36,7 @@ type replaceVirtualMachineSSHKeysRequest struct {
 // @Failure	404		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/ssh-keys [put]
-func (s *Server) replaceVirtualMachineSSHKeys(c echo.Context) error {
+func (s *Server) replaceVirtualMachineSSHKeys(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err

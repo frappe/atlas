@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 const maximumMetadataKeyLength = 128
@@ -30,7 +30,7 @@ type replaceVirtualMachineMetadataRequest struct {
 // @Failure	404		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/metadata [put]
-func (s *Server) replaceVirtualMachineMetadata(c echo.Context) error {
+func (s *Server) replaceVirtualMachineMetadata(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err

@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/coder/websocket"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -42,7 +42,7 @@ type consoleControlMessage struct {
 // @Failure	404	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/vms/{id}/console [get]
-func (s *Server) getVirtualMachineConsole(c echo.Context) error {
+func (s *Server) getVirtualMachineConsole(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err

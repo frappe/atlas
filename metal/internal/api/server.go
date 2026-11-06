@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/host"
@@ -118,8 +118,8 @@ type Server struct {
 	consoleShutdown context.Context
 }
 
-// New builds the HTTP router from explicit configuration and dependencies.
-func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
+// New builds the HTTP server from explicit configuration and dependencies.
+func New(configuration Config, dependencies Dependencies) (*http.Server, error) {
 	if err := validateServerConfiguration(configuration, dependencies); err != nil {
 		return nil, err
 	}
@@ -141,10 +141,6 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 	server.telemetry = configuration.Telemetry
 
 	router := echo.New()
-	var stopConsoles context.CancelFunc
-	server.consoleShutdown, stopConsoles = context.WithCancel(context.Background())
-	router.Server.RegisterOnShutdown(stopConsoles)
-	router.HideBanner = true
 	router.HTTPErrorHandler = errorHandler
 
 	// Correlation runs first, so every log line and error carries the same IDs.
@@ -152,12 +148,16 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 	router.Use(server.logRequest)
 	server.registerRoutes(router)
 
-	return router, nil
+	httpServer := &http.Server{Handler: router}
+	var stopConsoles context.CancelFunc
+	server.consoleShutdown, stopConsoles = context.WithCancel(context.Background())
+	httpServer.RegisterOnShutdown(stopConsoles)
+	return httpServer, nil
 }
 
-// NewCoordination builds the mutual-TLS router used between Metal nodes.
+// NewCoordination builds the mutual-TLS server used between Metal nodes.
 // The listener enforces the client certificate before a request reaches it.
-func NewCoordination(logger *slog.Logger, registry *telemetry.Registry, migrationManager MigrationManager) (*echo.Echo, error) {
+func NewCoordination(logger *slog.Logger, registry *telemetry.Registry, migrationManager MigrationManager) (*http.Server, error) {
 	if migrationManager == nil || registry == nil {
 		return nil, fmt.Errorf("migration manager and telemetry registry are required")
 	}
@@ -166,23 +166,25 @@ func NewCoordination(logger *slog.Logger, registry *telemetry.Registry, migratio
 	}
 	server := &Server{migrationManager: migrationManager, logger: logger, telemetry: registry}
 	router := echo.New()
-	router.HideBanner = true
 	router.HTTPErrorHandler = errorHandler
 	router.Use(correlationMiddleware)
 	router.Use(server.logRequest)
 	server.registerCoordinationRoutes(router)
-	return router, nil
+	return &http.Server{Handler: router}, nil
 }
 
 // Frequent host syncs are counted without latency observations.
 func (s *Server) logRequest(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		c.Set("logger", s.logger)
 		startedAt := time.Now()
 
 		err := next(c)
 		duration := time.Since(startedAt)
-		status := c.Response().Status
+		status := http.StatusOK
+		if response, unwrapError := echo.UnwrapResponse(c.Response()); unwrapError == nil {
+			status = response.Status
+		}
 		if err != nil {
 			status = publicAPIError(err).status
 		}

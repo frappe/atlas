@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/metrics"
 )
@@ -71,7 +71,7 @@ type networkUsageResponse struct {
 // @Failure 404 {object} errorResponse
 // @Failure 500 {object} errorResponse
 // @Router /v1/vms/{id}/metrics [get]
-func (s *Server) getVirtualMachineMetrics(c echo.Context) error {
+func (s *Server) getVirtualMachineMetrics(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err

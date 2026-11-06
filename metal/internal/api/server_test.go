@@ -372,6 +372,16 @@ func newServerWithServices(
 	wireGuardManager *fakeWireGuardManager,
 ) http.Handler {
 	t.Helper()
+	return newHTTPServer(t, virtualMachineManager, services, wireGuardManager).Handler
+}
+
+func newHTTPServer(
+	t *testing.T,
+	virtualMachineManager VirtualMachineManager,
+	services *fakeRuntimeServices,
+	wireGuardManager *fakeWireGuardManager,
+) *http.Server {
+	t.Helper()
 
 	store := newTestMetricsStore(t)
 	if manager, ok := virtualMachineManager.(*fakeVirtualMachineManager); ok {
