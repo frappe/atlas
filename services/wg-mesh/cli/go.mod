@@ -1,6 +1,6 @@
 module github.com/frappe/atlas/services/wg-mesh/cli
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/cilium/ebpf v0.22.0
@@ -9,6 +9,6 @@ require (
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
-	golang.org/x/sys v0.43.0
+	github.com/spf13/pflag v1.1.0 // indirect
+	golang.org/x/sys v0.49.0
 )
