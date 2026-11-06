@@ -487,8 +487,6 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 
 	// Start workers and serve the API.
 	logger.Info("metald listening", "version", version, "address", options.listen)
-	server.Listener = tls.NewListener(listener, tlsConfigurations.api)
-	coordinationServer.Listener = tls.NewListener(coordinationListener, tlsConfigurations.coordination)
 	daemon.StartWorker(platform.RunWatchdog)
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(sleepTransferReconciler.Run)
@@ -514,5 +512,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err := descriptorStore.SetStatus("ready " + version); err != nil {
 		logger.Warn("could not set the service status", "error", err)
 	}
-	return daemon.Serve(server, coordinationServer)
+	return daemon.Serve(
+		listeningServer{server: server, listener: tls.NewListener(listener, tlsConfigurations.api)},
+		listeningServer{server: coordinationServer, listener: tls.NewListener(coordinationListener, tlsConfigurations.coordination)},
+	)
 }

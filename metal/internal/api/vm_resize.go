@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
@@ -42,7 +42,7 @@ func (r resizeRequest) validate() error {
 // @Failure	409		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/resize [put]
-func (s *Server) resizeVirtualMachine(c echo.Context) error {
+func (s *Server) resizeVirtualMachine(c *echo.Context) error {
 	var request resizeRequest
 	if err := decodeJSONRequest(c, &request); err != nil {
 		return err

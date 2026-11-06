@@ -7,13 +7,13 @@ import (
 	"strconv"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
 
 // prepareMigrationSource locks the source and returns its definition and state.
-func (s *Server) prepareMigrationSource(c echo.Context) error {
+func (s *Server) prepareMigrationSource(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -26,7 +26,7 @@ func (s *Server) prepareMigrationSource(c echo.Context) error {
 }
 
 // startMigrationStream starts a one-shot mutual-TLS listener for one ZFS stream.
-func (s *Server) startMigrationStream(c echo.Context) error {
+func (s *Server) startMigrationStream(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func (s *Server) startMigrationStream(c echo.Context) error {
 }
 
 // createMigrationSnapshot returns the next source snapshot.
-func (s *Server) createMigrationSnapshot(c echo.Context) error {
+func (s *Server) createMigrationSnapshot(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -69,7 +69,7 @@ func (s *Server) createMigrationSnapshot(c echo.Context) error {
 
 // stopMigrationSource stops the source, removes its network, and returns its
 // final snapshot.
-func (s *Server) stopMigrationSource(c echo.Context) error {
+func (s *Server) stopMigrationSource(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -89,7 +89,7 @@ func (s *Server) stopMigrationSource(c echo.Context) error {
 }
 
 // streamMigrationMemorySnapshotFile streams one zstd-compressed memory snapshot file over the node TLS listener.
-func (s *Server) streamMigrationMemorySnapshotFile(c echo.Context) error {
+func (s *Server) streamMigrationMemorySnapshotFile(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func (s *Server) streamMigrationMemorySnapshotFile(c echo.Context) error {
 }
 
 // streamMigrationKernel streams the zstd-compressed kernel of the migrating VM.
-func (s *Server) streamMigrationKernel(c echo.Context) error {
+func (s *Server) streamMigrationKernel(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -119,7 +119,7 @@ func (s *Server) streamMigrationKernel(c echo.Context) error {
 }
 
 // streamCompressedFile streams and closes one zstd-compressed file.
-func streamCompressedFile(c echo.Context, file *os.File) error {
+func streamCompressedFile(c *echo.Context, file *os.File) error {
 	defer file.Close()
 	information, err := file.Stat()
 	if err != nil {
@@ -141,7 +141,7 @@ func streamCompressedFile(c echo.Context, file *os.File) error {
 }
 
 // startMigrationSource restores the source during rollback.
-func (s *Server) startMigrationSource(c echo.Context) error {
+func (s *Server) startMigrationSource(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (s *Server) startMigrationSource(c echo.Context) error {
 }
 
 // destroyMigrationSource destroys the stopped source and its migration state.
-func (s *Server) destroyMigrationSource(c echo.Context) error {
+func (s *Server) destroyMigrationSource(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -165,7 +165,7 @@ func (s *Server) destroyMigrationSource(c echo.Context) error {
 }
 
 // deleteMigrationSource unlocks the source and removes migration state.
-func (s *Server) deleteMigrationSource(c echo.Context) error {
+func (s *Server) deleteMigrationSource(c *echo.Context) error {
 	identifier, virtualMachineID, err := migrationSourceIdentifiers(c)
 	if err != nil {
 		return err
@@ -178,7 +178,7 @@ func (s *Server) deleteMigrationSource(c echo.Context) error {
 
 // migrationSourceIdentifiers reads the migration ID and the VM ID the destination
 // sends. The destination and source hold the same VM ID across a migration.
-func migrationSourceIdentifiers(c echo.Context) (string, string, error) {
+func migrationSourceIdentifiers(c *echo.Context) (string, string, error) {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return "", "", err

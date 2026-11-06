@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // @Summary		Liveness check
@@ -12,6 +12,6 @@ import (
 // @Tags			Health
 // @Success		200	"No content"
 // @Router			/health [get]
-func (s *Server) checkHealth(c echo.Context) error {
+func (s *Server) checkHealth(c *echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }

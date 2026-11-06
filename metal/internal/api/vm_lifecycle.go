@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // @Summary	Set the virtual machine power state
@@ -21,7 +21,7 @@ import (
 // @Failure	409		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/power [put]
-func (s *Server) setVirtualMachinePowerState(c echo.Context) error {
+func (s *Server) setVirtualMachinePowerState(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ func (s *Server) setVirtualMachinePowerState(c echo.Context) error {
 // @Failure	409	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/vms/{id}/restart [post]
-func (s *Server) restartVirtualMachine(c echo.Context) error {
+func (s *Server) restartVirtualMachine(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (s *Server) restartVirtualMachine(c echo.Context) error {
 // @Failure	404	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/vms/{id} [delete]
-func (s *Server) deleteVirtualMachine(c echo.Context) error {
+func (s *Server) deleteVirtualMachine(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func (s *Server) deleteVirtualMachine(c echo.Context) error {
 
 // respondWithCurrentVirtualMachine rereads the VM so the response contains the
 // stored intent produced by the request.
-func (s *Server) respondWithCurrentVirtualMachine(c echo.Context, status int) error {
+func (s *Server) respondWithCurrentVirtualMachine(c *echo.Context, status int) error {
 	virtualMachine, err := s.loadVirtualMachine(c)
 	if err != nil {
 		return err

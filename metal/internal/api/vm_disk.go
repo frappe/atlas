@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
@@ -23,7 +23,7 @@ import (
 // @Failure	409		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/disk [put]
-func (s *Server) setVirtualMachineDisk(c echo.Context) error {
+func (s *Server) setVirtualMachineDisk(c *echo.Context) error {
 	var request diskRequest
 	if err := decodeJSONRequest(c, &request); err != nil {
 		return err
@@ -55,7 +55,7 @@ func (s *Server) setVirtualMachineDisk(c echo.Context) error {
 
 // validateDiskCapacity rejects growth the pool cannot hold. Only the increase is
 // checked, because the VM already holds what it reserves.
-func (s *Server) validateDiskCapacity(c echo.Context, request diskRequest, current vm.Information) error {
+func (s *Server) validateDiskCapacity(c *echo.Context, request diskRequest, current vm.Information) error {
 	capacity, err := s.hostService.Capacity(c.Request().Context())
 	if err != nil {
 		return err

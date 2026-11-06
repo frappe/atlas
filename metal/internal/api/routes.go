@@ -1,7 +1,7 @@
 package api
 
 import (
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // registerRoutes binds handlers. PUT mutations are idempotent; POST is for
