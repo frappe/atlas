@@ -20,6 +20,10 @@ type BootSource struct {
 // can still lose its last writes.
 const CacheTypeWriteback = "Writeback"
 
+// IOEngineAsync serves guest requests through io_uring, so one drive keeps many
+// requests in flight. Firecracker's default "Sync" engine serves one at a time.
+const IOEngineAsync = "Async"
+
 // Drive contains one Firecracker drive.
 type Drive struct {
 	DriveID      string       `json:"drive_id"`
@@ -27,6 +31,7 @@ type Drive struct {
 	IsRootDevice bool         `json:"is_root_device"`
 	IsReadOnly   bool         `json:"is_read_only"`
 	CacheType    string       `json:"cache_type,omitempty"`
+	IOEngine     string       `json:"io_engine,omitempty"`
 	Discard      bool         `json:"discard,omitempty"`
 	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
 }
