@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,7 +27,7 @@ func writeConfig(t *testing.T, content string) string {
 }
 
 func TestClientWithoutCredentialsIsNotConfigured(t *testing.T) {
-	client := NewClient(writeConfig(t, "[telemetry]\ninterval = \"30s\"\n"))
+	client := NewClient(writeConfig(t, "[telemetry]\ninterval = \"30s\"\n"), slog.Default())
 	if err := client.Send(context.Background(), []Sample{{Metric: "system_cpu_count"}}); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("err = %v, want ErrNotConfigured", err)
 	}
@@ -48,7 +49,7 @@ func TestClientSplitsSamplesIntoBatchesDatumAccepts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(writeConfig(t, "[telemetry]\ndatum_url = \""+server.URL+"/\"\ndatum_token = \"token-1\"\n"))
+	client := NewClient(writeConfig(t, "[telemetry]\ndatum_url = \""+server.URL+"/\"\ndatum_token = \"token-1\"\n"), slog.Default())
 	samples := make([]Sample, maximumBatch+1)
 	for index := range samples {
 		samples[index] = Sample{Metric: "system_cpu_count", Value: 1, Time: time.Now()}
@@ -69,7 +70,7 @@ func TestPusherKeepsObservationsWhenDatumRejectsThem(t *testing.T) {
 
 	registry := newTestRegistry()
 	registry.Observe("metal_vm_action_duration_seconds", 2.5, Labels{"action": "create"})
-	client := NewClient(writeConfig(t, "[telemetry]\ndatum_url = \""+server.URL+"\"\ndatum_token = \"token-1\"\n"))
+	client := NewClient(writeConfig(t, "[telemetry]\ndatum_url = \""+server.URL+"\"\ndatum_token = \"token-1\"\n"), slog.Default())
 	NewPusher(registry, client, time.Second, registry.logger).Push(context.Background(), time.Now())
 
 	observations := registry.TakeObservations()
@@ -105,13 +106,13 @@ func TestClientKeepsTheTokenUntilItExpires(t *testing.T) {
 	valid, expired, renewed := signedToken(time.Now().Add(time.Hour)), signedToken(time.Now().Add(-time.Minute)), signedToken(time.Now().Add(2*time.Hour))
 
 	writeToken(valid)
-	kept := NewClient(config)
+	kept := NewClient(config, slog.Default())
 	send(kept)
 	writeToken(renewed)
 	send(kept)
 
 	writeToken(expired)
-	refreshed := NewClient(config)
+	refreshed := NewClient(config, slog.Default())
 	send(refreshed)
 	writeToken(renewed)
 	send(refreshed)

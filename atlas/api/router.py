@@ -69,6 +69,12 @@ warpgate = atlas_router.subrouter(
 	description="Close Warpgate sessions of a person. Tenant 0 only.",
 )
 
+dns_records = atlas_router.subrouter(
+	"dns-records",
+	name="DNS Records",
+	description="Point regional service names to their private addresses. Tenant 0 only.",
+)
+
 investigations = atlas_router.subrouter(
 	"investigations",
 	name="Investigations",
@@ -83,6 +89,7 @@ def get_resource_location(collection: str, resource_id: str) -> str:
 
 def register_atlas_api() -> None:
 	"""Import each module that registers Atlas API routes."""
+	import atlas.api.routes.dns_records
 	import atlas.api.routes.hosts
 	import atlas.api.routes.images
 	import atlas.api.routes.investigations

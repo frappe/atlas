@@ -170,6 +170,7 @@ type wgMeshFile struct {
 	BinaryPath string `toml:"binary_path"`
 	Uplink     string `toml:"uplink"`
 	Controller string `toml:"controller_address"`
+	VMMTU      *int   `toml:"vm_mtu"`
 }
 
 type trafficFile struct {
@@ -245,6 +246,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.mesh.binaryPath, fc.WGMesh.BinaryPath)
 	overlay(&resolvedOptions.mesh.uplinkName, fc.WGMesh.Uplink)
 	overlay(&resolvedOptions.mesh.controllerAddress, fc.WGMesh.Controller)
+	overlayInt(&resolvedOptions.cfg.MeshMTU, fc.WGMesh.VMMTU)
 	overlayBool(&resolvedOptions.trafficMonitor.enabled, fc.Traffic.Enabled)
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)

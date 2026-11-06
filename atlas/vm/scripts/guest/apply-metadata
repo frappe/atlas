@@ -9,6 +9,9 @@ METADATA_ADDRESS = ("169.254.169.254", 80)
 METADATA_PATH_PREFIX = "/latest"
 DROP_IN_PATH = pathlib.Path("/run/systemd/network/10-atlas.network.d/mesh.conf")
 MESH_GATEWAY = "fe80::1"
+MESH_PREFIX = "fdaa::/16"
+# Matches the image routes outside the mesh, which can lead to a 1500-byte network.
+OUTSIDE_MESH_MTU = 1380
 TOKEN_TTL_SECONDS = "21600"
 POLL_SECONDS = 0.25
 TIMEOUT_SECONDS = 3
@@ -94,15 +97,21 @@ def apply_hostname(hostname):
     subprocess.run(["hostnamectl", "set-hostname", hostname], check=False)
 
 
-def mesh_drop_in(address, routes):
-    """Return the mesh address and the host routes of the guest."""
-    drop_in = (
+def mesh_drop_in(address, routes, mtu):
+    """Return the mesh address, the mesh MTU and the host routes of the guest."""
+    drop_in = f"[Link]\nMTUBytes={mtu}\n\n" if mtu else ""
+    drop_in += (
         "[Network]\n"
         f"Address={address}/128\n"
         "IPv6AcceptRA=no\n"
+        "\n[Route]\n"
+        f"Destination={MESH_PREFIX}\n"
+        f"Gateway={MESH_GATEWAY}\n"
     )
     for destination in routes:
-        drop_in += "\n[Route]\n" f"Destination={destination}\n" f"Gateway={MESH_GATEWAY}\n"
+        drop_in += (
+            "\n[Route]\n" f"Destination={destination}\n" f"Gateway={MESH_GATEWAY}\n" f"MTUBytes={OUTSIDE_MESH_MTU}\n"
+        )
 
     return drop_in
 
@@ -112,15 +121,27 @@ def parse_routes(value):
     return [entry.strip() for entry in (value or "").split(",") if entry.strip()]
 
 
-def apply_mesh_network(address, routes):
-    drop_in = mesh_drop_in(ipaddress.IPv6Address(address), routes)
+def apply_mesh_network(address, routes, mtu):
+    drop_in = mesh_drop_in(ipaddress.IPv6Address(address), routes, mtu)
     if DROP_IN_PATH.exists() and DROP_IN_PATH.read_text() == drop_in:
         return
 
     # Netlink works before D-Bus starts. The drop-in preserves the state through networkd.
+    if mtu:
+        subprocess.run(["ip", "link", "set", "dev", "eth0", "mtu", str(mtu)], check=False)
+        # The kernel raises each IPv6 route that carried the old link MTU, so pin ::/0 again.
+        subprocess.run(
+            ["ip", "-6", "route", "replace", "default", "via", MESH_GATEWAY, "dev", "eth0"]
+            + ["proto", "static", "metric", "1024", "mtu", str(OUTSIDE_MESH_MTU)],
+            check=False,
+        )
     subprocess.run(["ip", "-6", "address", "replace", f"{address}/128", "dev", "eth0", "nodad"], check=False)
+    subprocess.run(["ip", "-6", "route", "replace", MESH_PREFIX, "via", MESH_GATEWAY, "dev", "eth0"], check=False)
     for destination in routes:
-        subprocess.run(["ip", "-6", "route", "replace", destination, "via", MESH_GATEWAY, "dev", "eth0"], check=False)
+        subprocess.run(
+            ["ip", "-6", "route", "replace", destination, "via", MESH_GATEWAY, "dev", "eth0", "mtu", str(OUTSIDE_MESH_MTU)],
+            check=False,
+        )
 
     DROP_IN_PATH.parent.mkdir(parents=True, exist_ok=True)
     DROP_IN_PATH.write_text(drop_in)
@@ -159,9 +180,11 @@ def main():
                 if hostname:
                     apply_hostname(hostname)
                 routes = read("meta-data/host-routes", token)
-                # A failed read keeps the current routes, because an empty value would remove them.
-                if address and routes is not None:
-                    apply_mesh_network(address, parse_routes(routes))
+                # Metal before the mesh MTU setting has no key, so the image MTU stays.
+                mtu = read("meta-data/mesh-mtu", token)
+                # A failed read keeps the current network, because an empty value would remove routes or the MTU.
+                if address and routes is not None and mtu is not None:
+                    apply_mesh_network(address, parse_routes(routes), int(mtu) if mtu else None)
         time.sleep(POLL_SECONDS)
 
 

@@ -67,6 +67,7 @@ The default path is `/var/lib/metal/metald.toml`. A missing default file is perm
 | `wg_mesh.binary_path` | `/usr/local/bin/atlas-wg-mesh` | WG Mesh CLI. |
 | `wg_mesh.uplink` | none | Interface for Atlas NDP. Required. |
 | `wg_mesh.controller_address` | none | Atlas tenant-0 mesh address on `wg0`. VMs of tenant 0 reach it. |
+| `wg_mesh.vm_mtu` | `1380` | VM veth and guest mesh MTU, published as MMDS `mesh-mtu`. Atlas sets it from the private network MTU. A value above `1380` must fit `wg0` with 56 header bytes. See [mesh MTU](../../../docs/networking/host-networking.md#mesh-mtu). |
 | `traffic_monitor.enabled` | `true` | Enables idle shutdown. |
 | `migration.final_delta_mib` | `512` | Delta size that triggers the final snapshot. |
 | `migration.transfer_port` | `9002` | Snapshot stream port. Same on every host. |

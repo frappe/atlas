@@ -162,8 +162,12 @@ func connectMesh(options options) (*network.Mesh, error) {
 		ControllerAddress:  options.mesh.controllerAddress,
 		WireGuardName:      options.wireGuardName,
 		WireGuardStatePath: wireGuardStatePath(options),
+		VMMTU:              options.cfg.MeshMTU,
 	})
 	if err != nil {
+		return nil, fmt.Errorf("configure Atlas WG Mesh: %w", err)
+	}
+	if err := mesh.CheckVMMTU(); err != nil {
 		return nil, fmt.Errorf("configure Atlas WG Mesh: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), meshSetupTimeout)
@@ -496,6 +500,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
 	}).Run)
+	daemon.StartWorker(telemetry.NewDatumProxy(options.configFile, logger).Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), func(ctx context.Context, event traffic.Event) error {
 			if err := virtualMachineManager.RestoreAfterTraffic(ctx, event); err != nil {

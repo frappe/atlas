@@ -10,6 +10,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/pkt_cls.h>
+#include <linux/tcp.h>
 
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_endian.h>

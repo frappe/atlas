@@ -3,6 +3,7 @@ from __future__ import annotations
 import frappe
 from frappe.flow import Agent
 from frappe.flow.knowledge import Knowledge
+from frappe.flow.lib.agent import with_app_prefix
 
 from atlas.operations.doctype.investigation.investigation import INVESTIGATOR_AGENT
 from atlas.operations.investigator.tools import bmc, changes, hosts, inventory, records, telemetry
@@ -74,7 +75,11 @@ def get_agents() -> list[Agent]:
 	if not model:
 		return []
 
-	knowledge = Knowledge(KNOWLEDGE_BASE, description="Atlas handbook, specifications, and incident reports.")
+	knowledge = None
+	if frappe.db.get_single_value("Flow Knowledge Settings", "embedding_model"):
+		knowledge = Knowledge(
+			KNOWLEDGE_BASE, description="Atlas handbook, specifications, and incident reports."
+		)
 	return [
 		Agent(
 			name=INVESTIGATOR_AGENT,
@@ -100,7 +105,8 @@ def get_agents() -> list[Agent]:
 
 def enable_skill_commands() -> None:
 	"""Let engineers start the Atlas skills with /skill:<name>. Flow syncs app skills with the command off."""
-	for name in SKILLS:
+	for skill_name in SKILLS:
+		name = with_app_prefix("atlas", skill_name)
 		if frappe.db.get_value("Flow Skill", name, "user_invocable") == 0:
 			skill = frappe.get_doc("Flow Skill", name)
 			skill.user_invocable = 1

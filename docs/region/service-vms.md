@@ -33,6 +33,24 @@ The service record and VM have different states. For example, the VM can exist w
 
 Cargo also starts as `Not Provisioned`. See [Cargo recovery](cargo.md#operate-and-recover) before replacing its VM.
 
+## Publish a service address
+
+A tenant-0 caller, such as Cargo, can set an A or AAAA record for a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
+
+```http
+PUT /api/atlas/dns-records/s3-svc.<domain>
+{"address": "203.0.113.7", "ttl": 300}
+
+PUT /api/atlas/dns-records/internal-s3-svc.<domain>
+{"address": "fdaa:1:0:0:0:0:0:7"}
+```
+
+The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse. `DELETE` on the same path removes the A and AAAA records.
+
+Metal looks up `internal-<host>` before it opens an image or snapshot connection to object storage, or a telemetry connection to Datum. When the answer is a private address, Metal connects to that address and keeps the original host name for TLS and presigned URLs. When the answer is public, or the private connection fails, Metal uses the public address.
+
+Vector sends its Datum logs through a CONNECT proxy in metald at `127.0.0.1:9003`, so it uses the same private path and fallback. The proxy allows only the Datum host from `metald.toml` and at most 4 tunnels. `install-telemetry.sh` sets the proxy only when metald listens on that port, so a host with an older metald sends logs directly.
+
 ## Why a service can wait
 
 Atlas queues a setup job after VM creation. If the VM is still a draft, the job leaves the service `Pending`. The scheduler queues it again.

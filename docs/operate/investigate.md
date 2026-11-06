@@ -4,8 +4,8 @@ Atlas runs two [Flow](https://github.com/frappe/frappe/tree/develop/frappe/flow)
 
 | Agent | Who starts it | Can change state |
 | --- | --- | --- |
-| Atlas Investigator | Central, through `POST /api/atlas/investigations` | No. It has only read-only tools. |
-| Atlas Engineer Assistant | An Atlas engineer, in the Flow chat (`/flow`) | Yes, after the engineer approves each call in the chat. |
+| `atlas/Atlas Investigator` | Central, through `POST /api/atlas/investigations` | No. It has only read-only tools. |
+| `atlas/Atlas Engineer Assistant` | An Atlas engineer, in the Flow chat (`/flow`) | Yes, after the engineer approves each call in the chat. |
 
 No agent can terminate a VM, archive a host, delete a record, or read a password or a console token.
 
@@ -32,7 +32,7 @@ Do these steps once for each region, in this order:
    | Enable Investigation | Turn it on. It is off by default, and while it is off, Atlas refuses `POST /api/atlas/investigations` and every agent tool call. |
    | ClickHouse URL, Database, Username, Password | The ClickHouse HTTP URL, such as `http://127.0.0.1:8123`, the `datum` database, and the user from step 4. |
 
-6. Run `pilot --site SITE migrate`. It creates the two agents and their skills, and loads the Atlas documents into the knowledge base. The load needs the embedding model of Flow Knowledge Settings. If the load fails, the migrate prints the error and continues. To load the documents without a migrate, run `pilot --site SITE execute atlas.operations.investigator.knowledge.load_knowledge_base`.
+6. Run `pilot --site SITE migrate`. It creates the two agents and their skills, and loads the Atlas documents into the knowledge base. The knowledge base needs the embedding model of Flow Knowledge Settings. Without it, the agents have no knowledge base. If the load fails, the migrate prints the error and continues. To load the documents without a migrate, run `pilot --site SITE execute atlas.operations.investigator.knowledge.load_knowledge_base`.
 
 ## How an investigation works
 

@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import frappe
 from frappe.flow import ToolContext
+from frappe.flow.lib.agent import with_app_prefix
 from frappe.tests import IntegrationTestCase
 
 from atlas.operations.doctype.investigation.investigation import (
+	INVESTIGATOR_AGENT,
 	Investigation,
 	fail_idle_investigations,
 	record_tool_call,
 	sync_with_flow_session,
 )
 from atlas.operations.doctype.investigation_entry.investigation_entry import InvestigationEntry
+from atlas.operations.investigator.agents import get_agents
 
 
 class TestInvestigation(IntegrationTestCase):
@@ -20,6 +23,12 @@ class TestInvestigation(IntegrationTestCase):
 		session.insert(ignore_permissions=True)
 		self.session = session
 		self.context = ToolContext(session_id=session.name, agent="Flow", user="Administrator")
+
+	def test_central_starts_the_agent_that_atlas_declares(self) -> None:
+		frappe.db.set_single_value("Atlas Settings", "investigation_model", "model")
+		agent_names = [agent.name for agent in get_agents()]
+
+		self.assertIn(with_app_prefix("atlas", INVESTIGATOR_AGENT), agent_names)
 
 	def test_a_chat_gets_one_investigation(self) -> None:
 		name = Investigation.get_for_session(self.context.session_id)

@@ -172,6 +172,10 @@ func (mesh *fakeMesh) syncVM(_ context.Context, request request) error {
 	return nil
 }
 
+func (mesh *fakeMesh) virtualMachineMTU() int {
+	return DefaultVMMTU
+}
+
 func (mesh *fakeMesh) removeVM(_ context.Context, address, interfaceName string) error {
 	mesh.removed = append(mesh.removed, address+" "+interfaceName)
 	return mesh.removeErr

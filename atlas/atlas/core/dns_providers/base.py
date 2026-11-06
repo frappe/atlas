@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from ipaddress import IPv4Address, IPv6Address
 from typing import TYPE_CHECKING, ClassVar
 
 import frappe
 
+from atlas.atlas.core.exceptions import AtlasUserError
+from atlas.atlas.core.mesh_address import MESH_NETWORK
+
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
+
+# Regional services that tenant 0 may publish. Metal and Pilot dial `internal-<label>` over the mesh.
+SERVICE_RECORD_LABELS = ("s3-svc", "s3-admin-svc", "telemetry-svc", "telemetry-read-svc")
+INTERNAL_RECORD_PREFIX = "internal-"
+
+
+class DnsProviderError(Exception):
+	"""Raised when the DNS provider rejects a request."""
 
 
 class DnsProvider(ABC):
@@ -17,6 +29,7 @@ class DnsProvider(ABC):
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
+		self.domain_name = self.settings.wildcard_domain.removeprefix("*.")
 
 	@abstractmethod
 	def bootstrap(self) -> None:
@@ -44,8 +57,15 @@ class DnsProvider(ABC):
 		...
 
 	@abstractmethod
-	def upsert_record(self, record_type: str, name: str, values: list[str], ttl: int = 300) -> None:
-		"""Create the DNS record if missing, or update it to match the given values."""
+	def upsert_record(
+		self,
+		record_type: str,
+		name: str,
+		values: list[str],
+		ttl: int = 300,
+		replaced_type: str | None = None,
+	) -> None:
+		"""Create or update the DNS record, and remove the `replaced_type` record of the name in the same change."""
 		...
 
 	@abstractmethod
@@ -107,3 +127,26 @@ class DnsProvider(ABC):
 	def remove_txt_record(self, name: str) -> None:
 		"""Remove the TXT record for the name, if it exists."""
 		self.remove_record("TXT", name)
+
+	def upsert_service_record(self, name: str, address: IPv4Address | IPv6Address, ttl: int) -> None:
+		"""Point a service name to its public address, or its `internal-` name to its mesh address."""
+		if self._is_internal_service_record(name):
+			if address not in MESH_NETWORK:
+				raise AtlasUserError(f"{name} needs a WG Mesh address in {MESH_NETWORK}.")
+		elif not address.is_global or address.is_multicast:
+			raise AtlasUserError(f"{name} needs a public address.")
+		record_type, replaced_type = ("A", "AAAA") if address.version == 4 else ("AAAA", "A")
+		self.upsert_record(record_type, name, [str(address)], ttl, replaced_type)
+
+	def remove_service_record(self, name: str) -> None:
+		"""Remove the A and AAAA records of one service name."""
+		self._is_internal_service_record(name)
+		self.remove_record("A", name)
+		self.remove_record("AAAA", name)
+
+	def _is_internal_service_record(self, name: str) -> bool:
+		label, _, domain = name.partition(".")
+		service = label.removeprefix(INTERNAL_RECORD_PREFIX)
+		if domain != self.domain_name or service not in SERVICE_RECORD_LABELS:
+			raise AtlasUserError(f"{name} is not a service record name under {self.domain_name}.")
+		return service != label

@@ -47,6 +47,7 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		configuration.Specification,
 		bootConfiguration,
 		configuration.NetworkInterface,
+		runtime.configuration.MeshMTU,
 	)
 }
 
@@ -199,7 +200,7 @@ func (runtime *Runtime) launchWarmImage(ctx context.Context, configuration vm.Ru
 	}
 
 	metadata := configuration.Specification.MetadataServiceData(
-		configuration.ID, configuration.NetworkInterface.GuestIPAddress, configuration.NetworkInterface.MACAddress,
+		configuration.ID, configuration.NetworkInterface.GuestIPAddress, configuration.NetworkInterface.MACAddress, runtime.configuration.MeshMTU,
 	)
 	if err := runtime.launchMemorySnapshot(
 		ctx,

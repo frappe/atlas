@@ -114,6 +114,15 @@ sinks:
       max_size: 268435488
       when_full: drop_newest
 VECTOR
+# metald tunnels Datum connections over the private network when Atlas publishes
+# internal-<host>. An older metald has no proxy, so Vector connects directly.
+if ss -Hltn 'sport = :9003' | grep -q .; then
+cat <<'VECTOR'
+    proxy:
+      enabled: true
+      https: http://127.0.0.1:9003
+VECTOR
+fi
 } > /etc/vector/vector.next.yaml
 chgrp vector /etc/vector/vector.next.yaml
 vector validate --no-environment /etc/vector/vector.next.yaml

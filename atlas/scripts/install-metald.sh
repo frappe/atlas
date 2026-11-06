@@ -33,6 +33,15 @@ false) cpu_template_line="" ;;
 	exit 1
 	;;
 esac
+# An Atlas build from before the setting does not send it, so metald keeps its default.
+case "${VM_MESH_MTU:-}" in
+"") vm_mtu_line="" ;;
+*[!0-9]*)
+	echo "VM_MESH_MTU must be a number" >&2
+	exit 1
+	;;
+*) vm_mtu_line="vm_mtu = $VM_MESH_MTU" ;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "install-metald must run as root" >&2
@@ -65,6 +74,21 @@ uplink_nic_firmware() {
 		[ -e "$device" ] || continue
 		ethtool -i "$(basename "$(readlink -f "$device")")" | awk '/^driver:/ { driver = $2 } /^firmware-version:/ { print driver, $2 }'
 	done
+}
+
+# set_config_line replaces the line of a key in a config section. An empty line removes it.
+set_config_line() {
+	local section=$1 key=$2 line=$3
+
+	sed -i "/^$key[[:space:]]*=/d" "$config_file"
+	if [ -z "$line" ]; then
+		return
+	fi
+	if grep -q "^\\[$section\\]" "$config_file"; then
+		sed -i "/^\\[$section\\]/a $line" "$config_file"
+	else
+		printf '\n[%s]\n%s\n' "$section" "$line" >>"$config_file"
+	fi
 }
 
 # service_is_stable checks that the metal service stays active.
@@ -246,13 +270,9 @@ EOF
 	tls_sections
 	chmod 600 "$config_file"
 fi
-# Atlas owns this line: metald boots every VM without a CPU template while it is present.
-sed -i '/^cpu_template_disabled[[:space:]]*=/d' "$config_file"
-if [ -n "$cpu_template_line" ] && grep -q '^\[firecracker\]' "$config_file"; then
-	sed -i "/^\[firecracker\]/a $cpu_template_line" "$config_file"
-elif [ -n "$cpu_template_line" ]; then
-	printf '\n[firecracker]\n%s\n' "$cpu_template_line" >>"$config_file"
-fi
+# Atlas owns these lines: metald boots every VM without a CPU template while it is present.
+set_config_line firecracker cpu_template_disabled "$cpu_template_line"
+set_config_line wg_mesh vm_mtu "$vm_mtu_line"
 
 
 step "NIC workarounds"
