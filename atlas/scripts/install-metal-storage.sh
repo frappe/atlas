@@ -60,6 +60,21 @@ else
 	echo "    device: $STORAGE_POOL_DEVICE"
 	zpool create -m none "$storage_pool_name" "$STORAGE_POOL_DEVICE"
 fi
+
+step "zfs tuning"
+# Deeper vdev queues keep the NVMe drives busy. The guests and the host page
+# cache already cache VM data, so the ARC needs room mostly for metadata.
+zfs_parameters="zfs_vdev_sync_read_max_active=64 zfs_vdev_sync_write_max_active=64 zfs_vdev_async_read_max_active=32 zfs_vdev_async_write_max_active=128 zfs_arc_max=17179869184 zfs_arc_min=4294967296"
+echo "options zfs $zfs_parameters" > /etc/modprobe.d/zfs-metal.conf
+for parameter in $zfs_parameters; do
+	echo "${parameter#*=}" > "/sys/module/zfs/parameters/${parameter%%=*}"
+done
+if [ "$(zpool get -H -o value autotrim "$storage_pool_name")" != on ]; then
+	zpool set autotrim=on "$storage_pool_name"
+	# Autotrim covers only the space that is freed from now on.
+	zpool trim "$storage_pool_name" || echo "    $STORAGE_POOL_DEVICE does not support trim"
+fi
+
 zfs list "$storage_pool_name/images" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/images"
 zfs list "$storage_pool_name/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/vms"
 zfs list "$storage_pool_name/staging" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/staging"
