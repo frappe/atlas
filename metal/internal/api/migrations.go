@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm/migration"
 )
@@ -93,7 +93,7 @@ type migrationErrorResponse struct {
 }
 
 // createMigration creates or resumes a destination migration and starts its worker.
-func (s *Server) createMigration(c echo.Context) error {
+func (s *Server) createMigration(c *echo.Context) error {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return err
@@ -115,7 +115,7 @@ func (s *Server) createMigration(c echo.Context) error {
 }
 
 // getMigration returns destination migration status.
-func (s *Server) getMigration(c echo.Context) error {
+func (s *Server) getMigration(c *echo.Context) error {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func (s *Server) getMigration(c echo.Context) error {
 
 // finishMigration records the destination's finish request. The destination then
 // destroys the source over the mesh.
-func (s *Server) finishMigration(c echo.Context) error {
+func (s *Server) finishMigration(c *echo.Context) error {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func (s *Server) finishMigration(c echo.Context) error {
 }
 
 // abortMigration removes an unfinished destination migration.
-func (s *Server) abortMigration(c echo.Context) error {
+func (s *Server) abortMigration(c *echo.Context) error {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ type restoreSourceRequest struct {
 }
 
 // restoreMigrationSource starts and unlocks a stopped source whose destination is lost.
-func (s *Server) restoreMigrationSource(c echo.Context) error {
+func (s *Server) restoreMigrationSource(c *echo.Context) error {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return err
@@ -180,7 +180,7 @@ func (s *Server) restoreMigrationSource(c echo.Context) error {
 }
 
 // discardMigration removes a destination whose source Atlas already restored.
-func (s *Server) discardMigration(c echo.Context) error {
+func (s *Server) discardMigration(c *echo.Context) error {
 	identifier, err := migrationIdentifier(c)
 	if err != nil {
 		return err
@@ -247,7 +247,7 @@ func bytesToMiB(bytes int64) int {
 }
 
 // migrationIdentifier reads and validates the path migration ID.
-func migrationIdentifier(c echo.Context) (string, error) {
+func migrationIdentifier(c *echo.Context) (string, error) {
 	identifier := c.Param("id")
 	if !validResourceID(identifier) {
 		return "", badRequest("invalid migration identifier")

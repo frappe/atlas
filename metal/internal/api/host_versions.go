@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // Versions names the builds that run on this host. An empty value means that
@@ -22,6 +22,6 @@ type Versions struct {
 // @Success	200	{object}	Versions
 // @Failure	401	{object}	errorResponse
 // @Router		/v1/versions [get]
-func (s *Server) getVersions(c echo.Context) error {
+func (s *Server) getVersions(c *echo.Context) error {
 	return c.JSON(http.StatusOK, s.versions)
 }

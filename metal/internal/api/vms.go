@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/vm"
 )
@@ -22,7 +22,7 @@ import (
 // @Failure	409		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id} [put]
-func (s *Server) createVirtualMachine(c echo.Context) error {
+func (s *Server) createVirtualMachine(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ func (s *Server) createVirtualMachine(c echo.Context) error {
 // @Failure	401	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/vms [get]
-func (s *Server) listVirtualMachines(c echo.Context) error {
+func (s *Server) listVirtualMachines(c *echo.Context) error {
 	ctx := c.Request().Context()
 	virtualMachines, _, err := s.virtualMachineManager.List(ctx)
 	if err != nil {
@@ -82,7 +82,7 @@ func (s *Server) listVirtualMachines(c echo.Context) error {
 // @Failure	404	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/vms/{id} [get]
-func (s *Server) getVirtualMachine(c echo.Context) error {
+func (s *Server) getVirtualMachine(c *echo.Context) error {
 	information, err := s.loadVirtualMachine(c)
 	if err != nil {
 		return err
@@ -91,7 +91,7 @@ func (s *Server) getVirtualMachine(c echo.Context) error {
 }
 
 // loadVirtualMachine reads the VM named in the request path.
-func (s *Server) loadVirtualMachine(c echo.Context) (vm.Information, error) {
+func (s *Server) loadVirtualMachine(c *echo.Context) (vm.Information, error) {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return vm.Information{}, err
@@ -100,12 +100,12 @@ func (s *Server) loadVirtualMachine(c echo.Context) (vm.Information, error) {
 }
 
 // respondWithVirtualMachine writes one VM as the response body.
-func (s *Server) respondWithVirtualMachine(c echo.Context, status int, information vm.Information) error {
+func (s *Server) respondWithVirtualMachine(c *echo.Context, status int, information vm.Information) error {
 	return c.JSON(status, toVirtualMachine(information))
 }
 
 // virtualMachineID reads and validates the VM identifier in the request path.
-func virtualMachineID(c echo.Context) (string, error) {
+func virtualMachineID(c *echo.Context) (string, error) {
 	identifier := c.Param("id")
 	if !validResourceID(identifier) {
 		return "", badRequest("invalid virtual machine identifier")
@@ -115,7 +115,7 @@ func virtualMachineID(c echo.Context) (string, error) {
 }
 
 // snapshotID reads and validates the snapshot identifier in the request path.
-func snapshotID(c echo.Context) (string, error) {
+func snapshotID(c *echo.Context) (string, error) {
 	identifier := c.Param("id")
 	if !validResourceID(identifier) {
 		return "", badRequest("invalid snapshot identifier")

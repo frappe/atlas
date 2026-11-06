@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/storage"
 )
@@ -85,7 +85,7 @@ type snapshotStatusResponse struct {
 // @Failure	409	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/vms/{id}/snapshots [post]
-func (s *Server) createVirtualMachineSnapshot(c echo.Context) error {
+func (s *Server) createVirtualMachineSnapshot(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -118,7 +118,7 @@ func (s *Server) createVirtualMachineSnapshot(c echo.Context) error {
 // @Failure	404		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/snapshots/{id}/upload [post]
-func (s *Server) uploadSnapshot(c echo.Context) error {
+func (s *Server) uploadSnapshot(c *echo.Context) error {
 	identifier, err := snapshotID(c)
 	if err != nil {
 		return err
@@ -146,7 +146,7 @@ func (s *Server) uploadSnapshot(c echo.Context) error {
 // @Failure	404	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/snapshots/{id} [get]
-func (s *Server) getSnapshot(c echo.Context) error {
+func (s *Server) getSnapshot(c *echo.Context) error {
 	identifier, err := snapshotID(c)
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func progressPercent(uploaded, total int64) int {
 // @Failure	401	{object}	errorResponse
 // @Failure	500	{object}	errorResponse
 // @Router		/v1/snapshots/{id} [delete]
-func (s *Server) deleteSnapshot(c echo.Context) error {
+func (s *Server) deleteSnapshot(c *echo.Context) error {
 	identifier, err := snapshotID(c)
 	if err != nil {
 		return err

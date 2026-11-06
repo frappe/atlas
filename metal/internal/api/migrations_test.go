@@ -153,7 +153,7 @@ func newMigrationTestServerWithWake(t *testing.T, migrations MigrationManager, w
 	if err != nil {
 		t.Fatal(err)
 	}
-	return server
+	return server.Handler
 }
 
 func newCoordinationTestServer(t *testing.T, migrations MigrationManager) http.Handler {
@@ -162,7 +162,7 @@ func newCoordinationTestServer(t *testing.T, migrations MigrationManager) http.H
 	if err != nil {
 		t.Fatal(err)
 	}
-	return server
+	return server.Handler
 }
 
 func TestCreateMigrationDrivesTheDestination(t *testing.T) {
@@ -502,14 +502,14 @@ func TestCoordinationMemoryStreamCarriesChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(router)
+	server := httptest.NewTLSServer(router.Handler)
 	defer server.Close()
 	tlsConfiguration := server.Client().Transport.(*http.Transport).TLSClientConfig
 	client := migration.NewSourceClient(0, tlsConfiguration)
 	if err := client.ReceiveMemorySnapshot(t.Context(), server.URL, "mig-1", "vm-1", 1, t.TempDir(), 1); err != nil {
 		t.Fatal(err)
 	}
-	do(t, router, http.MethodPost, "/v1/migrations/mig-1/stop?virtual_machine_id=vm-1", `{"has_memory_snapshot":true}`, http.StatusOK)
+	do(t, router.Handler, http.MethodPost, "/v1/migrations/mig-1/stop?virtual_machine_id=vm-1", `{"has_memory_snapshot":true}`, http.StatusOK)
 	if !stub.stopMemorySnapshot {
 		t.Fatal("stop did not preserve the memory request")
 	}
