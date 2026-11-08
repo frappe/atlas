@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -14,7 +15,10 @@ from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.proxy.configuration import ProxyConfiguration
 from atlas.service.core.service_package import HTTP_PROXY_PACKAGE
 from atlas.service.core.telemetry import enqueue_service_telemetry
-from atlas.service.doctype.proxy_server.proxy_server import proxy_server_lifecycle_lock
+from atlas.service.doctype.proxy_server.proxy_server import (
+	is_mesh_only_proxy_enabled,
+	proxy_server_lifecycle_lock,
+)
 
 if TYPE_CHECKING:
 	from atlas.service.doctype.proxy_server.proxy_server import ProxyServer
@@ -150,9 +154,20 @@ class ProxyServerProvisioner:
 		self.save_progress(save)
 
 	def update_dns_record(self, save: bool = True) -> None:
-		"""Point the proxy domain at its public IPv4 address."""
+		"""Publish the proxy node address."""
 		self.proxy_server = frappe.get_doc("Proxy Server", self.proxy_server.name, for_update=True)
 		if self.proxy_server.status == "Archived":
+			return
+
+		if is_mesh_only_proxy_enabled():
+			settings = frappe.get_single("Atlas Settings")
+			settings.dns_provider_controller.upsert_record(
+				"AAAA",
+				self.proxy_server.get_domain(),
+				[self.proxy_server.mesh_address],
+				ttl=NODE_DNS_TTL_SECONDS,
+			)
+			self.save_progress(save)
 			return
 
 		address = self.proxy_server.public_ipv4
@@ -167,6 +182,24 @@ class ProxyServerProvisioner:
 
 	def update_global_dns_record(self, save: bool = True) -> None:
 		"""Publish this proxy as a health-checked regional endpoint."""
+		if is_mesh_only_proxy_enabled():
+			settings = frappe.get_single("Atlas Settings")
+			provider = settings.dns_provider_controller
+			names = frappe.get_all("Proxy Server", filters={"status": "Active"}, pluck="name")
+			addresses = {frappe.get_doc("Proxy Server", name).mesh_address for name in names} | {
+				self.proxy_server.mesh_address
+			}
+			provider.upsert_record(
+				"AAAA", f"proxy.{settings.wildcard_domain}", sorted(addresses), ttl=REGIONAL_DNS_TTL_SECONDS
+			)
+			provider.upsert_cname_record(
+				f"*.{settings.wildcard_domain}",
+				f"proxy.{settings.wildcard_domain}",
+				ttl=WILDCARD_DNS_TTL_SECONDS,
+			)
+			self.save_progress(save)
+			return
+
 		address = self.proxy_server.public_ipv4
 		if not address:
 			frappe.throw(_("Proxy Server {0} has no public IPv4 address.").format(self.proxy_server.name))
@@ -206,7 +239,24 @@ class ProxyServerProvisioner:
 		"""Wait until the node has synchronized and OpenResty is ready."""
 		deadline = time.monotonic() + CONTROL_READY_TIMEOUT_SECONDS
 		url = f"https://{self.proxy_server.get_domain()}/readyz"
+		mesh_only = is_mesh_only_proxy_enabled()
 		while time.monotonic() < deadline:
+			if mesh_only:
+				virtual_machine = self.virtual_machine
+				result = SSHRunner(
+					virtual_machine.ssh_host, proxy_command=virtual_machine.get_ssh_proxy_command()
+				).run_command(
+					"curl --silent --show-error --fail --noproxy '*' --max-time 2 "
+					f"--resolve {shlex.quote(self.proxy_server.get_domain() + ':443:[' + self.proxy_server.mesh_address + ']')} "
+					f"--output /dev/null --write-out '%{{http_code}}' {shlex.quote(url)}",
+					timeout_seconds=10,
+				)
+				if result.is_success and result.output.strip() == "204":
+					self.save_progress(save)
+					return
+				time.sleep(CONTROL_READY_POLL_INTERVAL_SECONDS)
+				continue
+
 			try:
 				if requests.get(url, timeout=CONTROL_REQUEST_TIMEOUT_SECONDS).status_code == 204:
 					self.save_progress(save)

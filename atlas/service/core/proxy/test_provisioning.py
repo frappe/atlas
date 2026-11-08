@@ -312,3 +312,55 @@ class TestDNSRecord(UnitTestCase):
 			"*.example.com", "proxy.example.com", ttl=3600
 		)
 		self.assertEqual(proxy_server.dns_health_check_id, "health-1")
+
+
+class TestMeshOnlyProvisioning(UnitTestCase):
+	def test_static_dns_routes_normal_operator_names_to_mesh(self) -> None:
+		from pathlib import Path
+		from tempfile import TemporaryDirectory
+
+		from atlas.atlas.core.dns_providers.static import StaticProvider
+
+		proxy = _proxy_server(mesh_address="fdaa:1::1", get_domain=lambda: "proxy-001.metal.test")
+		settings = SimpleNamespace(wildcard_domain="metal.test", dns_provider="Static")
+		with (
+			TemporaryDirectory() as directory,
+			patch.dict(frappe.conf, {"developer_mode": True}),
+			patch.object(provisioning, "is_mesh_only_proxy_enabled", return_value=True),
+			patch.object(frappe, "get_single", return_value=settings),
+			patch.object(frappe, "get_doc", return_value=proxy),
+			patch.object(frappe, "get_all", return_value=[]),
+		):
+			provider = StaticProvider(settings)
+			provider.path = Path(directory) / "dns.sqlite3"
+			settings.dns_provider_controller = provider
+			provisioner = ProxyServerProvisioner(proxy)
+			provisioner.update_dns_record()
+			provisioner.update_global_dns_record()
+			self.assertEqual(provider.resolve("proxy-001.metal.test"), [proxy.mesh_address])
+			self.assertEqual(provider.resolve("runway-cache-svc.metal.test"), [proxy.mesh_address])
+			self.assertIsNone(proxy.dns_health_check_id)
+			from atlas.service.doctype.proxy_server.proxy_server import ProxyServer
+
+			with patch(
+				"atlas.service.doctype.proxy_server.proxy_server.is_mesh_only_proxy_enabled",
+				return_value=True,
+			):
+				ProxyServer.remove_dns_record(proxy)
+			self.assertEqual(provider.resolve("runway-cache-svc.metal.test"), [])
+
+	def test_readiness_uses_verified_mesh_https(self) -> None:
+		proxy = _proxy_server(mesh_address="fdaa:1::1", get_domain=lambda: "proxy-001.metal.test")
+		machine = SimpleNamespace(ssh_host="private", get_ssh_proxy_command=lambda: "host-proxy")
+		with (
+			patch.object(provisioning, "is_mesh_only_proxy_enabled", return_value=True),
+			patch.object(frappe, "get_doc", return_value=machine),
+			patch.object(provisioning, "SSHRunner") as runner,
+			patch.object(provisioning.requests, "get") as public_request,
+		):
+			runner.return_value.run_command.return_value = SimpleNamespace(is_success=True, output="204")
+			ProxyServerProvisioner(proxy).wait_for_control_readiness()
+			command = runner.return_value.run_command.call_args.args[0]
+			self.assertIn("proxy-001.metal.test:443:[fdaa:1::1]", command)
+			self.assertNotIn("--insecure", command)
+			public_request.assert_not_called()

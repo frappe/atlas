@@ -12,7 +12,7 @@ from frappe.model.document import Document
 from frappe.utils.file_lock import LockTimeoutError
 from frappe.utils.synchronization import filelock
 
-from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
+from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
 from atlas.service.core.telemetry import request_service_telemetry
 
 if TYPE_CHECKING:
@@ -36,6 +36,24 @@ def get_proxy_firewall(region_id: int) -> dict[str, Any]:
 		],
 		"outbound": [{"protocol": "any", "cidrs": ANYWHERE}],
 	}
+
+
+def is_mesh_only_proxy_enabled() -> bool:
+	"""Validate the explicit site-only development proxy mode."""
+	if not frappe.conf.get("dev_mesh_only_proxy"):
+		return False
+
+	settings = frappe.get_single("Atlas Settings")
+	if (
+		not frappe.conf.developer_mode
+		or settings.dns_provider != "Static"
+		or not settings.wildcard_domain.endswith(".test")
+		or settings.is_wildcard_tls_auto_renew_enabled
+	):
+		frappe.throw(
+			_("Mesh-only proxies require developer mode, Static .test DNS and disabled TLS renewal.")
+		)
+	return True
 
 
 class ProxyServer(Document):
@@ -67,6 +85,14 @@ class ProxyServer(Document):
 
 		return frappe.get_doc("Virtual Machine", self.virtual_machine).public_ipv4
 
+	@property
+	def mesh_address(self) -> str:
+		"""Return this proxy VM's tenant-0 mesh address."""
+		return get_virtual_machine_mesh_address(
+			frappe._dict(name=self.virtual_machine, tenant_id=0),
+			frappe.get_cached_value("Atlas Settings", "Atlas Settings", "region_id"),
+		)
+
 	def before_insert(self) -> None:
 		"""Reject records created outside the Proxy Server API."""
 		if not getattr(self.flags, "created_by_proxy_server_api", False):
@@ -84,7 +110,7 @@ class ProxyServer(Document):
 		if not isinstance(values, dict):
 			frappe.throw(_("Proxy Server creation data must be an object."))
 		public_ipv4 = values.get("public_ipv4")
-		if not isinstance(public_ipv4, str) or not public_ipv4.strip():
+		if not is_mesh_only_proxy_enabled() and (not isinstance(public_ipv4, str) or not public_ipv4.strip()):
 			frappe.throw(_("Select a reserved public IPv4 allocation."))
 
 		proxy_server = frappe.new_doc("Proxy Server")
@@ -114,7 +140,7 @@ class ProxyServer(Document):
 			"is_termination_protected": True,
 			"hostname": proxy_server.name,
 			"ssh_keys": settings.public_ssh_key,
-			"public_ipv4": values["public_ipv4"],
+			"public_ipv4": None if is_mesh_only_proxy_enabled() else values["public_ipv4"],
 			"placement_rules": values.get("placement_rules"),
 			"firewall": get_proxy_firewall(settings.region_id),
 		}
@@ -238,6 +264,20 @@ class ProxyServer(Document):
 		"""Remove proxy DNS records before its address is released."""
 		settings = frappe.get_single("Atlas Settings")
 		provider = settings.dns_provider_controller
+		if is_mesh_only_proxy_enabled():
+			provider.remove_record("AAAA", self.get_domain())
+			addresses = [
+				frappe.get_doc("Proxy Server", name).mesh_address
+				for name in frappe.get_all("Proxy Server", filters={"status": "Active"}, pluck="name")
+				if name != self.name
+			]
+			if addresses:
+				provider.upsert_record("AAAA", f"proxy.{settings.wildcard_domain}", addresses, ttl=120)
+			else:
+				provider.remove_record("AAAA", f"proxy.{settings.wildcard_domain}")
+				provider.remove_record("CNAME", f"*.{settings.wildcard_domain}")
+			return
+
 		if self.dns_health_check_id:
 			provider.remove_multivalue_a_record(
 				f"proxy.{settings.wildcard_domain}",

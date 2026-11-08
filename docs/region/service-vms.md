@@ -14,7 +14,7 @@ Atlas owns each VM and its setup record. The software inside the VM owns its tra
 
 ## What Atlas creates
 
-Atlas creates privileged, termination-protected VMs through the normal VM service. The HTTP proxy and WireGuard gateway need a **tenant-0 public IPv4 allocation**. Reserve an address on the Public IP Pool form before you create either service.
+Atlas creates privileged, termination-protected VMs through the normal VM service. The HTTP proxy and WireGuard gateway need a **tenant-0 public IPv4 allocation**. Reserve an address on the Public IP Pool form before you create either service. A proxy can use the explicitly enabled [mesh-only development mode](runway-cache.md#mesh-only-development-proxy) without an allocation.
 
 Proxy and Runway cache provisioning requests accept optional `placement_rules`. The normal VM placement rules select the host before Atlas creates the VM.
 

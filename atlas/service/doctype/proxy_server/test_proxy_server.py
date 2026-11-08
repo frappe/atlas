@@ -313,3 +313,45 @@ class TestProxyServerCreate(UnitTestCase):
 			deduplicate=True,
 			enqueue_after_commit=False,
 		)
+
+
+class TestMeshOnlyProxy(UnitTestCase):
+	def test_default_mode_is_off(self) -> None:
+		with patch.dict(frappe.conf, {"dev_mesh_only_proxy": False}):
+			self.assertFalse(proxy_server_module.is_mesh_only_proxy_enabled())
+
+	def test_mode_requires_safe_development_settings(self) -> None:
+		settings = SimpleNamespace(
+			dns_provider="Static", wildcard_domain="metal.test", is_wildcard_tls_auto_renew_enabled=0
+		)
+		with (
+			patch.dict(frappe.conf, {"dev_mesh_only_proxy": True, "developer_mode": True}),
+			patch.object(frappe, "get_single", return_value=settings),
+		):
+			self.assertTrue(proxy_server_module.is_mesh_only_proxy_enabled())
+			for field, value in (
+				("dns_provider", "Route53"),
+				("wildcard_domain", "example.com"),
+				("is_wildcard_tls_auto_renew_enabled", 1),
+			):
+				with patch.object(settings, field, value), self.assertRaises(frappe.ValidationError):
+					proxy_server_module.is_mesh_only_proxy_enabled()
+			with (
+				patch.dict(frappe.conf, {"developer_mode": False}),
+				self.assertRaises(frappe.ValidationError),
+			):
+				proxy_server_module.is_mesh_only_proxy_enabled()
+
+	def test_mesh_creation_omits_the_allocation_even_when_supplied(self) -> None:
+		proxy = SimpleNamespace(name="proxy-001")
+		with (
+			patch.object(proxy_server_module, "is_mesh_only_proxy_enabled", return_value=True),
+			patch.object(frappe, "get_single", return_value=SimpleNamespace(public_ssh_key="", region_id=1)),
+			patch(
+				"atlas.vm.core.vm_service.VirtualMachineService.create",
+				return_value={"name": "vm-0-0001", "is_draft": False},
+			) as create,
+		):
+			for values in ({}, {"public_ipv4": "reserved-allocation"}):
+				self.assertFalse(proxy_server_module.ProxyServer.create_virtual_machine(proxy, values))
+				self.assertIsNone(create.call_args.args[0]["public_ipv4"])

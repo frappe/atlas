@@ -41,3 +41,13 @@ Atlas writes configuration before installation. Runway setup restarts services o
 **Archive** removes the operator route and internal DNS before terminating the VM. A replacement gets a fresh disk and service identity. Listener ports and Central Region name cannot change while a VM is attached. An outage makes Runway jobs fall back to GitHub's cache.
 
 The controller verifies jobs with its GitHub App credential and records the result on the Central lease. The cache service holds no GitHub credential.
+
+## Mesh-only development proxy
+
+A development site without a public IP can set `dev_mesh_only_proxy` to `true` in its site configuration. The default is off. This mode requires `developer_mode`, Static DNS with a `.test` wildcard domain, and disabled wildcard TLS renewal. Keep the mode fixed until all proxy VMs are archived.
+
+Create the proxy through its normal Python creation API without `public_ipv4`. Atlas sends no public allocation to the VM service. Metal therefore applies no public-IP attachment, NAT, host route, or proxy ARP for this proxy. Node and regional proxy records contain mesh AAAA addresses. Readiness uses verified HTTPS to the node mesh address through normal VM SSH. Install the development CA in the proxy trust store before readiness.
+
+Central keeps the normal `https://runway-cache-svc.<wildcard-domain>/configure` route. Give its process private mesh connectivity, Static DNS resolution, and development CA trust. Deliver Static DNS and CA trust explicitly to each owned VM. Guest traffic still uses TLS directly to the cache VM's `internal-` name.
+
+This mode does not qualify the public proxy front. Qualify that front separately on a host with a public IP. Archive all development proxies before restoring site settings.

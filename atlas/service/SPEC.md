@@ -19,7 +19,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 
 ## Shared rules
 
-- Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. Proxy and WireGuard gateway VMs need a reserved tenant-0 IPv4 allocation. The proxy guest firewall admits TCP 80 and 443 from public addresses.
+- Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. Proxy and WireGuard gateway VMs need a reserved tenant-0 IPv4 allocation. The proxy guest firewall admits TCP 80 and 443 from public addresses. The opt-in [mesh-only development mode](../../docs/region/runway-cache.md#mesh-only-development-proxy) omits the proxy allocation.
 - Atlas reaches service SSH through the VM host. See [Atlas access to hosts](../../docs/region/host-access.md#ssh).
 - A job requeues `Pending` records every minute.
 - A failure sets `Failed` with the phase and message. Nothing replaces the VM automatically.
