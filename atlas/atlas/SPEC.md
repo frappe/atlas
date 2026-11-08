@@ -12,7 +12,7 @@ Behavior: [provider guide](../../docs/region/provider-guide.md), [configuration]
 | `AtlasSetup` | Deployer settings and first provider setup |
 | `ServerProvider` | The provider contract |
 | `registry` | Provider name to implementation |
-| `DNSProvider`, `Route53Provider` | DNS contract and Route 53 |
+| `DnsProvider`, `Route53Provider`, `StaticProvider` | DNS contract, Route 53 and explicit development VM resolution |
 | `host_binaries` | Builds `metald` and the WG Mesh CLI |
 | `telemetry` | Atlas metrics, events, Error Log shipping, and Datum tokens. See [telemetry](../../docs/operate/telemetry.md). |
 | `artifacts` | Publishes a build as a public File |

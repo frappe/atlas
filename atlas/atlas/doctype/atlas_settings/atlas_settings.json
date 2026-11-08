@@ -335,7 +335,7 @@
    "fieldname": "dns_provider",
    "fieldtype": "Select",
    "label": "DNS Provider",
-   "options": "Route53",
+   "options": "Route53\nStatic",
    "read_only_depends_on": "eval: doc.is_dns_setup_completed",
    "reqd": 1
   },

@@ -36,6 +36,7 @@ def get_dns_provider(
 
 def _load_implementations() -> None:
 	import atlas.atlas.core.dns_providers.route53
+	import atlas.atlas.core.dns_providers.static
 
 
 __all__ = ["DnsProvider", "DnsProviderError", "get_dns_provider", "register"]

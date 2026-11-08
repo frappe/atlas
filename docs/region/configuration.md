@@ -57,3 +57,13 @@ Verify hosts and services after changing region identity, trust material, storag
 - [Host sync](../../atlas/metal_server/usage.py) applies regional host policy.
 
 :::
+
+## Static DNS in development
+
+Select **Static** as the DNS provider only on a site with `developer_mode` enabled and a wildcard domain under `.test`. This provider has no public DNS client or credentials. It stores A, AAAA, CNAME and multivalue A records in the site-private `static-dns.sqlite3` file. Health checks do not contact a server.
+
+Static DNS delivery is explicit. In the site console, call `settings.dns_provider_controller.configure_virtual_machine(vm, ca_pem)` for each development VM that you own. `vm` is a loaded Virtual Machine document. The optional `ca_pem` contains a public CA certificate. Do not pass a CA private key. The method uses the normal Atlas SSH connection through that VM's Metal host. It does not enumerate VMs or update hosts.
+
+The method installs `dnsmasq-base`, writes a resolver configuration under `/etc/atlas/`, and starts `atlas-static-dns.service` on loopback port 5353. A systemd-resolved domain route sends only the development domain to it. The other domains keep their existing resolver. CNAMEs resolve to their stored target addresses. A wildcard CNAME becomes a wildcard address rule. An exact mesh record takes precedence. Repeat delivery after records change, including on proxy, service and runner VMs before they use the records.
+
+Use a local CA and wildcard certificate in Atlas Settings. Keep wildcard TLS auto-renewal disabled. Static DNS does not implement ACME TXT challenges. Back up the DNS database, original DNS and TLS settings, and scheduler settings before a qualification run. Restore those values after you delete the VMs you created. Static DNS does not remove the normal Proxy Server requirement for a reserved public IPv4 allocation.
