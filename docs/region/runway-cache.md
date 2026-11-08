@@ -30,7 +30,13 @@ Central supplies its read credential through `/configure`; Atlas stores no crede
 
 Publish the current HTTP proxy package with `build-service-packages` and update existing proxy nodes before cache setup. The package includes the generated operator virtual host. Atlas sends the route and public CA through the normal proxy configuration delivery and digest checks, including newly created proxy nodes.
 
-Central calls `https://runway-cache-svc.<wildcard-domain>/configure`. The regional wildcard certificate terminates public TLS at the proxy. The proxy accepts only POST on that exact path, then opens verified TLS to the VM mesh address and operator port. It verifies the service certificate against the public CA read from the VM and uses the service domain for SNI. Other paths return 404. The guest listener is never a proxy upstream. Runway validates Central's JWT and numeric region audience.
+Central calls `https://runway-cache-svc.<wildcard-domain>/configure`. The regional wildcard certificate terminates public TLS at the proxy.
+
+The proxy accepts only POST on that exact path, then opens verified TLS to the VM mesh address and operator port. It verifies the service certificate against the public CA read from the VM and uses the service domain for SNI. Other paths return 404.
+
+The generic wildcard TLS server remains the explicit default for Cargo, proxy control, and site traffic.
+
+The guest listener is never a proxy upstream. Runway validates Central's JWT and numeric region audience.
 
 ## Operate and recover
 
