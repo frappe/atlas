@@ -141,9 +141,9 @@ as_bench_user "pilot -b $q_bench frappe set-config -g -p scheduler_tick_interval
 if [ "$DEV_MESH_ONLY_PROXY" != 1 ]; then
 	as_bench_user "pilot -b $q_bench frappe --site $q_site enable-scheduler"
 else
-	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p pause_scheduler true"
-	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p developer_mode true"
-	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_mesh_only_proxy true"
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p pause_scheduler True"
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p developer_mode True"
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_mesh_only_proxy True"
 	q_placement=$(printf '%q' "$DEV_CARGO_PLACEMENT_RULES")
 	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_cargo_placement_rules $q_placement"
 fi
@@ -151,8 +151,8 @@ fi
 as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p default_storage_cluster_config $q_cluster_config"
 if [ "$DEV_CARGO_DISABLE_TELEMETRY" = 1 ]; then
 	[ "$DEV_MESH_ONLY_PROXY" = 1 ] || { echo "Telemetry opt-out requires development mesh mode." >&2; exit 1; }
-	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_cargo_disable_telemetry true"
-	q_telemetry_config=null
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_cargo_disable_telemetry True"
+	q_telemetry_config=None
 fi
 as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p default_telemetry_config $q_telemetry_config"
 as_bench_user "pilot --yes -b $q_bench get-app $q_repo --branch $q_branch --install-dependencies"
