@@ -11,6 +11,7 @@ from frappe import _
 
 from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
 from atlas.service.core.control_cluster import ControlClusterCredentials
+from atlas.service.core.runway_cache.proxy import proxy_route, write_proxy_route
 from atlas.vm.doctype.virtual_machine.virtual_machine import PRIVILEGED_TENANT_ID
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ $private_key
 
 WRITE_COMMAND_TEMPLATE = Template(
 	"""set -eu
+$cache_route
 install -d -m 0750 /etc/atlas
 install -m 0600 /dev/null $temporary_path
 cat > $temporary_path <<'ATLAS_PROXY_CONFIG_END'
@@ -82,6 +84,7 @@ class ProxyConfiguration:
 		self.settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		self.cluster_proxy_servers = cluster_proxy_servers
 		self.credentials = ControlClusterCredentials(self.settings, "proxy")
+		self.cache_route, self.cache_ca = proxy_route()
 
 	@property
 	def wildcard_domain(self) -> str:
@@ -150,6 +153,8 @@ class ProxyConfiguration:
 		"""Return the digest of the configuration and its template."""
 		values = (
 			CONFIG_TEMPLATE.template,
+			self.cache_route,
+			self.cache_ca,
 			self.proxy_server.get_domain(),
 			self.cluster_domain,
 			self.wildcard_domain,
@@ -169,6 +174,7 @@ class ProxyConfiguration:
 			config_path=CONFIG_PATH,
 			temporary_path=f"{CONFIG_PATH}.tmp",
 			content=self.content,
+			cache_route=write_proxy_route(self.cache_route, self.cache_ca),
 		)
 
 	def get_apply_command(self) -> str:

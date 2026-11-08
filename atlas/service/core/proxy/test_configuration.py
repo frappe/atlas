@@ -70,12 +70,22 @@ def _build(settings: _FakeSettings | None = None, password: str = "a-control-pas
 	patched = patch("atlas.service.core.proxy.configuration.frappe.get_single", return_value=settings)
 	patched.start()
 	proxy_server = _FakeProxyServer(password)
-	configuration = ProxyConfiguration(proxy_server, [proxy_server])
+	with patch.object(configuration_module, "proxy_route", return_value=("", "")):
+		configuration = ProxyConfiguration(proxy_server, [proxy_server])
 	patched.stop()
 	return configuration
 
 
 class TestProxyConfiguration(UnitTestCase):
+	def test_the_digest_tracks_the_cache_route_and_public_ca(self) -> None:
+		configuration = _build()
+		initial = configuration.digest
+		configuration.cache_route = "server { location / { return 404; } }"
+		self.assertNotEqual(configuration.digest, initial)
+		with_route = configuration.digest
+		configuration.cache_ca = "rotated public CA"
+		self.assertNotEqual(configuration.digest, with_route)
+
 	def test_the_file_is_valid_toml_with_every_section(self) -> None:
 		document = tomllib.loads(_build().content)
 

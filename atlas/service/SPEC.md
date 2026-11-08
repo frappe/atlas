@@ -9,6 +9,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 | Type | Owns |
 |---|---|
 | `ProxyServer` (DocType) | One proxy node and its VM, at most five active |
+| `RunwayCacheServer` (Single) | The regional Runway cache VM and release pin. See [Runway cache](../../docs/region/runway-cache.md). |
 | `CargoServer` (Single) | The regional Cargo VM |
 | `IPv6RouterServer` (DocType) | One router VM and its pool, `ipv6-router-NNN` |
 | `WireguardGatewayServer` (DocType) | One gateway node, its VM, and its WireGuard key, `wireguard-NNN` |

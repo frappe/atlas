@@ -7,6 +7,7 @@ Atlas owns each VM and its setup record. The software inside the VM owns its tra
 | Service | Why it exists | Read next |
 | --- | --- | --- |
 | HTTP proxy | Accepts public web traffic and stores replicated routes. | [Proxy overview](../networking/http-proxy/index.md), [Atlas setup](../networking/http-proxy/provisioning.md) |
+| Runway cache | Serves regional Actions cache traffic and Central enrolment. | [Runway cache](runway-cache.md) |
 | Cargo | Runs image and object-storage services. | [Cargo setup and storage](cargo.md) |
 | IPv6 router | Translates public IPv6 addresses to VM mesh addresses. | [Router setup and packet path](../networking/ipv6-router.md) |
 | WireGuard gateway | Carries customer devices into the private addresses of their tenant. | [WireGuard gateway](../networking/wireguard-gateway.md) |

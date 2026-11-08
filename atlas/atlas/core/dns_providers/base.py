@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 # Regional services that tenant 0 may publish. Metal and Pilot dial `internal-<label>` over the mesh.
-SERVICE_RECORD_LABELS = ("s3-svc", "s3-admin-svc", "telemetry-svc", "telemetry-read-svc")
+SERVICE_RECORD_LABELS = ("s3-svc", "s3-admin-svc", "telemetry-svc", "telemetry-read-svc", "runway-cache-svc")
 INTERNAL_RECORD_PREFIX = "internal-"
 
 

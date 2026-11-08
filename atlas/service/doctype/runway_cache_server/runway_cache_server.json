@@ -1,0 +1,173 @@
+{
+ "actions": [],
+ "creation": "2026-11-08 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "virtual_machine",
+  "installation_task",
+  "failure_message",
+  "release_section",
+  "release_url",
+  "release_sha256",
+  "listeners_section",
+  "guest_port",
+  "operator_port",
+  "central_section",
+  "central_region",
+  "central_url",
+  "central_issuer",
+  "central_jwks_url",
+  "central_ca",
+  "storage_ca",
+  "operator_ca"
+ ],
+ "fields": [
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nProvisioning\nActive\nFailed\nArchived",
+   "default": "Pending",
+   "read_only": 1
+  },
+  {
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "read_only": 1
+  },
+  {
+   "fieldname": "installation_task",
+   "fieldtype": "Link",
+   "label": "Installation Task",
+   "options": "SSH Task",
+   "read_only": 1
+  },
+  {
+   "fieldname": "failure_message",
+   "fieldtype": "Small Text",
+   "label": "Failure",
+   "read_only": 1
+  },
+  {
+   "fieldname": "release_section",
+   "fieldtype": "Section Break",
+   "label": "Runway Release"
+  },
+  {
+   "fieldname": "release_url",
+   "fieldtype": "Data",
+   "label": "Release URL"
+  },
+  {
+   "fieldname": "release_sha256",
+   "fieldtype": "Data",
+   "label": "Release SHA256"
+  },
+  {
+   "fieldname": "listeners_section",
+   "fieldtype": "Section Break",
+   "label": "Listeners"
+  },
+  {
+   "fieldname": "guest_port",
+   "fieldtype": "Int",
+   "label": "Guest Port",
+   "default": "8443"
+  },
+  {
+   "fieldname": "operator_port",
+   "fieldtype": "Int",
+   "label": "Operator Port",
+   "default": "8444"
+  },
+  {
+   "fieldname": "central_section",
+   "fieldtype": "Section Break",
+   "label": "Central"
+  },
+  {
+   "fieldname": "central_region",
+   "fieldtype": "Data",
+   "label": "Central Region"
+  },
+  {
+   "fieldname": "central_url",
+   "fieldtype": "Data",
+   "label": "Central URL"
+  },
+  {
+   "fieldname": "central_issuer",
+   "fieldtype": "Data",
+   "label": "Central Issuer",
+   "default": "central"
+  },
+  {
+   "fieldname": "central_jwks_url",
+   "fieldtype": "Data",
+   "label": "Central JWKS URL"
+  },
+  {
+   "fieldname": "central_ca",
+   "fieldtype": "Code",
+   "label": "Central CA",
+   "options": "Text"
+  },
+  {
+   "fieldname": "storage_ca",
+   "fieldtype": "Code",
+   "label": "Storage CA",
+   "options": "Text"
+  },
+  {
+   "fieldname": "operator_ca",
+   "fieldtype": "Code",
+   "label": "Operator CA",
+   "options": "Text",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-08 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Service",
+ "name": "Runway Cache Server",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Orange",
+   "title": "Pending"
+  },
+  {
+   "color": "Blue",
+   "title": "Provisioning"
+  },
+  {
+   "color": "Green",
+   "title": "Active"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  },
+  {
+   "color": "Gray",
+   "title": "Archived"
+  }
+ ]
+}
