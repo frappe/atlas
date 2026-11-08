@@ -103,7 +103,6 @@ class RunwayCacheServerProvisioner:
 			"private_key_file": "/etc/runway/tls/private-key.pem",
 			"signing_key_file": "/etc/runway/signing-key.pem",
 			"cache_data_ca_file": "/etc/runway/tls/ca.pem",
-			"github_token_file": "/etc/runway/github-token",
 			"archive_bytes": 1 << 30,
 		}
 
