@@ -5,6 +5,7 @@ import re
 import shlex
 import sqlite3
 from contextlib import closing, contextmanager
+from ipaddress import IPv4Address, IPv6Address
 from ipaddress import ip_address as parse_address
 from pathlib import Path
 from typing import TYPE_CHECKING, override
@@ -13,7 +14,7 @@ import frappe
 from cryptography import x509
 
 from atlas.atlas.core.dns_providers import register
-from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError
+from atlas.atlas.core.dns_providers.base import MESH_NETWORK, DnsProvider, DnsProviderError
 from atlas.atlas.core.ssh import SSHRunner
 
 if TYPE_CHECKING:
@@ -29,6 +30,19 @@ class StaticProvider(DnsProvider):
 
 	provider_type = "Static"
 	credential_fields = ()
+
+	@override
+	def upsert_service_record(self, name: str, address: IPv4Address | IPv6Address, ttl: int) -> None:
+		if frappe.conf.get("dev_mesh_only_proxy"):
+			from atlas.service.doctype.proxy_server.proxy_server import is_mesh_only_proxy_enabled
+
+			is_mesh_only_proxy_enabled()
+			self._is_internal_service_record(name)
+			if address not in MESH_NETWORK:
+				raise DnsProviderError("Mesh-only service records require a WG Mesh address.")
+			self.upsert_record("AAAA", name, [str(address)], ttl, "A")
+			return
+		super().upsert_service_record(name, address, ttl)
 
 	def __init__(self, settings: AtlasSettings | None = None) -> None:
 		super().__init__(settings)

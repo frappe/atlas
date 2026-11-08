@@ -82,3 +82,26 @@ class TestStaticProvider(TestCase):
 		self.provider.remove_cname_record("alias.metal.test")
 		self.provider.remove_cname_record("alias.metal.test")
 		self.assertEqual(self.provider.resolve("alias.metal.test"), [])
+
+	def test_mesh_service_names_resolve_without_public_addresses(self) -> None:
+		from ipaddress import ip_address
+
+		with (
+			patch.dict(frappe.conf, dev_mesh_only_proxy=True),
+			patch(
+				"atlas.service.doctype.proxy_server.proxy_server.is_mesh_only_proxy_enabled",
+				return_value=True,
+			),
+		):
+			self.provider.upsert_service_record("s3-svc.metal.test", ip_address("fdaa:1::7"), 300)
+			self.assertEqual(self.provider.resolve("s3-svc.metal.test"), ["fdaa:1::7"])
+			with self.assertRaises(DnsProviderError):
+				self.provider.upsert_service_record("s3-svc.metal.test", ip_address("192.0.2.7"), 300)
+
+	def test_default_still_requires_a_public_service_address(self) -> None:
+		from ipaddress import ip_address
+
+		from atlas.atlas.core.exceptions import AtlasUserError
+
+		with self.assertRaises(AtlasUserError):
+			self.provider.upsert_service_record("s3-svc.metal.test", ip_address("fdaa:1::7"), 300)
