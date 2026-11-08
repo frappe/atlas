@@ -54,6 +54,6 @@ A development site without a public IP can set `dev_mesh_only_proxy` to `true` i
 
 Create the proxy through its normal Python creation API without `public_ipv4`. Atlas sends no public allocation to the VM service. Metal therefore applies no public-IP attachment, NAT, host route, or proxy ARP for this proxy. Node and regional proxy records contain mesh AAAA addresses. Readiness uses verified HTTPS to the node mesh address through normal VM SSH. Install the development CA in the proxy trust store before readiness.
 
-Central keeps the normal `https://runway-cache-svc.<wildcard-domain>/configure` route. Give its process private mesh connectivity, Static DNS resolution, and development CA trust. Deliver Static DNS and CA trust explicitly to each owned VM. Guest traffic still uses TLS directly to the cache VM's `internal-` name.
+Central keeps the normal `https://runway-cache-svc.<wildcard-domain>/configure` route. Give its process private mesh connectivity, Static DNS resolution, and development CA trust. Deliver Static DNS and CA trust explicitly to each owned VM. Static DNS delivery selects the systemd-resolved stub for applications that read `/etc/resolv.conf`. Guest traffic still uses TLS directly to the cache VM's `internal-` name.
 
 This mode does not qualify the public proxy front. Qualify that front separately on a host with a public IP. Archive all development proxies before restoring site settings.

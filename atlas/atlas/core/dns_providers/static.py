@@ -206,6 +206,7 @@ systemctl daemon-reload
 systemctl enable atlas-static-dns.service
 systemctl restart atlas-static-dns.service
 systemctl restart systemd-resolved
+ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 """
 		if ca_pem:
 			try:
