@@ -68,3 +68,23 @@ class TestTelemetryConfig(UnitTestCase):
 		self.assertIn(
 			"for name in $ENROLMENT_VARS DEFAULT_STORAGE_CLUSTER_CONFIG DEFAULT_TELEMETRY_CONFIG; do", script
 		)
+
+
+class TestDisabledTelemetry(UnitTestCase):
+	def test_opt_out_does_not_require_or_return_a_datum_config(self):
+		with (
+			patch.dict(frappe.conf, {"dev_cargo_disable_telemetry": True}),
+			patch.object(telemetry, "is_mesh_only_proxy_enabled", return_value=True),
+			patch.object(telemetry, "remove_telemetry_config") as remove,
+		):
+			self.assertEqual(store_telemetry_config(None), {})
+			remove.assert_called_once()
+			self.assertEqual(telemetry_config_json(), "null")
+
+	def test_opt_out_fails_outside_mesh_development(self):
+		with (
+			patch.dict(frappe.conf, {"dev_cargo_disable_telemetry": True}),
+			patch.object(telemetry, "is_mesh_only_proxy_enabled", return_value=False),
+			self.assertRaises(frappe.ValidationError),
+		):
+			store_telemetry_config(None)

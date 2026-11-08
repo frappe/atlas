@@ -62,3 +62,11 @@ The installation SSH Task retains command output and generated credentials for S
 - [Cargo tests](../../atlas/service/doctype/cargo_server/test_cargo_server.py) cover creation and recovery.
 
 :::
+
+## Mesh-only development
+
+The guarded `dev_mesh_only_proxy` site setting also applies to Cargo installation. Atlas passes it to the new Cargo site with developer mode and explicit host placement rules. The new site scheduler stays disabled. Run each storage provisioning step separately through Cargo's normal flow.
+
+Set `dev_cargo_disable_telemetry` on Atlas to install Cargo without telemetry configuration. This requires mesh-only development mode. Atlas passes the opt-out to Cargo and writes `null` for `default_telemetry_config`. Cargo must support these development settings before installation. No Datum host or metrics exporter is created in this mode.
+
+Cargo's storage gateway uses mesh AAAA records and local Caddy certificates. Install its public CA in the Cargo, Central and cache-service trust stores before using storage. Deliver Static DNS to each owned VM after records change. Public Proxy and Cargo fronts, Datum and telemetry remain unqualified.

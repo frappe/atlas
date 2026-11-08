@@ -39,6 +39,13 @@ DEFAULT_STORAGE_CLUSTER_CONFIG="${DEFAULT_STORAGE_CLUSTER_CONFIG:-}"
 # Site config, not a Cargo Settings field: Cargo reads it to build its Datum host on first
 # boot. JSON with repository, branch, and a telemetry block of cpu_millicores, ram_gb and disk_gb.
 DEFAULT_TELEMETRY_CONFIG="${DEFAULT_TELEMETRY_CONFIG:-}"
+DEV_MESH_ONLY_PROXY="${DEV_MESH_ONLY_PROXY:-0}"
+DEV_CARGO_DISABLE_TELEMETRY="${DEV_CARGO_DISABLE_TELEMETRY:-0}"
+DEV_CARGO_PLACEMENT_RULES="${DEV_CARGO_PLACEMENT_RULES:-[]}"
+if [ "$DEV_CARGO_DISABLE_TELEMETRY" = 1 ] && [ "$DEV_MESH_ONLY_PROXY" != 1 ]; then
+	echo "Telemetry opt-out requires development mesh mode." >&2
+	exit 1
+fi
 BENCH_USER="${BENCH_USER:-frappe}" # pilot refuses to run as root, so the bench gets its own user
 BENCH_UID="${BENCH_UID:-1000}"
 BENCH_GID="${BENCH_GID:-1000}"
@@ -131,9 +138,22 @@ as_bench_user "pilot --yes -b $q_bench new-site $q_site --admin-password $q_site
 # `frappe` must be the first argument after the bench: pilot forwards the rest to Frappe
 # verbatim only then, and its own argparse rejects `--site` otherwise.
 as_bench_user "pilot -b $q_bench frappe set-config -g -p scheduler_tick_interval 5"
-as_bench_user "pilot -b $q_bench frappe --site $q_site enable-scheduler"
+if [ "$DEV_MESH_ONLY_PROXY" != 1 ]; then
+	as_bench_user "pilot -b $q_bench frappe --site $q_site enable-scheduler"
+else
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p pause_scheduler true"
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p developer_mode true"
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_mesh_only_proxy true"
+	q_placement=$(printf '%q' "$DEV_CARGO_PLACEMENT_RULES")
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_cargo_placement_rules $q_placement"
+fi
 # `-p` keeps the value JSON. Stored as a string, Cargo's spawner refuses it.
 as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p default_storage_cluster_config $q_cluster_config"
+if [ "$DEV_CARGO_DISABLE_TELEMETRY" = 1 ]; then
+	[ "$DEV_MESH_ONLY_PROXY" = 1 ] || { echo "Telemetry opt-out requires development mesh mode." >&2; exit 1; }
+	as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p dev_cargo_disable_telemetry true"
+	q_telemetry_config=null
+fi
 as_bench_user "pilot -b $q_bench frappe --site $q_site set-config -p default_telemetry_config $q_telemetry_config"
 as_bench_user "pilot --yes -b $q_bench get-app $q_repo --branch $q_branch --install-dependencies"
 

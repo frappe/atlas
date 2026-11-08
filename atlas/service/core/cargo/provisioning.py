@@ -19,8 +19,9 @@ from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.auth.issuer import issue_token
 from atlas.service.core.cargo.bucket import enqueue_bucket_provisioning
 from atlas.service.core.cargo.storage_cluster import storage_cluster_config_json
-from atlas.service.core.cargo.telemetry import telemetry_config_json
+from atlas.service.core.cargo.telemetry import is_telemetry_disabled, telemetry_config_json
 from atlas.service.doctype.cargo_server.cargo_server import cargo_lifecycle_lock
+from atlas.service.doctype.proxy_server.proxy_server import is_mesh_only_proxy_enabled
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -161,7 +162,7 @@ class CargoServerProvisioner:
 		)
 		atlas_url = get_internal_base_url().rstrip("/")
 
-		return {
+		environment = {
 			"PILOT_ADMIN_PASSWORD": generate_installer_password(),
 			"SITE_PASSWORD": generate_installer_password(),
 			"SITE": domain,
@@ -181,6 +182,17 @@ class CargoServerProvisioner:
 			"DEFAULT_STORAGE_CLUSTER_CONFIG": storage_cluster_config_json(),
 			"DEFAULT_TELEMETRY_CONFIG": telemetry_config_json(),
 		}
+
+		if is_mesh_only_proxy_enabled():
+			environment.update(
+				DEV_MESH_ONLY_PROXY=1,
+				DEV_CARGO_DISABLE_TELEMETRY=int(is_telemetry_disabled()),
+				DEV_CARGO_PLACEMENT_RULES=self.virtual_machine.placement_rules or "[]",
+			)
+			if frappe.conf.get("dev_cargo_repository"):
+				environment["REPO"] = frappe.conf.dev_cargo_repository
+				environment["BRANCH"] = frappe.conf.get("dev_cargo_branch", "develop")
+		return environment
 
 	def update_proxy_routes(self) -> None:
 		"""Map the Cargo domains to the virtual machine mesh address."""

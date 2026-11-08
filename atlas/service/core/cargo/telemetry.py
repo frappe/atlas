@@ -11,6 +11,7 @@ import frappe
 from frappe import _
 
 from atlas.service.core.cargo.storage_cluster import get_node_size
+from atlas.service.doctype.proxy_server.proxy_server import is_mesh_only_proxy_enabled
 
 CONFIG_FILE_PATH = ("private", "files", "cargo-telemetry.json")
 DATUM_REPOSITORY = "https://github.com/frappe/Datum.git"
@@ -24,6 +25,10 @@ def config_file() -> Path:
 
 def store_telemetry_config(values: Any) -> dict[str, Any]:
 	"""Validate the requested Datum host and keep it for the installer. Throws on a bad request."""
+	if is_telemetry_disabled():
+		remove_telemetry_config()
+		return {}
+
 	config = _validated_config(values)
 	path = config_file()
 	path.parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +38,9 @@ def store_telemetry_config(values: Any) -> dict[str, Any]:
 
 def telemetry_config_json() -> str:
 	"""Return the stored Datum host as the compact JSON the installer passes to Cargo."""
+	if is_telemetry_disabled():
+		return "null"
+
 	path = config_file()
 	if not path.exists():
 		frappe.throw(_("No telemetry configuration was stored for this Cargo Server."))
@@ -54,3 +62,12 @@ def _validated_config(values: Any) -> dict[str, Any]:
 		"branch": DATUM_BRANCH,
 		"telemetry": get_node_size(values.get("telemetry"), "telemetry"),
 	}
+
+
+def is_telemetry_disabled() -> bool:
+	"""Keep telemetry opt-out limited to the guarded development mesh mode."""
+	if not frappe.conf.get("dev_cargo_disable_telemetry"):
+		return False
+	if not is_mesh_only_proxy_enabled():
+		frappe.throw(_("Disabling Cargo telemetry requires mesh-only development mode."))
+	return True

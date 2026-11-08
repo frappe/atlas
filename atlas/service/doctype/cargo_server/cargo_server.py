@@ -224,6 +224,8 @@ class CargoServer(Document):
 			"hostname": "cargo",
 			"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
 		}
+		if values.get("placement_rules") is not None:
+			request["placement_rules"] = values["placement_rules"]
 		try:
 			result = VirtualMachineService.create(request)
 			self.virtual_machine = result["name"]

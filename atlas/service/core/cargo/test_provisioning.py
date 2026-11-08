@@ -195,6 +195,27 @@ class TestCargoInstallation(UnitTestCase):
 		self.assertEqual(environment["DEFAULT_STORAGE_CLUSTER_CONFIG"], STORAGE_CLUSTER_JSON)
 		self.assertEqual(environment["DEFAULT_TELEMETRY_CONFIG"], TELEMETRY_JSON)
 
+	def test_development_install_passes_placement_and_telemetry_opt_out(self) -> None:
+		provisioner = CargoServerProvisioner(cargo_server())
+		with (
+			patch.object(provisioner.__class__, "settings", new=property(lambda self: atlas_settings())),
+			patch.object(
+				provisioner.__class__,
+				"virtual_machine",
+				new=property(lambda self: SimpleNamespace(placement_rules='[{"resource":"metal_server"}]')),
+			),
+			patch.object(provisioning, "get_internal_base_url", return_value="https://atlas.test"),
+			patch.object(provisioning, "issue_token", return_value="token"),
+			patch.object(provisioning, "is_mesh_only_proxy_enabled", return_value=True),
+			patch.object(provisioning, "is_telemetry_disabled", return_value=True),
+			stored_storage_cluster(),
+			stored_telemetry(),
+		):
+			environment = provisioner.install_environment()
+		self.assertEqual(environment["DEV_MESH_ONLY_PROXY"], 1)
+		self.assertEqual(environment["DEV_CARGO_DISABLE_TELEMETRY"], 1)
+		self.assertEqual(environment["DEV_CARGO_PLACEMENT_RULES"], '[{"resource":"metal_server"}]')
+
 	def test_every_enrolment_variable_the_script_requires_is_supplied(self) -> None:
 		settings = atlas_settings()
 		provisioner = CargoServerProvisioner(cargo_server())
