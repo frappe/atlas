@@ -177,6 +177,7 @@ class TestCacheProvisioning(UnitTestCase):
 		self.assertEqual(config["listen"], "[fdaa:3::1]:8443")
 		self.assertEqual(config["operator_listen"], "[fdaa:3::1]:8444")
 		self.assertEqual(config["central_region_id"], 3)
+		self.assertEqual(config["audience"], "https://127.0.0.1:18445")
 		self.assertEqual(config["central_token_file"], "/etc/runway/central-token")
 		self.assertNotIn("credential", config)
 		self.assertNotIn("signing_key", config)

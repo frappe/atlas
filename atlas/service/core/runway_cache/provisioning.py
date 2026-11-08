@@ -98,7 +98,7 @@ class RunwayCacheServerProvisioner:
 			"central_url": self.cache.central_url.rstrip("/"),
 			"central_ca_file": "/etc/runway/central-ca.pem" if self.cache.central_ca else "",
 			"central_token_file": "/etc/runway/central-token",
-			"audience": "runway-cache",
+			"audience": "https://127.0.0.1:18445",
 			"certificate_file": "/etc/runway/tls/certificate.pem",
 			"private_key_file": "/etc/runway/tls/private-key.pem",
 			"signing_key_file": "/etc/runway/signing-key.pem",
@@ -144,10 +144,9 @@ class RunwayCacheServerProvisioner:
 		frappe.db.commit()  # nosemgrep
 		if task.result is None or not task.result.is_success:
 			frappe.throw(_("Runway installation failed. See SSH Task {0}.").format(task.name))
-		# A skipped package still needs to reload changed configuration and prove readiness.
+		# Setup owns service restarts; a matching package hash leaves services running.
 		vm = self.virtual_machine
 		result = SSHRunner(vm.ssh_host, proxy_command=vm.get_ssh_proxy_command()).run_command(
-			"set -eu\nsystemctl restart runway-cache-data.service runway-cache-service.service\n"
 			"systemctl is-active --quiet runway-cache-data.service runway-cache-service.service"
 		)
 		if not result.is_success:
