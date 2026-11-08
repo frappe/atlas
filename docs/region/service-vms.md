@@ -16,6 +16,8 @@ Atlas owns each VM and its setup record. The software inside the VM owns its tra
 
 Atlas creates privileged, termination-protected VMs through the normal VM service. The HTTP proxy and WireGuard gateway need a **tenant-0 public IPv4 allocation**. Reserve an address on the Public IP Pool form before you create either service.
 
+Proxy and Runway cache provisioning requests accept optional `placement_rules`. The normal VM placement rules select the host before Atlas creates the VM.
+
 The proxy guest firewall admits TCP 80 and 443 and ICMP from any address. It admits all traffic from tenant-0 mesh addresses in the region.
 
 The gateway firewall admits its WireGuard UDP port, TCP 443, and ICMP from any address. It also admits traffic from the region mesh.

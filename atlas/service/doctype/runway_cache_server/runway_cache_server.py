@@ -91,7 +91,13 @@ class RunwayCacheServer(Document):
 			settings = frappe.get_single("Atlas Settings")
 			request = {
 				key: values.get(key)
-				for key in ("virtual_machine_image", "cpu_millicores", "memory_mib", "disk_mib")
+				for key in (
+					"virtual_machine_image",
+					"cpu_millicores",
+					"memory_mib",
+					"disk_mib",
+					"placement_rules",
+				)
 			}
 			request.update(
 				tenant_id=0,

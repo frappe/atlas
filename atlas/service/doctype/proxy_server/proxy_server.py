@@ -115,6 +115,7 @@ class ProxyServer(Document):
 			"hostname": proxy_server.name,
 			"ssh_keys": settings.public_ssh_key,
 			"public_ipv4": values["public_ipv4"],
+			"placement_rules": values.get("placement_rules"),
 			"firewall": get_proxy_firewall(settings.region_id),
 		}
 		try:
