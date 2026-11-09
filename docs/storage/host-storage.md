@@ -56,8 +56,6 @@ Metal applies Firecracker drive limiters and can update a live VM. It does not u
 
 Firecracker sends each guest request as one 4 KiB IO, and the IOPS limit counts each request. So a VM at 3000 IOPS reads or writes about 12 MiB/s, even when the workload is sequential.
 
-Each drive uses the Firecracker `Async` IO engine (io_uring), so a drive keeps many requests in flight. A VM restored from a snapshot keeps the engine of the snapshot until its next cold boot.
-
 ## Host ZFS settings
 
 Storage setup writes the ZFS module options to `/etc/modprobe.d/zfs-metal.conf` and applies them to the running module. It sets deeper vdev queues and limits the ARC to 16 GiB, because the guests and the host page cache already cache VM data. It also turns on `autotrim` and trims the pool once, because the Ubuntu trim job skips pools on md arrays.
