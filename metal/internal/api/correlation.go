@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
 )
@@ -44,7 +44,7 @@ func operationID(requestContext context.Context) string {
 // correlationMiddleware gives every request a request ID and an operation ID,
 // keeps a valid caller-supplied value, and returns both in response headers.
 func correlationMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		requestID := correlationHeader(c.Request(), "X-Request-ID")
 		if requestID == "" {
 			requestID = newCorrelationID()

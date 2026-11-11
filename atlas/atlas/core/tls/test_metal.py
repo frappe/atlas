@@ -15,6 +15,7 @@ from atlas.atlas.core.tls.metal import (
 	client_certificate_files,
 	ensure_atlas_client_certificate,
 	ensure_server_certificate,
+	is_certificate_authority_expiring,
 )
 
 
@@ -112,6 +113,17 @@ class TestMetalCertificate(UnitTestCase):
 
 		self.assertEqual(kept_certificate, current_certificate)
 		server.save.assert_not_called()
+
+
+class TestCertificateAuthorityExpiry(UnitTestCase):
+	def test_regional_authority_expiry_is_read(self) -> None:
+		ca_certificate, _ = create_certificate_authority("Atlas Metal CA test")
+		settings = SimpleNamespace(get_password=Mock(return_value=ca_certificate))
+
+		with patch("atlas.atlas.core.tls.metal.frappe.get_single", return_value=settings):
+			self.assertFalse(is_certificate_authority_expiring())
+			with patch("atlas.atlas.core.tls.metal.CERTIFICATE_AUTHORITY_WARNING_DAYS", 100_000):
+				self.assertTrue(is_certificate_authority_expiring())
 
 
 class TestAtlasClientCertificate(UnitTestCase):

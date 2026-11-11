@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/frappe/atlas/metal/internal/host"
 	"github.com/frappe/atlas/metal/internal/network"
@@ -99,7 +99,7 @@ type capacityResponse struct {
 // @Failure	500		{object}	errorResponse
 // @Failure	503		{object}	errorResponse
 // @Router		/v1/sync [post]
-func (s *Server) exchangeControllerState(c echo.Context) error {
+func (s *Server) exchangeControllerState(c *echo.Context) error {
 	var request syncRequest
 	if err := decodeJSONRequest(c, &request); err != nil {
 		return err

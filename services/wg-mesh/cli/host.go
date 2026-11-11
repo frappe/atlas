@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -127,7 +128,7 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 		return err
 	}
 
-	if err := prepareHost(uplinkName); err != nil {
+	if err := prepareHost(uplinkName, wireGuardName); err != nil {
 		return err
 	}
 
@@ -159,6 +160,11 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 		candidate.cleanup()
 		return errors.Join(err, rollbackError)
 	}
+	// The route moves only after the host hook runs, so host traffic never loops through a bare veth.
+	wireGuardAddress := netip.AddrFrom16(config.WireGuardIPv6).String()
+	if err := runCommand("ip", "-6", "route", "replace", meshRoutePrefix, "via", hostGatewayAddress, "dev", hostVethName, "src", wireGuardAddress); err != nil {
+		return err
+	}
 	if controller != nil {
 		if err := writeMap("controller_address", uint32(0), *controller); err != nil {
 			return fmt.Errorf("write the controller address: %w", err)
@@ -170,7 +176,7 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 }
 
 // prepareHost sets the kernel state the mesh needs. peers sync sets the NDP mode.
-func prepareHost(uplinkName string) error {
+func prepareHost(uplinkName, wireGuardName string) error {
 	if err := runCommand("mountpoint", "-q", "/sys/fs/bpf"); err != nil {
 		if err := runCommand("mount", "-t", "bpf", "bpf", "/sys/fs/bpf"); err != nil {
 			return err
@@ -192,9 +198,23 @@ func prepareHost(uplinkName string) error {
 		}
 	}
 
+	wireGuard, err := net.InterfaceByName(wireGuardName)
+	if err != nil {
+		return err
+	}
+	if _, err := net.InterfaceByName(hostVethName); err != nil {
+		if err := runCommand("ip", "link", "add", hostVethName, "type", "veth", "peer", "name", tunnelVethName); err != nil {
+			return err
+		}
+	}
+
+	// The tunnel adds an outer IPv6 header inside the WireGuard MTU.
+	mtu := strconv.Itoa(wireGuard.MTU - 40)
 	for _, arguments := range [][]string{
 		{"sysctl", "-qw", "net.ipv6.conf.all.forwarding=1"},
-		{"ip", "-6", "route", "replace", meshRoutePrefix, "dev", uplinkName},
+		{"ip", "link", "set", hostVethName, "mtu", mtu, "up"},
+		{"ip", "link", "set", tunnelVethName, "mtu", mtu, "up"},
+		{"ip", "-6", "addr", "replace", hostGatewayAddress + "/64", "dev", tunnelVethName, "nodad"},
 	} {
 		if err := runCommand(arguments[0], arguments[1:]...); err != nil {
 			return err
@@ -218,6 +238,7 @@ func hostHooks(config hostConfig, wireGuardName string, vmInterfaces map[[16]byt
 		{interfaceName: uplinkName, program: uplinkIngressProgram, direction: "ingress"},
 		{interfaceName: deviceName(config.PublicIfIndex), program: uplinkIngressProgram, direction: "ingress"},
 		{interfaceName: wireGuardName, program: wireGuardProgram, direction: "ingress"},
+		{interfaceName: tunnelVethName, program: hostProgram, direction: "ingress"},
 	}
 
 	if isHookAttached(uplinkName, "egress") {
@@ -351,7 +372,7 @@ func resetHost(force bool) error {
 	}
 
 	uplinkName := deviceName(config.UplinkIfIndex)
-	interfaces := map[string]bool{uplinkName: true, deviceName(config.PublicIfIndex): true, interfaceWithAddress(config.WireGuardIPv6): true}
+	interfaces := map[string]bool{uplinkName: true, deviceName(config.PublicIfIndex): true, interfaceWithAddress(config.WireGuardIPv6): true, tunnelVethName: true}
 	for address, ifindex := range vms {
 		interfaces[deviceName(ifindex)] = true
 		_ = ignoreMissing(runCommand("ip", "-6", "neigh", "del", "proxy", netip.AddrFrom16(address).String(), "dev", uplinkName))
@@ -368,7 +389,10 @@ func resetHost(force bool) error {
 		}
 	}
 
-	if err := ignoreMissing(runCommand("ip", "-6", "route", "del", meshRoutePrefix, "dev", uplinkName)); err != nil {
+	if err := ignoreMissing(runCommand("ip", "-6", "route", "del", meshRoutePrefix)); err != nil {
+		return err
+	}
+	if err := ignoreMissing(runCommand("ip", "link", "del", hostVethName)); err != nil {
 		return err
 	}
 

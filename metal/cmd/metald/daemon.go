@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,8 +19,14 @@ import (
 const gracefulShutdownTimeout = 30 * time.Second
 
 type daemonHTTPServer interface {
-	Start(address string) error
+	Serve(net.Listener) error
 	Shutdown(context.Context) error
+}
+
+// listeningServer is an HTTP server and the listener that it serves.
+type listeningServer struct {
+	server   daemonHTTPServer
+	listener net.Listener
 }
 
 type snapshotUploadOwner interface {
@@ -119,11 +126,11 @@ func (daemon *daemon) StartTrafficListener(events <-chan traffic.Event, restore 
 }
 
 // Serve runs the HTTP server until it stops or the daemon receives a signal.
-func (daemon *daemon) Serve(servers ...daemonHTTPServer) error {
-	daemon.httpServers = servers
+func (daemon *daemon) Serve(servers ...listeningServer) error {
 	daemon.httpServerErrors = make(chan error, len(servers))
 	for _, server := range servers {
-		go func() { daemon.httpServerErrors <- server.Start("") }()
+		daemon.httpServers = append(daemon.httpServers, server.server)
+		go func() { daemon.httpServerErrors <- server.server.Serve(server.listener) }()
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

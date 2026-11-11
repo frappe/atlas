@@ -54,6 +54,14 @@ Set `disk.throughput_mibps` and `disk.iops`. Each covers reads and writes togeth
 
 Metal applies Firecracker drive limiters and can update a live VM. It does not use cgroup IO limits: ZFS schedules its own IO, so block-device limits do not hold per dataset.
 
+Firecracker sends each guest request as one 4 KiB IO, and the IOPS limit counts each request. So a VM at 3000 IOPS reads or writes about 12 MiB/s, even when the workload is sequential.
+
+## Host ZFS settings
+
+Storage setup writes the ZFS module options to `/etc/modprobe.d/zfs-metal.conf` and applies them to the running module. It sets deeper vdev queues and limits the ARC to 16 GiB, because the guests and the host page cache already cache VM data. It also turns on `autotrim` and trims the pool once, because the Ubuntu trim job skips pools on md arrays.
+
+To apply the settings on an existing host, run **Install Metald** again.
+
 ## Keep and remove cached images
 
 Host sync supplies image cache policy. Metal keeps each image that the policy caches.

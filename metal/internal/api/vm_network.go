@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // @Summary	Set the virtual machine network
@@ -21,7 +21,7 @@ import (
 // @Failure	409		{object}	errorResponse
 // @Failure	500		{object}	errorResponse
 // @Router		/v1/vms/{id}/network [put]
-func (s *Server) setVirtualMachineNetwork(c echo.Context) error {
+func (s *Server) setVirtualMachineNetwork(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err

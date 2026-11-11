@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // rescueModeRequest selects the image for rescue mode.
@@ -26,7 +26,7 @@ type rescueModeRequest struct {
 // @Failure 409 {object} errorResponse
 // @Failure 500 {object} errorResponse
 // @Router /v1/vms/{id}/rescue-mode [put]
-func (s *Server) enableVirtualMachineRescueMode(c echo.Context) error {
+func (s *Server) enableVirtualMachineRescueMode(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func (s *Server) enableVirtualMachineRescueMode(c echo.Context) error {
 // @Failure 409 {object} errorResponse
 // @Failure 500 {object} errorResponse
 // @Router /v1/vms/{id}/rescue-mode [delete]
-func (s *Server) disableVirtualMachineRescueMode(c echo.Context) error {
+func (s *Server) disableVirtualMachineRescueMode(c *echo.Context) error {
 	identifier, err := virtualMachineID(c)
 	if err != nil {
 		return err
