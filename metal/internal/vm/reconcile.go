@@ -131,6 +131,14 @@ func (manager *Manager) reconcileActive(
 	}
 
 	if desired.State == StateStopped {
+		status, err := manager.inspect(ctx, desired.ID, machine, &observed, operationID)
+		if err != nil {
+			return err
+		}
+		if status.State == StateStopped && observed.State == StateStopped && observed.Error == nil &&
+			observed.Generation == desired.Generation && observed.RestartGeneration == desired.RestartGeneration {
+			return nil
+		}
 		return manager.reconcileHardStop(ctx, desired, machine, &observed, operationID)
 	}
 

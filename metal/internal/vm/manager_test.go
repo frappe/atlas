@@ -976,3 +976,30 @@ func TestInformationReportsRequestedDiskSize(t *testing.T) {
 		t.Fatalf("disk = %d MiB, used = %d MiB", information.DiskMiB, information.DiskUsedMiB)
 	}
 }
+
+func TestReconcileDoesNotStopAnAppliedStoppedVirtualMachineAgain(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetPowerState(context.Background(), "machine-1", StateStopped); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.stops != 1 {
+		t.Fatalf("stops = %d, want 1", runtime.stops)
+	}
+
+	// A process that runs against the desired state is stopped again.
+	runtime.state = StateRunning
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 2 {
+		t.Fatalf("stops = %d, want 2", runtime.stops)
+	}
+}
