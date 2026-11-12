@@ -131,13 +131,12 @@ func (manager *Manager) reconcileActive(
 	}
 
 	if desired.State == StateStopped {
-		status, err := manager.inspect(ctx, desired.ID, machine, &observed, operationID)
-		if err != nil {
-			return err
-		}
-		if status.State == StateStopped && observed.State == StateStopped && observed.Error == nil &&
+		// An inspect error falls through, because the hard stop can still kill an unresponsive process.
+		status, err := manager.runtime.Inspect(ctx, machine)
+		if err == nil && status.State == StateStopped && observed.State == StateStopped && observed.Error == nil &&
 			observed.Generation == desired.Generation && observed.RestartGeneration == desired.RestartGeneration {
-			return nil
+			observed.completeOperation()
+			return manager.store.writeObserved(desired.ID, observed)
 		}
 		return manager.reconcileHardStop(ctx, desired, machine, &observed, operationID)
 	}
