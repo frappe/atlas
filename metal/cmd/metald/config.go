@@ -80,7 +80,6 @@ func defaultOptions() options {
 		mesh:               meshOptions{enabled: true, binaryPath: "/usr/local/bin/atlas-wg-mesh"},
 		trafficMonitor:     trafficMonitorOptions{enabled: true},
 		migration:          migrationOptions{finalDeltaMiB: 512, transferPort: 9002},
-		capacity:           host.Reserve{MemoryMiB: 18432, StoragePercent: 10},
 		coordinationListen: "127.0.0.1:9001",
 		configFile:         defaultConfigPath,
 		telemetry: telemetryOptions{

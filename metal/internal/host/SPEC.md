@@ -45,7 +45,7 @@ The `host` package applies the controller-owned sets: WireGuard peers, image pol
 | Memory available | The smaller of `MemAvailable` from `/proc/meminfo` and total memory minus the reserve and the `memory_mib` of each VM that runs, pauses or boots. A sleeping VM holds no memory. |
 | Storage | `StorageCapacitySource`, minus the reserved percent of the pool. |
 
-- The `[capacity]` section of `metald.toml` sets the `Reserve`. The defaults keep 18432 MiB of memory (the ZFS ARC maximum and the host system) and 10% of the pool. On the host that runs the Atlas VM, add its memory and CPU.
+- The `[capacity]` section of `metald.toml` sets the `Reserve`. Each missing key is 0. `install-metald.sh` writes 18432 MiB of memory (the ZFS ARC maximum and the host system), 2000 millicores and 10% of the pool. On the host that runs the Atlas VM, it adds the memory and CPU of that VM.
 
 - CPU is for visibility only. No admission check uses it.
 - `VirtualMachineSource` skips a VM that has only one of its two records.
