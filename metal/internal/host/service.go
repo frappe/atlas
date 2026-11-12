@@ -280,7 +280,7 @@ func isUsingMemory(information vm.Information) bool {
 	switch {
 	case information.State == vm.StateRunning || information.State == vm.StatePaused:
 		return true
-	case information.SleepAfterIdleSeconds > 0:
+	case information.SleepState != vm.SleepStateAwake:
 		// A sleeping VM is stopped and frees its memory.
 		return false
 	default:
