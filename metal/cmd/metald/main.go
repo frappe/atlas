@@ -399,6 +399,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		VirtualMachines:       virtualMachineManager,
 		Storage:               stores.Pool,
 		MigrationReservations: migrationReservations,
+		Reserve:               options.capacity,
 		Wake:                  notifyReconcilers,
 	}
 	compatibility, compatibilityError := virtualMachineRuntime.HostCompatibility(daemonContext)

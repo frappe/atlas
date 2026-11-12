@@ -13,6 +13,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/frappe/atlas/metal/internal/firecracker"
+	"github.com/frappe/atlas/metal/internal/host"
 )
 
 type options struct {
@@ -25,6 +26,7 @@ type options struct {
 	mesh                  meshOptions
 	trafficMonitor        trafficMonitorOptions
 	migration             migrationOptions
+	capacity              host.Reserve
 	tls                   tlsOptions
 	telemetry             telemetryOptions
 	coordinationListen    string
@@ -78,6 +80,7 @@ func defaultOptions() options {
 		mesh:               meshOptions{enabled: true, binaryPath: "/usr/local/bin/atlas-wg-mesh"},
 		trafficMonitor:     trafficMonitorOptions{enabled: true},
 		migration:          migrationOptions{finalDeltaMiB: 512, transferPort: 9002},
+		capacity:           host.Reserve{MemoryMiB: 18432, StoragePercent: 10},
 		coordinationListen: "127.0.0.1:9001",
 		configFile:         defaultConfigPath,
 		telemetry: telemetryOptions{
@@ -109,6 +112,7 @@ type fileConfig struct {
 	WGMesh      wgMeshFile      `toml:"wg_mesh"`
 	Traffic     trafficFile     `toml:"traffic_monitor"`
 	Migration   migrationFile   `toml:"migration"`
+	Capacity    capacityFile    `toml:"capacity"`
 	TLS         tlsFile         `toml:"tls"`
 	Telemetry   telemetryFile   `toml:"telemetry"`
 }
@@ -183,6 +187,12 @@ type migrationFile struct {
 	RequireGuestSSH *bool `toml:"require_guest_ssh"`
 }
 
+type capacityFile struct {
+	ReservedCPUMillicores  *int `toml:"reserved_cpu_millicores"`
+	ReservedMemoryMiB      *int `toml:"reserved_memory_mib"`
+	ReservedStoragePercent *int `toml:"reserved_storage_percent"`
+}
+
 func load(path string) (options, error) {
 	resolvedOptions := defaultOptions()
 	if err := applyFile(&resolvedOptions, path); err != nil {
@@ -251,6 +261,12 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlayInt(&resolvedOptions.migration.finalDeltaMiB, fc.Migration.FinalDeltaMiB)
 	overlayInt(&resolvedOptions.migration.transferPort, fc.Migration.TransferPort)
 	overlayBool(&resolvedOptions.cfg.RequireMigratedGuestSSH, fc.Migration.RequireGuestSSH)
+	overlayInt(&resolvedOptions.capacity.CPUMillicores, fc.Capacity.ReservedCPUMillicores)
+	overlayInt(&resolvedOptions.capacity.MemoryMiB, fc.Capacity.ReservedMemoryMiB)
+	overlayInt(&resolvedOptions.capacity.StoragePercent, fc.Capacity.ReservedStoragePercent)
+	if capacity := resolvedOptions.capacity; capacity.CPUMillicores < 0 || capacity.MemoryMiB < 0 || capacity.StoragePercent < 0 || capacity.StoragePercent > 100 {
+		return fmt.Errorf("config %s: capacity reserves must not be negative, and reserved_storage_percent must be at most 100", path)
+	}
 	overlay(&resolvedOptions.tls.caFile, fc.TLS.CAFile)
 	overlay(&resolvedOptions.tls.certificateFile, fc.TLS.CertificateFile)
 	overlay(&resolvedOptions.tls.privateKeyFile, fc.TLS.PrivateKeyFile)
