@@ -173,6 +173,8 @@ func (d *DBus) SetLimits(ctx context.Context, id string, limits Limits) error {
 	if limits.MemoryMaxBytes > 0 {
 		value := dbus.MakeVariant(uint64(limits.MemoryMaxBytes))
 		properties = append(properties, systemd.Property{Name: "MemoryMax", Value: value})
+		// The host must not swap guest memory: a guest stalls on disk when it touches a swapped page.
+		properties = append(properties, systemd.Property{Name: "MemorySwapMax", Value: dbus.MakeVariant(uint64(0))})
 	}
 	if limits.CPUMillicores > 0 {
 		quota := cpuQuotaMicrosecondsPerSecond(limits.CPUMillicores)
