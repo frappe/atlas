@@ -274,8 +274,8 @@ func TestCapacityCountsTheMemoryOfVMsAndTheReserve(t *testing.T) {
 	dependencies := &testHostDependencies{
 		virtualMachines: []vm.Information{
 			{ID: "vm-00001", State: vm.StateRunning, MemoryMiB: totalMemoryMiB / 2},
-			{ID: "vm-00002", State: vm.StateStopped, DesiredState: vm.StateRunning, MemoryMiB: totalMemoryMiB / 4},
-			{ID: "vm-00003", State: vm.StateStopped, DesiredState: vm.StateRunning, SleepAfterIdleSeconds: 60, MemoryMiB: totalMemoryMiB},
+			{ID: "vm-00002", State: vm.StateUnknown, DesiredState: vm.StateRunning, SleepAfterIdleSeconds: 60, MemoryMiB: totalMemoryMiB / 4},
+			{ID: "vm-00003", State: vm.StateStopped, DesiredState: vm.StateRunning, SleepState: vm.SleepStateSleeping, MemoryMiB: totalMemoryMiB},
 		},
 	}
 	service, err := NewService(Dependencies{
