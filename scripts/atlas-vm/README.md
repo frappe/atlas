@@ -63,7 +63,7 @@ After you upgrade `atlas-vm`, run `sudo atlas-vm stop && sudo atlas-vm create` t
 
 AWS uses one subnet in one availability zone, so a public IPv6 block can move to any host. An AWS region always uses unicast networking, because a VPC does not carry link-local multicast.
 
-`atlas-vm stop` and a host shutdown send Ctrl+Alt+Del to the guest, so the guest shuts down cleanly before Firecracker exits.
+`atlas-vm stop` and a host shutdown send Ctrl+Alt+Del to the guest, so the guest shuts down cleanly before Firecracker exits. systemd starts the VM again 5 seconds after a guest reboot or a Firecracker crash. Only `atlas-vm stop` keeps it stopped.
 
 The VM answers on host port 2222. In Atlas mode, host ports 80 and 443 also reach it. Gateway mode forwards UDP port 51821 to its WireGuard interface.
 
