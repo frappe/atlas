@@ -219,3 +219,10 @@ func TestTransferListenAddressNeedsANodeAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsAnInvalidCapacityReserve(t *testing.T) {
+	path := writeConfig(t, "[capacity]\nreserved_storage_percent = 101\n")
+	if _, err := load(path); err == nil {
+		t.Fatal("load accepted a storage reserve above 100 percent")
+	}
+}

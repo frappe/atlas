@@ -17,6 +17,8 @@ curl -fsSLo atlas-vm.toml https://raw.githubusercontent.com/frappe/atlas/develop
 sudo atlas-vm create
 ```
 
+metald does not count the Atlas VM. On a Metal host, add its `memory_mib` and `vcpu_count × 1000` to `reserved_memory_mib` and `reserved_cpu_millicores` in the `[capacity]` section of `/var/lib/metal/metald.toml`, then restart metald. See [host capacity](../../metal/internal/host/SPEC.md#capacity).
+
 The configuration must contain the Atlas region, Route53, and Let's Encrypt values. Set `atlas.server_provider` to `Generic`, `Scaleway` or `AWS`. Atlas reads the matching provider table. `Generic` has no provider table. Route53 must contain an existing public zone for `atlas.wildcard_domain`. Do not add `*.` to the domain.
 
 Set `atlas.unicast_network = true` when the provider network cannot carry IPv6 multicast between hosts. Atlas setup then enables **Use Unicast Networking**. AWS always uses unicast networking.

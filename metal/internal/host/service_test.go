@@ -265,3 +265,40 @@ func TestSynchronizeRefusesUnicastWithoutTheMesh(t *testing.T) {
 		t.Fatal("WireGuard peers were applied before the refusal")
 	}
 }
+
+func TestCapacityCountsTheMemoryOfVMsAndTheReserve(t *testing.T) {
+	totalMemoryMiB, _, err := memoryCapacityMiB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencies := &testHostDependencies{
+		virtualMachines: []vm.Information{
+			{ID: "vm-00001", State: vm.StateRunning, MemoryMiB: totalMemoryMiB / 2},
+			{ID: "vm-00002", State: vm.StateStopped, DesiredState: vm.StateRunning, MemoryMiB: totalMemoryMiB / 4},
+			{ID: "vm-00003", State: vm.StateStopped, DesiredState: vm.StateRunning, SleepAfterIdleSeconds: 60, MemoryMiB: totalMemoryMiB},
+		},
+	}
+	service, err := NewService(Dependencies{
+		WireGuard: dependencies, Images: dependencies, GatewayRoutes: dependencies,
+		VirtualMachines: dependencies, Storage: dependencies, Wake: func() {},
+		Reserve: Reserve{MemoryMiB: totalMemoryMiB / 8, StoragePercent: 25},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	capacity, err := service.Capacity(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The booting VM counts, and the sleeping VM does not.
+	if limit := totalMemoryMiB - totalMemoryMiB/2 - totalMemoryMiB/4 - totalMemoryMiB/8; capacity.AvailableMemoryMiB > limit {
+		t.Fatalf("available memory = %d, want at most %d", capacity.AvailableMemoryMiB, limit)
+	}
+	if capacity.AvailableMemoryMiB == 0 {
+		t.Fatal("the sleeping VM holds memory")
+	}
+	if capacity.AvailableStorageMiB != 3072-1024 {
+		t.Fatalf("available storage = %d, want 2048", capacity.AvailableStorageMiB)
+	}
+}
