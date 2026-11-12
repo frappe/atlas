@@ -59,6 +59,12 @@ transfer_port = 9002
 # Require a guest SSH handshake before memory snapshot migration source cleanup.
 require_guest_ssh = false
 
+[capacity]
+# Written by Atlas. Capacity that VMs never get. Each missing key is 0.
+reserved_memory_mib = 18432
+reserved_cpu_millicores = 2000
+reserved_storage_percent = 10
+
 [telemetry]
 # Written by Atlas. metald rereads both daily, or when the token expires.
 datum_url = "https://datum.example.com"
