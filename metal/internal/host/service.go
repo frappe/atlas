@@ -93,9 +93,18 @@ type Dependencies struct {
 	VirtualMachines       VirtualMachineSource
 	Storage               StorageCapacitySource
 	MigrationReservations MigrationReservations
+	Reserve               Reserve
 	// Wake starts a reconcile pass, so new controller state is applied at once
 	// instead of at the next tick.
 	Wake func()
+}
+
+// Reserve is host capacity that VMs never get: the host system, the ZFS ARC,
+// and VMs that metald does not run, such as the Atlas VM.
+type Reserve struct {
+	CPUMillicores  int
+	MemoryMiB      int
+	StoragePercent int
 }
 
 // Service owns controller synchronization and host capacity calculation.
@@ -108,6 +117,7 @@ type Service struct {
 	virtualMachines       VirtualMachineSource
 	storage               StorageCapacitySource
 	migrationReservations MigrationReservations
+	reserve               Reserve
 	wake                  func()
 }
 
@@ -127,6 +137,7 @@ func NewService(dependencies Dependencies) (*Service, error) {
 		virtualMachines:       dependencies.VirtualMachines,
 		storage:               dependencies.Storage,
 		migrationReservations: dependencies.MigrationReservations,
+		reserve:               dependencies.Reserve,
 		wake:                  dependencies.Wake,
 	}, nil
 }
@@ -194,7 +205,8 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 }
 
 // Capacity returns current host capacity and valid VM reservations. CPU is
-// reported against reservations and memory is read from the host. Storage is
+// reported against reservations. Memory is the smaller of what the host reports
+// and total memory less the reserve and the memory of each VM. Storage is
 // the smaller of free pool space and the pool size less every provisioned disk,
 // because thin disks can grow to their full size.
 func (service *Service) Capacity(ctx context.Context) (Capacity, error) {
@@ -210,9 +222,12 @@ func (service *Service) Capacity(ctx context.Context) (Capacity, error) {
 // Incoming destinations reserve capacity before their data arrives. A VM whose
 // records cannot be read holds an unknown shape, so the host offers nothing.
 func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Information, invalidVirtualMachineIDs []string) (Capacity, error) {
-	reservedCPUMillicores, provisionedStorageMiB := 0, 0
+	reservedCPUMillicores, committedMemoryMiB, provisionedStorageMiB := service.reserve.CPUMillicores, service.reserve.MemoryMiB, 0
 	for _, information := range virtualMachines {
 		reservedCPUMillicores += information.CPUMillicores
+		if isUsingMemory(information) {
+			committedMemoryMiB += information.MemoryMiB
+		}
 		provisionedStorageMiB += information.DiskMiB
 	}
 
@@ -241,14 +256,15 @@ func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Inf
 
 	totalCPUMillicores := runtime.NumCPU() * 1000
 	totalStorageMiB := int(storageCapacity.TotalMiB)
-	availableStorageMiB := min(int(storageCapacity.AvailableMiB), totalStorageMiB-provisionedStorageMiB) - reservedStorageMiB
+	availableStorageMiB := min(int(storageCapacity.AvailableMiB), totalStorageMiB-provisionedStorageMiB) -
+		reservedStorageMiB - totalStorageMiB*service.reserve.StoragePercent/100
 
 	capacity := Capacity{
 		TotalCPUMillicores:     totalCPUMillicores,
 		AvailableCPUMillicores: max(totalCPUMillicores-reservedCPUMillicores, 0),
 		VirtualMachineCount:    len(virtualMachines),
 		TotalMemoryMiB:         totalMemoryMiB,
-		AvailableMemoryMiB:     max(availableMemoryMiB-reservedMemoryMiB, 0),
+		AvailableMemoryMiB:     max(min(availableMemoryMiB, totalMemoryMiB-committedMemoryMiB)-reservedMemoryMiB, 0),
 		TotalStorageMiB:        totalStorageMiB,
 		AvailableStorageMiB:    max(availableStorageMiB, 0),
 	}
@@ -256,4 +272,18 @@ func (service *Service) capacityOf(ctx context.Context, virtualMachines []vm.Inf
 		capacity.AvailableCPUMillicores, capacity.AvailableMemoryMiB, capacity.AvailableStorageMiB = 0, 0, 0
 	}
 	return capacity, nil
+}
+
+// isUsingMemory reports whether a VM holds, or is about to hold, its memory.
+// A guest touches its memory lazily, so the host reports less than it holds.
+func isUsingMemory(information vm.Information) bool {
+	switch {
+	case information.State == vm.StateRunning || information.State == vm.StatePaused:
+		return true
+	case information.SleepState != vm.SleepStateAwake:
+		// A sleeping VM is stopped and frees its memory.
+		return false
+	default:
+		return information.DesiredState == vm.StateRunning || information.DesiredState == vm.StatePaused
+	}
 }
