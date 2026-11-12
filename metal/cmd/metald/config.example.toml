@@ -60,11 +60,9 @@ transfer_port = 9002
 require_guest_ssh = false
 
 [capacity]
-# Capacity that VMs never get. The default memory is the ZFS ARC maximum
-# (16 GiB) and 2 GiB for the host system. On the host that runs the Atlas VM,
-# add its memory and CPU.
+# Written by Atlas. Capacity that VMs never get. Each missing key is 0.
 reserved_memory_mib = 18432
-reserved_cpu_millicores = 0
+reserved_cpu_millicores = 2000
 reserved_storage_percent = 10
 
 [telemetry]

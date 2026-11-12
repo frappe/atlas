@@ -273,6 +273,18 @@ fi
 # Atlas owns these lines: metald boots every VM without a CPU template while it is present.
 set_config_line firecracker cpu_template_disabled "$cpu_template_line"
 set_config_line wg_mesh vm_mtu "$vm_mtu_line"
+# The ZFS ARC maximum, the host system, and the Atlas VM on the host that runs it.
+reserved_memory_mib=18432
+reserved_cpu_millicores=2000
+atlas_vm_configuration=/var/lib/atlas-vm/atlas/firecracker.json
+if [ -f "$atlas_vm_configuration" ]; then
+	read -r atlas_vm_memory_mib atlas_vm_vcpu_count < <(python3 -c 'import json, sys; machine = json.load(open(sys.argv[1]))["machine-config"]; print(machine["mem_size_mib"], machine["vcpu_count"])' "$atlas_vm_configuration")
+	reserved_memory_mib=$((reserved_memory_mib + atlas_vm_memory_mib))
+	reserved_cpu_millicores=$((reserved_cpu_millicores + atlas_vm_vcpu_count * 1000))
+fi
+set_config_line capacity reserved_memory_mib "reserved_memory_mib = $reserved_memory_mib"
+set_config_line capacity reserved_cpu_millicores "reserved_cpu_millicores = $reserved_cpu_millicores"
+set_config_line capacity reserved_storage_percent "reserved_storage_percent = 10"
 
 
 step "NIC workarounds"
