@@ -63,6 +63,10 @@ func (manager *Manager) reconcile(ctx context.Context, identifier string, remote
 	}
 
 	desired, observed, err := virtualMachine.records()
+	if virtualMachine.isRemoved(err) {
+		// A pass lists IDs before it starts; a delete can finish in between.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
