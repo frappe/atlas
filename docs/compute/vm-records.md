@@ -14,6 +14,8 @@ Atlas sends complete desired compute, disk, network, metadata, and SSH key value
 
 CPU uses `cpu_millicores`: **1000 equals one core**. The range is `100` through `32000`, avoiding impractical quotas and respecting Firecracker's 32-vCPU maximum.
 
+A VM can be burstable. `is_burstable` marks it, and `cpu_baseline_millicores` sets its CPU baseline, from `0` to `cpu_millicores`. Both are off and `0` by default. A baseline needs `is_burstable`. You set both when you create the VM. Atlas and Metal store them, but Metal does not apply them to the CPU limit yet.
+
 ## Read current VM state
 
 | Data | Source |
