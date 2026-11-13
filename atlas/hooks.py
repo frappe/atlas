@@ -233,6 +233,7 @@ scheduler_events = {
 		"* * * * * */30": [
 			"atlas.vm.core.vm_image_transfer.enqueue_pending_virtual_machine_image_transfers",
 			"atlas.vm.core.vm_image_deletion.enqueue_pending_virtual_machine_image_deletions",
+			"atlas.vm.core.oci_image_import.enqueue_oci_image_builds",
 		],
 		"*/15 * * * *": [
 			"atlas.atlas.core.artifacts.delete_unlinked_files",

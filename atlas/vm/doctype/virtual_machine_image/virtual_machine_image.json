@@ -70,7 +70,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Pending\nSnapshotting\nUploading\nCompleting\nCleaning\nAvailable\nFailed\nDeleting\nArchived",
+   "options": "Pending\nBuilding\nSnapshotting\nUploading\nCompleting\nCleaning\nAvailable\nFailed\nDeleting\nArchived",
    "read_only": 1,
    "reqd": 1
   },
@@ -308,7 +308,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-22 14:51:52.811271",
+ "modified": "2026-11-03 05:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Image",
@@ -337,6 +337,10 @@
   {
    "color": "Gray",
    "title": "Pending"
+  },
+  {
+   "color": "Blue",
+   "title": "Building"
   },
   {
    "color": "Blue",

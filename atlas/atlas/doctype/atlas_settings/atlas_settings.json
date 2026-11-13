@@ -33,6 +33,10 @@
   "wg_mesh_source_hash",
   "wg_mesh_binary_hash",
   "wg_mesh_version",
+  "oci_rootfs_binary_x86_64_file",
+  "oci_rootfs_source_hash",
+  "oci_rootfs_binary_hash",
+  "oci_rootfs_version",
   "atlas_tls_private_key",
   "atlas_tls_certificate",
   "jwks_data_section",
@@ -506,6 +510,31 @@
    "fieldname": "wg_mesh_version",
    "fieldtype": "Data",
    "label": "WG Mesh Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "oci_rootfs_binary_x86_64_file",
+   "fieldtype": "Link",
+   "label": "OCI Rootfs Binary (x86_64)",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "oci_rootfs_source_hash",
+   "fieldtype": "Data",
+   "label": "OCI Rootfs Source Hash",
+   "read_only": 1
+  },
+  {
+   "fieldname": "oci_rootfs_binary_hash",
+   "fieldtype": "Data",
+   "label": "OCI Rootfs Binary SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "oci_rootfs_version",
+   "fieldtype": "Data",
+   "label": "OCI Rootfs Version",
    "read_only": 1
   },
   {
@@ -1079,7 +1108,7 @@
  "issingle": 1,
  "link_display_mode": "Search",
  "links": [],
- "modified": "2026-10-31 01:37:03.934302",
+ "modified": "2026-11-03 05:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

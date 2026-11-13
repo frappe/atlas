@@ -151,6 +151,17 @@ class ObjectStorageClient:
 		except BotoCoreError as error:
 			raise self._error("read object metadata", key, error) from error
 
+	def read_object(self, key: str) -> bytes | None:
+		"""Return the content of a small object, or None when the object is absent."""
+		try:
+			return self._client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+		except ClientError as error:
+			if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+				return None
+			raise self._error("read an object", key, error) from error
+		except BotoCoreError as error:
+			raise self._error("read an object", key, error) from error
+
 	def delete_object(self, key: str) -> None:
 		"""Delete one object."""
 		try:
