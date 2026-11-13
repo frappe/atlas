@@ -172,6 +172,17 @@ func (specification Specification) VirtualCPUCount() int {
 	return count
 }
 
+// defaultCPUBaselinePercent is the baseline of a burstable VM that sets none.
+const defaultCPUBaselinePercent = 20
+
+// CPUBaseline returns the CPU millicores that a burstable VM may average.
+func (specification Specification) CPUBaseline() int {
+	if specification.CPUBaselineMillicores > 0 {
+		return specification.CPUBaselineMillicores
+	}
+	return specification.CPUMillicores * defaultCPUBaselinePercent / 100
+}
+
 // RefreshImageSource replaces image URLs and caching intent so a retry can use
 // fresh signed URLs without changing the reservation.
 func (specification Specification) RefreshImageSource(other Specification) Specification {
