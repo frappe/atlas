@@ -748,6 +748,27 @@ func TestResizeStoresTheCompleteShape(t *testing.T) {
 	}
 }
 
+func TestComputeRequestValidatesTheCPUBaseline(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		request computeRequest
+		isValid bool
+	}{
+		{"not burstable", computeRequest{CPUMillicores: 1000, MemoryMiB: 512}, true},
+		{"burstable", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: 250, MemoryMiB: 512}, true},
+		{"baseline equals the CPU", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: 1000, MemoryMiB: 512}, true},
+		{"baseline without burstable", computeRequest{CPUMillicores: 1000, CPUBaselineMillicores: 250, MemoryMiB: 512}, false},
+		{"baseline above the CPU", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: 1001, MemoryMiB: 512}, false},
+		{"negative baseline", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: -1, MemoryMiB: 512}, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.request.validate(); (err == nil) != testCase.isValid {
+				t.Fatalf("validate() = %v, want valid %v", err, testCase.isValid)
+			}
+		})
+	}
+}
+
 func TestSetComputeRejectsANegativeIdleTimeout(t *testing.T) {
 	srv := newTestServer(t)
 	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
