@@ -115,6 +115,8 @@ class VirtualMachineShape:
 	memory_mib: int
 	disk_mib: int
 	sleep_after_idle_seconds: int
+	is_burstable: bool = False
+	cpu_baseline_millicores: int = 0
 
 	def has_same_resources(self, other: VirtualMachineShape) -> bool:
 		"""Report whether CPU, memory, and disk size match."""
@@ -129,6 +131,8 @@ class VirtualMachineShape:
 		"""Return the complete Metal compute object."""
 		return {
 			"cpu_millicores": self.cpu_millicores,
+			"is_burstable": self.is_burstable,
+			"cpu_baseline_millicores": self.cpu_baseline_millicores,
 			"memory_mib": self.memory_mib,
 			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
 		}
@@ -144,8 +148,13 @@ class VirtualMachineShape:
 
 	@property
 	def resize(self) -> dict[str, int]:
-		"""Return the complete Metal in-place resize object."""
-		return {**self.compute, "disk_mib": self.disk_mib}
+		"""Return the complete Metal in-place resize object. Metal keeps the burstable values."""
+		return {
+			"cpu_millicores": self.cpu_millicores,
+			"memory_mib": self.memory_mib,
+			"disk_mib": self.disk_mib,
+			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+		}
 
 
 @dataclass(frozen=True, slots=True)

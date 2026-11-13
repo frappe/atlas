@@ -154,6 +154,8 @@ class VirtualMachineResize:
 			compute.memory_mib,
 			information.desired.disk.size_mib,
 			compute.sleep_after_idle_seconds,
+			compute.is_burstable,
+			compute.cpu_baseline_millicores,
 		)
 
 	@staticmethod
@@ -166,6 +168,8 @@ class VirtualMachineResize:
 			resize_values.get("memory_mib", current_shape.memory_mib),
 			resize_values.get("disk_mib", current_shape.disk_mib),
 			resize_values.get("sleep_after_idle_seconds", current_shape.sleep_after_idle_seconds),
+			current_shape.is_burstable,
+			current_shape.cpu_baseline_millicores,
 		)
 		if target_shape.disk_mib < current_shape.disk_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)

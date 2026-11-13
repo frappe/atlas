@@ -17,7 +17,13 @@ def build_information(state: str = "stopped") -> SimpleNamespace:
 	"""Return one Metal record with a 2 CPU, 2 GiB, 20 GiB shape."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
-			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
+			compute=SimpleNamespace(
+				cpu_millicores=2000,
+				memory_mib=2048,
+				sleep_after_idle_seconds=0,
+				is_burstable=True,
+				cpu_baseline_millicores=500,
+			),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),
 		observed=SimpleNamespace(state=state),
@@ -68,7 +74,14 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
+			"VM-00001",
+			{
+				"cpu_millicores": 2000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 1800,
+			},
 		)
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
@@ -147,7 +160,7 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.create_migration.assert_called_once_with(
 			self.virtual_machine,
 			destination_metal_server="metal-2",
-			resize=VirtualMachineShape(2000, 8192, 20480, 0),
+			resize=VirtualMachineShape(2000, 8192, 20480, 0, True, 500),
 		)
 		self.metal_client.set_virtual_machine_compute.assert_not_called()
 
@@ -157,7 +170,14 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.apply({"memory_mib": 8192, "sleep_after_idle_seconds": 600})
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 600}
+			"VM-00001",
+			{
+				"cpu_millicores": 2000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 600,
+			},
 		)
 		self.create_migration.assert_called_once()
 
