@@ -48,9 +48,11 @@ type observedVirtualMachineResponse struct {
 
 // computeResponse is the requested compute configuration.
 type computeResponse struct {
-	CPUMillicores         int `json:"cpu_millicores"`
-	MemoryMiB             int `json:"memory_mib"`
-	SleepAfterIdleSeconds int `json:"sleep_after_idle_seconds"`
+	CPUMillicores         int  `json:"cpu_millicores"`
+	IsBurstable           bool `json:"is_burstable"`
+	CPUBaselineMillicores int  `json:"cpu_baseline_millicores"`
+	MemoryMiB             int  `json:"memory_mib"`
+	SleepAfterIdleSeconds int  `json:"sleep_after_idle_seconds"`
 }
 
 // guestResponse is the guest-facing configuration. User data is not returned.
@@ -160,6 +162,8 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			IsRescueModeEnabled: information.IsRescueModeEnabled,
 			Compute: computeResponse{
 				CPUMillicores:         information.CPUMillicores,
+				IsBurstable:           information.IsBurstable,
+				CPUBaselineMillicores: information.CPUBaselineMillicores,
 				MemoryMiB:             information.MemoryMiB,
 				SleepAfterIdleSeconds: information.SleepAfterIdleSeconds,
 			},

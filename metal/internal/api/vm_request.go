@@ -54,9 +54,11 @@ type createRequest struct {
 
 // computeRequest is the complete compute configuration.
 type computeRequest struct {
-	CPUMillicores         int `json:"cpu_millicores" minimum:"100" maximum:"32000"`
-	MemoryMiB             int `json:"memory_mib" minimum:"1"`
-	SleepAfterIdleSeconds int `json:"sleep_after_idle_seconds" minimum:"0"`
+	CPUMillicores         int  `json:"cpu_millicores" minimum:"100" maximum:"32000"`
+	IsBurstable           bool `json:"is_burstable"`
+	CPUBaselineMillicores int  `json:"cpu_baseline_millicores" minimum:"0"`
+	MemoryMiB             int  `json:"memory_mib" minimum:"1"`
+	SleepAfterIdleSeconds int  `json:"sleep_after_idle_seconds" minimum:"0"`
 }
 
 // imageRequest identifies boot content and how the host should keep it.
@@ -214,6 +216,8 @@ func (request guestRequest) validate() error {
 func (request createRequest) specification() vm.Specification {
 	return vm.Specification{
 		CPUMillicores:         request.Compute.CPUMillicores,
+		IsBurstable:           request.Compute.IsBurstable,
+		CPUBaselineMillicores: request.Compute.CPUBaselineMillicores,
 		MemoryMiB:             request.Compute.MemoryMiB,
 		SleepAfterIdleSeconds: request.Compute.SleepAfterIdleSeconds,
 		DiskMiB:               request.Disk.SizeMiB,
@@ -234,6 +238,12 @@ func (request computeRequest) validate() error {
 	}
 	if request.CPUMillicores > maximumCPUMillicores {
 		return fmt.Errorf("compute.cpu_millicores must not exceed %d", maximumCPUMillicores)
+	}
+	if !request.IsBurstable && request.CPUBaselineMillicores != 0 {
+		return fmt.Errorf("compute.cpu_baseline_millicores needs compute.is_burstable")
+	}
+	if request.CPUBaselineMillicores < 0 || request.CPUBaselineMillicores > request.CPUMillicores {
+		return fmt.Errorf("compute.cpu_baseline_millicores must be from 0 to compute.cpu_millicores")
 	}
 	if request.MemoryMiB <= 0 {
 		return fmt.Errorf("compute.memory_mib must be positive")

@@ -44,6 +44,8 @@ func (s *Server) setVirtualMachineCompute(c *echo.Context) error {
 	}
 	if err := s.virtualMachineManager.SetCompute(c.Request().Context(), virtualMachine.ID, vm.Compute{
 		CPUMillicores:         request.CPUMillicores,
+		IsBurstable:           request.IsBurstable,
+		CPUBaselineMillicores: request.CPUBaselineMillicores,
 		MemoryMiB:             request.MemoryMiB,
 		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds,
 	}); err != nil {
