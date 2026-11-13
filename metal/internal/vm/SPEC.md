@@ -32,6 +32,7 @@ machines/<id>/metrics/     seven days of daily VM usage files
 - The create fingerprint excludes signed image URLs.
 - A firewall change increases the specification generation.
 - `cpu_millicores` accepts 100 through 32000. Firecracker receives `ceil(cpu_millicores / 1000)` vCPUs.
+- `is_burstable` and `cpu_baseline_millicores` are stored only. `SetCompute` changes them as a shape change; `Resize` keeps them. A record without them reads as not burstable.
 - A `sleep_after_idle_seconds` change does not change `SpecificationGeneration`.
 - Every read and write validates a record. An unreadable record takes only its own VM out of management; `List` returns its identifier separately. metald does not repair or remove an invalid record.
 - A record format change ships a patch in `internal/patches`. See [Change stored state with a patch](../../../docs/develop/metal.md#change-stored-state-with-a-patch).

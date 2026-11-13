@@ -36,7 +36,8 @@ The complete value is the state Metal saves and reapplies after a restart or fai
 | Rule | Detail |
 | --- | --- |
 | CPU | `cpu_millicores` from `100` to `32000`. `1000` is one core. The guest gets whole vCPUs, rounded up. |
-| CPU or memory change | Needs a stopped VM. The idle timeout can change in any state. |
+| Burstable CPU | `is_burstable` and `cpu_baseline_millicores` in the compute object. Both default to off and `0`. The baseline is from `0` to `cpu_millicores` and needs `is_burstable`. Metal stores them but does not apply them yet. Resize keeps them. |
+| CPU or memory change | Needs a stopped VM. A burstable change is a CPU change. The idle timeout can change in any state. |
 | Disk | Grows only. A shrink is rejected. |
 | Guest metadata | See [guest metadata limits](../compute/vm-records.md#guest-metadata). |
 | Resize | Changes CPU, memory, disk, and idle timeout as one shape, after a capacity check. |
