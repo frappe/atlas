@@ -100,3 +100,22 @@ func TestResetCPUThrottleNeedsABurstableVirtualMachine(t *testing.T) {
 		t.Fatalf("error = %v, want ErrConflict", err)
 	}
 }
+
+func TestCPUThrottlerReleasesAVirtualMachineThatStopsBeingBurstable(t *testing.T) {
+	ctx := context.Background()
+	manager, runtime, _, _ := newTestManager(t)
+	specification := testSpecification()
+	specification.IsBurstable = true
+	runningVirtualMachine(t, manager, specification)
+	throttler := NewCPUThrottler(manager, windowWithUsage("machine-1", 1000))
+	if err := throttler.Throttle(ctx); err != nil || runtime.cpuLimitMillicores != 400 {
+		t.Fatalf("CPU limit = %d, %v; want 400", runtime.cpuLimitMillicores, err)
+	}
+
+	if err := manager.SetCompute(ctx, "machine-1", Compute{CPUMillicores: 2000, MemoryMiB: 2048}); err != nil {
+		t.Fatal(err)
+	}
+	if err := throttler.Throttle(ctx); err != nil || runtime.cpuLimitMillicores != 2000 {
+		t.Fatalf("CPU limit = %d, %v; want 2000", runtime.cpuLimitMillicores, err)
+	}
+}
