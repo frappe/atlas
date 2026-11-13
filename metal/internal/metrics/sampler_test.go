@@ -45,7 +45,7 @@ func TestCollectReadsVMsConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := &parallelSource{started: make(chan struct{}), release: make(chan struct{})}
-	sampler := NewSampler(store, source, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sampler := NewSampler(store, NewCPUWindow(time.Hour), source, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	done := make(chan struct{})
 	go func() {
 		sampler.Collect(t.Context())

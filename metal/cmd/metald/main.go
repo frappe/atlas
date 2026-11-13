@@ -43,6 +43,7 @@ const (
 	meshSetupTimeout       = 2 * time.Minute
 	imageReconcileInterval = time.Hour
 	guestCheckInterval     = time.Minute
+	cpuThrottleWindow      = time.Hour
 )
 
 //	@title			Metal API
@@ -420,7 +421,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure metrics store: %w", err)
 	}
-	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, logger)
+	cpuWindow := metrics.NewCPUWindow(cpuThrottleWindow)
+	metricsSampler := metrics.NewSampler(metricsStore, cpuWindow, virtualMachineManager, logger)
 
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)
