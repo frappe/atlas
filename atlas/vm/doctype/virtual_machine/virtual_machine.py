@@ -604,8 +604,10 @@ class VirtualMachine(Document):
 		sleep_after_idle_seconds: int | None = None,
 		deep_sleep_after_idle_seconds: int | None = None,
 		coma_after_idle_seconds: int | None = None,
+		is_burstable: int | None = None,
+		cpu_baseline_millicores: int | None = None,
 	) -> str | None:
-		"""Change resources or sleep delays. Return the migration name when the VM must move."""
+		"""Change resources, sleep delays, or burstable CPU. Return the migration name when the VM must move."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
@@ -622,6 +624,8 @@ class VirtualMachine(Document):
 			"sleep_after_idle_seconds": sleep_after_idle_seconds,
 			"deep_sleep_after_idle_seconds": deep_sleep_after_idle_seconds,
 			"coma_after_idle_seconds": coma_after_idle_seconds,
+			"is_burstable": is_burstable,
+			"cpu_baseline_millicores": cpu_baseline_millicores,
 		}
 		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)

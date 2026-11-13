@@ -38,6 +38,8 @@ class TestVirtualMachineResize(UnitTestCase):
 			architecture="amd64",
 			tenant_id=7,
 			cpu_millicores=2000,
+			is_burstable=1,
+			cpu_baseline_millicores=500,
 			memory_mib=2048,
 			disk_mib=20480,
 			sleep_after_idle_seconds=0,
@@ -83,7 +85,9 @@ class TestVirtualMachineResize(UnitTestCase):
 				"sleep_after_idle_seconds": 1800,
 			},
 		)
-		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
+		self.virtual_machine.db_set.assert_called_once_with(
+			{"sleep_after_idle_seconds": 1800, "is_burstable": True, "cpu_baseline_millicores": 500}
+		)
 		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 		self.find_server.assert_not_called()
 
@@ -101,6 +105,8 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 4096,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 0,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
 			}
 		)
 
@@ -117,6 +123,8 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 2048,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 600,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
 			}
 		)
 

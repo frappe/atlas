@@ -138,6 +138,15 @@ class VirtualMachineShape:
 		}
 
 	@property
+	def live_values(self) -> dict[str, int]:
+		"""Return the compute values that change on a running VM."""
+		return {
+			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+			"is_burstable": self.is_burstable,
+			"cpu_baseline_millicores": self.cpu_baseline_millicores,
+		}
+
+	@property
 	def migration_resize(self) -> dict[str, int]:
 		"""Return the resize object of a Metal migration request."""
 		return {
