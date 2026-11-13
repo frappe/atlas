@@ -435,6 +435,22 @@ class TestVirtualMachineDocument(UnitTestCase):
 		self.assertEqual(virtual_machine.current_state, "unknown")
 		self.assertIsNone(virtual_machine.desired_state)
 
+	def test_cpu_throttle_reset_needs_a_burstable_virtual_machine(self) -> None:
+		virtual_machine = frappe.new_doc("Virtual Machine")
+		virtual_machine.name = "vm-0000042"
+
+		with (
+			patch.object(VirtualMachineService, "reset_cpu_throttle") as reset,
+			self.assertRaisesRegex(AtlasUserError, "not burstable"),
+		):
+			virtual_machine.reset_cpu_throttle()
+		reset.assert_not_called()
+
+		virtual_machine.is_burstable = 1
+		with patch.object(VirtualMachineService, "reset_cpu_throttle") as reset:
+			virtual_machine.reset_cpu_throttle()
+		reset.assert_called_once_with()
+
 	def test_guest_ssh_goes_through_the_current_host_namespace(self) -> None:
 		"""A migrated VM has a new host, so Atlas reads it for each connection."""
 		virtual_machine = frappe.new_doc("Virtual Machine")
