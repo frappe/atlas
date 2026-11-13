@@ -76,7 +76,7 @@ func (throttler *CPUThrottler) throttle(ctx context.Context, identifier string) 
 	baselinePercent := 100 * float64(baseline) / float64(specification.CPUMillicores)
 	wasThrottled := throttler.throttled[identifier]
 	isThrottled := wasThrottled
-	usagePercent, hasUsage := throttler.window.Usage(identifier, time.Now()).Percent(specification.CPUMillicores)
+	usagePercent, hasUsage := throttler.window.Usage(identifier, time.Now().Add(-throttler.window.Length())).Percent(specification.CPUMillicores)
 	switch {
 	case !hasUsage:
 	case usagePercent > baselinePercent:

@@ -107,7 +107,7 @@ func TestLoadWindowReadsStoredSamples(t *testing.T) {
 
 	window := NewCPUWindow(time.Hour)
 	NewSampler(store, window, listedSource{"one"}, slog.New(slog.NewTextHandler(io.Discard, nil))).LoadWindow(t.Context())
-	if usage := window.Usage("one", now); usage.CPUSeconds != 60 || usage.UpSeconds != 600 {
+	if usage := window.Usage("one", now.Add(-time.Hour)); usage.CPUSeconds != 60 || usage.UpSeconds != 600 {
 		t.Fatalf("usage=%+v", usage)
 	}
 }

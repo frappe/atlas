@@ -16,7 +16,7 @@ func TestCPUWindowMeasuresOnlyTheWindow(t *testing.T) {
 		window.Add("one", record)
 	}
 
-	usage := window.Usage("one", start.Add(110*time.Minute))
+	usage := window.Usage("one", start.Add(50*time.Minute))
 	if usage.CPUSeconds != 300 || usage.UpSeconds != 600 {
 		t.Fatalf("usage=%+v", usage)
 	}

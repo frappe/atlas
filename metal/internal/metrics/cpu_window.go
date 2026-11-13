@@ -33,13 +33,13 @@ func (window *CPUWindow) Add(identifier string, record Record) {
 	window.records[identifier] = records[firstInWindow(records, record.Timestamp.Add(-window.length)):]
 }
 
-// Usage returns the CPU use of one virtual machine in the window that ends at now.
-func (window *CPUWindow) Usage(identifier string, now time.Time) CPUUsage {
+// Usage returns the CPU use of one virtual machine in the samples from start.
+func (window *CPUWindow) Usage(identifier string, start time.Time) CPUUsage {
 	window.mutex.Lock()
 	defer window.mutex.Unlock()
 
 	records := window.records[identifier]
-	return MeasureCPUUsage(records[firstInWindow(records, now.Add(-window.length)):])
+	return MeasureCPUUsage(records[firstInWindow(records, start):])
 }
 
 // Retain drops the virtual machines that are not active.
