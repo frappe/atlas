@@ -369,6 +369,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
 	guestChecker := reconciler.NewGuestChecker(virtualMachineManager, guestCheckInterval, registry, logger)
+	cpuWindow := metrics.NewCPUWindow(cpuThrottleWindow)
+	cpuThrottleChecker := reconciler.NewCPUThrottleChecker(vm.NewCPUThrottler(virtualMachineManager, cpuWindow), cpuThrottleInterval, registry, logger)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
 		stores.Snapshots,
@@ -384,6 +386,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		sleepTransferReconciler.Wake()
 		sleepRestoreReconciler.Wake()
 		imageReconciler.Wake()
+		cpuThrottleChecker.Wake()
 		if migrationReconciler != nil {
 			migrationReconciler.Wake()
 		}
@@ -422,9 +425,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure metrics store: %w", err)
 	}
-	cpuWindow := metrics.NewCPUWindow(cpuThrottleWindow)
 	metricsSampler := metrics.NewSampler(metricsStore, cpuWindow, virtualMachineManager, logger)
-	cpuThrottleChecker := reconciler.NewCPUThrottleChecker(vm.NewCPUThrottler(virtualMachineManager, cpuWindow), cpuThrottleInterval, registry, logger)
 
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)
