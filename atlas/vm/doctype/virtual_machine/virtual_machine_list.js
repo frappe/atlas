@@ -145,6 +145,19 @@ function showCreateVirtualMachineDialog() {
 				max: 32000,
 				default: 1000,
 			},
+			{
+				fieldname: "is_burstable",
+				fieldtype: "Check",
+				label: __("Is Burstable"),
+				default: 0,
+			},
+			{
+				fieldname: "cpu_baseline_millicores",
+				fieldtype: "Int",
+				label: __("CPU Baseline (millicores)"),
+				depends_on: "eval: doc.is_burstable",
+				default: 0,
+			},
 			{ fieldtype: "Column Break" },
 			{
 				fieldname: "memory_mib",
