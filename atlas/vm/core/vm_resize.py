@@ -173,6 +173,8 @@ class VirtualMachineResize:
 		)
 		if target_shape.disk_mib < current_shape.disk_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
+		if target_shape.cpu_millicores < target_shape.cpu_baseline_millicores:
+			frappe.throw(_("CPU cannot be less than the CPU baseline."), exc=AtlasUserError)
 		return target_shape
 
 	def _get_requirements(self, target: VirtualMachineShape) -> PlacementRequirements:
