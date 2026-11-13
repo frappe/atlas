@@ -91,6 +91,8 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 		}
 
 		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
+			record.Specification.IsBurstable != compute.IsBurstable ||
+			record.Specification.CPUBaselineMillicores != compute.CPUBaselineMillicores ||
 			record.Specification.MemoryMiB != compute.MemoryMiB
 		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
 		if !shapeChanged && !timeoutChanged && record.State == StateRunning {
@@ -106,6 +108,8 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 				return false, ErrConflict
 			}
 			record.Specification.CPUMillicores = compute.CPUMillicores
+			record.Specification.IsBurstable = compute.IsBurstable
+			record.Specification.CPUBaselineMillicores = compute.CPUBaselineMillicores
 			record.Specification.MemoryMiB = compute.MemoryMiB
 			record.SpecificationGeneration++
 			record.State = StateRunning

@@ -10,6 +10,8 @@ import (
 // Specification contains the persistent configuration for one VM.
 type Specification struct {
 	CPUMillicores         int                  `json:"cpu_millicores"`
+	IsBurstable           bool                 `json:"is_burstable,omitempty"`
+	CPUBaselineMillicores int                  `json:"cpu_baseline_millicores,omitempty"`
 	MemoryMiB             int                  `json:"memory_mib"`
 	SleepAfterIdleSeconds int                  `json:"sleep_after_idle_seconds,omitempty"`
 	DiskMiB               int                  `json:"disk_mib"`
@@ -27,6 +29,8 @@ type Specification struct {
 // Compute is the requested compute configuration of one VM.
 type Compute struct {
 	CPUMillicores         int
+	IsBurstable           bool
+	CPUBaselineMillicores int
 	MemoryMiB             int
 	SleepAfterIdleSeconds int
 }
@@ -142,6 +146,8 @@ func (configuration NetworkConfiguration) RoutesViaGateway() []Route {
 // ignores signed image URLs, which can rotate without changing the reservation.
 func (specification Specification) SameReservation(other Specification) bool {
 	return specification.CPUMillicores == other.CPUMillicores &&
+		specification.IsBurstable == other.IsBurstable &&
+		specification.CPUBaselineMillicores == other.CPUBaselineMillicores &&
 		specification.MemoryMiB == other.MemoryMiB &&
 		specification.SleepAfterIdleSeconds == other.SleepAfterIdleSeconds &&
 		specification.DiskMiB == other.DiskMiB &&
@@ -244,6 +250,8 @@ type Information struct {
 	LastRequestAt                   time.Time
 	Error                           *PublicOperationError
 	CPUMillicores                   int
+	IsBurstable                     bool
+	CPUBaselineMillicores           int
 	MemoryMiB                       int
 	DiskMiB                         int
 	DiskUsedMiB                     int

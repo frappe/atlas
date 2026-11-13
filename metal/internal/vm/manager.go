@@ -407,6 +407,8 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		IsRescueModeEnabled:             desired.Specification.RescueImage != nil,
 		Error:                           errorDetail,
 		CPUMillicores:                   desired.Specification.CPUMillicores,
+		IsBurstable:                     desired.Specification.IsBurstable,
+		CPUBaselineMillicores:           desired.Specification.CPUBaselineMillicores,
 		MemoryMiB:                       desired.Specification.MemoryMiB,
 		DiskMiB:                         desired.Specification.DiskMiB,
 		DiskUsedMiB:                     usage.UsedMiB,
