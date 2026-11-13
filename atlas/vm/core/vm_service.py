@@ -145,6 +145,8 @@ class VirtualMachineService:
 				"virtual_machine_image": image.name,
 				"architecture": image.architecture,
 				"cpu_millicores": request.cpu_millicores,
+				"is_burstable": request.is_burstable,
+				"cpu_baseline_millicores": request.cpu_baseline_millicores,
 				"memory_mib": request.memory_mib,
 				"disk_mib": request.disk_mib,
 				"tenant_id": request.tenant_id,
@@ -171,6 +173,8 @@ class VirtualMachineService:
 		return {
 			"compute": {
 				"cpu_millicores": request.cpu_millicores,
+				"is_burstable": request.is_burstable,
+				"cpu_baseline_millicores": request.cpu_baseline_millicores,
 				"memory_mib": request.memory_mib,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 			},

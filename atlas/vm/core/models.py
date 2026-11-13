@@ -267,6 +267,8 @@ class VirtualMachineCreateRequest:
 	memory_mib: int
 	disk_mib: int
 	tenant_id: int
+	is_burstable: bool = False
+	cpu_baseline_millicores: int = 0
 	is_privileged: bool = False
 	is_termination_protected: bool = False
 	hostname: str = ""
@@ -303,6 +305,12 @@ class VirtualMachineCreateRequest:
 			raise ValueError(f"CPU millicores must be at least {MINIMUM_CPU_MILLICORES}.")
 		if cpu_millicores > MAXIMUM_CPU_MILLICORES:
 			raise ValueError(f"CPU millicores must not exceed {MAXIMUM_CPU_MILLICORES}.")
+		is_burstable = strict_bool(payload.get("is_burstable"), "is_burstable")
+		cpu_baseline_millicores = cls.non_negative_integer(payload, "cpu_baseline_millicores")
+		if cpu_baseline_millicores and not is_burstable:
+			raise ValueError("A CPU baseline needs a burstable virtual machine.")
+		if cpu_baseline_millicores > cpu_millicores:
+			raise ValueError("The CPU baseline must not exceed CPU millicores.")
 		memory_mib = cls.positive_integer(payload, "memory_mib", "Memory")
 		disk_mib = cls.positive_integer(payload, "disk_mib", "Disk")
 		tenant_id = payload.get("tenant_id")
@@ -327,6 +335,8 @@ class VirtualMachineCreateRequest:
 			memory_mib=memory_mib,
 			disk_mib=disk_mib,
 			tenant_id=tenant_id,
+			is_burstable=is_burstable,
+			cpu_baseline_millicores=cpu_baseline_millicores,
 			is_privileged=strict_bool(payload.get("is_privileged"), "is_privileged"),
 			is_termination_protected=strict_bool(
 				payload.get("is_termination_protected"), "is_termination_protected"

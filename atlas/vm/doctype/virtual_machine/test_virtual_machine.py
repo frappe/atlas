@@ -479,7 +479,14 @@ class TestVirtualMachineService(UnitTestCase):
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
 		self.assertEqual(
-			set(metal_request["compute"]), {"cpu_millicores", "memory_mib", "sleep_after_idle_seconds"}
+			set(metal_request["compute"]),
+			{
+				"cpu_millicores",
+				"is_burstable",
+				"cpu_baseline_millicores",
+				"memory_mib",
+				"sleep_after_idle_seconds",
+			},
 		)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
@@ -523,6 +530,8 @@ class TestVirtualMachineService(UnitTestCase):
 			metal_request["compute"],
 			{
 				"cpu_millicores": 2000,
+				"is_burstable": False,
+				"cpu_baseline_millicores": 0,
 				"memory_mib": 2048,
 				"sleep_after_idle_seconds": 0,
 			},
