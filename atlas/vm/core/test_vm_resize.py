@@ -204,6 +204,12 @@ class TestVirtualMachineResize(UnitTestCase):
 
 		self.find_server.assert_not_called()
 
+	def test_cpu_below_the_baseline_is_rejected(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "CPU baseline"):
+			self.apply({"cpu_millicores": 400})
+
+		self.find_server.assert_not_called()
+
 	def test_offload_is_rejected_for_a_large_virtual_machine_before_a_host_read(self) -> None:
 		for changes in (
 			{"memory_mib": 8192, "deep_sleep_after_idle_seconds": 3600},
