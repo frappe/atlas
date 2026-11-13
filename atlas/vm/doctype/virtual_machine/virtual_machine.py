@@ -53,10 +53,12 @@ class VirtualMachine(Document):
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
 		coma_after_idle_seconds: DF.Int
+		cpu_baseline_millicores: DF.Int
 		cpu_millicores: DF.Int
 		deep_sleep_after_idle_seconds: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
+		is_burstable: DF.Check
 		is_draft: DF.Check
 		is_network_gateway: DF.Check
 		is_privileged: DF.Check

@@ -23,6 +23,8 @@
   "is_termination_protected",
   "section_break_compute_and_storage",
   "cpu_millicores",
+  "is_burstable",
+  "cpu_baseline_millicores",
   "memory_mib",
   "column_break_compute",
   "disk_mib",
@@ -144,6 +146,21 @@
    "reqd": 1,
    "set_only_once": 1,
    "show_description_on_click": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_burstable",
+   "fieldtype": "Check",
+   "label": "Is Burstable",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.is_burstable",
+   "fieldname": "cpu_baseline_millicores",
+   "fieldtype": "Int",
+   "label": "CPU Baseline (millicores)",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_compute",
@@ -430,7 +447,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-31 02:30:00.000000",
+ "modified": "2026-11-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
