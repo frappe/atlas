@@ -91,11 +91,12 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 		}
 
 		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
-			record.Specification.IsBurstable != compute.IsBurstable ||
-			record.Specification.CPUBaselineMillicores != compute.CPUBaselineMillicores ||
 			record.Specification.MemoryMiB != compute.MemoryMiB
-		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
-		if !shapeChanged && !timeoutChanged && record.State == StateRunning {
+		// The idle timeout and the burstable values apply to a running VM.
+		liveChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds ||
+			record.Specification.IsBurstable != compute.IsBurstable ||
+			record.Specification.CPUBaselineMillicores != compute.CPUBaselineMillicores
+		if !shapeChanged && !liveChanged && record.State == StateRunning {
 			return false, nil
 		}
 
@@ -108,14 +109,14 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 				return false, ErrConflict
 			}
 			record.Specification.CPUMillicores = compute.CPUMillicores
-			record.Specification.IsBurstable = compute.IsBurstable
-			record.Specification.CPUBaselineMillicores = compute.CPUBaselineMillicores
 			record.Specification.MemoryMiB = compute.MemoryMiB
 			record.SpecificationGeneration++
 			record.State = StateRunning
 		}
 
 		record.Specification.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+		record.Specification.IsBurstable = compute.IsBurstable
+		record.Specification.CPUBaselineMillicores = compute.CPUBaselineMillicores
 		return true, nil
 	})
 }

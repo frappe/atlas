@@ -526,32 +526,28 @@ func TestSetComputeRequestsRunningState(t *testing.T) {
 	}
 }
 
-func TestSetComputeStoresBurstableCPUOnAStoppedVirtualMachine(t *testing.T) {
+func TestSetComputeChangesBurstableCPUOnARunningVirtualMachine(t *testing.T) {
 	ctx := context.Background()
 	manager, _, _, _ := newTestManager(t)
-	if _, err := manager.Create(ctx, "machine-1", testSpecification()); err != nil {
-		t.Fatal(err)
-	}
-	burstable := Compute{CPUMillicores: 2000, IsBurstable: true, CPUBaselineMillicores: 500, MemoryMiB: 2048}
-	if err := manager.SetCompute(ctx, "machine-1", burstable); !errors.Is(err, ErrConflict) {
-		t.Fatalf("running VM error = %v, want ErrConflict", err)
-	}
-
-	if err := manager.SetPowerState(ctx, "machine-1", StateStopped); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.SetCompute(ctx, "machine-1", burstable); err != nil {
-		t.Fatal(err)
-	}
-	information, err := manager.Information(ctx, "machine-1")
+	runningVirtualMachine(t, manager, testSpecification())
+	before, err := manager.store.readDesired("machine-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !information.IsBurstable || information.CPUBaselineMillicores != 500 {
-		t.Fatalf("information = %+v", information)
+
+	burstable := Compute{CPUMillicores: 2000, IsBurstable: true, CPUBaselineMillicores: 500, MemoryMiB: 2048}
+	if err := manager.SetCompute(ctx, "machine-1", burstable); err != nil {
+		t.Fatal(err)
+	}
+	after, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Specification.IsBurstable || after.Specification.CPUBaselineMillicores != 500 {
+		t.Fatalf("specification = %+v", after.Specification)
+	}
+	if after.SpecificationGeneration != before.SpecificationGeneration {
+		t.Fatalf("specification generation = %d, want %d", after.SpecificationGeneration, before.SpecificationGeneration)
 	}
 }
 
