@@ -36,7 +36,7 @@ The complete value is the state Metal saves and reapplies after a restart or fai
 | Rule | Detail |
 | --- | --- |
 | CPU | `cpu_millicores` from `100` to `32000`. `1000` is one core. The guest gets whole vCPUs, rounded up. |
-| Burstable CPU | `is_burstable` and `cpu_baseline_millicores` in the compute object. Both default to off and `0`. The baseline is from `0` to `cpu_millicores` and needs `is_burstable`. `0` means 20 percent of `cpu_millicores`. Metal limits a VM to its baseline after a high average. See [burstable CPU](../compute/vm-records.md#burstable-cpu). Resize keeps them. |
+| Burstable CPU | `is_burstable` and `cpu_baseline_millicores` in the compute object. Both default to off and `0`. The baseline is from `0` to `cpu_millicores` and needs `is_burstable`. `0` means 20 percent of `cpu_millicores`. Metal limits a VM to its baseline after a high average. `POST /v1/vms/{id}/cpu-throttle/reset` ends the throttle and returns `409` for a VM that is not burstable. See [burstable CPU](../compute/vm-records.md#burstable-cpu). Resize keeps them. |
 | CPU or memory change | Needs a stopped VM. A burstable change is a CPU change. The idle timeout can change in any state. |
 | Disk | Grows only. A shrink is rejected. |
 | Guest metadata | See [guest metadata limits](../compute/vm-records.md#guest-metadata). |

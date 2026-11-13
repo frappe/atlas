@@ -24,6 +24,8 @@ Every 30 seconds, metald measures the average CPU use of each running burstable 
 
 metald logs each change with `burstable VM CPU throttle changed`. The limit is a systemd CPU quota on the VM unit, so a throttled guest runs slower but does not stop. A restart of the VM or of metald does not clear a throttle, because metald applies the limit again on the next check from the stored samples.
 
+To end a throttle, a System Manager uses **Reset CPU Throttle** in the VM form. Metal then counts the VM's CPU use only from the reset time, so the VM gets its full CPU at once. Metal stores the reset time with the VM, so a metald restart does not bring the old samples back. A VM that keeps a high load is throttled again when its new average goes above the baseline. Only a burstable VM can be reset.
+
 ## Read current VM state
 
 | Data | Source |
