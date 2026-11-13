@@ -68,7 +68,14 @@ func (throttler *CPUThrottler) throttle(ctx context.Context, identifier string) 
 	}
 	specification := desired.Specification
 	if !specification.IsBurstable || observed.State != StateRunning {
+		wasThrottled := throttler.throttled[identifier]
 		delete(throttler.throttled, identifier)
+		// A running VM that stopped being burstable keeps a throttled quota until it gets the full CPU back.
+		if wasThrottled && observed.State == StateRunning {
+			throttler.manager.logger.InfoContext(ctx, "burstable VM CPU throttle changed",
+				"virtual_machine_id", identifier, "is_throttled", false)
+			return throttler.manager.runtime.RefreshCPU(ctx, runtimeMachine(desired, observed.NetworkInterface))
+		}
 		return nil
 	}
 
