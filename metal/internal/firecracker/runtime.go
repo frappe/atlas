@@ -215,6 +215,20 @@ func (runtime *Runtime) Remove(ctx context.Context, input vm.RuntimeMachine) err
 	return nil
 }
 
+// RefreshCPU applies the machine's CPU limit to a running guest. A caller may
+// lower the limit in the machine specification for a temporary throttle. A VM
+// that is not running is unchanged.
+func (runtime *Runtime) RefreshCPU(ctx context.Context, input vm.RuntimeMachine) error {
+	status, err := runtime.Inspect(ctx, input)
+	if err != nil {
+		return err
+	}
+	if status.State != vm.StateRunning {
+		return nil
+	}
+	return runtime.units.SetLimits(ctx, input.ID, platform.Limits{CPUMillicores: input.Specification.CPUMillicores})
+}
+
 // RefreshDisk applies the machine's disk limits to a live guest. A caller may
 // lower the limit in the machine specification for a temporary throttle. A VM
 // that is neither running nor paused is unchanged.

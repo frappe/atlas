@@ -16,25 +16,26 @@ import (
 )
 
 type fakeRuntime struct {
-	inRescueMode   bool
-	state          State
-	hasSavedState  bool
-	starts         int
-	stops          int
-	saves          int
-	restores       int
-	restoresPaused int
-	deletes        int
-	pauses         int
-	resumes        int
-	removes        int
-	coldStarts     int
-	metadata       int
-	diskRefresh    int
-	diskLimitMiBps int
-	inspectError   error
-	onInspect      func()
-	restoreError   error
+	inRescueMode       bool
+	state              State
+	hasSavedState      bool
+	starts             int
+	stops              int
+	saves              int
+	restores           int
+	restoresPaused     int
+	deletes            int
+	pauses             int
+	resumes            int
+	removes            int
+	coldStarts         int
+	metadata           int
+	diskRefresh        int
+	diskLimitMiBps     int
+	cpuLimitMillicores int
+	inspectError       error
+	onInspect          func()
+	restoreError       error
 	// restoreFailureState is the state a failed saved-state restore leaves behind.
 	restoreFailureState State
 	saveError           error
@@ -195,6 +196,11 @@ func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachin
 	runtime.diskRefresh++
 	runtime.diskLimitMiBps = machine.Specification.Disk.ThroughputMiBps
 	return runtime.diskError
+}
+
+func (runtime *fakeRuntime) RefreshCPU(_ context.Context, machine RuntimeMachine) error {
+	runtime.cpuLimitMillicores = machine.Specification.CPUMillicores
+	return nil
 }
 
 func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error) {
