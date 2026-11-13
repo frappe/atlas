@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -69,5 +70,33 @@ func TestCPUThrottlerLeavesAVirtualMachineThatIsNotBurstable(t *testing.T) {
 	}
 	if runtime.cpuLimitMillicores != 0 {
 		t.Fatalf("CPU limit = %d, want no change", runtime.cpuLimitMillicores)
+	}
+}
+
+func TestCPUThrottlerReleasesAVirtualMachineAfterAReset(t *testing.T) {
+	ctx := context.Background()
+	manager, runtime, _, _ := newTestManager(t)
+	specification := testSpecification()
+	specification.IsBurstable = true
+	runningVirtualMachine(t, manager, specification)
+	throttler := NewCPUThrottler(manager, windowWithUsage("machine-1", 1000))
+	if err := throttler.Throttle(ctx); err != nil || runtime.cpuLimitMillicores != 400 {
+		t.Fatalf("CPU limit = %d, %v; want 400", runtime.cpuLimitMillicores, err)
+	}
+
+	if err := manager.ResetCPUThrottle(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := throttler.Throttle(ctx); err != nil || runtime.cpuLimitMillicores != 2000 {
+		t.Fatalf("CPU limit after reset = %d, %v; want 2000", runtime.cpuLimitMillicores, err)
+	}
+}
+
+func TestResetCPUThrottleNeedsABurstableVirtualMachine(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	runningVirtualMachine(t, manager, testSpecification())
+
+	if err := manager.ResetCPUThrottle(context.Background(), "machine-1"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("error = %v, want ErrConflict", err)
 	}
 }
