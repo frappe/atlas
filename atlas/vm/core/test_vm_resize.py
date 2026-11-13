@@ -206,6 +206,57 @@ class TestVirtualMachineResize(UnitTestCase):
 
 		self.create_migration.assert_not_called()
 
+	def test_a_burstable_change_stays_in_place_on_a_running_virtual_machine(self) -> None:
+		self.assertIsNone(self.apply({"cpu_baseline_millicores": 800}, state="running"))
+
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001",
+			{
+				"cpu_millicores": 2000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 800,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 0,
+			},
+		)
+		self.virtual_machine.db_set.assert_called_once_with(
+			{"sleep_after_idle_seconds": 0, "is_burstable": True, "cpu_baseline_millicores": 800}
+		)
+		self.find_server.assert_not_called()
+
+	def test_an_in_place_resize_sets_the_burstable_values_after_the_shape(self) -> None:
+		self.assertIsNone(self.apply({"cpu_millicores": 4000, "cpu_baseline_millicores": 3000}))
+
+		self.metal_client.resize_virtual_machine.assert_called_once()
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001",
+			{
+				"cpu_millicores": 4000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 3000,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 0,
+			},
+		)
+
+	def test_a_baseline_needs_a_burstable_virtual_machine(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "needs a burstable"):
+			self.apply({"is_burstable": 0})
+
+		self.apply({"is_burstable": 0, "cpu_baseline_millicores": 0}, state="running")
+		self.assertEqual(
+			(self.virtual_machine.is_burstable, self.virtual_machine.cpu_baseline_millicores), (False, 0)
+		)
+
+	def test_a_move_cannot_raise_the_baseline_above_the_current_cpu(self) -> None:
+		self.find_server.return_value = "metal-2"
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Resize the CPU first"):
+			self.apply({"cpu_millicores": 4000, "cpu_baseline_millicores": 3000})
+
+		self.metal_client.set_virtual_machine_compute.assert_not_called()
+		self.create_migration.assert_not_called()
+
 	def test_a_smaller_disk_is_rejected(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "only increase"):
 			self.apply({"disk_mib": 10240})
