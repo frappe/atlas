@@ -44,6 +44,7 @@ const (
 	imageReconcileInterval = time.Hour
 	guestCheckInterval     = time.Minute
 	cpuThrottleWindow      = time.Hour
+	cpuThrottleInterval    = 30 * time.Second
 )
 
 //	@title			Metal API
@@ -423,6 +424,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	}
 	cpuWindow := metrics.NewCPUWindow(cpuThrottleWindow)
 	metricsSampler := metrics.NewSampler(metricsStore, cpuWindow, virtualMachineManager, logger)
+	cpuThrottleChecker := reconciler.NewCPUThrottleChecker(vm.NewCPUThrottler(virtualMachineManager, cpuWindow), cpuThrottleInterval, registry, logger)
 
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)
@@ -498,6 +500,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
+	daemon.StartWorker(cpuThrottleChecker.Run)
 	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
 	}).Run)
