@@ -73,6 +73,13 @@ frappe.ui.form.on("Virtual Machine", {
 				true,
 				ACTIONS,
 			],
+			[
+				__("Reset CPU Throttle"),
+				"reset_cpu_throttle",
+				Boolean(frm.doc.is_burstable),
+				ACTIONS,
+				__("Resetting CPU throttle..."),
+			],
 			ACTIONS_DIVIDER,
 			[__("Edit SSH Keys"), () => showEditSSHKeysDialog(frm), true, ACTIONS],
 			[__("Edit Metadata"), () => showEditMetadataDialog(frm), true, ACTIONS],
