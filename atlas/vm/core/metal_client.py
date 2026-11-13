@@ -199,6 +199,15 @@ class MetalClient:
 		)
 		return self._virtual_machine(response)
 
+	def reset_virtual_machine_cpu_throttle(self, virtual_machine_id: str) -> MetalVirtualMachine:
+		"""Count one burstable VM's CPU use only from now."""
+		response = self._request(
+			"POST",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/cpu-throttle/reset",
+			expected_status=202,
+		)
+		return self._virtual_machine(response)
+
 	def delete_virtual_machine(self, virtual_machine_id: str) -> MetalVirtualMachine:
 		"""Store a removal request for one VM."""
 		response = self._request(

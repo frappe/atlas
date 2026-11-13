@@ -318,6 +318,14 @@ class VirtualMachineService:
 			)
 		)
 
+	def reset_cpu_throttle(self) -> None:
+		"""Reset the CPU throttle of a burstable VM in Metal."""
+		self.perform_metal_operation(
+			lambda metal_client: metal_client.reset_virtual_machine_cpu_throttle(
+				cast(str, self.virtual_machine.name)
+			)
+		)
+
 	def set_compute(self, compute: dict[str, Any]) -> dict[str, Any]:
 		"""Set the complete compute values in Metal."""
 		information = self.perform_metal_operation(
