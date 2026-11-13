@@ -19,6 +19,9 @@ const (
 	// errorNoSuchUnit is the D-Bus error name systemd returns for an absent unit.
 	errorNoSuchUnit = "org.freedesktop.systemd1.NoSuchUnit"
 
+	// systemdRestartTimeout bounds how long Status retries while systemd re-executes.
+	systemdRestartTimeout = 10 * time.Second
+
 	// microsecondsPerCPUMillicore converts a millicore to the microseconds of CPU
 	// time per second that systemd expects in CPUQuotaPerSecUSec.
 	microsecondsPerCPUMillicore = 1000
@@ -78,8 +81,25 @@ func (d *DBus) ResetFailed(ctx context.Context, id string) error {
 // Status reports the activation state of the unit for id. An absent unit reads
 // as inactive, because a virtual machine that never started is a stopped one.
 func (d *DBus) Status(ctx context.Context, id string) (Status, error) {
-	unit := unitName(id)
+	ticker := time.NewTicker(waitPollInterval)
+	defer ticker.Stop()
 
+	deadline := time.Now().Add(systemdRestartTimeout)
+	for {
+		status, err := d.readStatus(ctx, unitName(id))
+		if !isSystemdRestarting(err) || time.Now().After(deadline) {
+			return status, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return Status{}, err
+		case <-ticker.C:
+		}
+	}
+}
+
+func (d *DBus) readStatus(ctx context.Context, unit string) (Status, error) {
 	properties, err := d.connection.GetUnitPropertiesContext(ctx, unit)
 	if isUnitNotLoaded(err) {
 		return Status{ActiveState: "inactive", SubState: "dead"}, nil
@@ -272,6 +292,14 @@ func isUnitNotLoaded(err error) bool {
 	}
 
 	return strings.Contains(err.Error(), "not loaded")
+}
+
+// isSystemdRestarting reports whether PID 1 is off the bus while it re-executes,
+// for about a second after a glibc or systemd upgrade.
+func isSystemdRestarting(err error) bool {
+	var dbusError dbus.Error
+	return errors.As(err, &dbusError) &&
+		(dbusError.Name == "org.freedesktop.DBus.Error.NoReply" || dbusError.Name == "org.freedesktop.DBus.Error.ServiceUnknown")
 }
 
 // unitName builds the template instance name for a virtual machine ID.
