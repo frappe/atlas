@@ -56,6 +56,32 @@ func (s *Server) setVirtualMachineCompute(c *echo.Context) error {
 	return s.respondWithCurrentVirtualMachine(c, http.StatusAccepted)
 }
 
+// @Summary	Reset the CPU throttle of a burstable virtual machine
+// @Description	Count CPU use only from now, so a throttled virtual machine gets its full CPU. The virtual machine must be burstable.
+// @ID			resetVirtualMachineCPUThrottle
+// @Tags		Virtual machines
+// @Produce	json
+// @Param		id	path		string	true	"Virtual machine identifier"
+// @Success	202	{object}	virtualMachineResponse
+// @Failure	400	{object}	errorResponse
+// @Failure	401	{object}	errorResponse
+// @Failure	404	{object}	errorResponse
+// @Failure	409	{object}	errorResponse
+// @Failure	500	{object}	errorResponse
+// @Router		/v1/vms/{id}/cpu-throttle/reset [post]
+func (s *Server) resetVirtualMachineCPUThrottle(c *echo.Context) error {
+	identifier, err := virtualMachineID(c)
+	if err != nil {
+		return err
+	}
+	if err := s.virtualMachineManager.ResetCPUThrottle(c.Request().Context(), identifier); err != nil {
+		return err
+	}
+
+	s.wakeReconciler()
+	return s.respondWithCurrentVirtualMachine(c, http.StatusAccepted)
+}
+
 // validateComputeCapacity rejects a request the host cannot satisfy. Only the
 // increase is checked, because the VM already holds what it reserves. Virtual
 // CPU entitlement is oversubscribed and never limits a request.

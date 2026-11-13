@@ -216,6 +216,13 @@ func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, str
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) ResetCPUThrottle(_ context.Context, id string) error {
+	if _, found := manager.virtualMachines[id]; !found {
+		return vm.ErrNotFound
+	}
+	return nil
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {

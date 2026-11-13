@@ -56,6 +56,7 @@ type VirtualMachineManager interface {
 	List(context.Context) ([]vm.Information, []string, error)
 	SetPowerState(context.Context, string, vm.State) error
 	RequestRestart(context.Context, string) error
+	ResetCPUThrottle(context.Context, string) error
 	EnableRescueMode(context.Context, string, vm.Image) error
 	DisableRescueMode(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error
