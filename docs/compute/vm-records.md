@@ -16,7 +16,7 @@ CPU uses `cpu_millicores`: **1000 equals one core**. The range is `100` through 
 
 ### Burstable CPU
 
-A burstable VM can use all of its `cpu_millicores` for a short time, but its average must stay at or below its CPU baseline. `is_burstable` marks the VM. `cpu_baseline_millicores` sets the baseline, from `0` to `cpu_millicores`. Both are off and `0` by default. A baseline needs `is_burstable`. You set both when you create the VM.
+A burstable VM can use all of its `cpu_millicores` for a short time, but its average must stay at or below its CPU baseline. `is_burstable` marks the VM. `cpu_baseline_millicores` sets the baseline, from `0` to `cpu_millicores`. Both are off and `0` by default. A baseline needs `is_burstable`. You set both in the Create VM dialog, or later with **Resize VM**. A change applies to a running VM within seconds and does not need a stop.
 
 A baseline of `0` means 20 percent of `cpu_millicores`. For example, a burstable VM with 2000 millicores and no baseline may average 400 millicores.
 
