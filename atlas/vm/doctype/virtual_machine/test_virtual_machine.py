@@ -122,6 +122,30 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.firewall, FirewallConfiguration())
 		self.assertEqual((request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (0, 0))
 
+	def test_request_parses_burstable_cpu(self) -> None:
+		base = {
+			"virtual_machine_image": "Ubuntu 24.04",
+			"cpu_millicores": 1000,
+			"memory_mib": 1024,
+			"disk_mib": 8192,
+			"tenant_id": 7,
+		}
+		request = VirtualMachineCreateRequest.from_value(base)
+		self.assertEqual((request.is_burstable, request.cpu_baseline_millicores), (False, 0))
+
+		request = VirtualMachineCreateRequest.from_value(
+			{**base, "is_burstable": 1, "cpu_baseline_millicores": 250}
+		)
+		self.assertEqual((request.is_burstable, request.cpu_baseline_millicores), (True, 250))
+
+		for invalid in (
+			{"cpu_baseline_millicores": 250},
+			{"is_burstable": True, "cpu_baseline_millicores": 1001},
+			{"is_burstable": True, "cpu_baseline_millicores": -1},
+		):
+			with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+				VirtualMachineCreateRequest.from_value({**base, **invalid})
+
 	def test_request_parses_a_firewall(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
 			{
