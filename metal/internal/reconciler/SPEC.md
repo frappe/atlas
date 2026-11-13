@@ -18,6 +18,7 @@ This package schedules convergence work. It owns no VM, image, snapshot, or traf
 | `ImageReconciler` | Caches images, prunes unused images, kernels, and staged snapshots. |
 | `MigrationReconciler` | Advances each active destination migration. |
 | `GuestChecker` | Pings running guests every minute, so a silent guest counts as unavailable. |
+| `CPUThrottleChecker` | Runs `vm.CPUThrottler` every 30 seconds, so a burstable VM stays near its CPU baseline. |
 | `passScheduler` | Runs a pass at startup, on an interval, and on request. |
 
 ## Pass model

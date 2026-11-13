@@ -14,7 +14,15 @@ Atlas sends complete desired compute, disk, network, metadata, and SSH key value
 
 CPU uses `cpu_millicores`: **1000 equals one core**. The range is `100` through `32000`, avoiding impractical quotas and respecting Firecracker's 32-vCPU maximum.
 
-A VM can be burstable. `is_burstable` marks it, and `cpu_baseline_millicores` sets its CPU baseline, from `0` to `cpu_millicores`. Both are off and `0` by default. A baseline needs `is_burstable`. You set both when you create the VM. Atlas and Metal store them, but Metal does not apply them to the CPU limit yet.
+### Burstable CPU
+
+A burstable VM can use all of its `cpu_millicores` for a short time, but its average must stay at or below its CPU baseline. `is_burstable` marks the VM. `cpu_baseline_millicores` sets the baseline, from `0` to `cpu_millicores`. Both are off and `0` by default. A baseline needs `is_burstable`. You set both when you create the VM.
+
+A baseline of `0` means 20 percent of `cpu_millicores`. For example, a burstable VM with 2000 millicores and no baseline may average 400 millicores.
+
+Every 30 seconds, metald measures the average CPU use of each running burstable VM over the last hour. It counts only the time that the VM was up. When the average is above the baseline, metald limits the VM to the baseline. When the average drops below 90 percent of the baseline, metald gives the VM its full `cpu_millicores` again. The gap stops a VM that is held at its baseline from switching on every check.
+
+metald logs each change with `burstable VM CPU throttle changed`. The limit is a systemd CPU quota on the VM unit, so a throttled guest runs slower but does not stop. A restart of the VM or of metald does not clear a throttle, because metald applies the limit again on the next check from the stored samples.
 
 ## Read current VM state
 
