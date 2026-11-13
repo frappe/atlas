@@ -115,6 +115,8 @@ class VirtualMachineShape:
 	memory_mib: int
 	disk_mib: int
 	sleep_after_idle_seconds: int
+	is_burstable: bool = False
+	cpu_baseline_millicores: int = 0
 
 	def has_same_resources(self, other: VirtualMachineShape) -> bool:
 		"""Report whether CPU, memory, and disk size match."""
@@ -129,8 +131,19 @@ class VirtualMachineShape:
 		"""Return the complete Metal compute object."""
 		return {
 			"cpu_millicores": self.cpu_millicores,
+			"is_burstable": self.is_burstable,
+			"cpu_baseline_millicores": self.cpu_baseline_millicores,
 			"memory_mib": self.memory_mib,
 			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+		}
+
+	@property
+	def live_values(self) -> dict[str, int]:
+		"""Return the compute values that change on a running VM."""
+		return {
+			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+			"is_burstable": self.is_burstable,
+			"cpu_baseline_millicores": self.cpu_baseline_millicores,
 		}
 
 	@property
@@ -144,8 +157,13 @@ class VirtualMachineShape:
 
 	@property
 	def resize(self) -> dict[str, int]:
-		"""Return the complete Metal in-place resize object."""
-		return {**self.compute, "disk_mib": self.disk_mib}
+		"""Return the complete Metal in-place resize object. Metal keeps the burstable values."""
+		return {
+			"cpu_millicores": self.cpu_millicores,
+			"memory_mib": self.memory_mib,
+			"disk_mib": self.disk_mib,
+			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+		}
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +285,8 @@ class VirtualMachineCreateRequest:
 	memory_mib: int
 	disk_mib: int
 	tenant_id: int
+	is_burstable: bool = False
+	cpu_baseline_millicores: int = 0
 	is_privileged: bool = False
 	is_termination_protected: bool = False
 	hostname: str = ""
@@ -303,6 +323,12 @@ class VirtualMachineCreateRequest:
 			raise ValueError(f"CPU millicores must be at least {MINIMUM_CPU_MILLICORES}.")
 		if cpu_millicores > MAXIMUM_CPU_MILLICORES:
 			raise ValueError(f"CPU millicores must not exceed {MAXIMUM_CPU_MILLICORES}.")
+		is_burstable = strict_bool(payload.get("is_burstable"), "is_burstable")
+		cpu_baseline_millicores = cls.non_negative_integer(payload, "cpu_baseline_millicores")
+		if cpu_baseline_millicores and not is_burstable:
+			raise ValueError("A CPU baseline needs a burstable virtual machine.")
+		if cpu_baseline_millicores > cpu_millicores:
+			raise ValueError("The CPU baseline must not exceed CPU millicores.")
 		memory_mib = cls.positive_integer(payload, "memory_mib", "Memory")
 		disk_mib = cls.positive_integer(payload, "disk_mib", "Disk")
 		tenant_id = payload.get("tenant_id")
@@ -327,6 +353,8 @@ class VirtualMachineCreateRequest:
 			memory_mib=memory_mib,
 			disk_mib=disk_mib,
 			tenant_id=tenant_id,
+			is_burstable=is_burstable,
+			cpu_baseline_millicores=cpu_baseline_millicores,
 			is_privileged=strict_bool(payload.get("is_privileged"), "is_privileged"),
 			is_termination_protected=strict_bool(
 				payload.get("is_termination_protected"), "is_termination_protected"

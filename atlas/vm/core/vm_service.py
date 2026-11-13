@@ -145,6 +145,8 @@ class VirtualMachineService:
 				"virtual_machine_image": image.name,
 				"architecture": image.architecture,
 				"cpu_millicores": request.cpu_millicores,
+				"is_burstable": request.is_burstable,
+				"cpu_baseline_millicores": request.cpu_baseline_millicores,
 				"memory_mib": request.memory_mib,
 				"disk_mib": request.disk_mib,
 				"tenant_id": request.tenant_id,
@@ -171,6 +173,8 @@ class VirtualMachineService:
 		return {
 			"compute": {
 				"cpu_millicores": request.cpu_millicores,
+				"is_burstable": request.is_burstable,
+				"cpu_baseline_millicores": request.cpu_baseline_millicores,
 				"memory_mib": request.memory_mib,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 			},
@@ -310,6 +314,14 @@ class VirtualMachineService:
 		"""Request one restart in Metal."""
 		self.perform_metal_operation(
 			lambda metal_client: metal_client.request_virtual_machine_restart(
+				cast(str, self.virtual_machine.name)
+			)
+		)
+
+	def reset_cpu_throttle(self) -> None:
+		"""Reset the CPU throttle of a burstable VM in Metal."""
+		self.perform_metal_operation(
+			lambda metal_client: metal_client.reset_virtual_machine_cpu_throttle(
 				cast(str, self.virtual_machine.name)
 			)
 		)

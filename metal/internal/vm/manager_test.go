@@ -16,25 +16,26 @@ import (
 )
 
 type fakeRuntime struct {
-	inRescueMode   bool
-	state          State
-	hasSavedState  bool
-	starts         int
-	stops          int
-	saves          int
-	restores       int
-	restoresPaused int
-	deletes        int
-	pauses         int
-	resumes        int
-	removes        int
-	coldStarts     int
-	metadata       int
-	diskRefresh    int
-	diskLimitMiBps int
-	inspectError   error
-	onInspect      func()
-	restoreError   error
+	inRescueMode       bool
+	state              State
+	hasSavedState      bool
+	starts             int
+	stops              int
+	saves              int
+	restores           int
+	restoresPaused     int
+	deletes            int
+	pauses             int
+	resumes            int
+	removes            int
+	coldStarts         int
+	metadata           int
+	diskRefresh        int
+	diskLimitMiBps     int
+	cpuLimitMillicores int
+	inspectError       error
+	onInspect          func()
+	restoreError       error
 	// restoreFailureState is the state a failed saved-state restore leaves behind.
 	restoreFailureState State
 	saveError           error
@@ -195,6 +196,11 @@ func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachin
 	runtime.diskRefresh++
 	runtime.diskLimitMiBps = machine.Specification.Disk.ThroughputMiBps
 	return runtime.diskError
+}
+
+func (runtime *fakeRuntime) RefreshCPU(_ context.Context, machine RuntimeMachine) error {
+	runtime.cpuLimitMillicores = machine.Specification.CPUMillicores
+	return nil
 }
 
 func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHSession, error) {
@@ -517,6 +523,31 @@ func TestSetComputeRequestsRunningState(t *testing.T) {
 	}
 	if record.State != StateRunning || record.Generation != 3 {
 		t.Fatalf("desired record = %+v", record)
+	}
+}
+
+func TestSetComputeChangesBurstableCPUOnARunningVirtualMachine(t *testing.T) {
+	ctx := context.Background()
+	manager, _, _, _ := newTestManager(t)
+	runningVirtualMachine(t, manager, testSpecification())
+	before, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	burstable := Compute{CPUMillicores: 2000, IsBurstable: true, CPUBaselineMillicores: 500, MemoryMiB: 2048}
+	if err := manager.SetCompute(ctx, "machine-1", burstable); err != nil {
+		t.Fatal(err)
+	}
+	after, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Specification.IsBurstable || after.Specification.CPUBaselineMillicores != 500 {
+		t.Fatalf("specification = %+v", after.Specification)
+	}
+	if after.SpecificationGeneration != before.SpecificationGeneration {
+		t.Fatalf("specification generation = %d, want %d", after.SpecificationGeneration, before.SpecificationGeneration)
 	}
 }
 

@@ -39,6 +39,8 @@ type DesiredRecord struct {
 	SpecificationGeneration uint64        `json:"specification_generation,omitempty"`
 	State                   State         `json:"state"`
 	Specification           Specification `json:"specification"`
+	// CPUThrottleResetAt is the time from which the CPU throttle counts the VM's CPU use.
+	CPUThrottleResetAt time.Time `json:"cpu_throttle_reset_at,omitzero"`
 }
 
 // ObservedRecord stores reconciliation progress and observed state.

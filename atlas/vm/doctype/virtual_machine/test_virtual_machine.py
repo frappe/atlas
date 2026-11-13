@@ -122,6 +122,30 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.firewall, FirewallConfiguration())
 		self.assertEqual((request.deep_sleep_after_idle_seconds, request.coma_after_idle_seconds), (0, 0))
 
+	def test_request_parses_burstable_cpu(self) -> None:
+		base = {
+			"virtual_machine_image": "Ubuntu 24.04",
+			"cpu_millicores": 1000,
+			"memory_mib": 1024,
+			"disk_mib": 8192,
+			"tenant_id": 7,
+		}
+		request = VirtualMachineCreateRequest.from_value(base)
+		self.assertEqual((request.is_burstable, request.cpu_baseline_millicores), (False, 0))
+
+		request = VirtualMachineCreateRequest.from_value(
+			{**base, "is_burstable": 1, "cpu_baseline_millicores": 250}
+		)
+		self.assertEqual((request.is_burstable, request.cpu_baseline_millicores), (True, 250))
+
+		for invalid in (
+			{"cpu_baseline_millicores": 250},
+			{"is_burstable": True, "cpu_baseline_millicores": 1001},
+			{"is_burstable": True, "cpu_baseline_millicores": -1},
+		):
+			with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+				VirtualMachineCreateRequest.from_value({**base, **invalid})
+
 	def test_request_parses_a_firewall(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
 			{
@@ -411,6 +435,22 @@ class TestVirtualMachineDocument(UnitTestCase):
 		self.assertEqual(virtual_machine.current_state, "unknown")
 		self.assertIsNone(virtual_machine.desired_state)
 
+	def test_cpu_throttle_reset_needs_a_burstable_virtual_machine(self) -> None:
+		virtual_machine = frappe.new_doc("Virtual Machine")
+		virtual_machine.name = "vm-0000042"
+
+		with (
+			patch.object(VirtualMachineService, "reset_cpu_throttle") as reset,
+			self.assertRaisesRegex(AtlasUserError, "not burstable"),
+		):
+			virtual_machine.reset_cpu_throttle()
+		reset.assert_not_called()
+
+		virtual_machine.is_burstable = 1
+		with patch.object(VirtualMachineService, "reset_cpu_throttle") as reset:
+			virtual_machine.reset_cpu_throttle()
+		reset.assert_called_once_with()
+
 	def test_guest_ssh_goes_through_the_current_host_namespace(self) -> None:
 		"""A migrated VM has a new host, so Atlas reads it for each connection."""
 		virtual_machine = frappe.new_doc("Virtual Machine")
@@ -479,7 +519,14 @@ class TestVirtualMachineService(UnitTestCase):
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
 		self.assertEqual(
-			set(metal_request["compute"]), {"cpu_millicores", "memory_mib", "sleep_after_idle_seconds"}
+			set(metal_request["compute"]),
+			{
+				"cpu_millicores",
+				"is_burstable",
+				"cpu_baseline_millicores",
+				"memory_mib",
+				"sleep_after_idle_seconds",
+			},
 		)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
@@ -523,6 +570,8 @@ class TestVirtualMachineService(UnitTestCase):
 			metal_request["compute"],
 			{
 				"cpu_millicores": 2000,
+				"is_burstable": False,
+				"cpu_baseline_millicores": 0,
 				"memory_mib": 2048,
 				"sleep_after_idle_seconds": 0,
 			},

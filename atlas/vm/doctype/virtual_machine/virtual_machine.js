@@ -73,6 +73,13 @@ frappe.ui.form.on("Virtual Machine", {
 				true,
 				ACTIONS,
 			],
+			[
+				__("Reset CPU Throttle"),
+				"reset_cpu_throttle",
+				Boolean(frm.doc.is_burstable),
+				ACTIONS,
+				__("Resetting CPU throttle..."),
+			],
 			ACTIONS_DIVIDER,
 			[__("Edit SSH Keys"), () => showEditSSHKeysDialog(frm), true, ACTIONS],
 			[__("Edit Metadata"), () => showEditMetadataDialog(frm), true, ACTIONS],
@@ -523,6 +530,20 @@ function showResizeDialog(frm) {
 				show_description_on_click: 1,
 			},
 			{
+				fieldname: "is_burstable",
+				fieldtype: "Check",
+				label: __("Is Burstable"),
+				default: frm.doc.is_burstable,
+			},
+			{
+				fieldname: "cpu_baseline_millicores",
+				fieldtype: "Int",
+				label: __("CPU Baseline (millicores)"),
+				depends_on: "eval: doc.is_burstable",
+				default: frm.doc.cpu_baseline_millicores,
+				description: __("0 means 20 percent of the CPU."),
+			},
+			{
 				fieldname: "memory_mib",
 				fieldtype: "Int",
 				label: __("Memory (MiB)"),
@@ -538,8 +559,12 @@ function showResizeDialog(frm) {
 				description: __("The disk can only grow."),
 			},
 		],
-		(values) =>
-			frm
+		(values) => {
+			// A baseline needs a burstable VM, so the hidden field must not keep its value.
+			if (!values.is_burstable) {
+				values.cpu_baseline_millicores = 0;
+			}
+			return frm
 				.call({
 					method: "resize",
 					doc: frm.doc,
@@ -555,7 +580,8 @@ function showResizeDialog(frm) {
 						});
 					}
 					frm.reload_doc();
-				}),
+				});
+		},
 		__("Resize VM"),
 		__("Resize")
 	);

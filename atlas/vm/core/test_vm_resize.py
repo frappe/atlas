@@ -17,7 +17,13 @@ def build_information(state: str = "stopped") -> SimpleNamespace:
 	"""Return one Metal record with a 2 CPU, 2 GiB, 20 GiB shape."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
-			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
+			compute=SimpleNamespace(
+				cpu_millicores=2000,
+				memory_mib=2048,
+				sleep_after_idle_seconds=0,
+				is_burstable=True,
+				cpu_baseline_millicores=500,
+			),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),
 		observed=SimpleNamespace(state=state),
@@ -32,6 +38,8 @@ class TestVirtualMachineResize(UnitTestCase):
 			architecture="amd64",
 			tenant_id=7,
 			cpu_millicores=2000,
+			is_burstable=1,
+			cpu_baseline_millicores=500,
 			memory_mib=2048,
 			disk_mib=20480,
 			sleep_after_idle_seconds=0,
@@ -68,9 +76,18 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
+			"VM-00001",
+			{
+				"cpu_millicores": 2000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 1800,
+			},
 		)
-		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
+		self.virtual_machine.db_set.assert_called_once_with(
+			{"sleep_after_idle_seconds": 1800, "is_burstable": True, "cpu_baseline_millicores": 500}
+		)
 		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 		self.find_server.assert_not_called()
 
@@ -88,6 +105,8 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 4096,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 0,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
 			}
 		)
 
@@ -104,6 +123,8 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 2048,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 600,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
 			}
 		)
 
@@ -147,7 +168,7 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.create_migration.assert_called_once_with(
 			self.virtual_machine,
 			destination_metal_server="metal-2",
-			resize=VirtualMachineShape(2000, 8192, 20480, 0),
+			resize=VirtualMachineShape(2000, 8192, 20480, 0, True, 500),
 		)
 		self.metal_client.set_virtual_machine_compute.assert_not_called()
 
@@ -157,7 +178,14 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.apply({"memory_mib": 8192, "sleep_after_idle_seconds": 600})
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 600}
+			"VM-00001",
+			{
+				"cpu_millicores": 2000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 500,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 600,
+			},
 		)
 		self.create_migration.assert_called_once()
 
@@ -178,9 +206,66 @@ class TestVirtualMachineResize(UnitTestCase):
 
 		self.create_migration.assert_not_called()
 
+	def test_a_burstable_change_stays_in_place_on_a_running_virtual_machine(self) -> None:
+		self.assertIsNone(self.apply({"cpu_baseline_millicores": 800}, state="running"))
+
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001",
+			{
+				"cpu_millicores": 2000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 800,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 0,
+			},
+		)
+		self.virtual_machine.db_set.assert_called_once_with(
+			{"sleep_after_idle_seconds": 0, "is_burstable": True, "cpu_baseline_millicores": 800}
+		)
+		self.find_server.assert_not_called()
+
+	def test_an_in_place_resize_sets_the_burstable_values_after_the_shape(self) -> None:
+		self.assertIsNone(self.apply({"cpu_millicores": 4000, "cpu_baseline_millicores": 3000}))
+
+		self.metal_client.resize_virtual_machine.assert_called_once()
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001",
+			{
+				"cpu_millicores": 4000,
+				"is_burstable": True,
+				"cpu_baseline_millicores": 3000,
+				"memory_mib": 2048,
+				"sleep_after_idle_seconds": 0,
+			},
+		)
+
+	def test_a_baseline_needs_a_burstable_virtual_machine(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "needs a burstable"):
+			self.apply({"is_burstable": 0})
+
+		self.apply({"is_burstable": 0, "cpu_baseline_millicores": 0}, state="running")
+		self.assertEqual(
+			(self.virtual_machine.is_burstable, self.virtual_machine.cpu_baseline_millicores), (False, 0)
+		)
+
+	def test_a_move_cannot_raise_the_baseline_above_the_current_cpu(self) -> None:
+		self.find_server.return_value = "metal-2"
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Resize the CPU first"):
+			self.apply({"cpu_millicores": 4000, "cpu_baseline_millicores": 3000})
+
+		self.metal_client.set_virtual_machine_compute.assert_not_called()
+		self.create_migration.assert_not_called()
+
 	def test_a_smaller_disk_is_rejected(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "only increase"):
 			self.apply({"disk_mib": 10240})
+
+		self.find_server.assert_not_called()
+
+	def test_cpu_below_the_baseline_is_rejected(self) -> None:
+		with self.assertRaisesRegex(frappe.ValidationError, "CPU baseline"):
+			self.apply({"cpu_millicores": 400})
 
 		self.find_server.assert_not_called()
 

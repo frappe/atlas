@@ -112,3 +112,12 @@ func TestHostReachedDestinationsListIPv6Routes(t *testing.T) {
 		t.Fatalf("a VM without routes reached %v", got)
 	}
 }
+
+func TestCPUBaselineDefaultsToTwentyPercent(t *testing.T) {
+	if baseline := (Specification{CPUMillicores: 2000}).CPUBaseline(); baseline != 400 {
+		t.Fatalf("default baseline = %d, want 400", baseline)
+	}
+	if baseline := (Specification{CPUMillicores: 2000, CPUBaselineMillicores: 250}).CPUBaseline(); baseline != 250 {
+		t.Fatalf("set baseline = %d, want 250", baseline)
+	}
+}

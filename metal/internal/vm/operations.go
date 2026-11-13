@@ -92,8 +92,11 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 
 		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
 			record.Specification.MemoryMiB != compute.MemoryMiB
-		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
-		if !shapeChanged && !timeoutChanged && record.State == StateRunning {
+		// The idle timeout and the burstable values apply to a running VM.
+		liveChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds ||
+			record.Specification.IsBurstable != compute.IsBurstable ||
+			record.Specification.CPUBaselineMillicores != compute.CPUBaselineMillicores
+		if !shapeChanged && !liveChanged && record.State == StateRunning {
 			return false, nil
 		}
 
@@ -112,6 +115,20 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 		}
 
 		record.Specification.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+		record.Specification.IsBurstable = compute.IsBurstable
+		record.Specification.CPUBaselineMillicores = compute.CPUBaselineMillicores
+		return true, nil
+	})
+}
+
+// ResetCPUThrottle makes the CPU throttle count a burstable VM's CPU use only
+// from now, so a throttled VM gets its full CPU on the next throttle pass.
+func (manager *Manager) ResetCPUThrottle(ctx context.Context, identifier string) error {
+	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if record.State == StateDestroyed || !record.Specification.IsBurstable {
+			return false, ErrConflict
+		}
+		record.CPUThrottleResetAt = time.Now().UTC()
 		return true, nil
 	})
 }

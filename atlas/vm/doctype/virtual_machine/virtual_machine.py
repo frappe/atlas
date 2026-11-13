@@ -53,10 +53,12 @@ class VirtualMachine(Document):
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
 		coma_after_idle_seconds: DF.Int
+		cpu_baseline_millicores: DF.Int
 		cpu_millicores: DF.Int
 		deep_sleep_after_idle_seconds: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
+		is_burstable: DF.Check
 		is_draft: DF.Check
 		is_network_gateway: DF.Check
 		is_privileged: DF.Check
@@ -602,8 +604,10 @@ class VirtualMachine(Document):
 		sleep_after_idle_seconds: int | None = None,
 		deep_sleep_after_idle_seconds: int | None = None,
 		coma_after_idle_seconds: int | None = None,
+		is_burstable: int | None = None,
+		cpu_baseline_millicores: int | None = None,
 	) -> str | None:
-		"""Change resources or sleep delays. Return the migration name when the VM must move."""
+		"""Change resources, sleep delays, or burstable CPU. Return the migration name when the VM must move."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
@@ -620,6 +624,8 @@ class VirtualMachine(Document):
 			"sleep_after_idle_seconds": sleep_after_idle_seconds,
 			"deep_sleep_after_idle_seconds": deep_sleep_after_idle_seconds,
 			"coma_after_idle_seconds": coma_after_idle_seconds,
+			"is_burstable": is_burstable,
+			"cpu_baseline_millicores": cpu_baseline_millicores,
 		}
 		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
@@ -656,6 +662,15 @@ class VirtualMachine(Document):
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		VirtualMachineService(self).request_restart()
+
+	@frappe.whitelist(methods=["POST"])
+	def reset_cpu_throttle(self) -> None:
+		"""Count this burstable VM's CPU use only from now, so a CPU throttle ends."""
+		frappe.only_for("System Manager")
+		if not self.is_burstable:
+			frappe.throw(_("Virtual Machine {0} is not burstable.").format(self.name), exc=AtlasUserError)
+		self.ensure_not_migrating()
+		VirtualMachineService(self).reset_cpu_throttle()
 
 	@frappe.whitelist(methods=["POST"])
 	def enable_rescue_mode(self) -> None:

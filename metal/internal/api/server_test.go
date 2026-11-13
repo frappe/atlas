@@ -216,6 +216,13 @@ func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, str
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) ResetCPUThrottle(_ context.Context, id string) error {
+	if _, found := manager.virtualMachines[id]; !found {
+		return vm.ErrNotFound
+	}
+	return nil
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {
@@ -745,6 +752,27 @@ func TestResizeStoresTheCompleteShape(t *testing.T) {
 	}
 	if response.Desired.Compute.CPUMillicores != 1000 || response.Desired.Compute.MemoryMiB != 512 || response.Desired.Disk.SizeMiB != 1024 || response.Desired.Compute.SleepAfterIdleSeconds != 1800 {
 		t.Fatalf("resized shape = %+v", response.Desired)
+	}
+}
+
+func TestComputeRequestValidatesTheCPUBaseline(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		request computeRequest
+		isValid bool
+	}{
+		{"not burstable", computeRequest{CPUMillicores: 1000, MemoryMiB: 512}, true},
+		{"burstable", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: 250, MemoryMiB: 512}, true},
+		{"baseline equals the CPU", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: 1000, MemoryMiB: 512}, true},
+		{"baseline without burstable", computeRequest{CPUMillicores: 1000, CPUBaselineMillicores: 250, MemoryMiB: 512}, false},
+		{"baseline above the CPU", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: 1001, MemoryMiB: 512}, false},
+		{"negative baseline", computeRequest{CPUMillicores: 1000, IsBurstable: true, CPUBaselineMillicores: -1, MemoryMiB: 512}, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.request.validate(); (err == nil) != testCase.isValid {
+				t.Fatalf("validate() = %v, want valid %v", err, testCase.isValid)
+			}
+		})
 	}
 }
 

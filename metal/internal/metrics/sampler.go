@@ -21,6 +21,7 @@ type VirtualMachineSource interface {
 // Sampler owns the periodic collection worker; Store owns persisted history.
 type Sampler struct {
 	store           *Store
+	window          *CPUWindow
 	virtualMachines VirtualMachineSource
 	logger          *slog.Logger
 	previousDisk    map[string]diskSnapshot
@@ -32,9 +33,9 @@ type diskSnapshot struct {
 	time     time.Time
 }
 
-// NewSampler collects VM metrics from one host.
-func NewSampler(store *Store, virtualMachines VirtualMachineSource, logger *slog.Logger) *Sampler {
-	return &Sampler{store: store, virtualMachines: virtualMachines, logger: logger, previousDisk: make(map[string]diskSnapshot)}
+// NewSampler collects VM metrics from one host into store and window.
+func NewSampler(store *Store, window *CPUWindow, virtualMachines VirtualMachineSource, logger *slog.Logger) *Sampler {
+	return &Sampler{store: store, window: window, virtualMachines: virtualMachines, logger: logger, previousDisk: make(map[string]diskSnapshot)}
 }
 
 // Run samples VMs every ten seconds and prunes old samples hourly.
@@ -46,6 +47,7 @@ func (sampler *Sampler) Run(ctx context.Context) {
 	if err := sampler.store.Prune(ctx, time.Now()); err != nil {
 		sampler.logger.Error("prune VM metrics", "error", err)
 	}
+	sampler.LoadWindow(ctx)
 	sampler.Collect(ctx)
 	for {
 		select {
@@ -57,6 +59,28 @@ func (sampler *Sampler) Run(ctx context.Context) {
 			if err := sampler.store.Prune(ctx, time.Now()); err != nil {
 				sampler.logger.Error("prune VM metrics", "error", err)
 			}
+		}
+	}
+}
+
+// LoadWindow fills the CPU window from stored samples, so a metald restart
+// keeps the recent CPU history.
+func (sampler *Sampler) LoadWindow(ctx context.Context) {
+	virtualMachineIDs, err := sampler.virtualMachines.ListIDs(ctx)
+	if err != nil {
+		sampler.logger.Warn("list VMs for the CPU window", "error", err)
+		return
+	}
+
+	end := time.Now().UTC()
+	for _, identifier := range virtualMachineIDs {
+		records, err := sampler.store.History(ctx, identifier, end.Add(-sampler.window.Length()), end)
+		if err != nil {
+			sampler.logger.Warn("load the CPU window", "virtual_machine_id", identifier, "error", err)
+			continue
+		}
+		for _, record := range records {
+			sampler.window.Add(identifier, record)
 		}
 	}
 }
@@ -84,8 +108,10 @@ func (sampler *Sampler) Collect(ctx context.Context) {
 					sampler.previousDiskMu.Lock()
 					usage = sampler.withDiskRates(identifier, timestamp, usage)
 					sampler.previousDiskMu.Unlock()
-					err = sampler.store.Append(identifier, Record{Timestamp: timestamp, Metrics: usage})
+					record := Record{Timestamp: timestamp, Metrics: usage}
+					err = sampler.store.Append(identifier, record)
 					if err == nil {
+						sampler.window.Add(identifier, record)
 						sampler.previousDiskMu.Lock()
 						if usage.Up {
 							sampler.previousDisk[identifier] = diskSnapshot{counters: usage.Counters, time: timestamp}
@@ -114,6 +140,7 @@ func (sampler *Sampler) Collect(ctx context.Context) {
 	for _, identifier := range virtualMachineIDs {
 		active[identifier] = true
 	}
+	sampler.window.Retain(active)
 	sampler.previousDiskMu.Lock()
 	for identifier := range sampler.previousDisk {
 		if !active[identifier] {

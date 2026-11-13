@@ -32,6 +32,8 @@ RESIZE_FIELDS = (
 	"sleep_after_idle_seconds",
 	"deep_sleep_after_idle_seconds",
 	"coma_after_idle_seconds",
+	"is_burstable",
+	"cpu_baseline_millicores",
 )
 
 
@@ -67,7 +69,7 @@ class VirtualMachineResize:
 		if target_shape.has_same_resources(current_shape):
 			self._sync_shape(current_shape)
 			if target_shape != current_shape:
-				self._set_idle_shutdown(current_shape, target_shape.sleep_after_idle_seconds)
+				self._set_live_values(current_shape, target_shape)
 			return None
 		if information.observed.state != "stopped":
 			frappe.throw(_("Stop the Virtual Machine before you resize it."), exc=AtlasUserError)
@@ -81,15 +83,25 @@ class VirtualMachineResize:
 		if destination == self.virtual_machine.server:
 			try:
 				self._resize_in_place(target_shape)
+				# Metal keeps the burstable values in a resize, so they change after it.
+				if target_shape.live_values != current_shape.live_values:
+					self._set_live_values(target_shape, target_shape)
 				return None
 			except MetalClientError as error:
 				# The capacity sample was older than the host state.
 				if not error.is_insufficient_capacity:
 					self.service.raise_metal_error(error)
 
-		# The idle delay needs no capacity, so it changes on the source and the move keeps it.
-		if target_shape.sleep_after_idle_seconds != current_shape.sleep_after_idle_seconds:
-			self._set_idle_shutdown(current_shape, target_shape.sleep_after_idle_seconds)
+		# The live values need no capacity, so they change on the source and the move keeps them.
+		if target_shape.live_values != current_shape.live_values:
+			if target_shape.cpu_baseline_millicores > current_shape.cpu_millicores:
+				frappe.throw(
+					_("Resize the CPU first, then set a CPU baseline above {0} millicores.").format(
+						current_shape.cpu_millicores
+					),
+					exc=AtlasUserError,
+				)
+			self._set_live_values(current_shape, target_shape)
 		return MigrationService.create(
 			self.virtual_machine,
 			destination_metal_server=destination if destination != self.virtual_machine.server else None,
@@ -128,6 +140,11 @@ class VirtualMachineResize:
 		if any(not isinstance(value, int) or isinstance(value, bool) for value in resize_values.values()):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
 
+		if resize_values.get("is_burstable", 0) not in (0, 1):
+			frappe.throw(_("Is Burstable must be 0 or 1."), exc=AtlasUserError)
+		if resize_values.get("cpu_baseline_millicores", 0) < 0:
+			frappe.throw(_("The CPU baseline must not be negative."), exc=AtlasUserError)
+
 		cpu_millicores = resize_values.get("cpu_millicores")
 		if cpu_millicores is not None and not (
 			MINIMUM_CPU_MILLICORES <= cpu_millicores <= MAXIMUM_CPU_MILLICORES
@@ -154,6 +171,8 @@ class VirtualMachineResize:
 			compute.memory_mib,
 			information.desired.disk.size_mib,
 			compute.sleep_after_idle_seconds,
+			compute.is_burstable,
+			compute.cpu_baseline_millicores,
 		)
 
 	@staticmethod
@@ -166,9 +185,15 @@ class VirtualMachineResize:
 			resize_values.get("memory_mib", current_shape.memory_mib),
 			resize_values.get("disk_mib", current_shape.disk_mib),
 			resize_values.get("sleep_after_idle_seconds", current_shape.sleep_after_idle_seconds),
+			bool(resize_values.get("is_burstable", current_shape.is_burstable)),
+			resize_values.get("cpu_baseline_millicores", current_shape.cpu_baseline_millicores),
 		)
 		if target_shape.disk_mib < current_shape.disk_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
+		if target_shape.cpu_baseline_millicores and not target_shape.is_burstable:
+			frappe.throw(_("A CPU baseline needs a burstable virtual machine."), exc=AtlasUserError)
+		if target_shape.cpu_millicores < target_shape.cpu_baseline_millicores:
+			frappe.throw(_("CPU cannot be less than the CPU baseline."), exc=AtlasUserError)
 		return target_shape
 
 	def _get_requirements(self, target: VirtualMachineShape) -> PlacementRequirements:
@@ -184,10 +209,10 @@ class VirtualMachineResize:
 			virtual_machine=self.virtual_machine.name,
 		)
 
-	def _set_idle_shutdown(self, current: VirtualMachineShape, sleep_after_idle_seconds: int) -> None:
-		"""Change only the idle shutdown delay on the current host."""
-		self.service.set_compute({**current.compute, "sleep_after_idle_seconds": sleep_after_idle_seconds})
-		self.virtual_machine.db_set("sleep_after_idle_seconds", sleep_after_idle_seconds)
+	def _set_live_values(self, current: VirtualMachineShape, target: VirtualMachineShape) -> None:
+		"""Change the idle shutdown delay and the burstable CPU values on the current host."""
+		self.service.set_compute({**current.compute, **target.live_values})
+		self.virtual_machine.db_set(target.live_values)
 
 	def _sync_shape(self, shape: VirtualMachineShape) -> None:
 		"""Store Metal values when a previous request response was lost."""
@@ -195,7 +220,7 @@ class VirtualMachineResize:
 			"cpu_millicores": shape.cpu_millicores,
 			"memory_mib": shape.memory_mib,
 			"disk_mib": shape.disk_mib,
-			"sleep_after_idle_seconds": shape.sleep_after_idle_seconds,
+			**shape.live_values,
 		}
 		if any(getattr(self.virtual_machine, field) != value for field, value in values.items()):
 			self.virtual_machine.db_set(values)
