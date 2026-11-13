@@ -79,6 +79,8 @@ func (throttler *CPUThrottler) throttle(ctx context.Context, identifier string) 
 	usagePercent, hasUsage := throttler.window.Usage(identifier, time.Now().Add(-throttler.window.Length())).Percent(specification.CPUMillicores)
 	switch {
 	case !hasUsage:
+		// A VM that just booted or was reset has no samples to hold it back.
+		isThrottled = false
 	case usagePercent > baselinePercent:
 		isThrottled = true
 	case usagePercent < baselinePercent*cpuReleasePercent/100:
