@@ -80,3 +80,34 @@ func TestDiskRatesStartAndResetAtZero(t *testing.T) {
 		t.Fatalf("reset disk rates = %+v", got.DiskUsage)
 	}
 }
+
+type listedSource []string
+
+func (source listedSource) ListIDs(context.Context) ([]string, error) { return source, nil }
+
+func (listedSource) Metrics(context.Context, string) (Sample, error) { return Sample{}, nil }
+
+func TestLoadWindowReadsStoredSamples(t *testing.T) {
+	directory := t.TempDir()
+	createVMDirectory(t, directory, "one")
+	store, err := NewStore(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, record := range []Record{
+		cpuRecord(now.Add(-2*time.Hour), true, 0),
+		cpuRecord(now.Add(-20*time.Minute), true, 100_000_000),
+		cpuRecord(now.Add(-10*time.Minute), true, 160_000_000),
+	} {
+		if err := store.Append("one", record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	window := NewCPUWindow(time.Hour)
+	NewSampler(store, window, listedSource{"one"}, slog.New(slog.NewTextHandler(io.Discard, nil))).LoadWindow(t.Context())
+	if usage := window.Usage("one", now); usage.CPUSeconds != 60 || usage.UpSeconds != 600 {
+		t.Fatalf("usage=%+v", usage)
+	}
+}
