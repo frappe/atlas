@@ -520,6 +520,35 @@ func TestSetComputeRequestsRunningState(t *testing.T) {
 	}
 }
 
+func TestSetComputeStoresBurstableCPUOnAStoppedVirtualMachine(t *testing.T) {
+	ctx := context.Background()
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(ctx, "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	burstable := Compute{CPUMillicores: 2000, IsBurstable: true, CPUBaselineMillicores: 500, MemoryMiB: 2048}
+	if err := manager.SetCompute(ctx, "machine-1", burstable); !errors.Is(err, ErrConflict) {
+		t.Fatalf("running VM error = %v, want ErrConflict", err)
+	}
+
+	if err := manager.SetPowerState(ctx, "machine-1", StateStopped); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(ctx, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetCompute(ctx, "machine-1", burstable); err != nil {
+		t.Fatal(err)
+	}
+	information, err := manager.Information(ctx, "machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !information.IsBurstable || information.CPUBaselineMillicores != 500 {
+		t.Fatalf("information = %+v", information)
+	}
+}
+
 func TestSetComputeRejectsAMissingVirtualMachine(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	if err := manager.SetCompute(context.Background(), "missing", Compute{CPUMillicores: 1000, MemoryMiB: 1}); !errors.Is(err, ErrNotFound) {
