@@ -47,7 +47,7 @@ Each active proxy, WireGuard gateway, and IPv6 router node runs Vector. Cargo do
 - A node gets telemetry when its provisioning completes. `renew_service_telemetry_credentials` installs it again with a new 7-day token every day at 03:30.
 - `install-vector.sh` installs Vector. Then `install-service-telemetry.sh` writes `vector.yaml` with the token over direct SSH and restarts Vector.
 - Vector sends `service_*` system metrics every 30 seconds through Prometheus remote write, and journald lines at warning or worse.
-- On a proxy node, Vector reads the JSON OpenResty access log and sends only counts and times: `service_proxy_requests_total` by status class, `service_proxy_request_seconds_total`, `service_proxy_upstream_seconds_total`, and `service_proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. OpenResty error lines at `error` or worse go to the log route.
+- On a proxy node, Vector reads the JSON OpenResty access log and sends only counts and times: `service_proxy_requests_total` by status class and origin (`proxy` when the last upstream sent no response header, so the proxy made the answer, `upstream` when the site answered, also with its own 502 or 504), `service_proxy_request_seconds_total`, `service_proxy_upstream_seconds_total`, and `service_proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. OpenResty error lines at `error` or worse go to the log route.
 
 To repair one node, run **Configure Telemetry** (`configure_telemetry`) on its form.
 

@@ -97,8 +97,18 @@ cat <<'VECTOR'
       status = to_string!(request.status)
       # A retried request lists one time for each upstream it tried. The last one answered.
       upstream = split(to_string(request.upstream_response_time) ?? "", ", ")
+      # The proxy made the answer when the last upstream sent no response header. A site can send its own 502 or 504.
+      upstream_status = to_string(get(split(to_string(request.upstream_status) ?? "", ", "), [-1]) ?? "") ?? ""
+      header_time = to_string(get(split(to_string(request.upstream_header_time) ?? "", ", "), [-1]) ?? "") ?? ""
+      origin = if exists(request.upstream_header_time) {
+        if includes(["", "-"], header_time) { "proxy" } else { "upstream" }
+      } else {
+        # A proxy image from before upstream_header_time was logged.
+        if includes(["", "-", "502", "504"], upstream_status) { "proxy" } else { "upstream" }
+      }
       . = {
         "status_class": slice!(status, 0, 1) + "xx",
+        "origin": origin,
         "request_time": to_float(request.request_time) ?? 0.0,
         "upstream_time": to_float(get(upstream, [-1]) ?? "") ?? 0.0,
       }
@@ -114,6 +124,7 @@ cat <<'VECTOR'
         name: proxy_requests_total
         tags:
           status_class: "{{ status_class }}"
+          origin: "{{ origin }}"
       - type: counter
         field: request_time
         increment_by_value: true
