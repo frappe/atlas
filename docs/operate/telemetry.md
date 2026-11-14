@@ -48,7 +48,7 @@ The Datum agent is the one Vector configuration of the telemetry contract. Datum
 The VM of each active proxy, WireGuard gateway, and IPv6 router node, and the Cargo VM, run the Datum agent, under the name of the VM. The Cargo VM sends with product `cargo` and no role file. Pilot runs the Cargo site on it and sends only its own metrics.
 
 - A node and the Cargo VM get telemetry when their provisioning completes. `renew_service_telemetry_credentials` installs it again with a new 7-day token every day at 03:30.
-- The agent sends the machine metrics of the contract each 60 seconds and the journal lines at `warning` or worse. It adds the role file of the service from `atlas/atlas/core/telemetry/agent_roles/`.
+- The agent adds the role file of the service from `atlas/atlas/core/telemetry/agent_roles/`.
 - Proxy: the agent reads the JSON nginx access log and sends only counts and times: `proxy_requests_total` by status class and origin (`proxy` when the last upstream sent no response header, so the proxy made the answer, `upstream` when the site answered, also with its own 502 or 504), `proxy_request_seconds_total`, `proxy_upstream_seconds_total`, and `proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. nginx error lines at `error` or worse go to the logs, except the upstream errors (refused, reset, timed out) that the site and proxy checks cover.
 - IPv6 router: `ipv6_router_program_attached` is 1 while the tc eBPF program is attached to `eth0`.
 - WireGuard gateway: `wireguard_peers` and `wireguard_peers_active`, the peers with a handshake in the last 3 minutes. A root timer of the gateway writes the counts, because reading WireGuard needs root.
@@ -71,11 +71,12 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
 
-metald sends CPU metrics as totals, so a host with many CPUs sends the same number of series as a small host. `system_cpu_seconds_total` has `cpu="all"`. The scheduler and softnet counters have no `cpu` label. The frequency and the thermal throttles have a `package` label. No reader needs the history of one CPU: read it on the host in `/proc/stat`, `/proc/schedstat`, `/proc/net/softnet_stat` and `/sys/devices/system/cpu/`. Of each hwmon sensor, metald sends only the input and the alarm and fault flags.
 | `atlas_*` | Atlas, as resource `atlas` | Regional inventory, the machines that must send (`atlas_machine`), capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, the free space of its own root, bench, and MariaDB file systems, and the days left on the wildcard and metald TLS certificates |
 | `system_*` | The Datum agent on service VMs and the Cargo VM | The machine metrics of the contract |
 | `proxy_*`, `ipv6_router_*`, `wireguard_*` | The Datum agent on service VMs | The role metrics above |
 | `bmc_*` | Atlas, from the host BMC | Out-of-band health, sensors, and power. See [BMC hardware](#bmc-hardware). |
+
+metald sends CPU metrics as totals, so a host with many CPUs sends the same number of series as a small host. `system_cpu_seconds_total` has `cpu="all"`. The scheduler and softnet counters have no `cpu` label. The frequency and the thermal throttles have a `package` label. No reader needs the history of one CPU: read it on the host in `/proc/stat`, `/proc/schedstat`, `/proc/net/softnet_stat` and `/sys/devices/system/cpu/`. Of each hwmon sensor, metald sends only the input and the alarm and fault flags.
 
 Kernel tables use a `field` label, for example `system_memory_info{field="MemAvailable"}`.
 
