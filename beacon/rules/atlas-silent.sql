@@ -11,4 +11,4 @@ SELECT {region:String} AS resource_id, '' AS alert_key,
        concat('no Atlas sample for ', toString(value), ' s') AS detail
 FROM datum.samples_recent
 WHERE metric = 'atlas_virtual_machine_drafts' AND ts > now() - INTERVAL 1 DAY
-HAVING value > 300
+HAVING value >= 180

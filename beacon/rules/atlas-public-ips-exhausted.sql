@@ -7,8 +7,10 @@
 -- resolve_after: 600
 -- Atlas creates allocation rows on demand, so free addresses are the capacity minus the rows in use.
 -- Both metrics come from the same Atlas collection, so the query reads the latest one.
+-- No free address pages, because new VMs cannot get one. Fewer than 5, or under 10% free, is Medium.
 SELECT 'atlas' AS resource_id, pool AS alert_key, capacity - used AS value,
-       concat(toString(value), ' of ', toString(capacity), ' IPv4 addresses free in pool ', pool) AS detail
+       concat(toString(value), ' of ', toString(capacity), ' IPv4 addresses free in pool ', pool) AS detail,
+       if(value <= 0, 'High', 'Medium') AS severity
 FROM (
     SELECT labels['pool'] AS pool,
            maxIf(value, metric = 'atlas_public_ip_capacity') AS capacity,
@@ -19,4 +21,4 @@ FROM (
                 WHERE metric = 'atlas_public_ip_capacity' AND ts > now() - INTERVAL 15 MINUTE)
     GROUP BY pool
 )
-WHERE capacity >= 16 AND value < 0.1 * capacity
+WHERE capacity > 0 AND (value < 5 OR value < 0.1 * capacity)
