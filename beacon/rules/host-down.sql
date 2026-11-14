@@ -1,6 +1,6 @@
 -- title: Host down
 -- severity: Critical
--- resource_type: Host
+-- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-down.md
 -- interval: 60
 -- pending_for: 60

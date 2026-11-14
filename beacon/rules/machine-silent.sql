@@ -1,6 +1,6 @@
 -- title: Machine silent
 -- severity: Medium
--- resource_type: Host, Server
+-- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-silent.md
 -- interval: 60
 -- pending_for: 120

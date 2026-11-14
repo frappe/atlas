@@ -1,6 +1,6 @@
 -- title: Repeated errors
 -- severity: Low
--- resource_type: Host, Server
+-- resource_type: Metal Host, Virtual Machine
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600
