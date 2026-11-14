@@ -5,7 +5,7 @@
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600
--- An uncorrected memory error pages. A failing disk and a CPU over 85 °C for 15 min are Medium. Many corrected memory errors, CPU throttling and slow ZFS I/O are Low: the part wears out.
+-- An uncorrected memory error pages. A failing disk, also a SAS disk with new defects or uncorrected errors, and a CPU over 85 °C for 15 min are Medium. Many corrected memory errors, CPU throttling and slow ZFS I/O are Low: the part wears out.
 SELECT resource_id, alert_key, max(value) AS value, any(detail) AS detail, any(severity) AS severity
 FROM (
     SELECT resource_id, 'ecc-uncorrected' AS alert_key, increase AS value,
@@ -53,5 +53,14 @@ FROM (
         GROUP BY resource_id, device
     )
     WHERE is_unhealthy
+    UNION ALL
+    -- A SAS disk is failing when its grown defects or its uncorrected read, write or verify errors grew in 1 day.
+    SELECT resource_id, concat('disk:', labels['device']), 1, concat('disk ', labels['device'], ' is failing'), 'Medium'
+    FROM datum.counter_increase(metric = 'system_smart_scsi_grown_defects', window = 86400)
+    WHERE increase > 0
+    UNION ALL
+    SELECT resource_id, concat('disk:', labels['device']), 1, concat('disk ', labels['device'], ' is failing'), 'Medium'
+    FROM datum.counter_increase(metric = 'system_smart_scsi_uncorrected_errors', window = 86400)
+    WHERE increase > 0
 )
 GROUP BY resource_id, alert_key
