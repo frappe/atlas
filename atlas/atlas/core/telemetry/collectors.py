@@ -17,6 +17,7 @@ from atlas.service.core.warpgate.sync import SYNCED_AT_CACHE_KEY
 from atlas.vm.core.vm_state import SLEEP_STATES
 
 MEBIBYTE = 1 << 20
+WARPGATE_WAITING_SINCE_CACHE_KEY = "atlas:warpgate-sync-waiting-since"
 # Probes run in parallel, so a slow node delays the minute's push by this much at most.
 READINESS_TIMEOUT_SECONDS = 3
 
@@ -304,14 +305,15 @@ class AtlasGauges:
 			)
 
 	def add_warpgate_sync(self) -> None:
-		"""Report how long ago the Warpgate sync last reached every host. A cleared cache sends nothing until
-		the next full sync, and that sync runs each minute."""
+		"""Report how long ago the Warpgate sync last reached every host. Without a full sync since the cache
+		started, the age counts from the first report without one, so a sync that never works still alerts."""
 		if not frappe.db.get_single_value("Atlas Settings", "warpgate_url"):
 			return
 
-		synced_at = frappe.cache.get_value(SYNCED_AT_CACHE_KEY)
-		if synced_at:
-			self.add("atlas_warpgate_sync_age_seconds", (self.now - get_datetime(synced_at)).total_seconds())
+		synced_at = frappe.cache.get_value(SYNCED_AT_CACHE_KEY) or frappe.cache.get_value(
+			WARPGATE_WAITING_SINCE_CACHE_KEY, generator=lambda: self.now
+		)
+		self.add("atlas_warpgate_sync_age_seconds", (self.now - get_datetime(synced_at)).total_seconds())
 
 	def latest_usages(self) -> list:
 		"""Return the newest usage sample of each host from the last hour."""
