@@ -1,6 +1,6 @@
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.telemetry.agent import ROLES
+from atlas.atlas.core.telemetry.agent import ROLES, DatumAgent
 from atlas.atlas.core.telemetry.collectors import SERVICE_DOCTYPES
 
 
@@ -13,3 +13,9 @@ class TestDatumAgentRoles(UnitTestCase):
 		"""The base configuration of the agent owns the sinks, so a role only adds metrics_* and logs_*."""
 		for role in ROLES.glob("*.yaml"):
 			self.assertNotIn("sinks:", role.read_text(), role.name)
+
+	def test_the_proxy_also_sends_the_nginx_error_log(self) -> None:
+		documents = DatumAgent.get_role_config("proxy").split("\n---\n")
+
+		self.assertEqual(len(documents), 2)
+		self.assertIn("logs_nginx", documents[1])

@@ -1,13 +1,9 @@
-# The HTTP proxy: request counts and times from the access log, and the nginx error log.
-# Access lines carry client addresses, so they stay on the node.
+# The HTTP proxy: request counts and times from the access log. Access lines carry client addresses, so they stay
+# on the node. The shared nginx role of the Datum agent sends the error log.
 sources:
   nginx_access:
     type: file
     include: [/var/log/nginx/access.log]
-    read_from: end
-  nginx_errors:
-    type: file
-    include: [/var/log/nginx/error.log]
     read_from: end
 
 transforms:
@@ -53,29 +49,3 @@ transforms:
         field: slow
         increment_by_value: true
         name: proxy_slow_requests_total
-  logs_nginx:
-    type: remap
-    inputs: [nginx_errors]
-    drop_on_abort: true
-    drop_on_error: true
-    source: |
-      levels = {"warn": "warning", "error": "error", "crit": "critical", "alert": "alert", "emerg": "emergency"}
-      message = string!(.message)
-      parsed = parse_regex!(message, r'^\S+ \S+ \[(?P<level>\w+)\]')
-      level = get(levels, [string!(parsed.level)]) ?? null
-      if level == null {
-        abort
-      }
-      stamp = .timestamp
-      if !is_timestamp(stamp) {
-        stamp = now()
-      }
-      . = {
-        "ts": format_timestamp!(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ"),
-        "product": "atlas",
-        "service": "nginx",
-        "source": "file",
-        "level": level,
-        "message": truncate(message, 8192),
-        "attributes": {},
-      }
