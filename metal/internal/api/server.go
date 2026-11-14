@@ -190,7 +190,13 @@ func (s *Server) logRequest(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 
 		method, route := c.Request().Method, c.Path()
-		s.logger.Info("API request",
+		// Atlas syncs each host every 10 seconds, and metal_api_requests_total counts each sync,
+		// so only a failed sync logs at info.
+		level := slog.LevelInfo
+		if route == "/v1/sync" && status < http.StatusBadRequest {
+			level = slog.LevelDebug
+		}
+		s.logger.Log(c.Request().Context(), level, "API request",
 			"method", method, "path", route, "status", status, "duration", duration,
 			pathIdentifier(route, c.Param("id")),
 			"request_id", requestID(c.Request().Context()),

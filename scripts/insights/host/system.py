@@ -140,18 +140,6 @@ SECTIONS = [
 				number_format={"decimals": 2},
 			),
 			Chart(
-				key="misc-interrupts",
-				title="Interrupts Detail",
-				sql=rate_sql(
-					["system_interrupts_by_source_total"],
-					"concat(d.labels['interrupt'], ' ', d.labels['devices'])",
-				),
-				measure="Interrupts/s",
-				aggregation="avg",
-				number_format=PER_SECOND,
-				split_values=15,
-			),
-			Chart(
 				key="misc-softirqs",
 				title="Soft Interrupts",
 				sql=rate_sql(["system_softirqs_total"], label("type")),
@@ -161,12 +149,11 @@ SECTIONS = [
 			),
 			Chart(
 				key="misc-timeslices",
-				title="Schedule Timeslices per CPU",
-				sql=rate_sql(["system_schedstat_timeslices_total"], "concat('cpu', d.labels['cpu'])"),
+				title="Schedule Timeslices",
+				sql=rate_sql(["system_schedstat_timeslices_total"], "'all CPUs'"),
 				measure="Timeslices/s",
 				aggregation="avg",
 				number_format=PER_SECOND,
-				split_values=16,
 			),
 			Chart(
 				key="misc-entropy",
@@ -206,11 +193,10 @@ SECTIONS = [
 			Chart(
 				key="misc-frequency",
 				title="CPU Frequency",
-				sql=gauge_sql("system_cpu_frequency_hertz", "concat('cpu', s.labels['cpu'])"),
+				sql=gauge_sql("system_cpu_frequency_hertz", "concat('package ', s.labels['package'])"),
 				measure="Hz",
 				aggregation="avg",
 				number_format={"shorten": True, "suffix": "Hz"},
-				split_values=16,
 			),
 		],
 	),
@@ -311,7 +297,7 @@ SECTIONS = [
 				title="CPU Thermal Throttling",
 				sql=rate_sql(
 					["system_cpu_core_throttles_total"],
-					"concat('cpu', d.labels['cpu'])",
+					"concat('package ', d.labels['package'])",
 					per_second=False,
 				),
 				measure="Throttles",

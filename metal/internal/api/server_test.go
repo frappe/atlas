@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +26,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
+	"github.com/labstack/echo/v5"
 )
 
 type fakeVM struct {
@@ -1311,5 +1314,28 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	}
 	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z", "max_samples=9", "max_samples=2001", "max_samples=all"} {
 		do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?"+query, "", http.StatusBadRequest)
+	}
+}
+
+func TestOnlyAFailedHostSyncLogsAtInfo(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{
+		logger:    slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		telemetry: telemetry.NewRegistry(nil),
+	}
+	router := echo.New()
+	router.Use(server.logRequest)
+	status := http.StatusOK
+	router.POST("/v1/sync", func(c *echo.Context) error { return c.NoContent(status) })
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/sync", nil))
+	if output.Len() != 0 {
+		t.Fatalf("a successful sync logged at info: %s", output.String())
+	}
+
+	status = http.StatusInternalServerError
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/sync", nil))
+	if !strings.Contains(output.String(), `"status":500`) {
+		t.Fatalf("a failed sync did not log at info: %q", output.String())
 	}
 }

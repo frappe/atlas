@@ -49,7 +49,7 @@ Known cause: the Firecracker API stops, but the process stays alive. metald then
 1. `get_reconciler_status`: a loop with `is_stale` true is stuck. Failures that grow show a loop that fails each pass.
 2. VM operations that grow each pass with no new request show a loop that never converges.
 3. `metal_vm_operations_in_progress{phase}` and `metal_vm_oldest_pending_seconds` show a stuck operation.
-4. Datum logs with `service = 'metald'`, then `read_metald_journal` for lines below warning.
+4. Datum logs with `service = 'metal'`, then `read_metald_journal` for lines below warning.
 
 ## Migration is stuck
 
@@ -66,7 +66,7 @@ Known cause: the Firecracker API stops, but the process stays alive. metald then
 
 ## Site is down or slow through the HTTP proxy
 
-1. Rate, errors, and duration: `service_proxy_requests_total{status_class}`, `service_proxy_slow_requests_total`, and `service_proxy_upstream_seconds_total`.
+1. Rate, errors, and duration: `proxy_requests_total{status_class}`, `proxy_slow_requests_total`, and `proxy_upstream_seconds_total`.
 2. Datum logs with `service = 'openresty'`. `no host in upstream` means that the proxy has no route for the site.
 3. Then check the VM behind the site.
 
@@ -78,6 +78,6 @@ Known cause: the Firecracker API stops, but the process stays alive. metald then
 
 ## An alert looks wrong
 
-1. Run the alert query with `run_saved_query`.
+1. Read the rule of the alert in `beacon/rules/` and run its query with `query_telemetry`.
 2. Get the raw samples behind the value.
-3. If the raw data does not agree with the alert, report the alert query as the cause. Name the query key and the wrong part of the query, such as a missing `GROUP BY` column.
+3. If the raw data does not agree with the alert, report the rule as the cause. Name the rule and the wrong part of the query, such as a missing `GROUP BY` column.

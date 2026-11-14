@@ -9,6 +9,7 @@ from frappe import _
 from atlas.atlas.core.artifacts import get_download_url
 from atlas.atlas.core.mesh_address import get_wireguard_ip_address
 from atlas.atlas.core.ssh import SSHRunner
+from atlas.atlas.core.telemetry.agent import DatumAgent
 from atlas.atlas.core.telemetry.datum import HOST_TOKEN_LIFETIME, get_datum_url, issue_datum_token
 from atlas.atlas.core.tls.metal import atlas_client_identity, ensure_server_certificate
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
@@ -29,6 +30,12 @@ STORAGE_INSTALL_TIMEOUT_SECONDS = 600
 FIREWALL_INSTALL_TIMEOUT_SECONDS = 120
 METALD_SETUP_TIMEOUT_SECONDS = 3_600
 TELEMETRY_INSTALL_TIMEOUT_SECONDS = 600
+# metald tunnels the Datum writes of the host over the private network. An older metald has no proxy.
+METALD_PROXY_PRELUDE = """
+if ss -Hltn 'sport = :9003' | grep -q .; then
+	export DATUM_PROXY=http://127.0.0.1:9003
+fi
+"""
 
 
 class HostInstallation:
@@ -192,25 +199,27 @@ class HostInstallation:
 			)
 
 	def install_telemetry(self) -> None:
-		"""Install Vector, then a fresh Datum token. The token goes over direct SSH, so no SSH Task stores it."""
+		"""Install the host tools, the Datum token of metald and the Datum agent. metald sends the machine
+		metrics, so the agent sends only logs. The tokens go over direct SSH, so no SSH Task stores them."""
 		datum_url = get_datum_url()
 		if not datum_url:
 			frappe.throw(_("Set datum_url in site config to send host telemetry."))
 
-		packages = SSHTask.create_for_script_file(
+		tools = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,
-			script_path="install-vector.sh",
+			script_path="install-host-monitoring.sh",
 			timeout_seconds=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
 		).result
-		if not packages or not packages.is_success:
+		if not tools or not tools.is_success:
 			throw_script_failure(
-				_("Could not install Vector on server {0}.").format(self.server.name), packages
+				_("Could not install the monitoring tools on server {0}.").format(self.server.name), tools
 			)
 
-		result = SSHRunner(self.server.ssh_host).run_script(
-			"install-telemetry.sh",
+		runner = SSHRunner(self.server.ssh_host)
+		result = runner.run_script(
+			"configure-metald-telemetry.sh",
 			data={
 				"DATUM_URL": datum_url,
 				"DATUM_TOKEN": issue_datum_token(self.server.name, HOST_TOKEN_LIFETIME),
@@ -219,7 +228,16 @@ class HostInstallation:
 		)
 		if not result.is_success:
 			throw_script_failure(
-				_("Could not install telemetry on server {0}.").format(self.server.name), result
+				_("Could not configure the telemetry of metald on server {0}.").format(self.server.name),
+				result,
+			)
+
+		result = DatumAgent(runner, self.server.name, "metal").install(
+			send_metrics=False, info_units=("metal.service",), prelude=METALD_PROXY_PRELUDE
+		)
+		if not result.is_success:
+			throw_script_failure(
+				_("Could not install the Datum agent on server {0}.").format(self.server.name), result
 			)
 
 	def upgrade_metald(self, build: Document | None = None, run_in_background: bool = False) -> SSHTask:

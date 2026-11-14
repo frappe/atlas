@@ -1,10 +1,11 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import frappe
-from frappe.tests import UnitTestCase
+from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.utils import now_datetime
 
-from atlas.atlas.core.telemetry.error_logs import to_log_line
+from atlas.atlas.core.telemetry.error_logs import CURSOR_KEY, get_new_error_logs, to_log_line
 
 TRACEBACK = (
 	'Traceback (most recent call last):\n  File "app.py", line 1\nfrappe.exceptions.PermissionError: \n'
@@ -50,3 +51,17 @@ class TestErrorLogLines(UnitTestCase):
 
 		self.assertEqual(line["attributes"]["unhandled"], "1")
 		self.assertEqual(line["attributes"]["path"], method)
+
+
+class TestNewErrorLogs(IntegrationTestCase):
+	def test_a_new_error_log_is_read_after_the_cursor(self) -> None:
+		frappe.cache.delete_value(CURSOR_KEY)
+		name = frappe.log_error("Atlas telemetry cursor test").name
+
+		self.assertIn(name, [row.name for row in get_new_error_logs()])
+
+	def test_an_old_iso_cursor_still_finds_new_error_logs(self) -> None:
+		frappe.cache.set_value(CURSOR_KEY, (now_datetime() - timedelta(minutes=1)).isoformat())
+		name = frappe.log_error("Atlas telemetry ISO cursor test").name
+
+		self.assertIn(name, [row.name for row in get_new_error_logs()])

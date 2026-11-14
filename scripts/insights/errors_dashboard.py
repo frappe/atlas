@@ -29,7 +29,7 @@ GROUP BY day, series"""
 
 API_ERROR_RATE = f"""SELECT day, 'per 1,000 API requests' AS series,
   sumIf(value, series LIKE '5%') / nullIf(sum(value), 0) * 1000 AS value
-FROM ({daily_increase_sql(["atlas_api_requests_total"], "labels['status']", "AND resource_id LIKE 'atlas-%'")})
+FROM ({daily_increase_sql(["atlas_api_requests_total"], "labels['status']", "AND resource_id = 'atlas'")})
 GROUP BY day"""
 
 

@@ -14,8 +14,9 @@ import (
 
 const clockTicksPerSecond = 100
 
-// cpuModes are the /proc/stat cpu columns in order.
-var cpuModes = []string{"user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal", "guest", "guest_nice"}
+// cpuModes are the first /proc/stat cpu columns in order. guest and guest_nice follow, but Linux
+// counts them in user and nice too.
+var cpuModes = []string{"user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal"}
 
 // statScalars maps single-value /proc/stat rows to metrics.
 var statScalars = map[string]string{
@@ -24,13 +25,12 @@ var statScalars = map[string]string{
 	"procs_blocked": "system_processes_blocked", "btime": "system_boot_time_seconds",
 }
 
-// cpuCollector reads CPU time per core, frequency, throttling, and scheduler
-// statistics. It keeps the previous total CPU time to report the percentages
-// that Pilot hosts also send.
+// cpuCollector reads CPU time, frequency, throttling, and scheduler statistics. It sends totals
+// for the host or for each package, not for each CPU: no reader needs the history of one CPU,
+// and per-CPU series would grow with the CPU count.
 type cpuCollector struct {
 	procRoot string
 	sysRoot  string
-	previous []float64
 }
 
 // Collect reads /proc/stat, /proc/schedstat, and the cpufreq and thermal
@@ -58,18 +58,13 @@ func (collector *cpuCollector) stat() ([]telemetry.Sample, error) {
 	for _, fields := range lines {
 		switch {
 		case fields[0] == "cpu":
-			percentages, err := collector.percentages(fields[1:], path)
-			if err != nil {
-				return nil, err
-			}
-			samples = append(samples, percentages...)
-		case strings.HasPrefix(fields[0], "cpu"):
-			cpuCount++
-			cpuSamples, err := cpuSeconds(strings.TrimPrefix(fields[0], "cpu"), fields[1:], path)
+			cpuSamples, err := cpuSeconds(fields[1:], path)
 			if err != nil {
 				return nil, err
 			}
 			samples = append(samples, cpuSamples...)
+		case strings.HasPrefix(fields[0], "cpu"):
+			cpuCount++
 		case statScalars[fields[0]] != "" && len(fields) > 1:
 			value, err := parseNumber(fields[1], path)
 			if err != nil {
@@ -81,97 +76,88 @@ func (collector *cpuCollector) stat() ([]telemetry.Sample, error) {
 	return append(samples, gauge("system_cpu_count", float64(cpuCount), nil)), nil
 }
 
-// cpuSeconds reports the time of one core in each mode.
-func cpuSeconds(cpu string, fields []string, path string) ([]telemetry.Sample, error) {
+// cpuSeconds reports the time of all CPUs in each mode.
+func cpuSeconds(fields []string, path string) ([]telemetry.Sample, error) {
 	var samples []telemetry.Sample
 	for index, mode := range cpuModes[:min(len(cpuModes), len(fields))] {
 		ticks, err := parseNumber(fields[index], path)
 		if err != nil {
 			return nil, err
 		}
-		labels := telemetry.Labels{"cpu": cpu, "mode": mode}
+		labels := telemetry.Labels{"cpu": "all", "mode": mode}
 		samples = append(samples, gauge("system_cpu_seconds_total", ticks/clockTicksPerSecond, labels))
 	}
 	return samples, nil
 }
 
-// percentages reports host CPU use since the previous snapshot. It matches the
-// Pilot shipper: usage is 100 minus idle, and user includes nice. Guest time is
-// already part of user time, so only the first eight modes count.
-func (collector *cpuCollector) percentages(fields []string, path string) ([]telemetry.Sample, error) {
-	if len(fields) < 8 {
-		return nil, fmt.Errorf("parse %s: short cpu line", filepath.Base(path))
-	}
-	ticks := make([]float64, 8)
-	for index := range ticks {
-		value, err := parseNumber(fields[index], path)
-		if err != nil {
-			return nil, err
-		}
-		ticks[index] = value
-	}
-
-	previous := collector.previous
-	collector.previous = ticks
-	if previous == nil {
-		return nil, nil
-	}
-
-	delta := make(map[string]float64, len(ticks))
-	total := 0.0
-	for index, mode := range cpuModes[:8] {
-		delta[mode] = ticks[index] - previous[index]
-		total += delta[mode]
-	}
-	if total <= 0 {
-		return nil, nil
-	}
-
-	percent := func(value float64) float64 { return value / total * 100 }
-	samples := []telemetry.Sample{gauge("system_cpu_usage_percent", 100-percent(delta["idle"]), nil)}
-	modes := map[string]float64{
-		"user": delta["user"] + delta["nice"], "system": delta["system"], "iowait": delta["iowait"],
-		"irq": delta["irq"], "softirq": delta["softirq"], "steal": delta["steal"], "idle": delta["idle"],
-	}
-	for mode, value := range modes {
-		samples = append(samples, gauge("system_cpu_mode_percent", percent(value), telemetry.Labels{"mode": mode}))
-	}
-	return samples, nil
-}
-
-// frequencies reads the current, minimum, and maximum frequency of each core
-// and how often a core or package was throttled for heat.
+// frequencies reports, for each CPU package, the average frequency of its CPUs and how often its
+// cores and the package were throttled for heat.
 func (collector *cpuCollector) frequencies() []telemetry.Sample {
 	directories, _ := filepath.Glob(filepath.Join(collector.sysRoot, "devices", "system", "cpu", "cpu[0-9]*"))
 
-	var samples []telemetry.Sample
-	packages := make(map[string]bool)
+	packages := make(map[string]*physicalPackage)
 	for _, directory := range directories {
-		cpu := strings.TrimPrefix(filepath.Base(directory), "cpu")
-		labels := telemetry.Labels{"cpu": cpu}
-		for file, metric := range map[string]string{
-			"cpufreq/scaling_cur_freq": "system_cpu_frequency_hertz",
-			"cpufreq/cpuinfo_min_freq": "system_cpu_frequency_min_hertz",
-			"cpufreq/cpuinfo_max_freq": "system_cpu_frequency_max_hertz",
-		} {
-			if kilohertz, err := readNumber(filepath.Join(directory, file)); err == nil {
-				samples = append(samples, gauge(metric, kilohertz*1000, labels))
-			}
+		id := readText(filepath.Join(directory, "topology", "physical_package_id"))
+		if packages[id] == nil {
+			packages[id] = &physicalPackage{coreThrottles: make(map[string]float64)}
 		}
+		packages[id].add(directory)
+	}
 
-		if count, err := readNumber(filepath.Join(directory, "thermal_throttle", "core_throttle_count")); err == nil {
-			samples = append(samples, gauge("system_cpu_core_throttles_total", count, labels))
-		}
-		physicalPackage := readText(filepath.Join(directory, "topology", "physical_package_id"))
-		if count, err := readNumber(filepath.Join(directory, "thermal_throttle", "package_throttle_count")); err == nil && !packages[physicalPackage] {
-			packages[physicalPackage] = true
-			samples = append(samples, gauge("system_cpu_package_throttles_total", count, telemetry.Labels{"package": physicalPackage}))
-		}
+	var samples []telemetry.Sample
+	for id, cpuPackage := range packages {
+		samples = append(samples, cpuPackage.samples(telemetry.Labels{"package": id})...)
 	}
 	return samples
 }
 
-// schedstat reads time running and waiting on each CPU's run queue.
+// physicalPackage adds up the cpufreq and thermal_throttle attributes of the CPUs of one package.
+type physicalPackage struct {
+	frequencyHertz      float64
+	frequencies         int
+	coreThrottles       map[string]float64
+	packageThrottles    float64
+	hasPackageThrottles bool
+}
+
+func (cpuPackage *physicalPackage) add(directory string) {
+	if kilohertz, err := readNumber(filepath.Join(directory, "cpufreq", "scaling_cur_freq")); err == nil {
+		cpuPackage.frequencyHertz += kilohertz * 1000
+		cpuPackage.frequencies++
+	}
+	// The hyperthreads of one core report the count of that core, and each CPU the count of its package.
+	if count, err := readNumber(filepath.Join(directory, "thermal_throttle", "core_throttle_count")); err == nil {
+		core := readText(filepath.Join(directory, "topology", "core_id"))
+		if core == "" {
+			core = filepath.Base(directory)
+		}
+		cpuPackage.coreThrottles[core] = count
+	}
+	if count, err := readNumber(filepath.Join(directory, "thermal_throttle", "package_throttle_count")); err == nil {
+		cpuPackage.packageThrottles, cpuPackage.hasPackageThrottles = count, true
+	}
+}
+
+func (cpuPackage *physicalPackage) samples(labels telemetry.Labels) []telemetry.Sample {
+	var samples []telemetry.Sample
+	if cpuPackage.frequencies > 0 {
+		average := cpuPackage.frequencyHertz / float64(cpuPackage.frequencies)
+		samples = append(samples, gauge("system_cpu_frequency_hertz", average, labels))
+	}
+	if len(cpuPackage.coreThrottles) > 0 {
+		total := 0.0
+		for _, count := range cpuPackage.coreThrottles {
+			total += count
+		}
+		samples = append(samples, gauge("system_cpu_core_throttles_total", total, labels))
+	}
+	if cpuPackage.hasPackageThrottles {
+		samples = append(samples, gauge("system_cpu_package_throttles_total", cpuPackage.packageThrottles, labels))
+	}
+	return samples
+}
+
+// schedstat reads the time that tasks ran and waited on the run queues of all CPUs.
 func (collector *cpuCollector) schedstat() ([]telemetry.Sample, error) {
 	path := filepath.Join(collector.procRoot, "schedstat")
 	lines, err := readFields(path)
@@ -182,24 +168,23 @@ func (collector *cpuCollector) schedstat() ([]telemetry.Sample, error) {
 		return nil, err
 	}
 
-	var samples []telemetry.Sample
+	var running, waiting, timeslices float64
 	for _, fields := range lines {
 		// cpuN fields: 7 = running nanoseconds, 8 = waiting nanoseconds, 9 = timeslices.
 		if !strings.HasPrefix(fields[0], "cpu") || len(fields) < 10 {
 			continue
 		}
-		labels := telemetry.Labels{"cpu": strings.TrimPrefix(fields[0], "cpu")}
-		running, runningError := strconv.ParseFloat(fields[7], 64)
-		waiting, waitingError := strconv.ParseFloat(fields[8], 64)
-		timeslices, timesliceError := strconv.ParseFloat(fields[9], 64)
+		cpuRunning, runningError := strconv.ParseFloat(fields[7], 64)
+		cpuWaiting, waitingError := strconv.ParseFloat(fields[8], 64)
+		cpuTimeslices, timesliceError := strconv.ParseFloat(fields[9], 64)
 		if err := errors.Join(runningError, waitingError, timesliceError); err != nil {
 			return nil, fmt.Errorf("parse schedstat: %w", err)
 		}
-		samples = append(samples,
-			gauge("system_schedstat_running_seconds_total", running/1e9, labels),
-			gauge("system_schedstat_waiting_seconds_total", waiting/1e9, labels),
-			gauge("system_schedstat_timeslices_total", timeslices, labels),
-		)
+		running, waiting, timeslices = running+cpuRunning, waiting+cpuWaiting, timeslices+cpuTimeslices
 	}
-	return samples, nil
+	return []telemetry.Sample{
+		gauge("system_schedstat_running_seconds_total", running/1e9, nil),
+		gauge("system_schedstat_waiting_seconds_total", waiting/1e9, nil),
+		gauge("system_schedstat_timeslices_total", timeslices, nil),
+	}, nil
 }

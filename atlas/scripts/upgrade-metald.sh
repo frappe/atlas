@@ -168,7 +168,7 @@ restore_previous() {
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
-	# Restore only these lines. install-telemetry.sh can change the rest of the file meanwhile.
+	# Restore only these lines. configure-metald-telemetry.sh can change the rest of the file meanwhile.
 	exec 8>"$config_file.lock"
 	flock 8
 	if [ -n "$previous_coordination_line" ]; then
@@ -230,7 +230,7 @@ cp -a "$metald_binary" "$metald_binary.previous"
 cp -a "$mesh_binary" "$mesh_binary.previous"
 
 step "set the coordination address to $COORDINATION_LISTEN_ADDRESS"
-# install-telemetry.sh edits the same file under this lock.
+# configure-metald-telemetry.sh edits the same file under this lock.
 exec 8>"$config_file.lock"
 flock 8
 previous_coordination_line=$(grep '^coordination_listen[[:space:]]*=' "$config_file" || true)

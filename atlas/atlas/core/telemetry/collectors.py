@@ -9,8 +9,12 @@ from ipaddress import ip_network
 
 import frappe
 import requests
+from frappe.model.base_document import get_controller
 from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
+
+from atlas.service.core.warpgate.sync import SYNCED_AT_CACHE_KEY
+from atlas.vm.core.vm_state import SLEEP_STATES
 
 MEBIBYTE = 1 << 20
 # Probes run in parallel, so a slow node delays the minute's push by this much at most.
@@ -37,6 +41,7 @@ class AtlasGauges:
 	def collect(self) -> list[dict]:
 		"""Return one sample list for every area. Each query is a small aggregate."""
 		self.add_virtual_machines()
+		self.add_machines()
 		self.add_hosts()
 		self.add_migrations()
 		self.add_images()
@@ -46,6 +51,8 @@ class AtlasGauges:
 		self.add_service_readiness()
 		self.add_jobs()
 		self.add_file_systems()
+		self.add_certificates()
+		self.add_warpgate_sync()
 		return self.samples
 
 	def add(self, metric: str, value: float, **labels: str) -> None:
@@ -72,6 +79,33 @@ class AtlasGauges:
 			"atlas_virtual_machine_oldest_draft_seconds", self.oldest_age([row.creation for row in drafts])
 		)
 		self.add("atlas_virtual_machines_terminating", sum(1 for row in rows if row.is_terminating))
+
+	def add_machines(self) -> None:
+		"""Name each machine that must send its machine metrics now: each Running host, and each VM that runs
+		and does not sleep. The machine-silent rule compares this list with the machines that send."""
+		for host in frappe.get_all("Metal Server", filters={"status": "Running"}, pluck="name"):
+			self.add("atlas_machine", 1, machine=host, kind="host")
+
+		running = [
+			state.virtual_machine
+			for state in frappe.get_all(
+				"Virtual Machine State",
+				filters={"status": "running"},
+				fields=["virtual_machine", "sleep_state"],
+			)
+			if state.sleep_state not in SLEEP_STATES
+		]
+		for machine in frappe.get_all(
+			"Virtual Machine",
+			filters={"name": ("in", running), "is_draft": 0, "is_terminating": 0},
+			fields=["name", "tenant_id"],
+		):
+			self.add(
+				"atlas_machine",
+				1,
+				machine=machine.name,
+				kind="service" if machine.tenant_id == 0 else "tenant",
+			)
 
 	def add_hosts(self) -> None:
 		"""Count hosts by status, name each host, and report its latest capacity and use."""
@@ -180,9 +214,9 @@ class AtlasGauges:
 		self.add_counts("atlas_metald_updates_active", Counter(updates), "status")
 
 		minute_ago = add_to_date(self.now, minutes=-1)
-		self.add(
-			"atlas_error_logs_last_minute", frappe.db.count("Error Log", {"creation": [">=", minute_ago]})
-		)
+		# Error Log is a virtual DocType in its own log database, so frappe.db.count reads a stale table.
+		error_logs = get_controller("Error Log").get_count("Error Log", {"creation": [">=", minute_ago]})
+		self.add("atlas_error_logs_last_minute", error_logs)
 
 	def add_services(self) -> None:
 		"""Count the nodes of each service by status."""
@@ -250,6 +284,34 @@ class AtlasGauges:
 			usage = shutil.disk_usage(path)
 			self.add("atlas_filesystem_bytes", usage.total, path=path, kind="size")
 			self.add("atlas_filesystem_bytes", usage.free, path=path, kind="available")
+
+	def add_certificates(self) -> None:
+		"""Report how long the wildcard certificate and the metald certificate of each Running host stay valid,
+		so a renewal that stops working shows before the certificate expires."""
+		expires_on = frappe.db.get_single_value("Atlas Settings", "wildcard_tls_expires_on")
+		if expires_on:
+			seconds = (get_datetime(expires_on) - self.now).total_seconds()
+			self.add("atlas_tls_certificate_expiry_seconds", seconds, certificate="wildcard")
+
+		for server in frappe.get_all(
+			"Metal Server",
+			filters={"status": "Running", "metald_tls_expires_on": ("is", "set")},
+			fields=["name", "metald_tls_expires_on"],
+		):
+			seconds = (get_datetime(server.metald_tls_expires_on) - self.now).total_seconds()
+			self.add(
+				"atlas_tls_certificate_expiry_seconds", seconds, certificate="metald", server=server.name
+			)
+
+	def add_warpgate_sync(self) -> None:
+		"""Report how long ago the Warpgate sync last reached every host. A cleared cache sends nothing until
+		the next full sync, and that sync runs each minute."""
+		if not frappe.db.get_single_value("Atlas Settings", "warpgate_url"):
+			return
+
+		synced_at = frappe.cache.get_value(SYNCED_AT_CACHE_KEY)
+		if synced_at:
+			self.add("atlas_warpgate_sync_age_seconds", (self.now - get_datetime(synced_at)).total_seconds())
 
 	def latest_usages(self) -> list:
 		"""Return the newest usage sample of each host from the last hour."""

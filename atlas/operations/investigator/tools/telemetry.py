@@ -9,12 +9,6 @@ from atlas.operations.investigator.tools.decorators import read_tool
 from atlas.operations.investigator.tools.inventory import get_host_name
 
 
-@read_tool(background=True)
-def list_failing_alert_checks(*, ctx: ToolContext) -> dict:
-	"""Run the Atlas alert queries (P1, P2 Hosts, P2 Platform) and return each failing check. Start here."""
-	return TelemetryQuery().get_failing_alert_checks()
-
-
 @read_tool()
 def list_saved_queries(
 	search: Annotated[
@@ -60,7 +54,7 @@ def query_telemetry(
 	- samples(ts DateTime64, metric String, resource_id String, labels Map(String, String), value Float64)
 	- logs(ts DateTime64, resource_id String, product String, service String, level String, source String, message String, attributes Map(String, String))
 
-	A host resource_id is its Metal Server name. Service nodes use their node name. Atlas uses atlas-<region>.
+	A host resource_id is its Metal Server name. A VM uses its Virtual Machine name. Atlas uses atlas.
 	"""
 	return TelemetryQuery().run(sql, row_limit=row_limit).as_dict()
 

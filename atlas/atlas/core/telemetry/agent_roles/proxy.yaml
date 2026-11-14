@@ -1,0 +1,51 @@
+# The HTTP proxy: request counts and times from the access log. Access lines carry client addresses, so they stay
+# on the node. The shared nginx role of the Datum agent sends the error log.
+sources:
+  nginx_access:
+    type: file
+    include: [/var/log/nginx/access.log]
+    read_from: end
+
+transforms:
+  nginx_requests:
+    type: remap
+    inputs: [nginx_access]
+    drop_on_error: true
+    source: |
+      request = object!(parse_json!(.message))
+      status = to_string!(request.status)
+      # A retried request lists one time for each upstream it tried. The last one answered.
+      upstream = split(to_string(request.upstream_response_time) ?? "", ", ")
+      # The proxy made the answer when the last upstream sent no response header. A site can send its own 502 or 504.
+      header_time = to_string(get(split(to_string(request.upstream_header_time) ?? "", ", "), [-1]) ?? "") ?? ""
+      origin = if includes(["", "-"], header_time) { "proxy" } else { "upstream" }
+      . = {
+        "status_class": slice!(status, 0, 1) + "xx",
+        "origin": origin,
+        "request_time": to_float(request.request_time) ?? 0.0,
+        "upstream_time": to_float(get(upstream, [-1]) ?? "") ?? 0.0,
+      }
+      # log_to_metric drops the whole event when one of its fields is missing, so slow is always set.
+      .slow = if .request_time >= 1.0 { 1.0 } else { 0.0 }
+  metrics_proxy:
+    type: log_to_metric
+    inputs: [nginx_requests]
+    metrics:
+      - type: counter
+        field: status_class
+        name: proxy_requests_total
+        tags:
+          status_class: "{{ status_class }}"
+          origin: "{{ origin }}"
+      - type: counter
+        field: request_time
+        increment_by_value: true
+        name: proxy_request_seconds_total
+      - type: counter
+        field: upstream_time
+        increment_by_value: true
+        name: proxy_upstream_seconds_total
+      - type: counter
+        field: slow
+        increment_by_value: true
+        name: proxy_slow_requests_total
