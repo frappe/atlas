@@ -1,6 +1,6 @@
 -- title: Repeated errors
 -- severity: Low
--- resource_type: Machine
+-- resource_type: Host, Server
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

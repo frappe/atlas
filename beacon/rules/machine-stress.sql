@@ -1,6 +1,6 @@
 -- title: Machine under stress
 -- severity: Medium
--- resource_type: Machine
+-- resource_type: Host, Server
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-stress.md
 -- interval: 300
 -- pending_for: 600
