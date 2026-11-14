@@ -6,7 +6,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.telemetry.collectors import AtlasGauges
+from atlas.atlas.core.telemetry.collectors import WARPGATE_WAITING_SINCE_CACHE_KEY, AtlasGauges
 
 Usage = namedtuple("Usage", "total used free")
 Stat = namedtuple("Stat", "st_dev")
@@ -93,6 +93,20 @@ class TestWarpgateSync(UnitTestCase):
 
 	def test_a_region_without_warpgate_sends_nothing(self) -> None:
 		self.assertEqual(self.collect(None, None), [])
+
+	def test_a_sync_that_never_worked_counts_from_the_first_report_without_one(self) -> None:
+		gauges = AtlasGauges("2026-10-27T12:00:00")
+		cache = {WARPGATE_WAITING_SINCE_CACHE_KEY: gauges.now - timedelta(minutes=30)}
+		with (
+			patch("frappe.db.get_single_value", return_value="https://warpgate.test"),
+			patch(
+				"frappe.cache.get_value",
+				side_effect=lambda key, generator=None: cache.get(key, generator and generator()),
+			),
+		):
+			gauges.add_warpgate_sync()
+
+		self.assertAlmostEqual(gauges.samples[0]["value"], 30 * 60, delta=60)
 
 
 class TestMachines(UnitTestCase):
