@@ -41,6 +41,9 @@ func TestSMARTReportsAFailingSATADisk(t *testing.T) {
 	if raw := valueOf(t, samples, "system_smart_attribute", reallocated); raw != 2310 {
 		t.Fatalf("reallocated sectors = %v, want 2310", raw)
 	}
+	if hasMetricWithLabel(samples, "field", "worst") || hasMetricWithLabel(samples, "field", "threshold") {
+		t.Fatal("a fixed or unread SMART field was reported")
+	}
 
 	if again, _ := collector.Collect(context.Background()); again != nil {
 		t.Fatal("smartctl ran again before the interval")

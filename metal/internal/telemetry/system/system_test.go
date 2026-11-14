@@ -102,9 +102,9 @@ func TestCPUReportsTotalsAndTheCoreCount(t *testing.T) {
 	}
 }
 
-func TestMemoryKeepsEveryFieldUnderTheKernelName(t *testing.T) {
+func TestMemoryKeepsTheChartFieldsUnderTheKernelName(t *testing.T) {
 	root := writeFiles(t, map[string]string{
-		"meminfo": "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 600 kB\nBuffers: 50 kB\nCached: 250 kB\nActive(anon): 20 kB\nHugePages_Total: 4\n",
+		"meminfo": "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 600 kB\nBuffers: 50 kB\nCached: 250 kB\nActive(anon): 20 kB\nHugePages_Total: 4\nZswap: 8 kB\n",
 		"vmstat":  "pgmajfault 7\nnr_free_pages 3\n",
 	})
 	samples, err := memoryCollector{procRoot: root}.Collect(context.Background())
@@ -120,8 +120,8 @@ func TestMemoryKeepsEveryFieldUnderTheKernelName(t *testing.T) {
 	if available := valueOf(t, samples, "system_memory_available_bytes", nil); available != 600*1024 {
 		t.Fatalf("available = %v, want %v", available, 600*1024)
 	}
-	if hasMetricWithLabel(samples, "field", "nr_free_pages") {
-		t.Fatal("a vmstat value that no chart reads was reported")
+	if hasMetricWithLabel(samples, "field", "nr_free_pages") || hasMetricWithLabel(samples, "field", "Zswap") {
+		t.Fatal("a vmstat or meminfo value that no chart reads was reported")
 	}
 	if faults := valueOf(t, samples, "system_vmstat", telemetry.Labels{"field": "pgmajfault"}); faults != 7 {
 		t.Fatalf("pgmajfault = %v, want 7", faults)
@@ -328,12 +328,16 @@ errors: No known data errors
 
 func TestHardwareSendsTheSensorInputAndAlarmButNotTheLimits(t *testing.T) {
 	sysRoot := writeFiles(t, map[string]string{
-		"class/hwmon/hwmon0/name":        "coretemp\n",
-		"class/hwmon/hwmon0/temp1_input": "54000\n",
-		"class/hwmon/hwmon0/temp1_crit":  "100000\n",
-		"class/hwmon/hwmon0/temp1_alarm": "1\n",
-		"class/hwmon/hwmon0/pwm1_input":  "120\n",
-		"class/hwmon/hwmon0/temp1_label": "Package id 0\n",
+		"class/hwmon/hwmon0/name":                 "coretemp\n",
+		"class/hwmon/hwmon0/temp1_input":          "54000\n",
+		"class/hwmon/hwmon0/temp1_crit":           "100000\n",
+		"class/hwmon/hwmon0/temp1_alarm":          "1\n",
+		"class/hwmon/hwmon0/pwm1_input":           "120\n",
+		"class/hwmon/hwmon0/temp1_label":          "Package id 0\n",
+		"class/thermal/cooling_device0/type":      "Processor\n",
+		"class/thermal/cooling_device0/cur_state": "0\n",
+		"class/thermal/cooling_device9/type":      "Fan\n",
+		"class/thermal/cooling_device9/cur_state": "2\n",
 	})
 	samples, _ := hardwareCollector{sysRoot: sysRoot}.Collect(context.Background())
 
@@ -347,5 +351,11 @@ func TestHardwareSendsTheSensorInputAndAlarmButNotTheLimits(t *testing.T) {
 	}
 	if hasMetricWithLabel(samples, "attribute", "crit") || hasMetricWithLabel(samples, "sensor", "pwm1") {
 		t.Fatal("a limit or a pwm sensor was reported")
+	}
+	if hasMetricWithLabel(samples, "type", "Processor") {
+		t.Fatal("a per-CPU cooling device was reported")
+	}
+	if state := valueOf(t, samples, "system_cooling_device_current_state", telemetry.Labels{"device": "cooling_device9", "type": "Fan"}); state != 2 {
+		t.Fatalf("fan state = %v, want 2", state)
 	}
 }

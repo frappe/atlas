@@ -22,8 +22,10 @@ func (collector memoryCollector) Collect(context.Context) ([]telemetry.Sample, e
 	}
 
 	samples := memoryUsage(info)
-	for field, value := range info {
-		samples = append(samples, gauge("system_memory_info", value, telemetry.Labels{"field": field}))
+	for _, field := range memoryInfoFields {
+		if value, found := info[field]; found {
+			samples = append(samples, gauge("system_memory_info", value, telemetry.Labels{"field": field}))
+		}
 	}
 
 	counters, err := collector.vmstat()
@@ -68,6 +70,17 @@ func memoryUsage(info map[string]float64) []telemetry.Sample {
 		gauge("system_memory_available_bytes", info["MemAvailable"], nil),
 		gauge("system_memory_swap_used_bytes", info["SwapTotal"]-info["SwapFree"], nil),
 	}
+}
+
+// memoryInfoFields are the /proc/meminfo fields that the host charts read. The others stay on the host.
+var memoryInfoFields = []string{
+	"MemTotal", "MemFree", "Buffers", "Cached", "SwapCached", "SwapTotal", "SwapFree",
+	"Active", "Inactive", "Active_anon", "Inactive_anon", "Active_file", "Inactive_file", "Unevictable", "Mlocked",
+	"Dirty", "Writeback", "WritebackTmp", "NFS_Unstable", "Bounce", "AnonPages", "AnonHugePages", "Mapped",
+	"Shmem", "ShmemHugePages", "ShmemPmdMapped", "Slab", "SReclaimable", "SUnreclaim", "KernelStack",
+	"PageTables", "Percpu", "CommitLimit", "Committed_AS", "VmallocTotal", "VmallocUsed", "VmallocChunk",
+	"HardwareCorrupted", "HugePages_Total", "HugePages_Free", "HugePages_Rsvd", "HugePages_Surp",
+	"Hugepagesize", "DirectMap4k", "DirectMap2M", "DirectMap1G",
 }
 
 // vmstatFields are the /proc/vmstat counters that the host charts read. The others stay on the host.
