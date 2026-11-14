@@ -27,5 +27,5 @@ LEFT JOIN (
     WHERE metric = 'metal_build_info' AND ts > now() - INTERVAL 15 MINUTE
     GROUP BY resource_id
 ) AS m ON m.resource_id = h.server
-WHERE h.status = 'Running' AND (s.age IS NULL OR s.age > 300) AND m.last_ts >= now() - INTERVAL 5 MINUTE
+WHERE h.status = 'Running' AND (s.age IS NULL OR s.age > 120) AND m.last_ts >= now() - INTERVAL 5 MINUTE
 SETTINGS join_use_nulls = 1
