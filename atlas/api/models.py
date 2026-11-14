@@ -1206,6 +1206,38 @@ class HostResponse(BaseModel):
 	tags: dict[str, str] = Field(description="Host tags as key-value pairs.")
 
 
+class BeaconResource(BaseModel):
+	"""One regional resource that Beacon, the incident manager, monitors."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"resource_id": "vm-00010",
+					"resource_type": "Server",
+					"parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+					"title": "vm-00010",
+					"status": "Active",
+				}
+			]
+		}
+	)
+
+	resource_id: str = Field(description="Atlas ID. Telemetry from this resource carries it.")
+	resource_type: str = Field(
+		description="`Atlas`, `Host`, `Server`, a service node DocType, or `Cargo Server`."
+	)
+	parent_id: str = Field(description="Resource ID of the parent, or empty for a root resource.")
+	title: str = Field(description="Name that people see.")
+	status: str = Field(description="`Pending`, `Active`, `Suspended` or `Terminated`.")
+
+
+class BeaconResourceListResponse(BaseModel):
+	"""Every resource that Beacon monitors in this region."""
+
+	resources: list[BeaconResource] = Field(description="Atlas, then hosts, VMs, service nodes and Cargo.")
+
+
 class HostAccessGrantPayload(StrictModel):
 	"""Open one host, or every host, to one person until a time."""
 
