@@ -1,9 +1,9 @@
 from workbook import HOST, LOOKBACK, METAL_HOST_IDS, TITLES, gauge_sql, rate_sql
 
 # Insights orders series by name, so "Busy ..." stacks below "Idle" as in Grafana.
-BASIC_CPU_MODE = """multiIf(s.labels['mode'] = 'idle', 'Idle', s.labels['mode'] = 'user', 'Busy User',
-  s.labels['mode'] = 'system', 'Busy System', s.labels['mode'] = 'iowait', 'Busy Iowait',
-  s.labels['mode'] = 'irq', 'Busy IRQs', 'Busy Other')"""
+BASIC_CPU_MODE = """multiIf(d.labels['mode'] = 'idle', 'Idle', d.labels['mode'] IN ('user', 'nice'), 'Busy User',
+  d.labels['mode'] = 'system', 'Busy System', d.labels['mode'] = 'iowait', 'Busy Iowait',
+  d.labels['mode'] = 'irq', 'Busy IRQs', 'Busy Other')"""
 CPU_MODE = """if(d.labels['mode'] = 'idle', 'Idle', concat('Busy ', multiIf(d.labels['mode'] = 'irq', 'IRQ',
   d.labels['mode'] = 'softirq', 'SoftIRQ', initcap(d.labels['mode']))))"""
 VM_STATE = "initcap(s.labels['state'])"

@@ -11,6 +11,7 @@ from workbook import (
 	daily_increase_sql,
 	dimension,
 	line_style,
+	machine_usage_sql,
 	measure,
 	trend,
 )
@@ -25,17 +26,25 @@ WHERE s.metric = '{metric}' AND s.ts >= {WEEK} AND s.resource_id IN ({METAL_HOST
 GROUP BY day, host"""
 
 
+def host_daily_usage_sql(column: str) -> str:
+	"""One cell per host and day: the day's average of one column of the machine usage."""
+	return f"""WITH {TITLES}
+SELECT toDate(u.ts) AS day, {HOST.format(alias="u")} AS host, avg(u.{column}) AS value
+FROM ({machine_usage_sql(f"ts >= {WEEK}")}) AS u LEFT JOIN titles AS t ON t.server = u.resource_id
+GROUP BY day, host"""
+
+
 def atlas_daily_last_sql(metric: str, label: str, divisor: int = 1) -> str:
 	"""One row per day and label value: the value at Atlas's last push of the day, over divisor."""
 	return f"""WITH last_pushes AS (
   SELECT toDate(ts) AS day, max(ts) AS last_ts
   FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = '{metric}' AND ts >= {WEEK}
+  WHERE resource_id = 'atlas' AND metric = '{metric}' AND ts >= {WEEK}
   GROUP BY day
 )
 SELECT p.day AS day, s.labels['{label}'] AS series, sum(s.value) / {divisor} AS value
 FROM samples AS s INNER JOIN last_pushes AS p ON p.last_ts = s.ts
-WHERE s.resource_id LIKE 'atlas-%' AND s.metric = '{metric}' AND s.ts >= {WEEK}
+WHERE s.resource_id = 'atlas' AND s.metric = '{metric}' AND s.ts >= {WEEK}
 GROUP BY day, series"""
 
 
@@ -73,7 +82,7 @@ def add_weekly_trends_dashboard(workbook: Workbook) -> None:
 		folder.add_chart(
 			"trend-host-cpu",
 			"Host CPU Busy, last 7 days",
-			host_daily_sql("system_cpu_usage_percent"),
+			host_daily_usage_sql("cpu_busy"),
 			"Heatmap",
 			heatmap("CPU %", PERCENT),
 			"Average CPU busy share of each host per day.",
@@ -81,7 +90,7 @@ def add_weekly_trends_dashboard(workbook: Workbook) -> None:
 		folder.add_chart(
 			"trend-host-memory",
 			"Host RAM Used, last 7 days",
-			host_daily_sql("system_memory_usage_percent"),
+			host_daily_usage_sql("ram_used"),
 			"Heatmap",
 			heatmap("RAM %", PERCENT),
 			"Average RAM use of each host per day.",
@@ -168,7 +177,7 @@ FROM samples WHERE metric = 'atlas_migration_duration_seconds' AND ts >= {WEEK} 
 			daily_increase_sql(
 				["atlas_api_requests_total", "atlas_metal_requests_total"],
 				"if(metric = 'atlas_api_requests_total', concat('API ', labels['status']), concat('Metal ', labels['status']))",
-				"AND resource_id LIKE 'atlas-%' AND ((metric = 'atlas_api_requests_total' AND labels['status'] LIKE '5%') OR (metric = 'atlas_metal_requests_total' AND labels['status'] NOT LIKE '2%'))",
+				"AND resource_id = 'atlas' AND ((metric = 'atlas_api_requests_total' AND labels['status'] LIKE '5%') OR (metric = 'atlas_metal_requests_total' AND labels['status'] NOT LIKE '2%'))",
 			),
 			"Line",
 			trend("Errors", COUNT),

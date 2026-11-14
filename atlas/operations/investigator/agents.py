@@ -12,7 +12,6 @@ ENGINEER_AGENT = "Atlas Engineer Assistant"
 KNOWLEDGE_BASE = "Atlas"
 SKILLS = ["incident-investigation", "simplified-technical-english"]
 READ_TOOLS = [
-	telemetry.list_failing_alert_checks,
 	telemetry.get_telemetry_freshness,
 	telemetry.list_saved_queries,
 	telemetry.run_saved_query,
