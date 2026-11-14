@@ -13,6 +13,8 @@ from frappe.model.base_document import get_controller
 from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
 
+from atlas.vm.core.vm_state import SLEEP_STATES
+
 MEBIBYTE = 1 << 20
 # Probes run in parallel, so a slow node delays the minute's push by this much at most.
 READINESS_TIMEOUT_SECONDS = 3
@@ -38,6 +40,7 @@ class AtlasGauges:
 	def collect(self) -> list[dict]:
 		"""Return one sample list for every area. Each query is a small aggregate."""
 		self.add_virtual_machines()
+		self.add_machines()
 		self.add_hosts()
 		self.add_migrations()
 		self.add_images()
@@ -74,6 +77,33 @@ class AtlasGauges:
 			"atlas_virtual_machine_oldest_draft_seconds", self.oldest_age([row.creation for row in drafts])
 		)
 		self.add("atlas_virtual_machines_terminating", sum(1 for row in rows if row.is_terminating))
+
+	def add_machines(self) -> None:
+		"""Name each machine that must send its machine metrics now: each Running host, and each VM that runs
+		and does not sleep. The machine-silent rule compares this list with the machines that send."""
+		for host in frappe.get_all("Metal Server", filters={"status": "Running"}, pluck="name"):
+			self.add("atlas_machine", 1, machine=host, kind="host")
+
+		running = [
+			state.virtual_machine
+			for state in frappe.get_all(
+				"Virtual Machine State",
+				filters={"status": "running"},
+				fields=["virtual_machine", "sleep_state"],
+			)
+			if state.sleep_state not in SLEEP_STATES
+		]
+		for machine in frappe.get_all(
+			"Virtual Machine",
+			filters={"name": ("in", running), "is_draft": 0, "is_terminating": 0},
+			fields=["name", "tenant_id"],
+		):
+			self.add(
+				"atlas_machine",
+				1,
+				machine=machine.name,
+				kind="service" if machine.tenant_id == 0 else "tenant",
+			)
 
 	def add_hosts(self) -> None:
 		"""Count hosts by status, name each host, and report its latest capacity and use."""

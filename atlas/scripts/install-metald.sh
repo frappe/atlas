@@ -216,7 +216,7 @@ EOF
 }
 
 step "config ($config_file)"
-# install-telemetry.sh edits the same file under this lock.
+# configure-metald-telemetry.sh edits the same file under this lock.
 exec 8>"$config_file.lock"
 flock 8
 # Keep the matching config for rollback.

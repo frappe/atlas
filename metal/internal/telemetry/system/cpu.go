@@ -25,12 +25,10 @@ var statScalars = map[string]string{
 }
 
 // cpuCollector reads CPU time per core, frequency, throttling, and scheduler
-// statistics. It keeps the previous total CPU time to report the percentages
-// that Pilot hosts also send.
+// statistics.
 type cpuCollector struct {
 	procRoot string
 	sysRoot  string
-	previous []float64
 }
 
 // Collect reads /proc/stat, /proc/schedstat, and the cpufreq and thermal
@@ -58,11 +56,8 @@ func (collector *cpuCollector) stat() ([]telemetry.Sample, error) {
 	for _, fields := range lines {
 		switch {
 		case fields[0] == "cpu":
-			percentages, err := collector.percentages(fields[1:], path)
-			if err != nil {
-				return nil, err
-			}
-			samples = append(samples, percentages...)
+			// The sum of all cores. A reader sums system_cpu_seconds_total over cpu.
+			continue
 		case strings.HasPrefix(fields[0], "cpu"):
 			cpuCount++
 			cpuSamples, err := cpuSeconds(strings.TrimPrefix(fields[0], "cpu"), fields[1:], path)
@@ -91,50 +86,6 @@ func cpuSeconds(cpu string, fields []string, path string) ([]telemetry.Sample, e
 		}
 		labels := telemetry.Labels{"cpu": cpu, "mode": mode}
 		samples = append(samples, gauge("system_cpu_seconds_total", ticks/clockTicksPerSecond, labels))
-	}
-	return samples, nil
-}
-
-// percentages reports host CPU use since the previous snapshot. It matches the
-// Pilot shipper: usage is 100 minus idle, and user includes nice. Guest time is
-// already part of user time, so only the first eight modes count.
-func (collector *cpuCollector) percentages(fields []string, path string) ([]telemetry.Sample, error) {
-	if len(fields) < 8 {
-		return nil, fmt.Errorf("parse %s: short cpu line", filepath.Base(path))
-	}
-	ticks := make([]float64, 8)
-	for index := range ticks {
-		value, err := parseNumber(fields[index], path)
-		if err != nil {
-			return nil, err
-		}
-		ticks[index] = value
-	}
-
-	previous := collector.previous
-	collector.previous = ticks
-	if previous == nil {
-		return nil, nil
-	}
-
-	delta := make(map[string]float64, len(ticks))
-	total := 0.0
-	for index, mode := range cpuModes[:8] {
-		delta[mode] = ticks[index] - previous[index]
-		total += delta[mode]
-	}
-	if total <= 0 {
-		return nil, nil
-	}
-
-	percent := func(value float64) float64 { return value / total * 100 }
-	samples := []telemetry.Sample{gauge("system_cpu_usage_percent", 100-percent(delta["idle"]), nil)}
-	modes := map[string]float64{
-		"user": delta["user"] + delta["nice"], "system": delta["system"], "iowait": delta["iowait"],
-		"irq": delta["irq"], "softirq": delta["softirq"], "steal": delta["steal"], "idle": delta["idle"],
-	}
-	for mode, value := range modes {
-		samples = append(samples, gauge("system_cpu_mode_percent", percent(value), telemetry.Labels{"mode": mode}))
 	}
 	return samples, nil
 }

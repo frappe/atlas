@@ -1,11 +1,12 @@
--- title: Host disk almost full
+-- title: Machine disk almost full
 -- severity: High
--- resource_type: Host
--- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-disk-full.md
+-- resource_type: Machine
+-- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-disk-full.md
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 900
--- Under 10% free pages. Under 25% free is Low: plan space before it fills. A ZFS mount shares the space of its pool, so host-pool-capacity covers it.
+-- Every machine sends its file systems. Under 10% free pages. Under 25% free is Low: plan space before it fills.
+-- A ZFS file system shares the space of its pool, so host-pool-capacity covers it.
 SELECT resource_id, mountpoint AS alert_key, free AS value,
        concat(mountpoint, ' has ', toString(round(free, 1)), '% free') AS detail,
        if(free < 10, 'High', 'Low') AS severity

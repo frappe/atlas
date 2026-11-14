@@ -52,29 +52,20 @@ func hasMetricWithLabel(samples []telemetry.Sample, name, value string) bool {
 	return false
 }
 
-func TestCPUReportsEachCoreAndUsageSinceThePreviousSnapshot(t *testing.T) {
+func TestCPUReportsTheTimeOfEachCoreAndTheCoreCount(t *testing.T) {
 	root := writeFiles(t, map[string]string{
-		"stat": "cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 60 0 40 400 0 0 0 0 0 0\ncpu1 40 0 60 400 0 0 0 0 0 0\nctxt 50\n",
+		"stat": "cpu  130 10 120 840 0 0 0 0 0 0\ncpu0 90 10 60 420 0 0 0 0 0 0\ncpu1 40 0 60 420 0 0 0 0 0 0\nbtime 1700000000\n",
 	})
-	collector := &cpuCollector{procRoot: root, sysRoot: t.TempDir()}
-	if _, err := collector.Collect(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// 100 ticks pass: 30 user, 10 nice, 20 system, 40 idle.
-	if err := os.WriteFile(filepath.Join(root, "stat"), []byte("cpu  130 10 120 840 0 0 0 0 0 0\ncpu0 90 10 60 420 0 0 0 0 0 0\ncpu1 40 0 60 420 0 0 0 0 0 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	samples, err := collector.Collect(context.Background())
+	samples, err := (&cpuCollector{procRoot: root, sysRoot: t.TempDir()}).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if usage := valueOf(t, samples, "system_cpu_usage_percent", nil); usage != 60 {
-		t.Fatalf("usage = %v, want 60", usage)
+	if count := valueOf(t, samples, "system_cpu_count", nil); count != 2 {
+		t.Fatalf("cpu count = %v, want 2", count)
 	}
-	if user := valueOf(t, samples, "system_cpu_mode_percent", telemetry.Labels{"mode": "user"}); user != 40 {
-		t.Fatalf("user = %v, want 40 including nice", user)
+	if boot := valueOf(t, samples, "system_boot_time_seconds", nil); boot != 1700000000 {
+		t.Fatalf("boot time = %v, want 1700000000", boot)
 	}
 	if seconds := valueOf(t, samples, "system_cpu_seconds_total", telemetry.Labels{"cpu": "0", "mode": "user"}); seconds != 0.9 {
 		t.Fatalf("cpu0 user seconds = %v, want 0.9", seconds)
@@ -96,8 +87,8 @@ func TestMemoryKeepsEveryFieldUnderTheKernelName(t *testing.T) {
 	if pages := valueOf(t, samples, "system_memory_info", telemetry.Labels{"field": "HugePages_Total"}); pages != 4 {
 		t.Fatalf("HugePages_Total = %v, want a count of 4", pages)
 	}
-	if used := valueOf(t, samples, "system_memory_used_bytes", nil); used != 600*1024 {
-		t.Fatalf("used = %v, want %v", used, 600*1024)
+	if available := valueOf(t, samples, "system_memory_available_bytes", nil); available != 600*1024 {
+		t.Fatalf("available = %v, want %v", available, 600*1024)
 	}
 	if faults := valueOf(t, samples, "system_vmstat", telemetry.Labels{"field": "pgmajfault"}); faults != 7 {
 		t.Fatalf("pgmajfault = %v, want 7", faults)

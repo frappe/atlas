@@ -1,0 +1,24 @@
+# The IPv6 router translates in a tc eBPF program on eth0. The machine can run while the program is
+# detached, and then nothing is forwarded.
+sources:
+  ipv6_router_check:
+    type: exec
+    mode: scheduled
+    scheduled:
+      exec_interval_secs: 30
+    command: ["/bin/sh", "-c", "if tc filter show dev eth0 ingress | grep -q 'router.bpf.o'; then echo 1; else echo 0; fi"]
+
+transforms:
+  ipv6_router_state:
+    type: remap
+    inputs: [ipv6_router_check]
+    drop_on_error: true
+    source: |
+      . = {"attached": to_float!(strip_whitespace!(.message))}
+  metrics_ipv6_router:
+    type: log_to_metric
+    inputs: [ipv6_router_state]
+    metrics:
+      - type: gauge
+        field: attached
+        name: ipv6_router_program_attached
