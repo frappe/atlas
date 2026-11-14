@@ -101,13 +101,13 @@ SLO_DAILY = f"""WITH daily AS (
 ),
 rolling AS (
   SELECT d.day AS day, e.slo AS slo, sum(e.good) / sum(e.events) * 100 AS value
-  FROM (SELECT today() - number AS day FROM numbers(28)) AS d
+  FROM (SELECT today() - arrayJoin(range(28)) AS day) AS d
   CROSS JOIN daily AS e
   WHERE e.day <= d.day AND e.day > d.day - 28
   GROUP BY day, slo
 )
 SELECT d.day AS day, s.slo AS series, if(r.slo = '', NULL, r.value) AS value
-FROM (SELECT today() - number AS day FROM numbers(28)) AS d
+FROM (SELECT today() - arrayJoin(range(28)) AS day) AS d
 CROSS JOIN values('slo String', {", ".join(f"'{name}'" for name, _, _ in SLOS)}) AS s
 LEFT JOIN rolling AS r ON r.day = d.day AND r.slo = s.slo"""
 
