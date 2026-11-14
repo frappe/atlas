@@ -316,13 +316,14 @@ type volumeDestination struct {
 	device  *os.File
 }
 
-// imageVolumeSizeMiB is the smallest whole MiB that holds an image. The import writes only the image bytes.
+// imageVolumeSizeMiB is the smallest whole MiB that holds an image. The import writes only the image bytes,
+// and the volume is sparse, so it reserves no pool space beyond them.
 func imageVolumeSizeMiB(sizeBytes int64) int64 {
 	return (sizeBytes + (1 << bytesToMiBShift) - 1) >> bytesToMiBShift
 }
 
 func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64) (io.Writer, error) {
-	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, destination.dataset); err != nil {
+	if err := platform.Run(ctx, "zfs", "create", "-s", "-V", fmt.Sprintf("%dM", imageVolumeSizeMiB(sizeBytes)), "-o", "volblocksize="+imageVolumeBlockSize, destination.dataset); err != nil {
 		return nil, err
 	}
 	devicePath := "/dev/zvol/" + destination.dataset

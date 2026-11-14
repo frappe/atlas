@@ -125,3 +125,17 @@ func TestStoreKernelKeepsOnlyAMatchingKernel(t *testing.T) {
 		t.Fatalf("stored kernel = %q, %v", stored, err)
 	}
 }
+
+func TestImageVolumeIsSparse(t *testing.T) {
+	logFile := fakeZFS(t, "", "create")
+	volume := &volumeDestination{dataset: "metal/images/image-1/base"}
+
+	if _, err := volume.open(context.Background(), 1<<20); err == nil {
+		t.Fatal("open succeeded with a failing zfs create")
+	}
+
+	want := []string{"create -s -V 1M -o volblocksize=16k metal/images/image-1/base"}
+	if got := commandLog(t, logFile); !slices.Equal(got, want) {
+		t.Errorf("commands = %v, want %v", got, want)
+	}
+}
