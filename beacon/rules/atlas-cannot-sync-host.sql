@@ -12,13 +12,13 @@ SELECT h.server AS resource_id, '' AS alert_key, ifNull(s.age, -1) AS value,
 FROM (
     SELECT labels['server'] AS server, argMax(labels['status'], ts) AS status
     FROM datum.samples_recent
-    WHERE metric = 'atlas_metal_server_info' AND ts > now() - INTERVAL 10 MINUTE
+    WHERE metric = 'atlas_metal_server_info' AND resource_id = 'atlas' AND ts > now() - INTERVAL 10 MINUTE
     GROUP BY server
 ) AS h
 LEFT JOIN (
     SELECT labels['server'] AS server, argMax(value, ts) AS age
     FROM datum.samples_recent
-    WHERE metric = 'atlas_host_sync_age_seconds' AND ts > now() - INTERVAL 10 MINUTE
+    WHERE metric = 'atlas_host_sync_age_seconds' AND resource_id = 'atlas' AND ts > now() - INTERVAL 10 MINUTE
     GROUP BY server
 ) AS s ON s.server = h.server
 LEFT JOIN (

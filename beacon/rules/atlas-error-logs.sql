@@ -13,7 +13,7 @@ FROM (
            countIf(ts > now() - INTERVAL 15 MINUTE) AS recent_count, countIf(ts > now() - INTERVAL 1 HOUR) AS hour_count,
            min(ts) > now() - INTERVAL 1 HOUR AS is_new
     FROM datum.logs
-    WHERE product = 'atlas' AND source = 'error_log' AND attributes['unhandled'] = '1'
+    WHERE resource_id = 'atlas' AND product = 'atlas' AND source = 'error_log' AND attributes['unhandled'] = '1'
       AND attributes['exception'] != 'frappe.exceptions.PermissionError'
       AND ts > now() - INTERVAL 1 DAY
     GROUP BY alert_key

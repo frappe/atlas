@@ -16,9 +16,9 @@ FROM (
            maxIf(value, metric = 'atlas_public_ip_capacity') AS capacity,
            sumIf(value, metric = 'atlas_public_ip_allocations' AND labels['status'] != 'Available') AS used
     FROM datum.samples_recent
-    WHERE metric IN ('atlas_public_ip_capacity', 'atlas_public_ip_allocations') AND labels['version'] = '4'
+    WHERE metric IN ('atlas_public_ip_capacity', 'atlas_public_ip_allocations') AND labels['version'] = '4' AND resource_id = 'atlas'
       AND ts = (SELECT max(ts) FROM datum.samples_recent
-                WHERE metric = 'atlas_public_ip_capacity' AND ts > now() - INTERVAL 15 MINUTE)
+                WHERE metric = 'atlas_public_ip_capacity' AND resource_id = 'atlas' AND ts > now() - INTERVAL 15 MINUTE)
     GROUP BY pool
 )
 WHERE capacity > 0 AND (value < 5 OR value < 0.1 * capacity)
