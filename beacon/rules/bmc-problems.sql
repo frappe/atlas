@@ -3,7 +3,7 @@
 -- resource_type: Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/bmc-problems.md
 -- interval: 300
--- pending_for: 0
+-- pending_for: 300
 -- resolve_after: 900
 -- Atlas reads each BMC every 5 minutes. A critical BMC event pages. An unhealthy component and an unreachable or unread BMC are Medium. A warning event is Low.
 SELECT resource_id, alert_key, max(value) AS value, any(detail) AS detail, any(severity) AS severity

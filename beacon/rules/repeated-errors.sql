@@ -2,7 +2,7 @@
 -- severity: Low
 -- resource_type: Host
 -- interval: 300
--- pending_for: 0
+-- pending_for: 300
 -- resolve_after: 3600
 -- metald logs one line per failed attempt, so one message 10 times in 1 h is a real problem, not a retry. It covers hosts and service nodes. openresty wraps each message in its time, worker, connection and request, so the query strips them. An upstream that refuses, resets or times out is one site, which the site and proxy checks cover, so those proxy errors do not count.
 SELECT resource_id, concat(service, ':', toString(cityHash64(message))) AS alert_key, toFloat64(count()) AS value,

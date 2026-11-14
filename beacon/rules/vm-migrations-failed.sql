@@ -2,7 +2,7 @@
 -- severity: Medium
 -- resource_type: Host
 -- interval: 300
--- pending_for: 0
+-- pending_for: 300
 -- resolve_after: 3600
 SELECT resource_id, attributes['virtual_machine_id'] AS alert_key, toFloat64(count()) AS value,
        concat('migration of ', alert_key, ' failed: ', left(any(attributes['error']), 100)) AS detail
