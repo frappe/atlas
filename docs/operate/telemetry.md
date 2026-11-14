@@ -158,6 +158,10 @@ metald logs each completed reconcile step at info level. The steps that every pa
 
 The job keeps its position in Redis. If the position is lost, it starts again 5 minutes back.
 
+## Beacon resources
+
+Beacon, the incident manager, reads `GET /api/atlas/beacon/resources` to know what this region runs. Only Central identities can call it. It returns Atlas itself (`atlas`), each host, each virtual machine with its host as parent, each proxy, WireGuard gateway and IPv6 router node with its virtual machine as parent, and the Cargo server (`cargo`). Each status maps to `Pending`, `Active`, `Suspended` or `Terminated`. The response has an ETag, and a request with a matching `If-None-Match` gets `304`.
+
 ## BMC hardware
 
 Atlas reads each host's baseboard management controller (BMC) over Redfish without access to the host OS. It sends hardware health, sensors, power, and events to Datum under the host's identity.

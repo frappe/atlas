@@ -217,6 +217,72 @@
         "title": "ApiErrorResponse",
         "type": "object"
       },
+      "BeaconResource": {
+        "description": "One regional resource that Beacon, the incident manager, monitors.",
+        "examples": [
+          {
+            "parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+            "resource_id": "vm-00010",
+            "resource_type": "Server",
+            "status": "Active",
+            "title": "vm-00010"
+          }
+        ],
+        "properties": {
+          "parent_id": {
+            "description": "Resource ID of the parent, or empty for a root resource.",
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "resource_id": {
+            "description": "Atlas ID. Telemetry from this resource carries it.",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "description": "`Atlas`, `Host`, `Server`, a service node DocType, or `Cargo Server`.",
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "status": {
+            "description": "`Pending`, `Active`, `Suspended` or `Terminated`.",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "Name that people see.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "resource_type",
+          "parent_id",
+          "title",
+          "status"
+        ],
+        "title": "BeaconResource",
+        "type": "object"
+      },
+      "BeaconResourceListResponse": {
+        "description": "Every resource that Beacon monitors in this region.",
+        "properties": {
+          "resources": {
+            "description": "Atlas, then hosts, VMs, service nodes and Cargo.",
+            "items": {
+              "$ref": "#/components/schemas/BeaconResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resources"
+        ],
+        "title": "BeaconResourceListResponse",
+        "type": "object"
+      },
       "CapacityUnavailableResponse": {
         "description": "The JSON body of a 503 from virtual machine creation.\n\n`error.code` separates a fleet that is full from one that is only busy, so a\ncaller can retry a busy placement at once and escalate a full one.",
         "properties": {
@@ -3093,6 +3159,61 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/atlas/beacon/resources": {
+      "get": {
+        "description": "Returns Atlas itself and every host, virtual machine, service node and the Cargo server of this region, with its parent, so Beacon can match telemetry to resources. The ETag changes only when the list changes.",
+        "operationId": "list_beacon_resources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeaconResourceListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "304": {
+            "description": "The list has not changed since the `If-None-Match` ETag."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "List resources for Beacon",
+        "tags": [
+          "Beacon"
+        ]
+      }
+    },
     "/api/atlas/dns-records/{name}": {
       "delete": {
         "description": "Removes the A and AAAA records of one regional service name.",
@@ -7573,6 +7694,10 @@
     {
       "description": "Hand a problem to the read-only investigator of the region and read its report. Tenant 0 only.",
       "name": "Investigations"
+    },
+    {
+      "description": "Serve the resource list that Beacon, the incident manager, monitors. Central only.",
+      "name": "Beacon"
     }
   ]
 }
