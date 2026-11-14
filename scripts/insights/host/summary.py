@@ -1,18 +1,20 @@
-from workbook import HOST, LOOKBACK, METAL_HOST_IDS, TITLES, UNHEALTHY_DISKS
+from workbook import HOST, LOOKBACK, METAL_HOST_IDS, TITLES, UNHEALTHY_DISKS, machine_usage_sql
 
 HOST_QUICK = f"""WITH {TITLES},
+usage AS (
+  SELECT resource_id, argMax(cpu_busy, ts) AS cpu_busy, argMax(ram_used, ts) AS ram_used,
+    argMax(root_used, ts) AS root_used, argMax(root_size, ts) AS root_total
+  FROM ({machine_usage_sql("ts > now() - INTERVAL 15 MINUTE")})
+  GROUP BY resource_id
+),
 latest AS (
   SELECT resource_id,
-    argMaxIf(value, ts, metric = 'system_cpu_usage_percent') AS cpu_busy,
     argMaxIf(value, ts, metric = 'system_load_average' AND labels['window'] = '5m') AS load5,
     argMaxIf(value, ts, metric = 'system_load_average' AND labels['window'] = '15m') AS load15,
     argMaxIf(value, ts, metric = 'system_cpu_count') AS cores,
-    argMaxIf(value, ts, metric = 'system_memory_usage_percent') AS ram_used,
-    argMaxIf(value, ts, metric = 'system_memory_info' AND labels['field'] = 'MemTotal') AS ram_total,
+    argMaxIf(value, ts, metric = 'system_memory_total_bytes') AS ram_total,
     argMaxIf(value, ts, metric = 'system_memory_info' AND labels['field'] = 'SwapTotal') AS swap_total,
     argMaxIf(value, ts, metric = 'system_memory_info' AND labels['field'] = 'SwapFree') AS swap_free,
-    argMaxIf(value, ts, metric = 'system_disk_usage_percent') AS root_used,
-    argMaxIf(value, ts, metric = 'system_disk_total_bytes') AS root_total,
     argMaxIf(value, ts, metric = 'system_time_seconds') - argMaxIf(value, ts, metric = 'system_boot_time_seconds') AS uptime,
     maxIf(value, metric = 'system_hwmon_temperature_celsius' AND labels['chip'] = 'coretemp' AND labels['attribute'] = 'input'
       AND ts > now() - INTERVAL 2 MINUTE) AS cpu_temperature,
@@ -26,14 +28,15 @@ latest AS (
   HAVING countIf(metric = 'system_cpu_count') > 0
 ),
 {UNHEALTHY_DISKS}
-SELECT {HOST.format(alias="l")} AS host, l.cpu_busy AS cpu_busy,
+SELECT {HOST.format(alias="l")} AS host, u.cpu_busy AS cpu_busy,
   l.load5 / greatest(l.cores, 1) * 100 AS load5_percent, l.load15 / greatest(l.cores, 1) * 100 AS load15_percent,
-  l.ram_used AS ram_used, if(l.swap_total > 0, (l.swap_total - l.swap_free) / l.swap_total * 100, 0) AS swap_used,
-  l.root_used AS root_used, l.cores AS cores, l.ram_total / 1073741824 AS ram_total, l.swap_total / 1073741824 AS swap_total,
-  l.root_total / 1073741824 AS root_total, l.uptime / 86400 AS uptime_days,
+  u.ram_used AS ram_used, if(l.swap_total > 0, (l.swap_total - l.swap_free) / l.swap_total * 100, 0) AS swap_used,
+  u.root_used AS root_used, l.cores AS cores, l.ram_total / 1073741824 AS ram_total, l.swap_total / 1073741824 AS swap_total,
+  u.root_total / 1073741824 AS root_total, l.uptime / 86400 AS uptime_days,
   l.cpu_temperature AS cpu_temperature, l.memory_temperature AS memory_temperature,
   l.pool_size / 1073741824 AS pool_size, l.failed_units AS failed_units, d.unhealthy_disks AS unhealthy_disks
 FROM latest AS l LEFT JOIN titles AS t ON t.server = l.resource_id
+LEFT JOIN usage AS u ON u.resource_id = l.resource_id
 LEFT JOIN disks AS d ON d.resource_id = l.resource_id"""
 
 # Newest disk health per host and disk. smartctl runs every 10 minutes; NVMe
@@ -101,23 +104,20 @@ FROM (SELECT * FROM pools UNION ALL SELECT * FROM arrays) AS p LEFT JOIN titles 
 
 # One row per push: the readings the top cards plot as sparklines.
 HOST_TREND = f"""WITH {TITLES},
+usage AS ({machine_usage_sql(f"ts > now() - {LOOKBACK}")}),
 pushes AS (
   SELECT ts, resource_id,
-    anyIf(value, metric = 'system_cpu_usage_percent') AS cpu_busy,
-    anyIf(value, metric = 'system_memory_usage_percent') AS ram_used,
     anyIf(value, metric = 'system_zfs_pool_capacity_percent') AS pool_used,
-    anyIf(value, metric = 'system_disk_usage_percent') AS root_used,
     anyIf(value, metric = 'system_load_average' AND labels['window'] = '5m')
       / greatest(anyIf(value, metric = 'system_cpu_count'), 1) * 100 AS load5_percent,
     anyIf(value, metric = 'system_load_average' AND labels['window'] = '15m')
       / greatest(anyIf(value, metric = 'system_cpu_count'), 1) * 100 AS load15_percent,
     anyIf(value, metric = 'metal_vm_count' AND labels['state'] = 'running') AS running_vms
   FROM samples
-  WHERE metric IN ('system_cpu_usage_percent', 'system_memory_usage_percent', 'system_zfs_pool_capacity_percent',
-      'system_disk_usage_percent', 'system_load_average', 'system_cpu_count', 'metal_vm_count')
+  WHERE metric IN ('system_zfs_pool_capacity_percent', 'system_load_average', 'system_cpu_count', 'metal_vm_count')
     AND ts > now() - {LOOKBACK} AND resource_id IN ({METAL_HOST_IDS})
   GROUP BY ts, resource_id
-  HAVING countIf(metric = 'system_cpu_usage_percent') > 0
+  HAVING countIf(metric = 'system_cpu_count') > 0
 ),
 -- The busiest disk at each push: its share of the interval spent on I/O.
 disks AS (
@@ -132,10 +132,11 @@ disks AS (
   )
   GROUP BY ts, resource_id
 )
-SELECT p.ts AS ts, {HOST.format(alias="p")} AS host, p.cpu_busy AS cpu_busy, p.ram_used AS ram_used,
-  p.pool_used AS pool_used, p.root_used AS root_used, p.load5_percent AS load5_percent,
+SELECT p.ts AS ts, {HOST.format(alias="p")} AS host, u.cpu_busy AS cpu_busy, u.ram_used AS ram_used,
+  p.pool_used AS pool_used, u.root_used AS root_used, p.load5_percent AS load5_percent,
   p.load15_percent AS load15_percent, d.disk_busy AS disk_busy, p.running_vms AS running_vms
 FROM pushes AS p LEFT JOIN titles AS t ON t.server = p.resource_id
+LEFT JOIN usage AS u ON u.ts = p.ts AND u.resource_id = p.resource_id
 LEFT JOIN disks AS d ON d.ts = p.ts AND d.resource_id = p.resource_id"""
 
 TREND_READINGS = [

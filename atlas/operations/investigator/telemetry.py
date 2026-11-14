@@ -18,7 +18,6 @@ MAXIMUM_EXECUTION_SECONDS = 30
 MAXIMUM_ROWS = 500
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 WORKBOOK_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "insights" / "generate_workbook.py"
-ALERT_QUERY_PREFIX = "q-alert-"
 FRESHNESS_SQL = """
 SELECT resource_id, max(ts) AS last_metric_at, dateDiff('second', max(ts), now()) AS metric_age_seconds
 FROM samples WHERE ts > now() - INTERVAL 1 DAY GROUP BY resource_id ORDER BY resource_id
@@ -154,15 +153,6 @@ class TelemetryQuery:
 			parameters={"filter_value": filter_value or ""},
 			row_limit=row_limit,
 		)
-
-	def get_failing_alert_checks(self) -> dict[str, list[dict]]:
-		"""Run each Atlas alert query. Return the failing checks of each alert by title."""
-		failing = {}
-		for query in get_saved_queries():
-			if query.key.startswith(ALERT_QUERY_PREFIX):
-				result = self.run(query.sql, row_limit=MAXIMUM_ROWS)
-				failing[query.title] = [dict(zip(result.columns, row, strict=True)) for row in result.rows]
-		return failing
 
 	def get_freshness(self) -> dict:
 		"""Return the age of the newest metric and log line of each resource. Old data means blind telemetry."""

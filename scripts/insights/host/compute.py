@@ -54,7 +54,12 @@ SECTIONS = [
 			Chart(
 				key="cpu-basic",
 				title="CPU Basic",
-				sql=gauge_sql("system_cpu_mode_percent", BASIC_CPU_MODE),
+				sql=rate_sql(
+					["system_cpu_seconds_total"],
+					BASIC_CPU_MODE,
+					"AND labels['mode'] NOT IN ('guest', 'guest_nice')",
+					scale="100",
+				),
 				measure=CPU_COLUMNS,
 				aggregation="avg",
 				number_format=PERCENT,

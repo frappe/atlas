@@ -9,12 +9,6 @@ from atlas.operations.investigator.tools.decorators import read_tool
 from atlas.operations.investigator.tools.inventory import get_host_name
 
 
-@read_tool(background=True)
-def list_failing_alert_checks(*, ctx: ToolContext) -> dict:
-	"""Run the Atlas alert queries (P1, P2 Hosts, P2 Platform) and return each failing check. Start here."""
-	return TelemetryQuery().get_failing_alert_checks()
-
-
 @read_tool()
 def list_saved_queries(
 	search: Annotated[

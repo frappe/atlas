@@ -19,7 +19,7 @@ def running_minutes_sql(start: str) -> str:
 	"""The finished minutes since start in which Atlas reported each host as Running."""
 	return f"""running AS (
   SELECT DISTINCT toStartOfMinute(ts) AS minute, labels['server'] AS server FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running'
+  WHERE resource_id = 'atlas' AND metric = 'atlas_metal_server_info' AND labels['status'] = 'Running'
     AND ts > {start} AND ts < toStartOfMinute(now())
 )"""
 
