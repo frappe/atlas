@@ -37,11 +37,10 @@ Do these steps once for each region, in this order:
 ## How an investigation works
 
 1. The agent loads the `incident-investigation` skill.
-2. It runs the alert queries and checks the telemetry age of each resource.
-3. It checks the raw data behind each alert, because an alert query can be wrong.
-4. It finds what changed on each affected host, then tests 2 to 4 possible causes against Datum.
-5. It reads a host over SSH only for data that Datum does not have: the Firecracker log, journal lines below warning, live state, or a host with stale telemetry.
-6. It writes a report: the cause, impact, confidence, an ASCII cause chain, a table for each group of resources and for the timeline, evidence, ruled-out causes, unexplained observations, and next steps.
+2. It checks the telemetry age of each resource.
+3. It finds what changed on each affected host, then tests 2 to 4 possible causes against Datum.
+4. It reads a host over SSH only for data that Datum does not have: the Firecracker log, journal lines below warning, live state, or a host with stale telemetry.
+5. It writes a report: the cause, impact, confidence, an ASCII cause chain, a table for each group of resources and for the timeline, evidence, ruled-out causes, unexplained observations, and next steps.
 
 Every reply uses ASD-STE100 Simplified Technical English as a short bullet list. The `simplified-technical-english` skill has the rules. An engineer can start either skill from the **Skills** menu or with `/skill:<name>` in the Flow chat.
 
@@ -51,7 +50,7 @@ A Central investigation that reaches the iteration limit gets one more turn to w
 
 | Group | Tools | Approval |
 | --- | --- | --- |
-| Telemetry | `list_failing_alert_checks`, `get_telemetry_freshness`, `list_saved_queries`, `run_saved_query`, `query_telemetry`, `get_counter_increase`, `get_reconciler_status` | None |
+| Telemetry | `get_telemetry_freshness`, `list_saved_queries`, `run_saved_query`, `query_telemetry`, `get_counter_increase`, `get_reconciler_status` | None |
 | Records | `find_resources`, `describe_host`, `describe_virtual_machine`, `list_recent_errors`, `read_error_log`, `get_host_changes`, `wait` | None |
 | Host reads | `read_firecracker_log`, `read_virtual_machine_journal`, `read_metald_journal`, `check_host_health`, `run_read_only_command`, `read_redfish_resource` | None |
 | Desk actions (engineer only) | `list_desk_actions`, `run_desk_action` | None |

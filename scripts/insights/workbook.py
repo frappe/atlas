@@ -4,19 +4,25 @@ DATA_SOURCE = os.environ.get("ATLAS_INSIGHTS_DATA_SOURCE", "datum")
 LOOKBACK = "INTERVAL 14 DAY"
 # Pilot servers push to the same Datum, so host queries read only the Metal servers that Atlas lists.
 METAL_HOST_IDS = f"SELECT labels['server'] FROM samples WHERE metric = 'atlas_metal_server_info' AND ts > now() - {LOOKBACK}"
-# Proxy, WireGuard gateway, and IPv6 router nodes push under their node name.
-SERVICE_NODE_IDS = f"""SELECT labels['node'] FROM samples
-WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo' AND ts > now() - {LOOKBACK}"""
+# Proxy, WireGuard gateway, and IPv6 router nodes push under the name of their VM.
+SERVICE_NODE_IDS = f"""SELECT labels['virtual_machine'] FROM samples
+WHERE resource_id = 'atlas' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo' AND ts > now() - {LOOKBACK}"""
 
 PERCENT = {"decimals": 1, "suffix": "%"}
 UPTIME_PERCENT = {"decimals": 2, "suffix": "%"}
 COUNT = {"shorten": True, "decimals": 0}
 SECONDS = {"decimals": 1, "suffix": " s"}
 
+# The title of each host, and the node name of each service node VM.
 TITLES = f"""titles AS (
   SELECT labels['server'] AS server, argMax(labels['title'], ts) AS title
   FROM samples
   WHERE metric = 'atlas_metal_server_info' AND ts > now() - {LOOKBACK}
+  GROUP BY server
+  UNION ALL
+  SELECT labels['virtual_machine'] AS server, argMax(labels['node'], ts) AS title
+  FROM samples
+  WHERE resource_id = 'atlas' AND metric = 'atlas_service_node' AND ts > now() - {LOOKBACK}
   GROUP BY server
 )"""
 
@@ -51,6 +57,29 @@ def gauge_sql(
 SELECT s.ts AS ts, {HOST.format(alias="s")} AS host, {series} AS series, {value} AS value
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
 WHERE s.metric = '{metric}' AND s.ts > now() - {LOOKBACK} AND s.resource_id IN ({resources}) {where}"""
+
+
+def machine_usage_sql(period: str, resources: str = METAL_HOST_IDS) -> str:
+	"""One row per push and machine, in percent: CPU busy since the push before, RAM used, and root filesystem used.
+	Linux counts guest time in user too, so the CPU total leaves it out."""
+	return f"""SELECT ts, resource_id,
+  sumIf(increase, metric = 'system_cpu_seconds_total' AND labels['mode'] != 'idle')
+    / nullIf(sumIf(increase, metric = 'system_cpu_seconds_total'), 0) * 100 AS cpu_busy,
+  (1 - anyIf(value, metric = 'system_memory_available_bytes') / nullIf(anyIf(value, metric = 'system_memory_total_bytes'), 0)) * 100 AS ram_used,
+  (1 - anyIf(value, metric = 'system_filesystem_available_bytes') / nullIf(anyIf(value, metric = 'system_filesystem_size_bytes'), 0)) * 100 AS root_used,
+  anyIf(value, metric = 'system_filesystem_size_bytes') AS root_size
+FROM (
+  SELECT ts, resource_id, metric, labels, value,
+    if(metric = 'system_cpu_seconds_total', greatest(value - lagInFrame(value, 1, value) OVER w, 0), 0) AS increase
+  FROM samples
+  WHERE {period} AND resource_id IN ({resources})
+    AND (metric IN ('system_memory_available_bytes', 'system_memory_total_bytes')
+      OR (metric = 'system_cpu_seconds_total' AND labels['mode'] NOT IN ('guest', 'guest_nice'))
+      OR (metric IN ('system_filesystem_available_bytes', 'system_filesystem_size_bytes') AND labels['mountpoint'] = '/'))
+  WINDOW w AS (PARTITION BY resource_id, metric, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
+)
+GROUP BY ts, resource_id
+HAVING countIf(metric = 'system_cpu_seconds_total') > 0"""
 
 
 def rate_sql(
@@ -108,7 +137,6 @@ class Workbook:
 		self.charts: dict = {}
 		self.dashboards: dict = {}
 		self.folders: list = []
-		self.alerts: list = []
 
 	def query(self, key: str, title: str, sql: str, folder: str) -> str:
 		"""Add a native query and return its name."""
@@ -170,7 +198,6 @@ class Workbook:
 			"queries": self.queries,
 			"charts": self.charts,
 			"dashboards": self.dashboards,
-			"alerts": self.alerts,
 		}
 
 

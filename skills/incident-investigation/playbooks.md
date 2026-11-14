@@ -78,6 +78,6 @@ Known cause: the Firecracker API stops, but the process stays alive. metald then
 
 ## An alert looks wrong
 
-1. Run the alert query with `run_saved_query`.
+1. Read the rule of the alert in `beacon/rules/` and run its query with `query_telemetry`.
 2. Get the raw samples behind the value.
-3. If the raw data does not agree with the alert, report the alert query as the cause. Name the query key and the wrong part of the query, such as a missing `GROUP BY` column.
+3. If the raw data does not agree with the alert, report the rule as the cause. Name the rule and the wrong part of the query, such as a missing `GROUP BY` column.

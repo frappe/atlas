@@ -70,7 +70,7 @@ atlas AS (
       / nullIf(sumIf(value, metric = 'atlas_host_storage_bytes' AND labels['kind'] = 'total'), 0)) * 100 AS storage_allocated,
     {PUBLIC_IPV4}
   FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND ts > now() - {LOOKBACK}
+  WHERE resource_id = 'atlas' AND ts > now() - {LOOKBACK}
     AND metric IN ('atlas_error_logs_last_minute', 'atlas_job_failed', 'atlas_job_queue_length',
       'atlas_host_cpu_millicores', 'atlas_host_memory_bytes', 'atlas_host_storage_bytes',
       'atlas_public_ip_capacity', 'atlas_public_ip_allocations')
@@ -85,7 +85,7 @@ growth AS (
   FROM (
     SELECT ts, metric, value - lagInFrame(value, 1, value) OVER w AS increase
     FROM samples
-    WHERE resource_id LIKE 'atlas-%' AND ts > now() - {LOOKBACK}
+    WHERE resource_id = 'atlas' AND ts > now() - {LOOKBACK}
       AND (metric = 'atlas_job_failed' OR (metric = 'atlas_metal_requests_total' AND labels['status'] NOT LIKE '2%')
         OR (metric = 'atlas_api_requests_total' AND labels['status'] LIKE '5%'))
     WINDOW w AS (PARTITION BY metric, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)

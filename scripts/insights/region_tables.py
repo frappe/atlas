@@ -1,14 +1,17 @@
 from bmc_dashboard import BMC_HOSTS
-from workbook import HOST, METAL_HOST_IDS, TITLES, UNHEALTHY_DISKS
+from workbook import HOST, METAL_HOST_IDS, TITLES, UNHEALTHY_DISKS, machine_usage_sql
 
 # One row per host: its newest push, Atlas's view of its capacity, and a count of
 # the problem kinds it has, so the worst host sorts first. metald omits a VM state
 # with no VMs, so VM counts read the newest push and an absent state reads 0.
 FLEET_HOSTS = f"""WITH {TITLES},
+usage AS (
+  SELECT resource_id, argMax(cpu_busy, ts) AS cpu, argMax(ram_used, ts) AS memory
+  FROM ({machine_usage_sql("ts > now() - INTERVAL 15 MINUTE")})
+  GROUP BY resource_id
+),
 latest AS (
   SELECT resource_id, max(ts) AS last_ts,
-    argMaxIf(value, ts, metric = 'system_cpu_usage_percent') AS cpu,
-    argMaxIf(value, ts, metric = 'system_memory_usage_percent') AS memory,
     argMaxIf(value, ts, metric = 'system_zfs_pool_capacity_percent') AS pool,
     argMaxIf(value, ts, metric = 'system_zfs_pool_healthy') AS pool_healthy,
     argMaxIf(value, ts, metric = 'system_systemd_failed_units') AS failed_units,
@@ -45,18 +48,19 @@ capacity AS (
     (1 - argMaxIf(value, ts, metric = 'atlas_host_storage_bytes' AND labels['kind'] = 'available')
       / nullIf(argMaxIf(value, ts, metric = 'atlas_host_storage_bytes' AND labels['kind'] = 'total'), 0)) * 100 AS storage_allocated
   FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric LIKE 'atlas_host_%' AND ts > now() - INTERVAL 15 MINUTE
+  WHERE resource_id = 'atlas' AND metric LIKE 'atlas_host_%' AND ts > now() - INTERVAL 15 MINUTE
   GROUP BY server
 ),
 {UNHEALTHY_DISKS}
 SELECT {HOST.format(alias="l")} AS host, l.version AS version, dateDiff('second', l.last_ts, now()) AS last_push_seconds,
-  l.cpu AS cpu, l.memory AS memory, l.pool AS pool, c.cpu_allocated AS cpu_allocated, c.memory_allocated AS memory_allocated,
+  u.cpu AS cpu, u.memory AS memory, l.pool AS pool, c.cpu_allocated AS cpu_allocated, c.memory_allocated AS memory_allocated,
   c.storage_allocated AS storage_allocated, l.total_vms AS total_vms, l.running AS running,
   l.pending AS pending, l.failing AS failing, l.failed_units AS failed_units, d.unhealthy_disks AS unhealthy_disks,
   toUInt8(dateDiff('second', l.last_ts, now()) >= 120) + toUInt8(l.failed_units > 0) + toUInt8(d.unhealthy_disks > 0)
     + toUInt8(l.pool_healthy = 0) + toUInt8(a.degraded_arrays > 0) AS issues,
   toUInt8(issues > 0) AS has_issues
 FROM latest AS l LEFT JOIN titles AS t ON t.server = l.resource_id
+LEFT JOIN usage AS u ON u.resource_id = l.resource_id
 LEFT JOIN arrays AS a ON a.resource_id = l.resource_id
 LEFT JOIN capacity AS c ON c.server = l.resource_id
 LEFT JOIN disks AS d ON d.resource_id = l.resource_id"""
@@ -64,7 +68,7 @@ LEFT JOIN disks AS d ON d.resource_id = l.resource_id"""
 
 # Problems of the last day, one row per kind of problem and place, newest first.
 RECENT_PROBLEMS = f"""WITH {TITLES}
-SELECT if(l.resource_id LIKE 'atlas-%', 'Atlas', if(t.title = '', l.resource_id, t.title)) AS place,
+SELECT if(l.resource_id = 'atlas', 'Atlas', if(t.title = '', l.resource_id, t.title)) AS place,
   multiIf(l.service = 'atlas', 'Unhandled error', l.message = 'migration state changed', 'Migration failed',
     l.source = 'bmc', 'BMC event', 'Host error') AS kind,
   multiIf(l.service = 'atlas', l.message, l.source = 'bmc', concat(l.attributes['sensor_type'], ' event in ', l.attributes['log']),
@@ -167,13 +171,15 @@ pressure AS (
   GROUP BY resource_id
 ),
 usage AS (
+  SELECT resource_id, avg(cpu_busy) AS cpu_busy, avg(ram_used) AS ram_used
+  FROM ({machine_usage_sql("ts > now() - INTERVAL 15 MINUTE")})
+  GROUP BY resource_id
+),
+load AS (
   SELECT resource_id,
-    avgIf(value, metric = 'system_cpu_usage_percent') AS cpu_busy,
-    avgIf(value, metric = 'system_memory_usage_percent') AS ram_used,
     avgIf(value, metric = 'system_load_average' AND labels['window'] = '5m') / greatest(maxIf(value, metric = 'system_cpu_count'), 1) AS load_per_core
   FROM samples
-  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS})
-    AND metric IN ('system_cpu_usage_percent', 'system_memory_usage_percent', 'system_load_average', 'system_cpu_count')
+  WHERE ts > now() - INTERVAL 15 MINUTE AND resource_id IN ({METAL_HOST_IDS}) AND metric IN ('system_load_average', 'system_cpu_count')
   GROUP BY resource_id
 ),
 allocation AS (
@@ -183,15 +189,16 @@ allocation AS (
     (1 - argMaxIf(value, ts, metric = 'atlas_host_memory_bytes' AND labels['kind'] = 'available')
       / nullIf(argMaxIf(value, ts, metric = 'atlas_host_memory_bytes' AND labels['kind'] = 'total'), 0)) * 100 AS memory_allocated
   FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric IN ('atlas_host_cpu_millicores', 'atlas_host_memory_bytes') AND ts > now() - INTERVAL 15 MINUTE
+  WHERE resource_id = 'atlas' AND metric IN ('atlas_host_cpu_millicores', 'atlas_host_memory_bytes') AND ts > now() - INTERVAL 15 MINUTE
   GROUP BY server
 )
-SELECT {HOST.format(alias="u")} AS host, u.cpu_busy AS cpu_busy, u.load_per_core AS load_per_core, p.cpu_pressure AS cpu_pressure,
+SELECT {HOST.format(alias="u")} AS host, u.cpu_busy AS cpu_busy, l.load_per_core AS load_per_core, p.cpu_pressure AS cpu_pressure,
   p.memory_pressure AS memory_pressure, p.io_pressure AS io_pressure, u.ram_used AS ram_used,
   a.cpu_allocated AS cpu_allocated, a.memory_allocated AS memory_allocated,
   ifNull(cpu_pressure > 10, 0) + ifNull(memory_pressure > 5, 0) + ifNull(io_pressure > 10, 0) + ifNull(ram_used > 90, 0)
     + ifNull(load_per_core > 1.5, 0) + ifNull(cpu_allocated > 100, 0) + ifNull(memory_allocated > 100, 0) AS stress_signals
 FROM usage AS u LEFT JOIN titles AS t ON t.server = u.resource_id
+LEFT JOIN load AS l ON l.resource_id = u.resource_id
 LEFT JOIN pressure AS p ON p.resource_id = u.resource_id
 LEFT JOIN allocation AS a ON a.server = u.resource_id
 WHERE stress_signals > 0"""
@@ -214,11 +221,11 @@ WHERE m.step NOT IN ('completed', 'aborted')"""
 # region is healthy.
 REGION_HEALTH = f"""WITH
 atlas_last AS (
-  SELECT max(ts) AS last_ts FROM samples WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_servers' AND ts > now() - INTERVAL 1 HOUR
+  SELECT max(ts) AS last_ts FROM samples WHERE resource_id = 'atlas' AND metric = 'atlas_metal_servers' AND ts > now() - INTERVAL 1 HOUR
 ),
 atlas AS (
   SELECT metric, labels, value FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND ts = (SELECT last_ts FROM atlas_last)
+  WHERE resource_id = 'atlas' AND ts = (SELECT last_ts FROM atlas_last)
 ),
 host_last AS (
   SELECT resource_id, max(ts) AS last_ts,
@@ -233,7 +240,7 @@ api AS (
   FROM (
     SELECT labels['status'] AS status, greatest(max(value) - min(value), 0) AS increase
     FROM samples
-    WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_api_requests_total' AND ts > now() - INTERVAL 1 HOUR
+    WHERE resource_id = 'atlas' AND metric = 'atlas_api_requests_total' AND ts > now() - INTERVAL 1 HOUR
     GROUP BY labels
   )
 ),
