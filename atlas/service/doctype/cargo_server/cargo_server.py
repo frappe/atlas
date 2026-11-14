@@ -140,6 +140,14 @@ class CargoServer(Document):
 			cargo_server._set_pilot_release_tracker(enabled=False)
 
 	@frappe.whitelist(methods=["POST"])
+	def configure_telemetry(self) -> None:
+		"""Queue the Datum agent setup and a fresh Datum token for the Cargo VM."""
+		from atlas.service.core.telemetry import request_service_telemetry
+
+		_validate_system_manager()
+		request_service_telemetry(self)
+
+	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
 		"""Remove the proxy routes and terminate the Cargo virtual machine."""
 		_validate_system_manager()

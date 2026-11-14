@@ -114,6 +114,24 @@ class TestCargoInstallation(UnitTestCase):
 		self.assertEqual(server.status, "Failed")
 		self.assertEqual(server.failure_message, "proxy-routes: proxy unavailable")
 
+	def test_an_active_cargo_server_gets_the_datum_agent(self) -> None:
+		server = cargo_server()
+		provisioner = CargoServerProvisioner(server)
+		with (
+			patch.object(provisioning, "cargo_lifecycle_lock", return_value=nullcontext()),
+			patch.object(provisioning.frappe, "get_single", return_value=server),
+			patch.object(provisioner.__class__, "is_virtual_machine_ready", new=property(lambda self: True)),
+			patch.object(
+				provisioner.__class__, "steps", new=property(lambda self: (("installation", Mock()),))
+			),
+			patch.object(provisioning, "enqueue_bucket_provisioning"),
+			patch.object(provisioning, "enqueue_service_telemetry") as enqueue_telemetry,
+		):
+			provisioner.run()
+
+		self.assertEqual(server.status, "Active")
+		enqueue_telemetry.assert_called_once_with(server)
+
 	def test_ssh_wait_goes_through_the_guest_host(self) -> None:
 		virtual_machine = SimpleNamespace(ssh_host="vm-00001", get_ssh_proxy_command=lambda: "ssh host nc")
 		provisioner = CargoServerProvisioner(cargo_server())

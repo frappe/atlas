@@ -1,6 +1,6 @@
 # Machine disk almost full
 
-A file system of a host or a VM that is not ZFS has less than 10% free (High) or 25% free (Low). The alert key is the mount. A full root or log disk stops the service of the machine and its telemetry.
+A file system of a host, an Atlas service VM or a Cargo machine that is not ZFS has less than 10% free (High) or 25% free (Low). The alert key is the mount. A full root or log disk stops the service of the machine and its telemetry.
 
 1. Open a shell on the machine. Run `df -h <mount>` and `du -xh --max-depth=2 <mount> | sort -h | tail` to find what grew.
 2. Remove what is safe to remove: old journal files (`journalctl --vacuum-size=500M`), rotated logs, old images and core dumps.

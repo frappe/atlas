@@ -20,6 +20,7 @@ from atlas.auth.issuer import issue_token
 from atlas.service.core.cargo.bucket import enqueue_bucket_provisioning
 from atlas.service.core.cargo.storage_cluster import storage_cluster_config_json
 from atlas.service.core.cargo.telemetry import telemetry_config_json
+from atlas.service.core.telemetry import enqueue_service_telemetry
 from atlas.service.doctype.cargo_server.cargo_server import cargo_lifecycle_lock
 
 if TYPE_CHECKING:
@@ -68,6 +69,7 @@ class CargoServerProvisioner:
 				self.cargo_server.status = "Active"
 				self.save()
 				enqueue_bucket_provisioning()
+				enqueue_service_telemetry(self.cargo_server)
 			except Exception as error:
 				self.cargo_server.status = "Failed"
 				self.cargo_server.failure_message = f"{phase}: {error}"
