@@ -75,6 +75,26 @@ class TestCertificates(UnitTestCase):
 		self.assertEqual(readings, {})
 
 
+class TestWarpgateSync(UnitTestCase):
+	def collect(self, warpgate_url: str | None, synced_at) -> list[dict]:
+		gauges = AtlasGauges("2026-10-27T12:00:00")
+		with (
+			patch("frappe.db.get_single_value", return_value=warpgate_url),
+			patch("frappe.cache.get_value", return_value=synced_at),
+		):
+			gauges.add_warpgate_sync()
+		return gauges.samples
+
+	def test_the_age_counts_from_the_last_full_sync(self) -> None:
+		now = AtlasGauges("2026-10-27T12:00:00").now
+		samples = self.collect("https://warpgate.test", now - timedelta(minutes=20))
+
+		self.assertAlmostEqual(samples[0]["value"], 20 * 60, delta=60)
+
+	def test_a_region_without_warpgate_sends_nothing(self) -> None:
+		self.assertEqual(self.collect(None, None), [])
+
+
 class TestMachines(UnitTestCase):
 	def collect(self) -> dict[str, str]:
 		rows = {

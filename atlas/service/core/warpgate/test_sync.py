@@ -6,7 +6,7 @@ from unittest.mock import patch
 from frappe.tests import UnitTestCase
 
 from atlas.service.core.warpgate.client import WarpgateError
-from atlas.service.core.warpgate.sync import WarpgateTargetSync
+from atlas.service.core.warpgate.sync import SYNCED_AT_CACHE_KEY, WarpgateTargetSync
 
 
 class FakeWarpgate:
@@ -208,7 +208,7 @@ class TestReportFailures(UnitTestCase):
 		cache = {}
 		fake_cache = SimpleNamespace(
 			get_value=cache.get,
-			set_value=lambda key, value, expires_in_sec: cache.update({key: value}),
+			set_value=lambda key, value, expires_in_sec=None: cache.update({key: value}),
 			delete_value=lambda key: cache.pop(key, None),
 		)
 		with patch("atlas.service.core.warpgate.sync.frappe.cache", fake_cache):
@@ -217,6 +217,8 @@ class TestReportFailures(UnitTestCase):
 			WarpgateTargetSync.report_failures(["osa-1: refused"])
 			with self.assertRaises(WarpgateError):
 				WarpgateTargetSync.report_failures(["osa-2: refused"])
+			self.assertNotIn(SYNCED_AT_CACHE_KEY, cache)
 			WarpgateTargetSync.report_failures([])
+			self.assertIn(SYNCED_AT_CACHE_KEY, cache)
 			with self.assertRaises(WarpgateError):
 				WarpgateTargetSync.report_failures(["osa-2: refused"])
