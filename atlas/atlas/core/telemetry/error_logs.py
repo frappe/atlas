@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import frappe
 import requests
-from frappe.utils import get_system_timezone, now_datetime
+from frappe.utils import get_datetime, get_system_timezone, now_datetime
 from frappe.utils.file_lock import LockTimeoutError
 from frappe.utils.synchronization import filelock
 
@@ -63,12 +63,13 @@ def send_new_error_logs(url: str) -> None:
 	except requests.RequestException as error:
 		frappe.logger("atlas.telemetry").warning(f"Datum error log push failed: {error}")
 		return
-	frappe.cache.set_value(CURSOR_KEY, rows[-1].creation.isoformat())
+	frappe.cache.set_value(CURSOR_KEY, str(rows[-1].creation))
 
 
 def get_new_error_logs() -> list[frappe._dict]:
 	"""Read after the cursor, leaving a partial timestamp group for the next batch."""
-	cursor = frappe.cache.get_value(CURSOR_KEY) or (now_datetime() - timedelta(minutes=5)).isoformat()
+	# The log store compares creation as text, so the cursor uses the same "YYYY-MM-DD HH:MM:SS" form.
+	cursor = str(get_datetime(frappe.cache.get_value(CURSOR_KEY) or now_datetime() - timedelta(minutes=5)))
 	rows = frappe.get_all(
 		"Error Log",
 		filters={"creation": [">", cursor]},
