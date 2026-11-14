@@ -19,7 +19,7 @@ FROM (
         SELECT labels['server'] AS server,
                (1 - argMaxIf(value, ts, labels['kind'] = 'available') / nullIf(argMaxIf(value, ts, labels['kind'] = 'total'), 0)) * 100 AS allocated
         FROM datum.samples_recent
-        WHERE metric = 'atlas_host_memory_bytes' AND ts > now() - INTERVAL 15 MINUTE
+        WHERE metric = 'atlas_host_memory_bytes' AND resource_id = 'atlas' AND ts > now() - INTERVAL 15 MINUTE
         GROUP BY server
     )
     WHERE allocated > 90

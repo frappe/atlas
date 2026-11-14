@@ -17,6 +17,6 @@ FROM (
 INNER JOIN (
     SELECT DISTINCT labels['virtual_machine'] AS virtual_machine, labels['node'] AS node
     FROM datum.samples_recent
-    WHERE metric = 'atlas_service_node' AND labels['service'] = 'ipv6_router' AND ts > now() - INTERVAL 15 MINUTE
+    WHERE metric = 'atlas_service_node' AND resource_id = 'atlas' AND labels['service'] = 'ipv6_router' AND ts > now() - INTERVAL 15 MINUTE
 ) AS n ON n.virtual_machine = a.resource_id
 WHERE a.attached = 0

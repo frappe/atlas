@@ -33,7 +33,7 @@ FROM (
     SELECT h.server, 'not-read', toFloat64(ifNull(dateDiff('second', r.last_ts, now()), -1)), 'Atlas did not read the BMC for 15 min', 'Medium'
     FROM (
         SELECT labels['server'] AS server FROM datum.samples_recent
-        WHERE metric = 'atlas_metal_server_info' AND ts > now() - INTERVAL 15 MINUTE
+        WHERE metric = 'atlas_metal_server_info' AND resource_id = 'atlas' AND ts > now() - INTERVAL 15 MINUTE
         GROUP BY server
         HAVING argMax(labels['bmc'], ts) = 'true' AND argMax(labels['status'], ts) = 'Running'
     ) AS h

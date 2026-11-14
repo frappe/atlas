@@ -3,6 +3,7 @@
 -- scope: Region
 -- slo_target: 99.9
 -- sort_order: 2
+-- Only the hosts that Atlas lists count, because any sender can send metal_vm_wanted_running.
 SELECT w.resource_id AS resource_id,
        toInt64(greatest(w.wanted - u.unavailable, 0)) AS good,
        toInt64(w.wanted) AS valid,
@@ -11,6 +12,10 @@ FROM (
     SELECT resource_id, argMax(value, ts) AS wanted, max(ts) AS last_ts
     FROM datum.samples_recent
     WHERE metric = 'metal_vm_wanted_running' AND ts > now() - INTERVAL 30 MINUTE
+      AND resource_id IN (
+          SELECT labels['machine'] FROM datum.samples_recent
+          WHERE metric = 'atlas_machine' AND resource_id = 'atlas' AND labels['kind'] = 'host' AND ts > now() - INTERVAL 15 MINUTE
+      )
     GROUP BY resource_id
 ) AS w
 LEFT JOIN (
