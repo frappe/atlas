@@ -160,7 +160,7 @@ The job keeps its position in Redis. If the position is lost, it starts again 5 
 
 ## Beacon resources
 
-Beacon, the incident manager, reads `GET /api/atlas/beacon/resources` to know what this region runs. Only Central identities can call it. It returns Atlas itself (`atlas`), each host, each virtual machine with its host as parent, each proxy, WireGuard gateway and IPv6 router node with its virtual machine as parent, and the Cargo server (`cargo`). Each status maps to `Pending`, `Active`, `Suspended` or `Terminated`. The response has an ETag, and a request with a matching `If-None-Match` gets `304`.
+Beacon, the incident manager, reads `GET /api/atlas/beacon/resources` to know what this region runs. Only Central identities can call it. It returns Atlas itself (`atlas`), each host, each virtual machine with its host as parent, each proxy, WireGuard gateway and IPv6 router node with its virtual machine as parent, and the Cargo server (`cargo`). Each status maps to `Pending`, `Active`, `Suspended` or `Terminated`. A virtual machine that its host reports as stopped, because it sleeps or was stopped on purpose, is `Suspended`. The response has an ETag, and a request with a matching `If-None-Match` gets `304`.
 
 ## Beacon rules
 
