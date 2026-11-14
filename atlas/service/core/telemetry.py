@@ -12,18 +12,23 @@ from atlas.metal_server.core.host_installation import throw_script_failure
 
 
 class ServiceTelemetry:
-	"""Install the Datum agent on the VM of a service node. The VM sends under its own name."""
+	"""Install the Datum agent on the VM of a service node or of the Cargo Server. The VM sends under its own name.
+
+	Pilot runs the Cargo site on the Cargo VM and sends only its own metrics, so the agent sends the machine
+	metrics and the journal of the VM, with no role file."""
 
 	def __init__(self, node: Document) -> None:
 		self.node = node
-		self.service = SERVICE_DOCTYPES[node.doctype]
+		is_cargo = node.doctype == "Cargo Server"
+		self.product = "cargo" if is_cargo else "atlas"
+		self.role = None if is_cargo else SERVICE_DOCTYPES[node.doctype]
 		self.virtual_machine = frappe.get_doc("Virtual Machine", node.virtual_machine)
 
 	def configure(self) -> None:
 		runner = SSHRunner(
 			self.virtual_machine.ssh_host, proxy_command=self.virtual_machine.get_ssh_proxy_command()
 		)
-		result = DatumAgent(runner, self.virtual_machine.name, "atlas").install(role=self.service)
+		result = DatumAgent(runner, self.virtual_machine.name, self.product).install(role=self.role)
 		if not result.is_success:
 			throw_script_failure(
 				_("Could not install the Datum agent on {0}.").format(self.node.name), result
@@ -64,7 +69,12 @@ def configure_service_telemetry(doctype: str, name: str) -> None:
 
 
 def renew_service_telemetry_credentials() -> None:
-	"""Queue a telemetry setup with a fresh Datum token for every active service node. Runs daily."""
+	"""Queue a telemetry setup with a fresh Datum token for every active service node and the Cargo Server.
+	Runs daily."""
 	for doctype in SERVICE_DOCTYPES:
 		for name in frappe.get_all(doctype, filters={"status": "Active"}, pluck="name"):
 			enqueue_service_telemetry(frappe.get_doc(doctype, name))
+
+	cargo_server = frappe.get_single("Cargo Server")
+	if cargo_server.status == "Active":
+		enqueue_service_telemetry(cargo_server)
