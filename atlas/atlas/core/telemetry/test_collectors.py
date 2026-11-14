@@ -1,7 +1,9 @@
 import os
 from collections import namedtuple
+from datetime import timedelta
 from unittest.mock import patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.telemetry.collectors import AtlasGauges
@@ -42,3 +44,32 @@ class TestFileSystems(UnitTestCase):
 		samples = self.collect({"/": 1, "/home/pilot/bench": 2})
 
 		self.assertEqual({sample["labels"]["path"] for sample in samples}, {"/", "/home/pilot/bench"})
+
+
+class TestCertificates(UnitTestCase):
+	def collect(self, wildcard_expires_on, servers: list[dict]) -> dict[tuple[str, str], float]:
+		gauges = AtlasGauges("2026-10-27T12:00:00")
+		with (
+			patch("frappe.db.get_single_value", return_value=wildcard_expires_on),
+			patch("frappe.get_all", return_value=[frappe._dict(server) for server in servers]),
+		):
+			gauges.add_certificates()
+		return {
+			(sample["labels"]["certificate"], sample["labels"].get("server", "")): sample["value"]
+			for sample in gauges.samples
+		}
+
+	def test_each_certificate_reports_the_seconds_until_it_expires(self) -> None:
+		now = AtlasGauges("2026-10-27T12:00:00").now
+		readings = self.collect(
+			now + timedelta(days=10),
+			[{"name": "host-1", "metald_tls_expires_on": now + timedelta(days=2)}],
+		)
+
+		self.assertAlmostEqual(readings[("wildcard", "")], 10 * 86400, delta=60)
+		self.assertAlmostEqual(readings[("metald", "host-1")], 2 * 86400, delta=60)
+
+	def test_a_region_without_a_wildcard_certificate_reports_only_hosts(self) -> None:
+		readings = self.collect(None, [])
+
+		self.assertEqual(readings, {})
