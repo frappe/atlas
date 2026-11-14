@@ -141,7 +141,7 @@ func (collector filesystemCollector) Collect(context.Context) ([]telemetry.Sampl
 
 func filesystemSamples(mounted mount, stat unix.Statfs_t, labels telemetry.Labels) []telemetry.Sample {
 	blockSize := float64(stat.Bsize)
-	size, free, available := float64(stat.Blocks)*blockSize, float64(stat.Bfree)*blockSize, float64(stat.Bavail)*blockSize
+	size, available := float64(stat.Blocks)*blockSize, float64(stat.Bavail)*blockSize
 	readOnly := 0.0
 	if mounted.isReadOnly {
 		readOnly = 1
@@ -149,7 +149,6 @@ func filesystemSamples(mounted mount, stat unix.Statfs_t, labels telemetry.Label
 
 	return []telemetry.Sample{
 		gauge("system_filesystem_size_bytes", size, labels),
-		gauge("system_filesystem_free_bytes", free, labels),
 		gauge("system_filesystem_available_bytes", available, labels),
 		gauge("system_filesystem_inodes", float64(stat.Files), labels),
 		gauge("system_filesystem_inodes_free", float64(stat.Ffree), labels),

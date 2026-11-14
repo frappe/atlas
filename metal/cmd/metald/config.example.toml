@@ -69,5 +69,5 @@ reserved_storage_percent = 10
 # Written by Atlas. metald rereads both daily, or when the token expires.
 datum_url = "https://datum.example.com"
 datum_token = "<token>"
-interval = "30s"
+interval = "60s"
 restart_count_units = ["metal.service", "atlas-host-firewall.service", "wg-quick@wg0.service", "vector.service"]
