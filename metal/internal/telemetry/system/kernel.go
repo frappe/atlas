@@ -20,8 +20,9 @@ const (
 	clockNanoseconds    = 0x2000
 )
 
-// kernelCollector reads load, pressure, softirqs, interrupts, entropy, and
-// open file use.
+// kernelCollector reads load, pressure, softirqs, entropy, and open file use. It does not send each
+// interrupt line: a host has one for each queue of each NIC and NVMe disk, so the count grows with
+// the CPUs. system_interrupts_total counts them all, and /proc/interrupts has the detail.
 type kernelCollector struct {
 	procRoot string
 }
@@ -31,7 +32,7 @@ func (collector kernelCollector) Collect(context.Context) ([]telemetry.Sample, e
 	var samples []telemetry.Sample
 	var failures []error
 	for _, read := range []func() ([]telemetry.Sample, error){
-		collector.load, collector.pressure, collector.softirqs, collector.interrupts, collector.limits,
+		collector.load, collector.pressure, collector.softirqs, collector.limits,
 	} {
 		collected, err := read()
 		samples = append(samples, collected...)
@@ -107,36 +108,6 @@ func (collector kernelCollector) softirqs() ([]telemetry.Sample, error) {
 			return nil, err
 		}
 		samples = append(samples, gauge("system_softirqs_total", total, telemetry.Labels{"type": strings.TrimSuffix(fields[0], ":")}))
-	}
-	return samples, nil
-}
-
-// interrupts sums each interrupt line over all CPUs and names its device. A
-// NIC queue that stops getting interrupts shows here.
-func (collector kernelCollector) interrupts() ([]telemetry.Sample, error) {
-	path := filepath.Join(collector.procRoot, "interrupts")
-	lines, err := readFields(path)
-	if err != nil {
-		return nil, err
-	}
-	if len(lines) == 0 {
-		return nil, nil
-	}
-	cpus := len(lines[0])
-
-	var samples []telemetry.Sample
-	for _, fields := range lines[1:] {
-		counts := fields[1:min(len(fields), cpus+1)]
-		total, err := sumNumbers(counts, path)
-		if err != nil {
-			continue
-		}
-		labels := telemetry.Labels{"interrupt": strings.TrimSuffix(fields[0], ":")}
-		if rest := fields[1+len(counts):]; len(rest) > 0 {
-			labels["type"] = rest[0]
-			labels["devices"] = strings.Join(rest[1:], " ")
-		}
-		samples = append(samples, gauge("system_interrupts_by_source_total", total, labels))
 	}
 	return samples, nil
 }
