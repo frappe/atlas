@@ -9,6 +9,7 @@ from ipaddress import ip_network
 
 import frappe
 import requests
+from frappe.model.base_document import get_controller
 from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
 
@@ -180,9 +181,9 @@ class AtlasGauges:
 		self.add_counts("atlas_metald_updates_active", Counter(updates), "status")
 
 		minute_ago = add_to_date(self.now, minutes=-1)
-		self.add(
-			"atlas_error_logs_last_minute", frappe.db.count("Error Log", {"creation": [">=", minute_ago]})
-		)
+		# Error Log is a virtual DocType in its own log database, so frappe.db.count reads a stale table.
+		error_logs = get_controller("Error Log").get_count("Error Log", {"creation": [">=", minute_ago]})
+		self.add("atlas_error_logs_last_minute", error_logs)
 
 	def add_services(self) -> None:
 		"""Count the nodes of each service by status."""
