@@ -223,7 +223,7 @@
           {
             "parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
             "resource_id": "vm-00010",
-            "resource_type": "Server",
+            "resource_type": "Virtual Machine",
             "status": "Active",
             "title": "vm-00010"
           }
@@ -240,7 +240,7 @@
             "type": "string"
           },
           "resource_type": {
-            "description": "`Atlas`, `Host`, `Server`, a service node DocType, or `Cargo Server`.",
+            "description": "`Atlas`, `Metal Host`, `Virtual Machine`, a service node DocType, or `Cargo Server`.",
             "title": "Resource Type",
             "type": "string"
           },

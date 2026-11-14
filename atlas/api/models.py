@@ -1214,7 +1214,7 @@ class BeaconResource(BaseModel):
 			"examples": [
 				{
 					"resource_id": "vm-00010",
-					"resource_type": "Server",
+					"resource_type": "Virtual Machine",
 					"parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
 					"title": "vm-00010",
 					"status": "Active",
@@ -1225,7 +1225,7 @@ class BeaconResource(BaseModel):
 
 	resource_id: str = Field(description="Atlas ID. Telemetry from this resource carries it.")
 	resource_type: str = Field(
-		description="`Atlas`, `Host`, `Server`, a service node DocType, or `Cargo Server`."
+		description="`Atlas`, `Metal Host`, `Virtual Machine`, a service node DocType, or `Cargo Server`."
 	)
 	parent_id: str = Field(description="Resource ID of the parent, or empty for a root resource.")
 	title: str = Field(description="Name that people see.")
