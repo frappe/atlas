@@ -13,6 +13,7 @@ from frappe.model.base_document import get_controller
 from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
 
+from atlas.service.core.warpgate.sync import SYNCED_AT_CACHE_KEY
 from atlas.vm.core.vm_state import SLEEP_STATES
 
 MEBIBYTE = 1 << 20
@@ -51,6 +52,7 @@ class AtlasGauges:
 		self.add_jobs()
 		self.add_file_systems()
 		self.add_certificates()
+		self.add_warpgate_sync()
 		return self.samples
 
 	def add(self, metric: str, value: float, **labels: str) -> None:
@@ -300,6 +302,16 @@ class AtlasGauges:
 			self.add(
 				"atlas_tls_certificate_expiry_seconds", seconds, certificate="metald", server=server.name
 			)
+
+	def add_warpgate_sync(self) -> None:
+		"""Report how long ago the Warpgate sync last reached every host. A cleared cache sends nothing until
+		the next full sync, and that sync runs each minute."""
+		if not frappe.db.get_single_value("Atlas Settings", "warpgate_url"):
+			return
+
+		synced_at = frappe.cache.get_value(SYNCED_AT_CACHE_KEY)
+		if synced_at:
+			self.add("atlas_warpgate_sync_age_seconds", (self.now - get_datetime(synced_at)).total_seconds())
 
 	def latest_usages(self) -> list:
 		"""Return the newest usage sample of each host from the last hour."""
