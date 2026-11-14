@@ -66,7 +66,7 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_migration_*` | Destination host | State transitions, duration, downtime, and transfer size |
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
-| `atlas_*` | Atlas | Regional inventory, capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, and the free space of its own root, bench, and MariaDB file systems |
+| `atlas_*` | Atlas | Regional inventory, capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, the free space of its own root, bench, and MariaDB file systems, and the days left on the wildcard and metald TLS certificates |
 | `service_*` | Vector on service nodes | CPU, memory, file systems, disks, network, load, OOM kills, and proxy requests |
 | `bmc_*` | Atlas, from the host BMC | Out-of-band health, sensors, and power. See [BMC hardware](#bmc-hardware). |
 

@@ -47,6 +47,7 @@ class AtlasGauges:
 		self.add_service_readiness()
 		self.add_jobs()
 		self.add_file_systems()
+		self.add_certificates()
 		return self.samples
 
 	def add(self, metric: str, value: float, **labels: str) -> None:
@@ -251,6 +252,24 @@ class AtlasGauges:
 			usage = shutil.disk_usage(path)
 			self.add("atlas_filesystem_bytes", usage.total, path=path, kind="size")
 			self.add("atlas_filesystem_bytes", usage.free, path=path, kind="available")
+
+	def add_certificates(self) -> None:
+		"""Report how long the wildcard certificate and the metald certificate of each Running host stay valid,
+		so a renewal that stops working shows before the certificate expires."""
+		expires_on = frappe.db.get_single_value("Atlas Settings", "wildcard_tls_expires_on")
+		if expires_on:
+			seconds = (get_datetime(expires_on) - self.now).total_seconds()
+			self.add("atlas_tls_certificate_expiry_seconds", seconds, certificate="wildcard")
+
+		for server in frappe.get_all(
+			"Metal Server",
+			filters={"status": "Running", "metald_tls_expires_on": ("is", "set")},
+			fields=["name", "metald_tls_expires_on"],
+		):
+			seconds = (get_datetime(server.metald_tls_expires_on) - self.now).total_seconds()
+			self.add(
+				"atlas_tls_certificate_expiry_seconds", seconds, certificate="metald", server=server.name
+			)
 
 	def latest_usages(self) -> list:
 		"""Return the newest usage sample of each host from the last hour."""
