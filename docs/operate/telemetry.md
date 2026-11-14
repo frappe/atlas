@@ -162,6 +162,10 @@ The job keeps its position in Redis. If the position is lost, it starts again 5 
 
 Beacon, the incident manager, reads `GET /api/atlas/beacon/resources` to know what this region runs. Only Central identities can call it. It returns Atlas itself (`atlas`), each host, each virtual machine with its host as parent, each proxy, WireGuard gateway and IPv6 router node with its virtual machine as parent, and the Cargo server (`cargo`). Each status maps to `Pending`, `Active`, `Suspended` or `Terminated`. The response has an ETag, and a request with a matching `If-None-Match` gets `304`.
 
+## Beacon rules
+
+Beacon reads its alert rules, services and runbooks for Atlas, metald, hosts and the regional services from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule, `beacon/services/<service>.sql` is one SLO service, and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
+
 ## BMC hardware
 
 Atlas reads each host's baseboard management controller (BMC) over Redfish without access to the host OS. It sends hardware health, sensors, power, and events to Datum under the host's identity.
