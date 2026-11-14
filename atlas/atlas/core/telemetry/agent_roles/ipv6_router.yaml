@@ -1,6 +1,5 @@
-# The IPv6 router translates in a tc eBPF program on eth0. The machine can run while the program is
-# detached, and then nothing is forwarded.
 sources:
+  # The router translates in a tc eBPF program on eth0. The machine can run while the program is detached, and then nothing is forwarded.
   ipv6_router_check:
     type: exec
     mode: scheduled

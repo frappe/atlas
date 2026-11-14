@@ -1,6 +1,5 @@
-# The WireGuard gateway: its peers, and the peers with a handshake in the last 3 minutes. A root timer of
-# the gateway writes the counts, because reading WireGuard needs root.
 sources:
+  # The peers, and the peers with a handshake in the last 3 minutes. A root timer writes the counts, because reading WireGuard needs root.
   wireguard_peers_file:
     type: exec
     mode: scheduled
