@@ -149,7 +149,7 @@ The Datum agent reads the journal and posts batches of up to 5,000 lines, 10 req
 | `kernel` | Kernel warnings and errors, such as NIC, OOM, and ZFS messages. |
 | unit name | Warnings and errors of every other unit. |
 
-metald logs each completed reconcile step at info level. The steps that every pass runs for every VM (`network`, `inspect`, and `storage`) log at debug level when they succeed.
+metald logs each completed reconcile step at info level. The steps that every pass runs for every VM (`network`, `inspect`, and `storage`) log at debug level when they succeed. metald logs each API request at info level, except a `/v1/sync` that succeeds: Atlas syncs each host every 10 seconds, so that request logs at debug level, and `metal_api_requests_total` counts it.
 
 ## Atlas errors
 
