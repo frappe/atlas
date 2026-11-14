@@ -55,3 +55,38 @@ transforms:
         field: slow
         increment_by_value: true
         name: proxy_slow_requests_total
+
+tests:
+  - name: a proxy package older than upstream_header_time gives origin unknown
+    inputs:
+      - insert_at: nginx_requests
+        type: log
+        log_fields:
+          message: '{"status":"502","request_time":"0.5","upstream_response_time":"0.4"}'
+    outputs:
+      - extract_from: nginx_requests
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.origin, "unknown")'
+  - name: a 502 with no upstream response header is from the proxy
+    inputs:
+      - insert_at: nginx_requests
+        type: log
+        log_fields:
+          message: '{"status":"502","request_time":"0.5","upstream_response_time":"0.4","upstream_header_time":"-"}'
+    outputs:
+      - extract_from: nginx_requests
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.origin, "proxy")'
+  - name: a 502 that the last tried upstream sent is from the upstream
+    inputs:
+      - insert_at: nginx_requests
+        type: log
+        log_fields:
+          message: '{"status":"502","request_time":"0.5","upstream_response_time":"0.1, 0.4","upstream_header_time":"-, 0.3"}'
+    outputs:
+      - extract_from: nginx_requests
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.origin, "upstream")'
