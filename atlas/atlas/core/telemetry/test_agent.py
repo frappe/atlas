@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+from unittest import skipUnless
 from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
@@ -16,6 +19,12 @@ class TestDatumAgentRoles(UnitTestCase):
 		"""The base configuration of the agent owns the sinks, so a role only adds metrics_* and logs_*."""
 		for role in ROLES.glob("*.yaml"):
 			self.assertNotIn("sinks:", role.read_text(), role.name)
+
+	@skipUnless(shutil.which("vector"), "needs the vector binary")
+	def test_the_role_files_pass_their_vector_tests(self) -> None:
+		for role in ROLES.glob("*.yaml"):
+			if "\ntests:" in role.read_text():
+				subprocess.run(["vector", "test", str(role)], check=True)
 
 	def test_the_proxy_also_sends_the_nginx_error_log(self) -> None:
 		documents = DatumAgent.get_role_config("proxy").split("\n---\n")
