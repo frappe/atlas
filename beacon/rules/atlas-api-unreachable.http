@@ -1,0 +1,10 @@
+-- title: Atlas API unreachable
+-- severity: High
+-- url: {atlas_url}/api/atlas/jwks.json
+-- region: all
+-- expected_text: "keys"
+-- timeout: 10
+-- pending_for: 180
+-- resolve_after: 300
+-- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-api-unreachable.md
+-- Beacon calls the public key set of the Atlas API from outside the region. It needs the web workers, so it fails when the scheduler runs but the API is down. Central cannot create, start or stop servers then.

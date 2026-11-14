@@ -1,0 +1,10 @@
+-- title: Atlas certificate expiring
+-- severity: Medium
+-- host: {atlas_url}
+-- region: all
+-- minimum_days_left: 14
+-- timeout: 10
+-- pending_for: 900
+-- resolve_after: 1800
+-- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-certificate.md
+-- Beacon reads the certificate that the Atlas API serves. Central calls this API for every server action.

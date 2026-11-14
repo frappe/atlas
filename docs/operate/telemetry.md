@@ -172,7 +172,7 @@ Beacon, the incident manager, reads `GET /api/atlas/beacon/resources` to know wh
 
 ## Beacon rules
 
-Beacon reads its alert rules, services and runbooks for Atlas, metald, hosts and the regional services from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule, `beacon/services/<service>.sql` is one SLO service, and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
+Beacon reads its alert rules, services and runbooks for Atlas, metald, hosts and the regional services from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule, `.http` and `.tls` files are checks that Beacon makes from outside the region (the Atlas API and its certificate), `beacon/services/<service>.sql` is one SLO service, and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
 
 ## BMC hardware
 
