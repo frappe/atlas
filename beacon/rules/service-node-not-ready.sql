@@ -1,6 +1,6 @@
 -- title: Service node not ready
 -- severity: High
--- resource_type: Server
+-- resource_type: Proxy Server, Wireguard Gateway Server, IPv6 Router Server
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/service-node-not-ready.md
 -- interval: 60
 -- pending_for: 180

@@ -1,6 +1,6 @@
 -- title: Host hardware degraded
 -- severity: High
--- resource_type: Host
+-- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-hardware-degraded.md
 -- interval: 300
 -- pending_for: 300

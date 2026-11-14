@@ -1,6 +1,6 @@
 -- title: Host under stress
 -- severity: Medium
--- resource_type: Host
+-- resource_type: Metal Host
 -- interval: 300
 -- pending_for: 900
 -- resolve_after: 900
