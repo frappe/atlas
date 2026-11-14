@@ -1,6 +1,9 @@
+from unittest.mock import patch
+
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.telemetry.agent import ROLES, DatumAgent
+from atlas.atlas.core.ssh import SSHResult, SSHRunner
+from atlas.atlas.core.telemetry.agent import INSTALL_TIMEOUT_SECONDS, ROLES, DatumAgent
 from atlas.atlas.core.telemetry.collectors import SERVICE_DOCTYPES
 
 
@@ -19,3 +22,17 @@ class TestDatumAgentRoles(UnitTestCase):
 
 		self.assertEqual(len(documents), 2)
 		self.assertIn("logs_nginx", documents[1])
+
+	def test_install_sends_the_script_and_token_over_ssh(self) -> None:
+		with (
+			patch("atlas.atlas.core.telemetry.agent.get_datum_url", return_value="https://datum.test"),
+			patch("atlas.atlas.core.telemetry.agent.issue_datum_token", return_value="datum-jwt"),
+			patch.object(SSHRunner, "_run", return_value=SSHResult(output="", exit_code=0)) as run,
+		):
+			DatumAgent(SSHRunner("192.0.2.1"), "vm-1", "atlas").install(role="proxy")
+
+		source, data, timeout_seconds, _ = run.call_args.args
+		self.assertIn("datum.d", source)
+		self.assertEqual(data["DATUM_TOKEN"], "datum-jwt")
+		self.assertIn("nginx_requests", data["ROLE_CONFIG"])
+		self.assertEqual(timeout_seconds, INSTALL_TIMEOUT_SECONDS)

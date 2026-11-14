@@ -39,7 +39,7 @@ class DatumAgent:
 			"INFO_UNITS": " ".join(info_units),
 			"ROLE_CONFIG": self.get_role_config(role) if role else "",
 		}
-		return self.runner.run(
+		return self.runner.run_command(
 			prelude + get_install_script(), data=environment, timeout_seconds=INSTALL_TIMEOUT_SECONDS
 		)
 
