@@ -1,6 +1,6 @@
 -- title: BMC problems
 -- severity: High
--- resource_type: Host
+-- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/bmc-problems.md
 -- interval: 300
 -- pending_for: 300

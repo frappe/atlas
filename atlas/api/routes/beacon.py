@@ -76,7 +76,7 @@ class BeaconResourceList:
 
 	def add_hosts(self) -> None:
 		for host in frappe.get_all("Metal Server", fields=["name", "title", "status"], order_by="name"):
-			self.add(host.name, "Host", host.title, HOST_STATUSES.get(host.status, "Pending"))
+			self.add(host.name, "Metal Host", host.title, HOST_STATUSES.get(host.status, "Pending"))
 
 	def add_virtual_machines(self) -> None:
 		"""A draft is not placed yet, so it has no host. The hostname is virtual, so the title is the name.
@@ -95,7 +95,11 @@ class BeaconResourceList:
 			order_by="name",
 		):
 			self.add(
-				machine.name, "Server", machine.name, get_machine_status(machine, stopped), machine.server
+				machine.name,
+				"Virtual Machine",
+				machine.name,
+				get_machine_status(machine, stopped),
+				machine.server,
 			)
 
 	def add_service_nodes(self) -> None:

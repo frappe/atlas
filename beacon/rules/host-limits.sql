@@ -1,6 +1,6 @@
 -- title: Host near a kernel limit
 -- severity: Medium
--- resource_type: Host
+-- resource_type: Metal Host
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 900

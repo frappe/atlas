@@ -1,6 +1,6 @@
 -- title: Host network errors
 -- severity: Medium
--- resource_type: Host
+-- resource_type: Metal Host
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600
