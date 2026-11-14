@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
@@ -69,8 +70,10 @@ func memoryUsage(info map[string]float64) []telemetry.Sample {
 	}
 }
 
-// vmstat reports every /proc/vmstat value. Names that start with nr_ are
-// current counts; the rest only grow.
+// vmstatFields are the /proc/vmstat counters that the host charts read. The others stay on the host.
+var vmstatFields = []string{"pgpgin", "pgpgout", "pswpin", "pswpout", "pgfault", "pgmajfault", "oom_kill"}
+
+// vmstat reports the vmstatFields counters of /proc/vmstat.
 func (collector memoryCollector) vmstat() ([]telemetry.Sample, error) {
 	path := filepath.Join(collector.procRoot, "vmstat")
 	lines, err := readFields(path)
@@ -80,7 +83,7 @@ func (collector memoryCollector) vmstat() ([]telemetry.Sample, error) {
 
 	var samples []telemetry.Sample
 	for _, fields := range lines {
-		if len(fields) < 2 {
+		if len(fields) < 2 || !slices.Contains(vmstatFields, fields[0]) {
 			continue
 		}
 		value, err := parseNumber(fields[1], path)

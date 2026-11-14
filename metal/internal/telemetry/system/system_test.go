@@ -120,6 +120,9 @@ func TestMemoryKeepsEveryFieldUnderTheKernelName(t *testing.T) {
 	if available := valueOf(t, samples, "system_memory_available_bytes", nil); available != 600*1024 {
 		t.Fatalf("available = %v, want %v", available, 600*1024)
 	}
+	if hasMetricWithLabel(samples, "field", "nr_free_pages") {
+		t.Fatal("a vmstat value that no chart reads was reported")
+	}
 	if faults := valueOf(t, samples, "system_vmstat", telemetry.Labels{"field": "pgmajfault"}); faults != 7 {
 		t.Fatalf("pgmajfault = %v, want 7", faults)
 	}
@@ -156,7 +159,7 @@ func TestNetworkSkipsVirtualMachineInterfaces(t *testing.T) {
 	}
 }
 
-func TestNetstatKeepsEveryProtocolCounter(t *testing.T) {
+func TestNetstatKeepsOnlyTheCountersThatAChartReads(t *testing.T) {
 	root := writeFiles(t, map[string]string{
 		"net/snmp":     "Tcp: RtoAlgorithm CurrEstab RetransSegs\nTcp: 1 7 9\n",
 		"net/netstat":  "TcpExt: ListenDrops\nTcpExt: 4\n",
@@ -170,8 +173,8 @@ func TestNetstatKeepsEveryProtocolCounter(t *testing.T) {
 	if retransmits := valueOf(t, samples, "system_netstat", telemetry.Labels{"protocol": "Tcp", "field": "RetransSegs"}); retransmits != 9 {
 		t.Fatalf("RetransSegs = %v, want 9", retransmits)
 	}
-	if errors := valueOf(t, samples, "system_netstat", telemetry.Labels{"protocol": "Udp6", "field": "InErrors"}); errors != 2 {
-		t.Fatalf("Udp6 InErrors = %v, want 2", errors)
+	if hasMetricWithLabel(samples, "field", "RtoAlgorithm") || hasMetricWithLabel(samples, "protocol", "Udp6") {
+		t.Fatal("a counter that no chart reads was reported")
 	}
 	if bytes := valueOf(t, samples, "system_sockstat", telemetry.Labels{"protocol": "TCP", "field": "mem_bytes"}); bytes != float64(2*os.Getpagesize()) {
 		t.Fatalf("TCP mem bytes = %v, want two pages", bytes)

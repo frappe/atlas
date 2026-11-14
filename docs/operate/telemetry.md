@@ -78,7 +78,7 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 
 metald sends CPU metrics as totals, so a host with many CPUs sends the same number of series as a small host. `system_cpu_seconds_total` has `cpu="all"`. The scheduler and softnet counters have no `cpu` label. The frequency and the thermal throttles have a `package` label. No reader needs the history of one CPU: read it on the host in `/proc/stat`, `/proc/schedstat`, `/proc/net/softnet_stat` and `/sys/devices/system/cpu/`. Of each hwmon sensor, metald sends only the input and the alarm and fault flags.
 
-Kernel tables use a `field` label, for example `system_memory_info{field="MemAvailable"}`.
+Kernel tables use a `field` label, for example `system_memory_info{field="MemAvailable"}`. `system_netstat` and `system_vmstat` send only the fields that the host charts read, listed in `netstatFields` and `vmstatFields`. Add a field there when a chart or rule needs it.
 
 Collectors exclude VM volumes, interfaces, units, and per-dataset ZFS counters. Datum keeps samples 90 days, so temporary resources would cause many series.
 
