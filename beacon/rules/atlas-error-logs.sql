@@ -4,7 +4,7 @@
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 900
--- One alert for each error fingerprint that is new in the last hour (not seen in the day before), that repeats 5 times in 15 min, or 20 times in 1 h.
+-- One alert for each error fingerprint that is new in the last hour (not seen in the day before) and repeats 3 times, that repeats 5 times in 15 min, or 20 times in 1 h. One new error alone is not a problem that a person must look at.
 -- Errors that Atlas logs on purpose are handled and not counted. A PermissionError is a caller without access, such as a guest, not an Atlas failure.
 SELECT 'atlas' AS resource_id, alert_key, toFloat64(hour_count) AS value,
        concat(if(is_new, 'new: ', ''), toString(hour_count), ' x ', first_message, ' in 1 h') AS detail
@@ -18,4 +18,4 @@ FROM (
       AND ts > now() - INTERVAL 1 DAY
     GROUP BY alert_key
 )
-WHERE hour_count > 0 AND (is_new OR recent_count >= 5 OR hour_count >= 20)
+WHERE (is_new AND hour_count >= 3) OR recent_count >= 5 OR hour_count >= 20
