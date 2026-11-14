@@ -17,6 +17,7 @@ FROM (
                sumIf(increase, labels['status'] = 'unreachable' OR startsWith(labels['status'], '5')) AS recent_errors,
                sum(increase) AS recent_requests
         FROM datum.counter_increase(metric = 'atlas_metal_requests_total', window = 600)
+        WHERE resource_id = 'atlas'
         GROUP BY route
     )
     WHERE recent_errors >= 5 AND recent_errors > 0.2 * recent_requests
@@ -26,6 +27,7 @@ FROM (
         SELECT labels['route'] AS route,
                sumIf(increase, labels['status'] = 'unreachable' OR startsWith(labels['status'], '5')) AS errors
         FROM datum.counter_increase(metric = 'atlas_metal_requests_total', window = 3600)
+        WHERE resource_id = 'atlas'
         GROUP BY route
     )
     WHERE errors >= 5
@@ -34,6 +36,7 @@ FROM (
     FROM (
         SELECT sumIf(increase, labels['status'] IN ('401', '403')) AS denied
         FROM datum.counter_increase(metric = 'atlas_metal_requests_total', window = 3600)
+        WHERE resource_id = 'atlas'
     )
     WHERE denied > 0
 )

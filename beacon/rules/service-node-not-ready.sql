@@ -5,9 +5,12 @@
 -- interval: 60
 -- pending_for: 180
 -- resolve_after: 120
-SELECT labels['node'] AS resource_id, labels['service'] AS alert_key, max(value) AS value,
-       concat(alert_key, ' on ', resource_id, ' is not ready') AS detail
-FROM datum.samples_recent
-WHERE metric = 'atlas_service_ready' AND ts > now() - INTERVAL 3 MINUTE
-GROUP BY resource_id, alert_key
-HAVING value = 0 AND count() >= 2
+-- Atlas sends the readiness of each node, so only its rows count: a node label from another sender would name any node.
+SELECT node AS resource_id, service AS alert_key, ready AS value, concat(service, ' on ', node, ' is not ready') AS detail
+FROM (
+    SELECT labels['node'] AS node, labels['service'] AS service, max(value) AS ready, count() AS samples
+    FROM datum.samples_recent
+    WHERE metric = 'atlas_service_ready' AND resource_id = 'atlas' AND ts > now() - INTERVAL 3 MINUTE
+    GROUP BY node, service
+)
+WHERE ready = 0 AND samples >= 2

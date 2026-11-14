@@ -13,6 +13,7 @@ FROM (
            sumIf(increase, startsWith(labels['status'], '5')) AS errors,
            sum(increase) AS requests
     FROM datum.counter_increase(metric = 'atlas_api_requests_total', window = 600)
+    WHERE resource_id = 'atlas'
     GROUP BY operation
 )
 WHERE errors >= 5 AND errors > 0.05 * requests
@@ -21,5 +22,6 @@ SELECT 'atlas', 'all', errors, concat(toString(errors), ' of ', toString(request
 FROM (
     SELECT sumIf(increase, startsWith(labels['status'], '5')) AS errors, sum(increase) AS requests
     FROM datum.counter_increase(metric = 'atlas_api_requests_total', window = 900)
+    WHERE resource_id = 'atlas'
 )
 WHERE requests >= 50 AND errors > 0.01 * requests

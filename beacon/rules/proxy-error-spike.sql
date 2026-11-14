@@ -29,7 +29,7 @@ FROM (
 INNER JOIN (
     SELECT DISTINCT labels['virtual_machine'] AS virtual_machine, labels['node'] AS node
     FROM datum.samples_recent
-    WHERE metric = 'atlas_service_node' AND labels['service'] = 'proxy' AND ts > now() - INTERVAL 15 MINUTE
+    WHERE metric = 'atlas_service_node' AND resource_id = 'atlas' AND labels['service'] = 'proxy' AND ts > now() - INTERVAL 15 MINUTE
 ) AS n ON n.virtual_machine = c.resource_id
 WHERE (recent_requests >= 100 AND recent_share > 0.01 AND recent_share > 5 * baseline_share)
    OR (baseline_requests >= 100 AND baseline_share > 0.05)

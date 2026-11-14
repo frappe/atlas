@@ -14,6 +14,7 @@ FROM (
            maxIf(value, labels['kind'] = 'available') AS available,
            maxIf(value, labels['kind'] = 'size') AS size
     FROM datum.latest_value(metric = 'atlas_filesystem_bytes', window = 600)
+    WHERE resource_id = 'atlas'
     GROUP BY path
 )
 WHERE size > 0 AND available < 0.25 * size

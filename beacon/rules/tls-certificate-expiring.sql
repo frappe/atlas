@@ -12,6 +12,10 @@ SELECT resource_id, alert_key, days AS value,
 FROM (
     SELECT if(labels['certificate'] = 'metald', labels['server'], 'atlas') AS resource_id, labels['certificate'] AS alert_key,
            value / 86400 AS days
-    FROM datum.latest_value(metric = 'atlas_tls_certificate_expiry_seconds', window = 900)
+    FROM (
+        SELECT labels, value
+        FROM datum.latest_value(metric = 'atlas_tls_certificate_expiry_seconds', window = 900)
+        WHERE resource_id = 'atlas'
+    )
 )
 WHERE days < 21
