@@ -78,14 +78,20 @@ class BeaconResourceList:
 			self.add(host.name, "Host", host.title, HOST_STATUSES.get(host.status, "Pending"))
 
 	def add_virtual_machines(self) -> None:
-		"""A draft is not placed yet, so it has no host. The hostname is virtual, so the title is the name."""
+		"""A draft is not placed yet, so it has no host. The hostname is virtual, so the title is the name.
+		A VM that its host reports as stopped, because it sleeps or was stopped on purpose, is Suspended, so its
+		silent Pilot does not alert. A VM that must run but stopped still shows in the host's unavailable count."""
+		stopped = set(
+			frappe.get_all("Virtual Machine State", filters={"status": "stopped"}, pluck="virtual_machine")
+		)
 		for machine in frappe.get_all(
 			"Virtual Machine",
 			fields=["name", "server", "is_draft", "is_terminating"],
 			order_by="name",
 		):
-			status = "Pending" if machine.is_draft else "Terminated" if machine.is_terminating else "Active"
-			self.add(machine.name, "Server", machine.name, status, machine.server)
+			self.add(
+				machine.name, "Server", machine.name, get_machine_status(machine, stopped), machine.server
+			)
 
 	def add_service_nodes(self) -> None:
 		for doctype in SERVICE_DOCTYPES:
@@ -111,3 +117,11 @@ class BeaconResourceList:
 				SERVICE_STATUSES.get(cargo.status, "Pending"),
 				cargo.virtual_machine,
 			)
+
+
+def get_machine_status(machine: frappe._dict, stopped: set[str]) -> str:
+	if machine.is_draft:
+		return "Pending"
+	if machine.is_terminating:
+		return "Terminated"
+	return "Suspended" if machine.name in stopped else "Active"
