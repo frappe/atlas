@@ -25,7 +25,7 @@ class BeaconResource:
         Attributes:
             parent_id (str): Resource ID of the parent, or empty for a root resource.
             resource_id (str): Atlas ID. Telemetry from this resource carries it.
-            resource_type (str): `Atlas`, `Host`, `Server`, a service node DocType, or `Cargo Server`.
+            resource_type (str): `Atlas`, `Metal Host`, `Virtual Machine`, a service node DocType, or `Cargo Server`.
             status (str): `Pending`, `Active`, `Suspended` or `Terminated`.
             title (str): Name that people see.
      """
