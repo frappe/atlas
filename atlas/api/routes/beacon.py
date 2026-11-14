@@ -9,6 +9,7 @@ from atlas.api.core.base import ApiResult
 from atlas.api.core.docs import api_docs
 from atlas.api.models import BeaconResourceListResponse
 from atlas.api.router import beacon
+from atlas.vm.core.vm_state import SLEEP_STATES
 
 # Beacon knows four resource statuses. Each Atlas status maps to one of them.
 HOST_STATUSES = {
@@ -79,10 +80,14 @@ class BeaconResourceList:
 
 	def add_virtual_machines(self) -> None:
 		"""A draft is not placed yet, so it has no host. The hostname is virtual, so the title is the name.
-		A VM that its host reports as stopped, because it sleeps or was stopped on purpose, is Suspended, so its
-		silent Pilot does not alert. A VM that must run but stopped still shows in the host's unavailable count."""
+		A sleeping VM is Suspended, so its silent Pilot does not alert. Any other stopped VM stays Active: a crashed
+		VM must keep its alerts and the checks of the service node on it."""
 		stopped = set(
-			frappe.get_all("Virtual Machine State", filters={"status": "stopped"}, pluck="virtual_machine")
+			frappe.get_all(
+				"Virtual Machine State",
+				filters={"status": "stopped", "sleep_state": ("in", SLEEP_STATES)},
+				pluck="virtual_machine",
+			)
 		)
 		for machine in frappe.get_all(
 			"Virtual Machine",
