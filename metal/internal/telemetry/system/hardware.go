@@ -91,7 +91,12 @@ func (collector hardwareCollector) thermal() []telemetry.Sample {
 
 	devices, _ := filepath.Glob(filepath.Join(collector.sysRoot, "class", "thermal", "cooling_device*"))
 	for _, device := range devices {
-		labels := telemetry.Labels{"device": filepath.Base(device), "type": readText(filepath.Join(device, "type"))}
+		kind := readText(filepath.Join(device, "type"))
+		// Linux makes one Processor cooling device for each CPU. Throttles and temperatures show heat.
+		if kind == "Processor" {
+			continue
+		}
+		labels := telemetry.Labels{"device": filepath.Base(device), "type": kind}
 		if value, err := readNumber(filepath.Join(device, "cur_state")); err == nil {
 			samples = append(samples, gauge("system_cooling_device_current_state", value, labels))
 		}

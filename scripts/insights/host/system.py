@@ -140,18 +140,6 @@ SECTIONS = [
 				number_format={"decimals": 2},
 			),
 			Chart(
-				key="misc-interrupts",
-				title="Interrupts Detail",
-				sql=rate_sql(
-					["system_interrupts_by_source_total"],
-					"concat(d.labels['interrupt'], ' ', d.labels['devices'])",
-				),
-				measure="Interrupts/s",
-				aggregation="avg",
-				number_format=PER_SECOND,
-				split_values=15,
-			),
-			Chart(
 				key="misc-softirqs",
 				title="Soft Interrupts",
 				sql=rate_sql(["system_softirqs_total"], label("type")),
