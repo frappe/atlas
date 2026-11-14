@@ -5,7 +5,7 @@
 -- interval: 60
 -- pending_for: 120
 -- resolve_after: 120
--- Each machine sends system_boot_time_seconds at least once a minute: metald on a host, the Datum agent on an Atlas service VM or a Cargo machine, Pilot on a Pilot VM.
+-- Each host, Atlas service VM and Cargo machine sends system_boot_time_seconds at least once a minute: metald on a host, the Datum agent on a VM. A tenant VM does not send machine metrics, and pilot-silent covers a Pilot VM.
 -- Atlas lists the machines that must send now as atlas_machine. A machine that sent in the last 14 days and has no sample for 3 minutes is silent, so a VM that never sends telemetry does not alert.
 -- host-down covers a host that Atlas cannot reach, and vms-unavailable-on-host a VM that stopped, so silence alone is Medium.
 WITH (SELECT max(ts) FROM datum.samples_recent WHERE metric = 'atlas_machine' AND resource_id = 'atlas' AND ts > now() - INTERVAL 10 MINUTE) AS snapshot
@@ -14,7 +14,7 @@ SELECT e.machine AS resource_id, '' AS alert_key, toFloat64(if(l.last_ts IS NULL
 FROM (
     SELECT labels['machine'] AS machine
     FROM datum.samples_recent
-    WHERE metric = 'atlas_machine' AND resource_id = 'atlas' AND ts = snapshot
+    WHERE metric = 'atlas_machine' AND resource_id = 'atlas' AND ts = snapshot AND labels['kind'] != 'tenant'
 ) AS e
 LEFT JOIN (
     SELECT resource_id, max(ts) AS last_ts

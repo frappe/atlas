@@ -181,6 +181,17 @@ frappe.ui.form.on("Cargo Server", {
 			);
 
 			frm.add_custom_button(
+				__("Configure Telemetry"),
+				() =>
+					frappe.confirm(
+						__("Install Vector and a new Datum token on the Cargo VM?"),
+						() =>
+							frm.call({ method: "configure_telemetry", doc: frm.doc, freeze: true })
+					),
+				__("Actions")
+			);
+
+			frm.add_custom_button(
 				frm.doc.auto_build_pilot_images
 					? __("Disable Auto Build Pilot Images")
 					: __("Enable Auto Build Pilot Images"),

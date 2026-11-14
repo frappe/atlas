@@ -6,6 +6,7 @@
 -- pending_for: 300
 -- resolve_after: 900
 -- Every machine sends its file systems. Under 10% free pages. Under 25% free is Low: plan space before it fills.
+-- The disk of a tenant VM is the customer's: Pilot tells the customer, so a tenant VM does not alert.
 -- A ZFS file system shares the space of its pool, so host-pool-capacity covers it.
 SELECT resource_id, mountpoint AS alert_key, free AS value,
        concat(mountpoint, ' has ', toString(round(free, 1)), '% free') AS detail,
@@ -19,3 +20,8 @@ FROM (
     HAVING countIf(metric = 'system_filesystem_available_bytes') > 0
 )
 WHERE free < 25
+  AND resource_id NOT IN (
+      SELECT labels['machine']
+      FROM datum.samples_recent
+      WHERE metric = 'atlas_machine' AND resource_id = 'atlas' AND labels['kind'] = 'tenant' AND ts > now() - INTERVAL 10 MINUTE
+  )
