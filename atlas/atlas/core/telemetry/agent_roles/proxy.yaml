@@ -16,15 +16,8 @@ transforms:
       # A retried request lists one time for each upstream it tried. The last one answered.
       upstream = split(to_string(request.upstream_response_time) ?? "", ", ")
       # The proxy made the answer when the last upstream sent no response header. A site can send its own 502 or 504.
-      # A proxy package older than the field does not log it, so its origin is unknown and no rule counts it.
       header_time = to_string(get(split(to_string(request.upstream_header_time) ?? "", ", "), [-1]) ?? "") ?? ""
-      origin = if is_null(request.upstream_header_time) {
-        "unknown"
-      } else if includes(["", "-"], header_time) {
-        "proxy"
-      } else {
-        "upstream"
-      }
+      origin = if includes(["", "-"], header_time) { "proxy" } else { "upstream" }
       . = {
         "status_class": slice!(status, 0, 1) + "xx",
         "origin": origin,
@@ -57,17 +50,6 @@ transforms:
         name: proxy_slow_requests_total
 
 tests:
-  - name: a proxy package older than upstream_header_time gives origin unknown
-    inputs:
-      - insert_at: nginx_requests
-        type: log
-        log_fields:
-          message: '{"status":"502","request_time":"0.5","upstream_response_time":"0.4"}'
-    outputs:
-      - extract_from: nginx_requests
-        conditions:
-          - type: vrl
-            source: 'assert_eq!(.origin, "unknown")'
   - name: a 502 with no upstream response header is from the proxy
     inputs:
       - insert_at: nginx_requests
