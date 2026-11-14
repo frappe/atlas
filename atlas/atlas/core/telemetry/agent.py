@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from datum_client.agent import get_install_script
+from datum_client.agent import get_install_script, get_role_config
 
 from atlas.atlas.core.ssh import SSHResult, SSHRunner
 from atlas.atlas.core.telemetry.datum import HOST_TOKEN_LIFETIME, get_datum_url, issue_datum_token
 
 INSTALL_TIMEOUT_SECONDS = 600
 ROLES = Path(__file__).parent / "agent_roles"
+# The roles that the Datum agent ships, for a program that the service runs.
+SHARED_ROLES = {"proxy": ("nginx",)}
 
 
 class DatumAgent:
@@ -35,8 +37,15 @@ class DatumAgent:
 			"PRODUCT": self.product,
 			"SEND_METRICS": str(send_metrics).lower(),
 			"INFO_UNITS": " ".join(info_units),
-			"ROLE_CONFIG": (ROLES / f"{role}.yaml").read_text() if role else "",
+			"ROLE_CONFIG": self.get_role_config(role) if role else "",
 		}
 		return self.runner.run(
 			prelude + get_install_script(), data=environment, timeout_seconds=INSTALL_TIMEOUT_SECONDS
 		)
+
+	@staticmethod
+	def get_role_config(role: str) -> str:
+		"""The role file of the service and the shared roles it needs, one YAML document each."""
+		files = [(ROLES / f"{role}.yaml").read_text()]
+		files += [get_role_config(name) for name in SHARED_ROLES.get(role, ())]
+		return "\n---\n".join(files)
