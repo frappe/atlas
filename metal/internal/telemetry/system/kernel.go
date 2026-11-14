@@ -250,7 +250,6 @@ func (timeCollector) Collect(context.Context) ([]telemetry.Sample, error) {
 		gauge("system_timex_loop_time_constant", float64(timex.Constant), nil),
 		gauge("system_timex_tick_seconds", float64(timex.Tick)*1e-6, nil),
 		gauge("system_timex_tai_offset_seconds", float64(timex.Tai), nil),
-		gauge("system_timex_status", float64(timex.Status), nil),
 		gauge("system_kernel_info", 1, telemetry.Labels{
 			"release": unix.ByteSliceToString(name.Release[:]),
 			"version": unix.ByteSliceToString(name.Version[:]),

@@ -22,7 +22,7 @@ During a Datum outage, metald retains counters and up to 50,000 events in memory
 | Setting | Owner | Purpose |
 | --- | --- | --- |
 | `datum_url` | Site config | Datum base URL. Without it, Atlas pushes nothing and installs no host telemetry. |
-| `[telemetry]` in `metald.toml` | Atlas, host | Atlas writes `datum_url` and `datum_token`. metald rereads them every 24 hours, or when the token expires. The host sets `interval` (default `30s`) and `restart_count_units`, the systemd units whose restart count it reports. |
+| `[telemetry]` in `metald.toml` | Atlas, host | Atlas writes `datum_url` and `datum_token`. metald rereads them every 24 hours, or when the token expires. The host sets `interval` (default `60s`) and `restart_count_units`, the systemd units whose restart count it reports. |
 | `/etc/vector/datum.d/`, `/etc/vector/datum.env` | The Datum agent | The configuration and the token. Readable only by root and Vector. |
 
 Datum names each row by the `resource_id` in its token, as the telemetry contract sets. A host uses its Metal Server name. A VM uses its Virtual Machine name, also when it runs a service node: `atlas_service_node{node, virtual_machine}` maps the two. Atlas uses `atlas`. The `atlas_metal_server_info` metric maps a Metal Server name to its title.
@@ -70,6 +70,8 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_migration_*` | Destination host | State transitions, duration, downtime, and transfer size |
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
+
+metald sends CPU metrics as totals, so a host with many CPUs sends the same number of series as a small host. `system_cpu_seconds_total` has `cpu="all"`. The scheduler and softnet counters have no `cpu` label. The frequency and the thermal throttles have a `package` label. No reader needs the history of one CPU: read it on the host in `/proc/stat`, `/proc/schedstat`, `/proc/net/softnet_stat` and `/sys/devices/system/cpu/`. Of each hwmon sensor, metald sends only the input and the alarm and fault flags.
 | `atlas_*` | Atlas, as resource `atlas` | Regional inventory, the machines that must send (`atlas_machine`), capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, the free space of its own root, bench, and MariaDB file systems, and the days left on the wildcard and metald TLS certificates |
 | `system_*` | The Datum agent on service VMs and the Cargo VM | The machine metrics of the contract |
 | `proxy_*`, `ipv6_router_*`, `wireguard_*` | The Datum agent on service VMs | The role metrics above |
@@ -127,6 +129,7 @@ These metrics show a failing disk before a pool or array loses data.
 | `system_nvme_smart{field="critical_warning"}` | More than `0`. |
 | `system_nvme_smart{field="media_errors"}` | An increase. |
 | `system_disk_scsi_timeouts_total` | An increase: a command to a SATA or SAS disk timed out. |
+| `system_smart_scsi_grown_defects`, `system_smart_scsi_uncorrected_errors{operation}` | An increase in 1 day: a SAS disk fails. |
 | `system_md_degraded`, `system_md_mismatch_cnt` | More than `0`: a missing member, or copies that differ after a check. |
 | `system_md_member_corrected_errors` | An increase: md rewrote a sector that a member could not read. |
 | `system_zfs_device_errors{kind}`, `system_zfs_device_slow_ios` | An increase on one device. |
