@@ -4,7 +4,7 @@
 -- interval: 60
 -- pending_for: 120
 -- resolve_after: 300
--- A proxy error is a 5xx that the proxy made itself. A 5xx that the site sent (origin upstream) is the site's own fault, so it counts only as a request.
+-- A proxy error is a 5xx that the proxy made itself (origin proxy). A 5xx that the site sent (origin upstream) is the site's own fault, so it counts only as a request.
 -- The rule fires on a spike, 5 times the error share of the last 70 minutes, or on more than 5% errors for 70 minutes, so a steady failure does not hide in its own baseline.
 -- The VM sends the counts. atlas_service_node names the proxy node of the VM, so the alert is on the node.
 SELECT n.node AS resource_id, '' AS alert_key, recent_share AS value,
@@ -18,10 +18,10 @@ FROM (
            sumIf(increase, NOT is_recent) AS baseline_requests
     FROM (
         -- counter_increase handles counter resets. The baseline is the last 70 minutes, the recent window included.
-        SELECT resource_id, 1 AS is_recent, labels['status_class'] = '5xx' AND labels['origin'] != 'upstream' AS is_proxy_error, increase
+        SELECT resource_id, 1 AS is_recent, labels['status_class'] = '5xx' AND labels['origin'] = 'proxy' AS is_proxy_error, increase
         FROM datum.counter_increase(metric = 'proxy_requests_total', window = 600)
         UNION ALL
-        SELECT resource_id, 0, labels['status_class'] = '5xx' AND labels['origin'] != 'upstream', increase
+        SELECT resource_id, 0, labels['status_class'] = '5xx' AND labels['origin'] = 'proxy', increase
         FROM datum.counter_increase(metric = 'proxy_requests_total', window = 4200)
     )
     GROUP BY resource_id

@@ -1,6 +1,5 @@
-# The HTTP proxy: request counts and times from the access log. Access lines carry client addresses, so they stay
-# on the node. The shared nginx role of the Datum agent sends the error log.
 sources:
+  # Access lines carry client addresses, so only counts and times leave the node.
   nginx_access:
     type: file
     include: [/var/log/nginx/access.log]
@@ -17,8 +16,15 @@ transforms:
       # A retried request lists one time for each upstream it tried. The last one answered.
       upstream = split(to_string(request.upstream_response_time) ?? "", ", ")
       # The proxy made the answer when the last upstream sent no response header. A site can send its own 502 or 504.
+      # A proxy package older than the field does not log it, so its origin is unknown and no rule counts it.
       header_time = to_string(get(split(to_string(request.upstream_header_time) ?? "", ", "), [-1]) ?? "") ?? ""
-      origin = if includes(["", "-"], header_time) { "proxy" } else { "upstream" }
+      origin = if is_null(request.upstream_header_time) {
+        "unknown"
+      } else if includes(["", "-"], header_time) {
+        "proxy"
+      } else {
+        "upstream"
+      }
       . = {
         "status_class": slice!(status, 0, 1) + "xx",
         "origin": origin,
