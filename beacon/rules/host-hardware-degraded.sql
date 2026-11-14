@@ -3,7 +3,7 @@
 -- resource_type: Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-hardware-degraded.md
 -- interval: 300
--- pending_for: 0
+-- pending_for: 300
 -- resolve_after: 3600
 -- An uncorrected memory error pages. A failing disk and a CPU over 85 °C for 15 min are Medium. Many corrected memory errors, CPU throttling and slow ZFS I/O are Low: the part wears out.
 SELECT resource_id, alert_key, max(value) AS value, any(detail) AS detail, any(severity) AS severity

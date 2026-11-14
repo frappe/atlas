@@ -3,7 +3,7 @@
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/tls-certificate-expiring.md
 -- interval: 900
--- pending_for: 0
+-- pending_for: 900
 -- resolve_after: 900
 -- Atlas renews the wildcard certificate and each metald certificate daily from 30 days before expiry. Under 21 days left means renewal fails: Medium. Under 3 days pages, because there is no time left to fix renewal calmly. An expired wildcard certificate breaks every site, and an expired metald certificate cuts Atlas off from the host.
 SELECT resource_id, alert_key, days AS value,
