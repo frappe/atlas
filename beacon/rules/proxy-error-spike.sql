@@ -6,7 +6,8 @@
 -- resolve_after: 300
 -- A proxy error is a 5xx that the proxy made itself. A 5xx that the site sent (origin upstream) is the site's own fault, so it counts only as a request.
 -- The rule fires on a spike, 5 times the error share of the last 70 minutes, or on more than 5% errors for 70 minutes, so a steady failure does not hide in its own baseline.
-SELECT resource_id, '' AS alert_key, recent_share AS value,
+-- The VM sends the counts. atlas_service_node names the proxy node of the VM, so the alert is on the node.
+SELECT n.node AS resource_id, '' AS alert_key, recent_share AS value,
        concat('proxy 5xx share ', toString(round(100 * recent_share, 2)), '% in the last 10 min, ',
               toString(round(100 * baseline_share, 2)), '% in the last 70 min') AS detail
 FROM (
@@ -18,12 +19,17 @@ FROM (
     FROM (
         -- counter_increase handles counter resets. The baseline is the last 70 minutes, the recent window included.
         SELECT resource_id, 1 AS is_recent, labels['status_class'] = '5xx' AND labels['origin'] != 'upstream' AS is_proxy_error, increase
-        FROM datum.counter_increase(metric = 'service_proxy_requests_total', window = 600)
+        FROM datum.counter_increase(metric = 'proxy_requests_total', window = 600)
         UNION ALL
         SELECT resource_id, 0, labels['status_class'] = '5xx' AND labels['origin'] != 'upstream', increase
-        FROM datum.counter_increase(metric = 'service_proxy_requests_total', window = 4200)
+        FROM datum.counter_increase(metric = 'proxy_requests_total', window = 4200)
     )
     GROUP BY resource_id
-)
+) AS c
+INNER JOIN (
+    SELECT DISTINCT labels['virtual_machine'] AS virtual_machine, labels['node'] AS node
+    FROM datum.samples_recent
+    WHERE metric = 'atlas_service_node' AND labels['service'] = 'proxy' AND ts > now() - INTERVAL 15 MINUTE
+) AS n ON n.virtual_machine = c.resource_id
 WHERE (recent_requests >= 100 AND recent_share > 0.01 AND recent_share > 5 * baseline_share)
    OR (baseline_requests >= 100 AND baseline_share > 0.05)

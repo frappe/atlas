@@ -1,0 +1,10 @@
+[Unit]
+Description=Count the Atlas WireGuard gateway peers every 30 seconds
+
+[Timer]
+OnActiveSec=0
+OnUnitActiveSec=30s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

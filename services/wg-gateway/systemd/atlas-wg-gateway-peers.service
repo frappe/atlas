@@ -1,0 +1,11 @@
+[Unit]
+Description=Atlas WireGuard gateway peer counts for the Datum agent
+Requires=atlas-wg-gateway.service
+After=atlas-wg-gateway.service
+
+[Service]
+Type=oneshot
+RuntimeDirectory=atlas-wg-gateway
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/atlas/wg-gateway/peer-stats.sh

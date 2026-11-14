@@ -13,7 +13,7 @@ type memoryCollector struct {
 }
 
 // Collect reports every /proc/meminfo field and every /proc/vmstat counter,
-// plus the memory summary that Pilot hosts also send.
+// plus the memory metrics that every machine sends.
 func (collector memoryCollector) Collect(context.Context) ([]telemetry.Sample, error) {
 	info, err := collector.meminfo()
 	if err != nil {
@@ -57,20 +57,15 @@ func (collector memoryCollector) meminfo() (map[string]float64, error) {
 	return values, nil
 }
 
-// memoryUsage matches the Pilot shipper, which uses the psutil formulas.
+// memoryUsage reports the memory metrics of the telemetry contract.
 func memoryUsage(info map[string]float64) []telemetry.Sample {
-	total := info["MemTotal"]
-	if total == 0 {
+	if info["MemTotal"] == 0 {
 		return nil
 	}
-	used := total - info["MemFree"] - info["Buffers"] - info["Cached"]
 	return []telemetry.Sample{
-		gauge("system_memory_total_bytes", total, nil),
-		gauge("system_memory_free_bytes", info["MemFree"], nil),
-		gauge("system_memory_cached_bytes", info["Cached"], nil),
-		gauge("system_memory_used_bytes", used, nil),
+		gauge("system_memory_total_bytes", info["MemTotal"], nil),
+		gauge("system_memory_available_bytes", info["MemAvailable"], nil),
 		gauge("system_memory_swap_used_bytes", info["SwapTotal"]-info["SwapFree"], nil),
-		gauge("system_memory_usage_percent", (total-info["MemAvailable"])/total*100, nil),
 	}
 }
 

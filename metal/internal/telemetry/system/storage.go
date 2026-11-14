@@ -147,7 +147,7 @@ func filesystemSamples(mounted mount, stat unix.Statfs_t, labels telemetry.Label
 		readOnly = 1
 	}
 
-	samples := []telemetry.Sample{
+	return []telemetry.Sample{
 		gauge("system_filesystem_size_bytes", size, labels),
 		gauge("system_filesystem_free_bytes", free, labels),
 		gauge("system_filesystem_available_bytes", available, labels),
@@ -155,15 +155,6 @@ func filesystemSamples(mounted mount, stat unix.Statfs_t, labels telemetry.Label
 		gauge("system_filesystem_inodes_free", float64(stat.Ffree), labels),
 		gauge("system_filesystem_read_only", readOnly, labels),
 	}
-	if mounted.path != "/" || size == 0 {
-		return samples
-	}
-	return append(samples,
-		gauge("system_disk_total_bytes", size, nil),
-		gauge("system_disk_used_bytes", size-free, nil),
-		gauge("system_disk_free_bytes", available, nil),
-		gauge("system_disk_usage_percent", (size-free)/(size-free+available)*100, nil),
-	)
 }
 
 // Exclude temporary session and credential mounts.

@@ -37,10 +37,8 @@ def issue_datum_token(resource_id: str, lifetime: timedelta = TOKEN_LIFETIME) ->
 	)
 
 
-def get_atlas_resource_id() -> str:
-	"""Name this region's Atlas in Datum. Hosts use their Metal Server name."""
-	settings = frappe.get_cached_doc("Atlas Settings")
-	return f"atlas-{settings.region_name}"
+# The ID of the Atlas site in the Beacon resource list. Each Datum serves one region, so it needs no region.
+ATLAS_RESOURCE_ID = "atlas"
 
 
 def publish_metrics() -> None:
@@ -49,7 +47,7 @@ def publish_metrics() -> None:
 	if not url:
 		return
 
-	token = issue_datum_token(get_atlas_resource_id())
+	token = issue_datum_token(ATLAS_RESOURCE_ID)
 	timestamp = datetime.now(UTC).isoformat()
 	samples = AtlasGauges(timestamp).collect() + read_counters(timestamp)
 	observations = take_observations()

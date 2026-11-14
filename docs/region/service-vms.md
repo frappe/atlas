@@ -49,7 +49,7 @@ The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/
 
 Metal looks up `internal-<host>` before it opens an image or snapshot connection to object storage, or a telemetry connection to Datum. When the answer is a private address, Metal connects to that address and keeps the original host name for TLS and presigned URLs. When the answer is public, or the private connection fails, Metal uses the public address.
 
-Vector sends its Datum logs through a CONNECT proxy in metald at `127.0.0.1:9003`, so it uses the same private path and fallback. The proxy allows only the Datum host from `metald.toml` and at most 4 tunnels. `install-telemetry.sh` sets the proxy only when metald listens on that port, so a host with an older metald sends logs directly.
+The Datum agent of a host sends its logs through a CONNECT proxy in metald at `127.0.0.1:9003`, so it uses the same private path and fallback. The proxy allows only the Datum host from `metald.toml` and at most 4 tunnels. Atlas sets the proxy only when metald listens on that port, so a host with an older metald sends logs directly.
 
 ## Why a service can wait
 

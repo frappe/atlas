@@ -82,9 +82,14 @@ clang -O2 -g -Wall -Werror -DREGION_ID="$REGION_ID" -DGATEWAY_ID="$GATEWAY_ID" \
 step "start the gateway"
 install -m 0644 "$source_dir/systemd/atlas-wg-gateway.service" /etc/systemd/system/atlas-wg-gateway.service
 
+install -m 0755 "$source_dir/peer-stats.sh" "$state_dir/peer-stats.sh"
+install -m 0644 "$source_dir/systemd/atlas-wg-gateway-peers.service" /etc/systemd/system/atlas-wg-gateway-peers.service
+install -m 0644 "$source_dir/systemd/atlas-wg-gateway-peers.timer" /etc/systemd/system/atlas-wg-gateway-peers.timer
+
 systemctl daemon-reload
 systemctl enable atlas-wg-gateway.service
 systemctl restart atlas-wg-gateway.service
+systemctl enable --now atlas-wg-gateway-peers.timer
 
 
 step "install the gateway API"

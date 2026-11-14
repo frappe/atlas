@@ -11,6 +11,7 @@ dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
     "bcrypt~=5.0",
     "pyjwt[crypto]~=2.10",
+    "datum @ git+https://github.com/frappe/datum@main",
     "boto3~=1.43",
 ]
 

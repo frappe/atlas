@@ -73,3 +73,27 @@ class TestCertificates(UnitTestCase):
 		readings = self.collect(None, [])
 
 		self.assertEqual(readings, {})
+
+
+class TestMachines(UnitTestCase):
+	def collect(self) -> dict[str, str]:
+		rows = {
+			"Metal Server": ["host-1"],
+			"Virtual Machine State": [
+				frappe._dict(virtual_machine="vm-service", sleep_state=""),
+				frappe._dict(virtual_machine="vm-tenant", sleep_state=None),
+				frappe._dict(virtual_machine="vm-sleeping", sleep_state="deep-sleeping"),
+			],
+			"Virtual Machine": [
+				frappe._dict(name="vm-service", tenant_id=0),
+				frappe._dict(name="vm-tenant", tenant_id=7),
+			],
+		}
+		gauges = AtlasGauges("2026-10-27T12:00:00")
+		with patch("frappe.get_all", side_effect=lambda doctype, **_: rows[doctype]) as get_all:
+			gauges.add_machines()
+		self.assertEqual(get_all.call_args.kwargs["filters"]["name"], ("in", ["vm-service", "vm-tenant"]))
+		return {sample["labels"]["machine"]: sample["labels"]["kind"] for sample in gauges.samples}
+
+	def test_each_running_machine_that_does_not_sleep_must_send(self) -> None:
+		self.assertEqual(self.collect(), {"host-1": "host", "vm-service": "service", "vm-tenant": "tenant"})

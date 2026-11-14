@@ -1,0 +1,28 @@
+# The WireGuard gateway: its peers, and the peers with a handshake in the last 3 minutes. A root timer of
+# the gateway writes the counts, because reading WireGuard needs root.
+sources:
+  wireguard_peers_file:
+    type: exec
+    mode: scheduled
+    scheduled:
+      exec_interval_secs: 30
+    command: ["/bin/cat", "/run/atlas-wg-gateway/peers.json"]
+
+transforms:
+  wireguard_peer_counts:
+    type: remap
+    inputs: [wireguard_peers_file]
+    drop_on_error: true
+    source: |
+      counts = object!(parse_json!(string!(.message)))
+      . = {"peers": to_float!(counts.peers), "active": to_float!(counts.active)}
+  metrics_wireguard:
+    type: log_to_metric
+    inputs: [wireguard_peer_counts]
+    metrics:
+      - type: gauge
+        field: peers
+        name: wireguard_peers
+      - type: gauge
+        field: active
+        name: wireguard_peers_active

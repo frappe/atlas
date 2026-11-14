@@ -11,7 +11,7 @@ from frappe.utils.file_lock import LockTimeoutError
 from frappe.utils.synchronization import filelock
 
 from atlas.atlas.core.telemetry.datum import (
-	get_atlas_resource_id,
+	ATLAS_RESOURCE_ID,
 	get_datum_url,
 	issue_datum_token,
 	send_log_lines,
@@ -59,7 +59,7 @@ def send_new_error_logs(url: str) -> None:
 		return
 
 	try:
-		send_log_lines(url, issue_datum_token(get_atlas_resource_id()), [to_log_line(row) for row in rows])
+		send_log_lines(url, issue_datum_token(ATLAS_RESOURCE_ID), [to_log_line(row) for row in rows])
 	except requests.RequestException as error:
 		frappe.logger("atlas.telemetry").warning(f"Datum error log push failed: {error}")
 		return

@@ -12,12 +12,12 @@ FROM (
     SELECT resource_id,
            sumIf(increase, labels['status_class'] = '5xx' AND labels['origin'] = 'proxy') AS bad,
            sum(increase) AS valid
-    FROM datum.counter_increase(metric = 'service_proxy_requests_total', window = 90)
+    FROM datum.counter_increase(metric = 'proxy_requests_total', window = 90)
     GROUP BY resource_id
 ) AS c
 INNER JOIN (
     SELECT resource_id, max(ts) AS last_ts
     FROM datum.samples_recent
-    WHERE metric = 'service_proxy_requests_total' AND ts > now() - INTERVAL 10 MINUTE
+    WHERE metric = 'proxy_requests_total' AND ts > now() - INTERVAL 10 MINUTE
     GROUP BY resource_id
 ) AS t ON t.resource_id = c.resource_id
