@@ -60,7 +60,7 @@ def query_telemetry(
 	- samples(ts DateTime64, metric String, resource_id String, labels Map(String, String), value Float64)
 	- logs(ts DateTime64, resource_id String, product String, service String, level String, source String, message String, attributes Map(String, String))
 
-	A host resource_id is its Metal Server name. Service nodes use their node name. Atlas uses atlas-<region>.
+	A host resource_id is its Metal Server name. A VM uses its Virtual Machine name. Atlas uses atlas.
 	"""
 	return TelemetryQuery().run(sql, row_limit=row_limit).as_dict()
 

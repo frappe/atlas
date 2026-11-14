@@ -4,15 +4,15 @@ Atlas, Metal hosts, and service nodes send metrics and logs to regional [Datum](
 
 ```text
 Metal host
-  metald ── host, metald, VM, and migration metrics ──> Datum /v1/ingest
-  journald ── Vector ──> Datum /v1/logs/ingest
+  metald ── machine, metald, VM, and migration metrics ──> Datum /v1/ingest
+  journald ── Datum agent ──> Datum /v1/logs/ingest
 Atlas
   scheduled job ── regional state, counters, events ──> Datum /v1/ingest
   scheduled job ── Error Logs ──> Datum /v1/logs/ingest
   BMC jobs ── Redfish readings and events of each host ──> Datum, as the host
-Proxy, WireGuard gateway, and IPv6 router node
-  Vector ── system metrics, proxy request counts ──> Datum /v1/ingest/remote
-  Vector ── journald and OpenResty error lines ──> Datum /v1/logs/ingest
+Proxy, WireGuard gateway, and IPv6 router VM
+  Datum agent ── machine metrics, role metrics ──> Datum /v1/ingest/remote
+  Datum agent ── journald and nginx error lines ──> Datum /v1/logs/ingest
 ```
 
 During a Datum outage, metald retains counters and up to 50,000 events in memory. Atlas uses Redis. Vector buffers up to 256 MiB of logs on disk.
@@ -23,9 +23,9 @@ During a Datum outage, metald retains counters and up to 50,000 events in memory
 | --- | --- | --- |
 | `datum_url` | Site config | Datum base URL. Without it, Atlas pushes nothing and installs no host telemetry. |
 | `[telemetry]` in `metald.toml` | Atlas, host | Atlas writes `datum_url` and `datum_token`. metald rereads them every 24 hours, or when the token expires. The host sets `interval` (default `30s`) and `restart_count_units`, the systemd units whose restart count it reports. |
-| `/etc/vector/vector.yaml` | Atlas | Vector sources, the Datum line format, and the token. Readable only by root and Vector. |
+| `/etc/vector/datum.d/`, `/etc/vector/datum.env` | The Datum agent | The configuration and the token. Readable only by root and Vector. |
 
-Datum names each row by the `resource_id` in its token. A host uses its Metal Server name. A service node uses its node name, such as `proxy-012`. Atlas uses `atlas-<region name>`. The `atlas_metal_server_info` metric maps a Metal Server name to its title.
+Datum names each row by the `resource_id` in its token, as the telemetry contract sets. A host uses its Metal Server name. A VM uses its Virtual Machine name, also when it runs a service node: `atlas_service_node{node, virtual_machine}` maps the two. Atlas uses `atlas`. The `atlas_metal_server_info` metric maps a Metal Server name to its title.
 
 ## Tokens and installation
 
@@ -36,18 +36,22 @@ Atlas signs every token with its regional key for the `atlas-datum:<region ID>` 
 - A host gets telemetry right after Atlas installs metald on it, during provisioning or **Re-configure Metald**.
 - To repair one host, run **Configure Telemetry** (`configure_telemetry`) on its Metal Server.
 
-The SSH Task `install-vector.sh` installs a pinned Vector package and smartmontools, and makes the RAID monitor `mdmonitor` log array events to the journal. It also removes the Vector start limit, so systemd restarts Vector every 5 seconds until it starts.
+The SSH Task `install-host-monitoring.sh` installs smartmontools, and makes the RAID monitor `mdmonitor` log array events to the journal. Then, over direct SSH so that no SSH Task stores a token:
 
-Then `install-telemetry.sh` writes the token to `metald.toml` and `vector.yaml`, and restarts Vector. It runs over direct SSH, so no SSH Task stores the token.
+1. `configure-metald-telemetry.sh` writes the token to `metald.toml`.
+2. The Datum agent installs with `PRODUCT=metal`, no machine metrics, because metald sends them, and the `info` lines of `metal.service`. When metald listens on `127.0.0.1:9003`, the agent writes through that proxy.
+
+The Datum agent is the one Vector configuration of the telemetry contract. Datum owns it in `datum_client/agent/`, and `DatumAgent` (`atlas/atlas/core/telemetry/agent.py`) installs it. See the contract in Beacon `docs/telemetry.md`.
 
 ## Service node telemetry
 
-Each active proxy, WireGuard gateway, and IPv6 router node runs Vector. Cargo does not.
+The VM of each active proxy, WireGuard gateway, and IPv6 router node runs the Datum agent, under the name of the VM. The Cargo VM runs Pilot, which sends its own telemetry.
 
 - A node gets telemetry when its provisioning completes. `renew_service_telemetry_credentials` installs it again with a new 7-day token every day at 03:30.
-- `install-vector.sh` installs Vector. Then `install-service-telemetry.sh` writes `vector.yaml` with the token over direct SSH and restarts Vector.
-- Vector sends `service_*` system metrics every 30 seconds through Prometheus remote write, and journald lines at warning or worse.
-- On a proxy node, Vector reads the JSON OpenResty access log and sends only counts and times: `service_proxy_requests_total` by status class and origin (`proxy` when the last upstream sent no response header, so the proxy made the answer, `upstream` when the site answered, also with its own 502 or 504), `service_proxy_request_seconds_total`, `service_proxy_upstream_seconds_total`, and `service_proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. OpenResty error lines at `error` or worse go to the log route.
+- The agent sends the machine metrics of the contract each 30 seconds and the journal lines at `warning` or worse. It adds the role file of the service from `atlas/atlas/core/telemetry/agent_roles/`.
+- Proxy: the agent reads the JSON nginx access log and sends only counts and times: `proxy_requests_total` by status class and origin (`proxy` when the last upstream sent no response header, so the proxy made the answer, `upstream` when the site answered, also with its own 502 or 504), `proxy_request_seconds_total`, `proxy_upstream_seconds_total`, and `proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. nginx error lines at `warning` or worse go to the logs.
+- IPv6 router: `ipv6_router_program_attached` is 1 while the tc eBPF program is attached to `eth0`.
+- WireGuard gateway: `wireguard_peers` and `wireguard_peers_active`, the peers with a handshake in the last 3 minutes. A root timer of the gateway writes the counts, because reading WireGuard needs root.
 
 To repair one node, run **Configure Telemetry** (`configure_telemetry`) on its form.
 
@@ -66,13 +70,14 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_migration_*` | Destination host | State transitions, duration, downtime, and transfer size |
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
-| `atlas_*` | Atlas | Regional inventory, capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, the free space of its own root, bench, and MariaDB file systems, and the days left on the wildcard and metald TLS certificates |
-| `service_*` | Vector on service nodes | CPU, memory, file systems, disks, network, load, OOM kills, and proxy requests |
+| `atlas_*` | Atlas, as resource `atlas` | Regional inventory, the machines that must send (`atlas_machine`), capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, the free space of its own root, bench, and MariaDB file systems, and the days left on the wildcard and metald TLS certificates |
+| `system_*` | The Datum agent on service VMs | The machine metrics of the contract |
+| `proxy_*`, `ipv6_router_*`, `wireguard_*` | The Datum agent on service VMs | The role metrics above |
 | `bmc_*` | Atlas, from the host BMC | Out-of-band health, sensors, and power. See [BMC hardware](#bmc-hardware). |
 
 Kernel tables use a `field` label, for example `system_memory_info{field="MemAvailable"}`.
 
-Collectors exclude VM volumes, interfaces, units, and per-dataset ZFS counters. Datum retains series forever, so temporary resources would cause unbounded growth.
+Collectors exclude VM volumes, interfaces, units, and per-dataset ZFS counters. Datum keeps samples 90 days, so temporary resources would cause many series.
 
 ## Boot time
 
@@ -132,12 +137,11 @@ metald runs `smartctl` every 10 minutes, so SMART metrics have one sample for ea
 
 ## Logs
 
-Vector reads the journal and posts batches of up to 5,000 lines, 10 requests a minute at most.
+The Datum agent reads the journal and posts batches of up to 5,000 lines, 10 requests a minute at most. `service` is the unit name without `.service`.
 
 | `service` | Lines |
 | --- | --- |
-| `metald` | Every metald line. Its JSON fields become `attributes`. |
-| `metal.service` | metald output that is not JSON. A Go crash line (`panic:` or `fatal error:`) has level `critical`, so it shows on Atlas - Errors. |
+| `metal` | Every metald line at `info` or worse. Its JSON fields become `attributes`. A Go crash line (`panic:` or `fatal error:`) has level `critical`, so it shows on Atlas - Errors. |
 | `kernel` | Kernel warnings and errors, such as NIC, OOM, and ZFS messages. |
 | unit name | Warnings and errors of every other unit. |
 
@@ -218,7 +222,8 @@ A `429` from Datum means the caller sent more than 12 requests a minute to one r
 
 - [metald telemetry package](../../metal/internal/telemetry/SPEC.md) owns the registry, the push, and the host collector.
 - [Atlas telemetry](../../atlas/atlas/core/telemetry/) owns Atlas metrics and tokens.
-- [install-vector.sh](../../atlas/scripts/install-vector.sh) installs Vector and smartmontools.
-- [install-telemetry.sh](../../atlas/scripts/install-telemetry.sh) installs the credentials.
+- [install-host-monitoring.sh](../../atlas/scripts/install-host-monitoring.sh) installs smartmontools and RAID logging.
+- [configure-metald-telemetry.sh](../../atlas/scripts/configure-metald-telemetry.sh) writes the token of metald.
+- [agent.py](../../atlas/atlas/core/telemetry/agent.py) installs the Datum agent.
 
 :::

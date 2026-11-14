@@ -53,7 +53,7 @@ To read more than the dashboard shows, query Datum directly. A host writes under
 ```sql
 SELECT ts, service, level, message, attributes
 FROM datum.logs
-WHERE resource_id = '<Metal Server name>' AND level IN ('warn', 'error', 'critical') AND ts > now() - INTERVAL 1 HOUR
+WHERE resource_id = '<Metal Server name>' AND level IN ('emergency', 'alert', 'critical', 'error', 'warning') AND ts > now() - INTERVAL 1 HOUR
 ORDER BY ts DESC
 LIMIT 200
 ```
