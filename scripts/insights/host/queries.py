@@ -1,9 +1,9 @@
 from workbook import HOST, LOOKBACK, METAL_HOST_IDS, TITLES, gauge_sql, rate_sql
 
 # Insights orders series by name, so "Busy ..." stacks below "Idle" as in Grafana.
-BASIC_CPU_MODE = """multiIf(s.labels['mode'] = 'idle', 'Idle', s.labels['mode'] = 'user', 'Busy User',
-  s.labels['mode'] = 'system', 'Busy System', s.labels['mode'] = 'iowait', 'Busy Iowait',
-  s.labels['mode'] = 'irq', 'Busy IRQs', 'Busy Other')"""
+BASIC_CPU_MODE = """multiIf(d.labels['mode'] = 'idle', 'Idle', d.labels['mode'] IN ('user', 'nice'), 'Busy User',
+  d.labels['mode'] = 'system', 'Busy System', d.labels['mode'] = 'iowait', 'Busy Iowait',
+  d.labels['mode'] = 'irq', 'Busy IRQs', 'Busy Other')"""
 CPU_MODE = """if(d.labels['mode'] = 'idle', 'Idle', concat('Busy ', multiIf(d.labels['mode'] = 'irq', 'IRQ',
   d.labels['mode'] = 'softirq', 'SoftIRQ', initcap(d.labels['mode']))))"""
 VM_STATE = "initcap(s.labels['state'])"
@@ -106,4 +106,15 @@ SELECT s.ts AS ts, {HOST.format(alias="s")} AS host, s.labels['mountpoint'] AS s
 FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
 WHERE s.metric IN ('system_filesystem_size_bytes', 'system_filesystem_available_bytes') AND s.ts > now() - {LOOKBACK}
   AND s.resource_id IN ({METAL_HOST_IDS})
+GROUP BY ts, host, series"""
+
+
+def cpu_percent_sql(series: str) -> str:
+	"""The CPU time of each mode as a percent of all CPU time of the host. metald sends the total of all CPUs, so a
+	rate alone goes up to 100 times the CPU count. Linux counts guest time in user too, so the total leaves it out."""
+	rates = rate_sql(
+		["system_cpu_seconds_total"], series, "AND labels['mode'] NOT IN ('guest', 'guest_nice')"
+	)
+	return f"""SELECT ts, host, series, sum(share) AS value
+FROM (SELECT ts, host, series, 100 * value / nullIf(sum(value) OVER (PARTITION BY host, ts), 0) AS share FROM ({rates}))
 GROUP BY ts, host, series"""

@@ -185,7 +185,7 @@ In development, run Warpgate on the machine that runs Atlas, so it uses the loca
 | New host stops at `wireguard-link` | Check that `atlas0.conf` lists the host and that the timer applied it: `systemctl status atlas-wireguard-atlas0.service`. |
 | Atlas key lost | Restore the site backup with its `site_config.json`, because the encryption key is in that file. A new key needs the provider console on every host: clear `wireguard_public_key` in Atlas Settings, run `configure-atlas-wireguard`, then run `configure-wireguard.sh` on each host. |
 | Host firewall blocks access | From the private network or console, run `systemctl disable --now atlas-host-firewall && nft delete table inet atlas_host`. |
-| Warpgate refuses a person | Check that the grant is active for the right email and host. A target appears within a minute after the host gets its `wg0` key. Read Error Log for "Warpgate target sync failed". |
+| Warpgate refuses a person | Check that the grant is active for the right email and host. A target appears within a minute after the host gets its `wg0` key. Read Error Log for "Warpgate target sync failed". Beacon alerts with `warpgate-sync-failing` after 15 minutes without a full sync. |
 
 ::: details Source code and tests
 

@@ -26,14 +26,12 @@ var linkAttributes = map[string]string{
 	"mtu": "system_network_mtu_bytes", "carrier": "system_network_carrier",
 	"carrier_changes": "system_network_carrier_changes_total", "carrier_up_count": "system_network_carrier_up_changes_total",
 	"carrier_down_count": "system_network_carrier_down_changes_total", "tx_queue_len": "system_network_transmit_queue_length",
-	"dormant": "system_network_dormant", "flags": "system_network_flags", "iflink": "system_network_iface_link",
 }
 
-// softnetColumns are the hexadecimal /proc/net/softnet_stat columns of each CPU.
+// softnetColumns are the hexadecimal /proc/net/softnet_stat columns that metald adds up over all CPUs.
 var softnetColumns = map[int]string{
 	0: "system_network_softnet_processed_total", 1: "system_network_softnet_dropped_total",
-	2: "system_network_softnet_time_squeezed_total", 9: "system_network_softnet_received_rps_total",
-	10: "system_network_softnet_flow_limit_total",
+	2: "system_network_softnet_time_squeezed_total",
 }
 
 type networkCollector struct {
@@ -122,15 +120,8 @@ func (collector networkCollector) softnet() ([]telemetry.Sample, error) {
 		return nil, err
 	}
 
-	var samples []telemetry.Sample
-	for row, fields := range lines {
-		// Newer kernels name the CPU in column 12; older ones list CPUs in order.
-		cpu := strconv.Itoa(row)
-		if len(fields) > 12 {
-			if index, err := strconv.ParseUint(fields[12], 16, 64); err == nil {
-				cpu = strconv.FormatUint(index, 10)
-			}
-		}
+	totals := make(map[string]float64, len(softnetColumns))
+	for _, fields := range lines {
 		for column, metric := range softnetColumns {
 			if column >= len(fields) {
 				continue
@@ -139,8 +130,13 @@ func (collector networkCollector) softnet() ([]telemetry.Sample, error) {
 			if err != nil {
 				return nil, fmt.Errorf("parse softnet_stat: %w", err)
 			}
-			samples = append(samples, gauge(metric, float64(value), telemetry.Labels{"cpu": cpu}))
+			totals[metric] += float64(value)
 		}
+	}
+
+	var samples []telemetry.Sample
+	for metric, total := range totals {
+		samples = append(samples, gauge(metric, total, nil))
 	}
 	return samples, nil
 }

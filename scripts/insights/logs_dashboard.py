@@ -20,7 +20,7 @@ def logs_sql(where: str, columns: str = "") -> str:
 SELECT l.ts AS ts, {HOST.format(alias="l")} AS host, l.service AS service, l.level AS level,
   l.message AS message, l.attributes['virtual_machine_id'] AS vm, l.attributes['request_id'] AS request_id {columns}
 FROM logs AS l LEFT JOIN titles AS t ON t.server = l.resource_id
-WHERE l.ts > now() - {LOOKBACK} AND (l.resource_id LIKE 'atlas-%' OR l.resource_id IN ({METAL_HOST_IDS})) {where}"""
+WHERE l.ts > now() - {LOOKBACK} AND (l.resource_id = 'atlas' OR l.resource_id IN ({METAL_HOST_IDS})) {where}"""
 
 
 def log_table(
@@ -79,7 +79,7 @@ def add_logs_dashboard(workbook: Workbook) -> None:
 	problems = folder.add_chart(
 		"problems",
 		"Warnings and Errors",
-		logs_sql("AND l.level IN ('warn', 'warning', 'error', 'critical', 'alert', 'emergency')"),
+		logs_sql("AND l.level IN ('warning', 'error', 'critical', 'alert', 'emergency')"),
 		"Table",
 		log_table(["host", "service", "level", "vm", "message"], [LINES]),
 	)

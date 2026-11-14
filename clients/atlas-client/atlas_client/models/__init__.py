@@ -10,6 +10,8 @@ from .affinity_unsatisfied_error import AffinityUnsatisfiedError
 from .api_error_detail import ApiErrorDetail
 from .api_error_field import ApiErrorField
 from .api_error_response import ApiErrorResponse
+from .beacon_resource import BeaconResource
+from .beacon_resource_list_response import BeaconResourceListResponse
 from .capacity_unavailable_response import CapacityUnavailableResponse
 from .configure_webhooks_payload import ConfigureWebhooksPayload
 from .console_token_payload import ConsoleTokenPayload
@@ -107,6 +109,8 @@ __all__ = (
     "ApiErrorDetail",
     "ApiErrorField",
     "ApiErrorResponse",
+    "BeaconResource",
+    "BeaconResourceListResponse",
     "CapacityUnavailableResponse",
     "ConfigureWebhooksPayload",
     "ConsoleTokenPayload",

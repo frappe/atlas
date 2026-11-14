@@ -52,38 +52,59 @@ func hasMetricWithLabel(samples []telemetry.Sample, name, value string) bool {
 	return false
 }
 
-func TestCPUReportsEachCoreAndUsageSinceThePreviousSnapshot(t *testing.T) {
+func TestCPUReportsTotalsAndTheCoreCount(t *testing.T) {
 	root := writeFiles(t, map[string]string{
-		"stat": "cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 60 0 40 400 0 0 0 0 0 0\ncpu1 40 0 60 400 0 0 0 0 0 0\nctxt 50\n",
+		"stat":      "cpu  130 10 120 840 0 0 0 0 5 0\ncpu0 90 10 60 420 0 0 0 0 5 0\ncpu1 40 0 60 420 0 0 0 0 0 0\nbtime 1700000000\n",
+		"schedstat": "version 15\ncpu0 0 0 0 0 0 0 1000000000 2000000000 10\ncpu1 0 0 0 0 0 0 3000000000 0 5\n",
 	})
-	collector := &cpuCollector{procRoot: root, sysRoot: t.TempDir()}
-	if _, err := collector.Collect(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// 100 ticks pass: 30 user, 10 nice, 20 system, 40 idle.
-	if err := os.WriteFile(filepath.Join(root, "stat"), []byte("cpu  130 10 120 840 0 0 0 0 0 0\ncpu0 90 10 60 420 0 0 0 0 0 0\ncpu1 40 0 60 420 0 0 0 0 0 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	samples, err := collector.Collect(context.Background())
+	sysRoot := writeFiles(t, map[string]string{
+		"devices/system/cpu/cpu0/cpufreq/scaling_cur_freq":                "1000000\n",
+		"devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq":                "3000000\n",
+		"devices/system/cpu/cpu0/topology/physical_package_id":            "0\n",
+		"devices/system/cpu/cpu0/topology/core_id":                        "0\n",
+		"devices/system/cpu/cpu0/thermal_throttle/core_throttle_count":    "7\n",
+		"devices/system/cpu/cpu0/thermal_throttle/package_throttle_count": "4\n",
+		"devices/system/cpu/cpu1/cpufreq/scaling_cur_freq":                "3000000\n",
+		"devices/system/cpu/cpu1/topology/physical_package_id":            "0\n",
+		"devices/system/cpu/cpu1/topology/core_id":                        "0\n",
+		"devices/system/cpu/cpu1/thermal_throttle/core_throttle_count":    "7\n",
+		"devices/system/cpu/cpu1/thermal_throttle/package_throttle_count": "4\n",
+	})
+	samples, err := (&cpuCollector{procRoot: root, sysRoot: sysRoot}).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if usage := valueOf(t, samples, "system_cpu_usage_percent", nil); usage != 60 {
-		t.Fatalf("usage = %v, want 60", usage)
+	if count := valueOf(t, samples, "system_cpu_count", nil); count != 2 {
+		t.Fatalf("cpu count = %v, want 2", count)
 	}
-	if user := valueOf(t, samples, "system_cpu_mode_percent", telemetry.Labels{"mode": "user"}); user != 40 {
-		t.Fatalf("user = %v, want 40 including nice", user)
+	if boot := valueOf(t, samples, "system_boot_time_seconds", nil); boot != 1700000000 {
+		t.Fatalf("boot time = %v, want 1700000000", boot)
 	}
-	if seconds := valueOf(t, samples, "system_cpu_seconds_total", telemetry.Labels{"cpu": "0", "mode": "user"}); seconds != 0.9 {
-		t.Fatalf("cpu0 user seconds = %v, want 0.9", seconds)
+	if seconds := valueOf(t, samples, "system_cpu_seconds_total", telemetry.Labels{"cpu": "all", "mode": "user"}); seconds != 1.3 {
+		t.Fatalf("user seconds = %v, want 1.3", seconds)
+	}
+	if hasMetricWithLabel(samples, "cpu", "0") || hasMetricWithLabel(samples, "mode", "guest") {
+		t.Fatal("a per-CPU series or a guest mode was reported")
+	}
+	if running := valueOf(t, samples, "system_schedstat_running_seconds_total", nil); running != 4 {
+		t.Fatalf("running seconds = %v, want 4", running)
+	}
+	if hertz := valueOf(t, samples, "system_cpu_frequency_hertz", telemetry.Labels{"package": "0"}); hertz != 2e9 {
+		t.Fatalf("package frequency = %v, want the average 2e9", hertz)
+	}
+	// Two hyperthreads of one core report the same core count.
+	if throttles := valueOf(t, samples, "system_cpu_core_throttles_total", telemetry.Labels{"package": "0"}); throttles != 7 {
+		t.Fatalf("core throttles = %v, want 7", throttles)
+	}
+	if throttles := valueOf(t, samples, "system_cpu_package_throttles_total", telemetry.Labels{"package": "0"}); throttles != 4 {
+		t.Fatalf("package throttles = %v, want 4", throttles)
 	}
 }
 
-func TestMemoryKeepsEveryFieldUnderTheKernelName(t *testing.T) {
+func TestMemoryKeepsTheChartFieldsUnderTheKernelName(t *testing.T) {
 	root := writeFiles(t, map[string]string{
-		"meminfo": "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 600 kB\nBuffers: 50 kB\nCached: 250 kB\nActive(anon): 20 kB\nHugePages_Total: 4\n",
+		"meminfo": "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 600 kB\nBuffers: 50 kB\nCached: 250 kB\nActive(anon): 20 kB\nHugePages_Total: 4\nZswap: 8 kB\n",
 		"vmstat":  "pgmajfault 7\nnr_free_pages 3\n",
 	})
 	samples, err := memoryCollector{procRoot: root}.Collect(context.Background())
@@ -96,8 +117,11 @@ func TestMemoryKeepsEveryFieldUnderTheKernelName(t *testing.T) {
 	if pages := valueOf(t, samples, "system_memory_info", telemetry.Labels{"field": "HugePages_Total"}); pages != 4 {
 		t.Fatalf("HugePages_Total = %v, want a count of 4", pages)
 	}
-	if used := valueOf(t, samples, "system_memory_used_bytes", nil); used != 600*1024 {
-		t.Fatalf("used = %v, want %v", used, 600*1024)
+	if available := valueOf(t, samples, "system_memory_available_bytes", nil); available != 600*1024 {
+		t.Fatalf("available = %v, want %v", available, 600*1024)
+	}
+	if hasMetricWithLabel(samples, "field", "nr_free_pages") || hasMetricWithLabel(samples, "field", "Zswap") {
+		t.Fatal("a vmstat or meminfo value that no chart reads was reported")
 	}
 	if faults := valueOf(t, samples, "system_vmstat", telemetry.Labels{"field": "pgmajfault"}); faults != 7 {
 		t.Fatalf("pgmajfault = %v, want 7", faults)
@@ -127,15 +151,15 @@ func TestNetworkSkipsVirtualMachineInterfaces(t *testing.T) {
 	if speed := valueOf(t, samples, "system_network_speed_bytes", telemetry.Labels{"interface": "eno1"}); speed != 125e6 {
 		t.Fatalf("speed = %v, want 125000000 bytes per second", speed)
 	}
-	if squeezed := valueOf(t, samples, "system_network_softnet_time_squeezed_total", telemetry.Labels{"cpu": "1"}); squeezed != 3 {
-		t.Fatalf("cpu 1 time squeezed = %v, want 3", squeezed)
+	if squeezed := valueOf(t, samples, "system_network_softnet_time_squeezed_total", nil); squeezed != 5 {
+		t.Fatalf("time squeezed = %v, want 5 over all CPUs", squeezed)
 	}
 	if entries := valueOf(t, samples, "system_network_arp_entries", telemetry.Labels{"device": "eno1"}); entries != 1 {
 		t.Fatalf("arp entries = %v, want 1", entries)
 	}
 }
 
-func TestNetstatKeepsEveryProtocolCounter(t *testing.T) {
+func TestNetstatKeepsOnlyTheCountersThatAChartReads(t *testing.T) {
 	root := writeFiles(t, map[string]string{
 		"net/snmp":     "Tcp: RtoAlgorithm CurrEstab RetransSegs\nTcp: 1 7 9\n",
 		"net/netstat":  "TcpExt: ListenDrops\nTcpExt: 4\n",
@@ -149,8 +173,8 @@ func TestNetstatKeepsEveryProtocolCounter(t *testing.T) {
 	if retransmits := valueOf(t, samples, "system_netstat", telemetry.Labels{"protocol": "Tcp", "field": "RetransSegs"}); retransmits != 9 {
 		t.Fatalf("RetransSegs = %v, want 9", retransmits)
 	}
-	if errors := valueOf(t, samples, "system_netstat", telemetry.Labels{"protocol": "Udp6", "field": "InErrors"}); errors != 2 {
-		t.Fatalf("Udp6 InErrors = %v, want 2", errors)
+	if hasMetricWithLabel(samples, "field", "RtoAlgorithm") || hasMetricWithLabel(samples, "protocol", "Udp6") {
+		t.Fatal("a counter that no chart reads was reported")
 	}
 	if bytes := valueOf(t, samples, "system_sockstat", telemetry.Labels{"protocol": "TCP", "field": "mem_bytes"}); bytes != float64(2*os.Getpagesize()) {
 		t.Fatalf("TCP mem bytes = %v, want two pages", bytes)
@@ -299,5 +323,39 @@ errors: No known data errors
 	}
 	if checksum := valueOf(t, samples, "system_zfs_device_errors_maximum", telemetry.Labels{"pool": "metal", "kind": "checksum"}); checksum != 17 {
 		t.Fatalf("checksum errors = %v, want 17", checksum)
+	}
+}
+
+func TestHardwareSendsTheSensorInputAndAlarmButNotTheLimits(t *testing.T) {
+	sysRoot := writeFiles(t, map[string]string{
+		"class/hwmon/hwmon0/name":                 "coretemp\n",
+		"class/hwmon/hwmon0/temp1_input":          "54000\n",
+		"class/hwmon/hwmon0/temp1_crit":           "100000\n",
+		"class/hwmon/hwmon0/temp1_alarm":          "1\n",
+		"class/hwmon/hwmon0/pwm1_input":           "120\n",
+		"class/hwmon/hwmon0/temp1_label":          "Package id 0\n",
+		"class/thermal/cooling_device0/type":      "Processor\n",
+		"class/thermal/cooling_device0/cur_state": "0\n",
+		"class/thermal/cooling_device9/type":      "Fan\n",
+		"class/thermal/cooling_device9/cur_state": "2\n",
+	})
+	samples, _ := hardwareCollector{sysRoot: sysRoot}.Collect(context.Background())
+
+	labels := telemetry.Labels{"chip": "coretemp", "device": "", "sensor": "Package id 0", "attribute": "input"}
+	if celsius := valueOf(t, samples, "system_hwmon_temperature_celsius", labels); celsius != 54 {
+		t.Fatalf("temperature = %v, want 54", celsius)
+	}
+	labels["attribute"] = "alarm"
+	if alarm := valueOf(t, samples, "system_hwmon_temperature_celsius", labels); alarm != 1 {
+		t.Fatalf("alarm = %v, want the unscaled flag 1", alarm)
+	}
+	if hasMetricWithLabel(samples, "attribute", "crit") || hasMetricWithLabel(samples, "sensor", "pwm1") {
+		t.Fatal("a limit or a pwm sensor was reported")
+	}
+	if hasMetricWithLabel(samples, "type", "Processor") {
+		t.Fatal("a per-CPU cooling device was reported")
+	}
+	if state := valueOf(t, samples, "system_cooling_device_current_state", telemetry.Labels{"device": "cooling_device9", "type": "Fan"}); state != 2 {
+		t.Fatalf("fan state = %v, want 2", state)
 	}
 }

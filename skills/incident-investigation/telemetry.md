@@ -12,13 +12,13 @@
 - `samples(ts, metric, resource_id, labels, value)`: metrics. Read a label with `labels['interface']`.
 - `logs(ts, resource_id, product, service, level, source, message, attributes)`: log lines at info and above.
 
-| Metric prefix | `resource_id` |
+| Sender | `resource_id` |
 | --- | --- |
-| `system_`, `metal_` | Metal Server name, such as `01a0cb6d-7f90-...`. Get it from `describe_host`. |
-| `service_` | Service node name, such as `proxy-012` or `wireguard-001`. |
-| `atlas_` | `atlas-<region>`. A `server` label names the host. |
+| A host (`system_`, `metal_`) | Metal Server name, such as `01a0cb6d-7f90-...`. Get it from `describe_host`. |
+| A VM (`system_`, `proxy_`, `wireguard_`, `ipv6_router_`) | Virtual Machine name. `atlas_service_node{node, virtual_machine}` maps a service node, such as `proxy-012`, to its VM. |
+| Atlas (`atlas_`) | `atlas`. A `server` label names the host. |
 
-Data is kept for about 14 days.
+`atlas_machine{machine, kind}` lists each machine that must send now. Samples are kept for 90 days, log lines for 30 days.
 
 ## Rules
 
@@ -34,8 +34,8 @@ Use utilization, saturation, and errors for each host resource. Use rate, errors
 
 | Area | Utilization | Saturation | Errors |
 | --- | --- | --- | --- |
-| CPU | `system_cpu_usage_percent` | `system_load_average` against `system_cpu_count`, `system_pressure_stall_seconds_total{resource=cpu}`, `system_cpu_core_throttles_total` | |
-| Memory | `system_memory_usage_percent` | `system_pressure_stall_seconds_total{resource=memory}`, `system_memory_swap_used_bytes` | `system_vmstat{field=oom_kill}`, `system_edac_uncorrectable_errors_total` |
+| CPU | `system_cpu_seconds_total{mode}`: busy is all modes except `idle` and `iowait` | `system_load_average` against `system_cpu_count`, `system_pressure_stall_seconds_total{resource=cpu}`, `system_cpu_core_throttles_total` | |
+| Memory | `system_memory_available_bytes` against `system_memory_total_bytes` | `system_pressure_stall_seconds_total{resource=memory}`, `system_memory_swap_used_bytes` | `system_vmstat{field=oom_kill}`, `system_edac_uncorrectable_errors_total` |
 | Disk | `system_disk_io_time_seconds_total`, `system_zfs_pool_capacity_percent` | `system_disk_io_in_progress`, `system_pressure_stall_seconds_total{resource=io}`, `system_zfs_device_slow_ios` | `system_zfs_device_errors`, `system_zfs_pool_data_errors`, `system_disk_scsi_timeouts_total`, `system_smart_healthy`, `system_md_degraded`, `system_filesystem_read_only` |
 | Network | `system_network_receive_bytes_total`, `system_network_transmit_bytes_total` | `system_network_softnet_dropped_total`, `system_network_conntrack_entries` against `_limit` | `system_network_receive_errors_total`, `system_network_transmit_errors_total`, `_drops_total`, `system_network_carrier_changes_total`, `system_network_up` |
 
@@ -45,7 +45,9 @@ Use utilization, saturation, and errors for each host resource. Use rate, errors
 | VMs on a host | `metal_vm_count{state}`, `metal_vm_unavailable{reason}`, `metal_vm_failing`, `metal_vm_boot_unreachable_total{kind}`, `metal_vm_operations_total{phase,result}`, `metal_vm_operations_in_progress{phase}` |
 | Migration | `metal_migration_sources`, `metal_migration_destinations{state}`, `atlas_migration_oldest_active_seconds` |
 | Atlas app | `atlas_error_logs_last_minute`, `atlas_job_failed{queue}`, `atlas_job_queue_length{queue}`, `atlas_host_sync_age_seconds{server}`, `atlas_metal_requests_total{status}` |
-| HTTP proxy | `service_proxy_requests_total{status_class}`, `service_proxy_slow_requests_total`, `service_proxy_upstream_seconds_total` |
+| HTTP proxy | `proxy_requests_total{status_class,origin}`, `proxy_slow_requests_total`, `proxy_upstream_seconds_total` |
+| IPv6 router | `ipv6_router_program_attached` |
+| WireGuard gateway | `wireguard_peers`, `wireguard_peers_active` |
 | Systemd | `system_systemd_failed_units`, `system_systemd_unit_restarts_total{unit}` |
 
 ## SQL patterns
@@ -61,12 +63,12 @@ GROUP BY resource_id, metric, labels
 HAVING increase != 0
 ```
 
-Now against the same hour yesterday:
+Load now against the same hour yesterday:
 
 ```sql
 SELECT resource_id, ts > now() - INTERVAL 1 HOUR AS is_now, avg(value) AS average, max(value) AS peak
 FROM samples
-WHERE metric = 'system_cpu_usage_percent'
+WHERE metric = 'system_load_average' AND labels['window'] = '5m'
   AND (ts > now() - INTERVAL 1 HOUR OR ts BETWEEN now() - INTERVAL 25 HOUR AND now() - INTERVAL 24 HOUR)
 GROUP BY resource_id, is_now
 ```
@@ -88,7 +90,7 @@ Errors and warnings of one host:
 ```sql
 SELECT ts, service, level, message
 FROM logs
-WHERE resource_id = '<Metal Server name>' AND level IN ('error', 'warn') AND ts > now() - INTERVAL 1 HOUR
+WHERE resource_id = '<Metal Server name>' AND level IN ('emergency', 'alert', 'critical', 'error', 'warning') AND ts > now() - INTERVAL 1 HOUR
 ORDER BY ts DESC
 LIMIT 50
 ```

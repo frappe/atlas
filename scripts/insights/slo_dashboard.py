@@ -146,14 +146,14 @@ api AS (
   FROM (
     SELECT labels['status'] AS status, greatest(max(value) - min(value), 0) AS increase
     FROM samples
-    WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_api_requests_total' AND ts > {MONTH_START}
+    WHERE resource_id = 'atlas' AND metric = 'atlas_api_requests_total' AND ts > {MONTH_START}
     GROUP BY labels
   )
 ),
 atlas_minutes AS (
   -- Minutes are counted from the first push of the month, when measuring began.
   SELECT uniqExact(toStartOfMinute(ts)) AS reported, dateDiff('minute', min(ts), now()) AS elapsed
-  FROM samples WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_servers' AND ts > {MONTH_START}
+  FROM samples WHERE resource_id = 'atlas' AND metric = 'atlas_metal_servers' AND ts > {MONTH_START}
 )
 SELECT 'VM uptime' AS sla, '{VM_UPTIME_TARGET * 100:g}%' AS target,
   (1 - down_minutes / nullIf(wanted_minutes, 0)) * 100 AS this_month,
