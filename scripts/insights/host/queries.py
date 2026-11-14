@@ -107,3 +107,14 @@ FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
 WHERE s.metric IN ('system_filesystem_size_bytes', 'system_filesystem_available_bytes') AND s.ts > now() - {LOOKBACK}
   AND s.resource_id IN ({METAL_HOST_IDS})
 GROUP BY ts, host, series"""
+
+
+def cpu_percent_sql(series: str) -> str:
+	"""The CPU time of each mode as a percent of all CPU time of the host. metald sends the total of all CPUs, so a
+	rate alone goes up to 100 times the CPU count. Linux counts guest time in user too, so the total leaves it out."""
+	rates = rate_sql(
+		["system_cpu_seconds_total"], series, "AND labels['mode'] NOT IN ('guest', 'guest_nice')"
+	)
+	return f"""SELECT ts, host, series, sum(share) AS value
+FROM (SELECT ts, host, series, 100 * value / nullIf(sum(value) OVER (PARTITION BY host, ts), 0) AS share FROM ({rates}))
+GROUP BY ts, host, series"""
