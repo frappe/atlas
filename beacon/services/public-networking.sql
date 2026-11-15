@@ -1,0 +1,8 @@
+-- title: Public networking
+-- description: Customers reach their sites and servers over the internet.
+-- scope: Region
+-- measurement: Declared
+-- status_page_group: Networking
+-- slo_target: 99.9
+-- sort_order: 5
+-- No metric yet. Published incidents in Beacon set the status.

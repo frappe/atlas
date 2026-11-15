@@ -1,0 +1,8 @@
+-- title: Customer VPN gateway
+-- description: Customers reach their private network through the VPN gateway.
+-- scope: Region
+-- measurement: Declared
+-- status_page_group: Networking
+-- slo_target: 99.9
+-- sort_order: 7
+-- No metric yet. Published incidents in Beacon set the status.
