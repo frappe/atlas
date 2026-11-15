@@ -120,3 +120,15 @@ func TestSlidingWindowUsageWithoutHistory(t *testing.T) {
 
 	assertNotEnoughSamples(t, manager)
 }
+
+func TestSlidingWindowUsageSkipsSamplesWithoutElapsedTime(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	appendCPUSamples(t, manager,
+		cpuSample{-30 * time.Second, true, 0},
+		cpuSample{-20 * time.Second, true, 5},
+		cpuSample{-20 * time.Second, true, 15},
+		cpuSample{-10 * time.Second, true, 20},
+	)
+
+	assertMilliCPUs(t, manager, 500)
+}
