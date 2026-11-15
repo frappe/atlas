@@ -222,9 +222,10 @@ func (manager *Manager) RecordMetrics(ctx context.Context, identifier string, re
 		return nil
 	}
 
-	// The store already holds record, so History returns it too.
+	// The store already holds record, so History returns it too. One more interval
+	// gives a sample at or before the window start, so no history counts as missing.
 	now := time.Now()
-	records, err := manager.metrics.History(ctx, identifier, now.Add(-window), now)
+	records, err := manager.metrics.History(ctx, identifier, now.Add(-window-metrics.SampleInterval), now)
 	if err != nil {
 		return fmt.Errorf("read metrics history: %w", err)
 	}
