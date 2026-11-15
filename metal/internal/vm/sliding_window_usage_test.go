@@ -320,10 +320,10 @@ func TestSlidingWindowUsageNeedsABurstableVM(t *testing.T) {
 	}
 	recordSamples(t, manager, storedCPUSample{0, true, 20})
 
-	if _, err := manager.SlidingWindowUsage("missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := manager.CPUBurstStatus(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing VM error = %v, want %v", err, ErrNotFound)
 	}
-	if _, err := manager.SlidingWindowUsage(testVirtualMachineID); !errors.Is(err, ErrNotBurstable) {
+	if _, err := manager.CPUBurstStatus(context.Background(), testVirtualMachineID); !errors.Is(err, ErrNotBurstable) {
 		t.Fatalf("error = %v, want %v", err, ErrNotBurstable)
 	}
 	if len(manager.slidingWindowUsage.rings) != 0 {

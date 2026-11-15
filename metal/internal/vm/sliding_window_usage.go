@@ -14,6 +14,10 @@ import (
 type SlidingWindowUsage struct {
 	// MilliCPUs is average CPU use in thousandths of a CPU. 1500 means 1.5 CPUs.
 	MilliCPUs uint64
+	// UpTime is the time of the sample pairs in the average.
+	UpTime time.Duration
+	// IdleTime is the missing history that the average counts as idle.
+	IdleTime time.Duration
 }
 
 // slidingWindowUsage keeps the newest CPU samples of each burstable VM, so a read
@@ -185,7 +189,11 @@ func (usage *slidingWindowUsage) average(identifier string, now, ignoreBefore ti
 	if totalMicroseconds <= 0 {
 		return SlidingWindowUsage{}, nil
 	}
-	return SlidingWindowUsage{MilliCPUs: cpuMicroseconds * 1000 / uint64(totalMicroseconds)}, nil
+	return SlidingWindowUsage{
+		MilliCPUs: cpuMicroseconds * 1000 / uint64(totalMicroseconds),
+		UpTime:    upTime,
+		IdleTime:  missing,
+	}, nil
 }
 
 // forget drops the VM's ring when the VM leaves this host or stops being burstable.
@@ -235,19 +243,4 @@ func (manager *Manager) RecordMetrics(ctx context.Context, identifier string, re
 	}
 	manager.slidingWindowUsage.seed(identifier, window, stored)
 	return nil
-}
-
-// SlidingWindowUsage returns a burstable VM's average use over its sliding window.
-// It averages only over intervals where the VM was up at both samples, and
-// counts history missing at the window start, or before a CPU burst reset, as
-// idle. After a window change, the old window applies until the next sweep.
-func (manager *Manager) SlidingWindowUsage(identifier string) (SlidingWindowUsage, error) {
-	desired, err := manager.store.readDesired(identifier)
-	if err != nil {
-		return SlidingWindowUsage{}, err
-	}
-	if !desired.Specification.CPUBurst.IsBurstable {
-		return SlidingWindowUsage{}, ErrNotBurstable
-	}
-	return manager.slidingWindowUsage.average(identifier, time.Now(), desired.CPUBurstResetAt)
 }
