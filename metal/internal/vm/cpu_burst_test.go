@@ -148,3 +148,65 @@ func TestResetCPUBurstHidesEarlierSamplesFromTheLimiter(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, ErrNotBurstable)
 	}
 }
+
+// TestCPUBurstStatus checks that a running burstable VM reports its settings,
+// its average with up and idle time, and its runtime CPU limit; that its usage is
+// nil without samples in memory; that a stopped VM has no CPU limit; and that a
+// VM that is not burstable returns ErrNotBurstable.
+func TestCPUBurstStatus(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	specification := testSpecification()
+	specification.CPUBurst = CPUBurst{IsBurstable: true, BaselineCPUMillicores: 1000, SlidingWindowMinutes: 1}
+	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.State = StateRunning
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
+	runtime.cpuLimit = 1000
+
+	// 40 s at 1500 millicores, and the 20 s before the oldest sample counts as idle.
+	now := time.Now().Truncate(time.Second)
+	manager.slidingWindowUsage.seed("machine-1", time.Minute, []cpuSample{
+		{timestamp: now.Add(-40 * time.Second), isUp: true},
+		{timestamp: now, isUp: true, cpuMicroseconds: 1500 * 40_000},
+	})
+	status, err := manager.CPUBurstStatus(context.Background(), "machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.CPUBurst != specification.CPUBurst || status.CPUMillicores != specification.CPUMillicores {
+		t.Fatalf("settings = %+v and %d CPU, want %+v and %d", status.CPUBurst, status.CPUMillicores, specification.CPUBurst, specification.CPUMillicores)
+	}
+	if status.Usage == nil || status.Usage.UpTime != 40*time.Second || status.Usage.IdleTime < 19*time.Second || status.Usage.IdleTime > 20*time.Second {
+		t.Fatalf("usage = %+v, want 40 s up and about 20 s idle", status.Usage)
+	}
+	if status.CPULimit == nil || *status.CPULimit != 1000 {
+		t.Fatalf("CPU limit = %v, want 1000", status.CPULimit)
+	}
+
+	manager.slidingWindowUsage.forget("machine-1")
+	if status, err := manager.CPUBurstStatus(context.Background(), "machine-1"); err != nil || status.Usage != nil {
+		t.Fatalf("usage = %+v, error = %v, want no usage", status.Usage, err)
+	}
+
+	observed.State = StateStopped
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := manager.CPUBurstStatus(context.Background(), "machine-1"); err != nil || status.CPULimit != nil {
+		t.Fatalf("CPU limit = %v, error = %v, want no limit", status.CPULimit, err)
+	}
+
+	if _, err := manager.Create(context.Background(), "machine-2", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CPUBurstStatus(context.Background(), "machine-2"); !errors.Is(err, ErrNotBurstable) {
+		t.Fatalf("error = %v, want %v", err, ErrNotBurstable)
+	}
+}
