@@ -112,9 +112,21 @@ func (usage *slidingWindowUsage) seed(identifier string, window time.Duration, s
 	usage.rings[identifier] = ring
 }
 
-// average returns the mean CPU use of the pairs of adjacent samples inside the window.
+// average returns the mean CPU use of the pairs of adjacent samples inside the
+// window. When the ring starts inside the window, the time before its oldest
+// sample counts as use at the baseline, so missing history gives no gain or loss.
+// No ring, or no usable time, gives the baseline.
 //
-//	MilliCPUs = sum(CPU used in each pair) * 1000 / sum(elapsed time of each pair)
+//	MilliCPUs = (sum(CPU used in each pair) * 1000 + baseline * missing time)
+//	          / (sum(elapsed time of each pair) + missing time)
+//
+// Example of missing history: window 60 s, now t60, oldest sample t30.
+//
+//	time      t0 ......... t30    t40    t50    t60
+//	up        (no samples) yes    yes    no     yes
+//	          \__missing__/   \___/  \___/  \___/
+//	          30 s at the     use    skip   skip      down time inside the
+//	          baseline                                history is not padded
 //
 // Example: window 30 s, now t60. t20 is outside the window.
 //
@@ -132,14 +144,17 @@ func (usage *slidingWindowUsage) seed(identifier string, window time.Duration, s
 // A restart where the new counter is already above the old one (cpu 15 -> 18)
 // adds 3 instead of 18; it cannot be seen without stored state. The ring evicts
 // by count, so after missed sweeps it can hold samples older than the window,
-// and the time filter drops them.
-func (usage *slidingWindowUsage) average(identifier string, now time.Time) (SlidingWindowUsage, error) {
+// and the time filter drops them. A ring refilled from the store starts up to
+// one sample interval after the window start, so that time counts at the
+// baseline until the next sweep.
+func (usage *slidingWindowUsage) average(identifier string, now time.Time, baselineMillicores int) SlidingWindowUsage {
 	usage.mutex.Lock()
 	defer usage.mutex.Unlock()
 
+	baseline := SlidingWindowUsage{MilliCPUs: uint64(baselineMillicores)}
 	ring, found := usage.rings[identifier]
-	if !found {
-		return SlidingWindowUsage{}, ErrNotEnoughSamples
+	if !found || ring.count == 0 {
+		return baseline
 	}
 
 	start := now.Add(-ring.window)
@@ -160,10 +175,13 @@ func (usage *slidingWindowUsage) average(identifier string, now time.Time) (Slid
 		}
 	}
 
-	if upTime == 0 {
-		return SlidingWindowUsage{}, ErrNotEnoughSamples
+	missing := max(ring.at(0).timestamp.Sub(start), 0)
+	totalMicroseconds := (upTime + missing).Microseconds()
+	if totalMicroseconds <= 0 {
+		return baseline
 	}
-	return SlidingWindowUsage{MilliCPUs: cpuMicroseconds * 1000 / uint64(upTime.Microseconds())}, nil
+	milliCPUMicroseconds := cpuMicroseconds*1000 + uint64(baselineMillicores)*uint64(missing.Microseconds())
+	return SlidingWindowUsage{MilliCPUs: milliCPUMicroseconds / uint64(totalMicroseconds)}
 }
 
 // forget drops the VM's ring when the VM leaves this host or stops being burstable.
@@ -215,15 +233,17 @@ func (manager *Manager) RecordMetrics(ctx context.Context, identifier string, re
 }
 
 // SlidingWindowUsage returns a burstable VM's average use over its sliding window.
-// It averages only over intervals where the VM was up at both samples. After a
-// window change, the old window applies until the next sweep.
+// It averages only over intervals where the VM was up at both samples, and
+// counts history missing at the window start at the baseline. After a window
+// change, the old window applies until the next sweep.
 func (manager *Manager) SlidingWindowUsage(identifier string) (SlidingWindowUsage, error) {
 	desired, err := manager.store.readDesired(identifier)
 	if err != nil {
 		return SlidingWindowUsage{}, err
 	}
-	if !desired.Specification.CPUBurst.IsBurstable {
+	burst := desired.Specification.CPUBurst
+	if !burst.IsBurstable {
 		return SlidingWindowUsage{}, ErrNotBurstable
 	}
-	return manager.slidingWindowUsage.average(identifier, time.Now())
+	return manager.slidingWindowUsage.average(identifier, time.Now(), burst.BaselineCPUMillicores), nil
 }

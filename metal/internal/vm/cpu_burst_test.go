@@ -42,11 +42,14 @@ func TestLimitCPUBursts(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.cpuLimit = 2000
-	averageOver10Seconds := func(milliCPUs uint64) {
+	// The down sample before the window start leaves no missing history, so the
+	// one 40 s up pair gives the average.
+	averageOverWindow := func(milliCPUs uint64) {
 		now := time.Now().Truncate(time.Second)
 		manager.slidingWindowUsage.seed("machine-1", time.Minute, []cpuSample{
-			{timestamp: now.Add(-20 * time.Second), isUp: true},
-			{timestamp: now.Add(-10 * time.Second), isUp: true, cpuMicroseconds: milliCPUs * 10_000},
+			{timestamp: now.Add(-70 * time.Second)},
+			{timestamp: now.Add(-50 * time.Second), isUp: true},
+			{timestamp: now.Add(-10 * time.Second), isUp: true, cpuMicroseconds: milliCPUs * 40_000},
 		})
 	}
 	limit := func(wantLimit, wantSets int) {
@@ -59,7 +62,7 @@ func TestLimitCPUBursts(t *testing.T) {
 		}
 	}
 
-	averageOver10Seconds(1500)
+	averageOverWindow(1500)
 	limit(2000, 0)
 
 	observed, err := manager.store.readObserved("machine-1")
@@ -73,10 +76,10 @@ func TestLimitCPUBursts(t *testing.T) {
 	limit(1000, 1)
 	limit(1000, 1)
 
-	averageOver10Seconds(900)
+	averageOverWindow(900)
 	limit(2000, 2)
 
-	averageOver10Seconds(1500)
+	averageOverWindow(1500)
 	limit(1000, 3)
 	if err := manager.SetCompute(context.Background(), "machine-1", Compute{CPUMillicores: 2000, MemoryMiB: 2048}); err != nil {
 		t.Fatal(err)
