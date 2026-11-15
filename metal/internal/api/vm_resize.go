@@ -9,7 +9,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// resizeRequest is the complete resource and idle shutdown shape of a VM.
+// resizeRequest is the complete resource, idle shutdown, and CPU burst shape of a VM.
 type resizeRequest struct {
 	computeRequest
 	DiskMiB int `json:"disk_mib"`
@@ -26,7 +26,7 @@ func (r resizeRequest) validate() error {
 }
 
 // @Summary	Resize a virtual machine
-// @Description	Store the complete CPU, memory, disk, and idle shutdown shape. The virtual machine must be stopped.
+// @Description	Store the complete CPU, memory, disk, idle shutdown, and CPU burst shape. A CPU, memory, or disk change needs a stopped virtual machine.
 // @ID			resizeVirtualMachine
 // @Tags		Virtual machines
 // @Accept		json
