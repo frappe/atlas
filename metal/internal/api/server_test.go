@@ -223,6 +223,10 @@ func (manager *fakeVirtualMachineManager) ResetCPUBurst(context.Context, string)
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) CPUBurstStatus(context.Context, string) (vm.CPUBurstStatus, error) {
+	return vm.CPUBurstStatus{}, vm.ErrNotBurstable
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {

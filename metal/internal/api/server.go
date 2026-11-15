@@ -60,6 +60,7 @@ type VirtualMachineManager interface {
 	DisableRescueMode(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error
 	ResetCPUBurst(context.Context, string) error
+	CPUBurstStatus(context.Context, string) (vm.CPUBurstStatus, error)
 	SetDisk(context.Context, string, int, vm.Disk) error
 	Resize(context.Context, string, vm.Compute, int) error
 	SetNetwork(context.Context, string, vm.NetworkConfiguration) error
