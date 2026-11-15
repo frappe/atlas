@@ -124,7 +124,12 @@ func (manager *Manager) limitCPUBurst(ctx context.Context, identifier string) er
 	if desired.State != StateRunning || observed.State != StateRunning {
 		return nil
 	}
+	return manager.applyCPULimit(ctx, desired, observed)
+}
 
+// applyCPULimit sets the CPU limit that a running VM's sliding window average calls for.
+func (manager *Manager) applyCPULimit(ctx context.Context, desired DesiredRecord, observed ObservedRecord) error {
+	identifier := desired.ID
 	ctx, cancel := context.WithTimeout(ctx, cpuLimitTimeout)
 	defer cancel()
 	machine := runtimeMachine(desired, observed.NetworkInterface)

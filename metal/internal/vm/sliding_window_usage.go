@@ -158,15 +158,38 @@ func (usage *slidingWindowUsage) average(identifier string, now, ignoreBefore ti
 	if !found {
 		return SlidingWindowUsage{}, ErrNotEnoughSamples
 	}
-	first := 0
-	for first < ring.count && ring.at(first).timestamp.Before(ignoreBefore) {
-		first++
-	}
+	first := ring.firstAtOrAfter(ignoreBefore)
 	if first == ring.count {
 		return SlidingWindowUsage{}, nil
 	}
 
 	start := now.Add(-ring.window)
+	cpuMicroseconds, upTime := ring.upPairTotals(first, start)
+
+	missing := max(ring.at(first).timestamp.Sub(start), 0)
+	totalMicroseconds := (upTime + missing).Microseconds()
+	if totalMicroseconds <= 0 {
+		return SlidingWindowUsage{}, nil
+	}
+	return SlidingWindowUsage{
+		MilliCPUs: cpuMicroseconds * 1000 / uint64(totalMicroseconds),
+		UpTime:    upTime,
+		IdleTime:  missing,
+	}, nil
+}
+
+// firstAtOrAfter returns the index of the oldest sample at or after timestamp, or count when there is none.
+func (ring *cpuSampleRing) firstAtOrAfter(timestamp time.Time) int {
+	first := 0
+	for first < ring.count && ring.at(first).timestamp.Before(timestamp) {
+		first++
+	}
+	return first
+}
+
+// upPairTotals adds the CPU time and elapsed time of each pair of adjacent samples
+// from first that starts inside the window and has the VM up at both samples.
+func (ring *cpuSampleRing) upPairTotals(first int, start time.Time) (uint64, time.Duration) {
 	var cpuMicroseconds uint64
 	var upTime time.Duration
 	for index := first + 1; index < ring.count; index++ {
@@ -183,17 +206,7 @@ func (usage *slidingWindowUsage) average(identifier string, now, ignoreBefore ti
 			cpuMicroseconds += current.cpuMicroseconds - previous.cpuMicroseconds
 		}
 	}
-
-	missing := max(ring.at(first).timestamp.Sub(start), 0)
-	totalMicroseconds := (upTime + missing).Microseconds()
-	if totalMicroseconds <= 0 {
-		return SlidingWindowUsage{}, nil
-	}
-	return SlidingWindowUsage{
-		MilliCPUs: cpuMicroseconds * 1000 / uint64(totalMicroseconds),
-		UpTime:    upTime,
-		IdleTime:  missing,
-	}, nil
+	return cpuMicroseconds, upTime
 }
 
 // forget drops the VM's ring when the VM leaves this host or stops being burstable.
