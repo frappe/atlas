@@ -76,9 +76,11 @@ metald removes the samples of a VM when the VM stops being burstable, is destroy
 
 Metal adds the CPU time and the elapsed time of each pair of adjacent samples in the window. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, or when both samples have the same second. Thus down time does not lower the average.
 
+When the samples start after the window start, Metal counts the time before the oldest sample as CPU use at the baseline. For example, a VM with 10 minutes of samples in a 60-minute window gets 50 minutes at its baseline. Thus a VM with little history does not get a limit from a short burst. Down time between samples is not counted at the baseline. After metald fills the window from the store, up to 10 seconds at the window start count at the baseline until the next sweep.
+
 When the CPU counter falls, a restart made a new cgroup that counts from 0. Metal counts the new counter value as the CPU time of that pair. The CPU time that the old cgroup used after the previous sample is lost.
 
-The call returns `ErrNotEnoughSamples` when the window has no usable pair. This includes a VM that has no samples on this host.
+When the window has no usable time, the call returns the baseline. This includes a VM that has no samples on this host. The CPU limit of the VM then stays the same.
 
 The value includes the Firecracker process threads, so it can be a little more than the vCPU count multiplied by 1,000. A paused VM counts as up with almost no CPU use. If a restart occurs inside one 10-second interval and the new counter is already more than the old counter, that pair shows less CPU time than the VM used.
 
