@@ -115,6 +115,7 @@ func (usage *slidingWindowUsage) seed(identifier string, window time.Duration, s
 // average returns the mean CPU use of the pairs of adjacent samples inside the
 // window. When the ring starts inside the window, the time before its oldest
 // sample counts as use at the baseline, so missing history gives no gain or loss.
+// Samples before ignoreBefore, the VM's CPU burst reset time, are missing history.
 // No ring, or no usable time, gives the baseline.
 //
 //	MilliCPUs = (sum(CPU used in each pair) * 1000 + baseline * missing time)
@@ -147,20 +148,27 @@ func (usage *slidingWindowUsage) seed(identifier string, window time.Duration, s
 // and the time filter drops them. A ring refilled from the store starts up to
 // one sample interval after the window start, so that time counts at the
 // baseline until the next sweep.
-func (usage *slidingWindowUsage) average(identifier string, now time.Time, baselineMillicores int) SlidingWindowUsage {
+func (usage *slidingWindowUsage) average(identifier string, now time.Time, baselineMillicores int, ignoreBefore time.Time) SlidingWindowUsage {
 	usage.mutex.Lock()
 	defer usage.mutex.Unlock()
 
 	baseline := SlidingWindowUsage{MilliCPUs: uint64(baselineMillicores)}
 	ring, found := usage.rings[identifier]
-	if !found || ring.count == 0 {
+	if !found {
+		return baseline
+	}
+	first := 0
+	for first < ring.count && ring.at(first).timestamp.Before(ignoreBefore) {
+		first++
+	}
+	if first == ring.count {
 		return baseline
 	}
 
 	start := now.Add(-ring.window)
 	var cpuMicroseconds uint64
 	var upTime time.Duration
-	for index := 1; index < ring.count; index++ {
+	for index := first + 1; index < ring.count; index++ {
 		previous, current := ring.at(index-1), ring.at(index)
 		elapsed := current.timestamp.Sub(previous.timestamp)
 		if previous.timestamp.Before(start) || !previous.isUp || !current.isUp || elapsed <= 0 {
@@ -175,7 +183,7 @@ func (usage *slidingWindowUsage) average(identifier string, now time.Time, basel
 		}
 	}
 
-	missing := max(ring.at(0).timestamp.Sub(start), 0)
+	missing := max(ring.at(first).timestamp.Sub(start), 0)
 	totalMicroseconds := (upTime + missing).Microseconds()
 	if totalMicroseconds <= 0 {
 		return baseline
@@ -234,8 +242,8 @@ func (manager *Manager) RecordMetrics(ctx context.Context, identifier string, re
 
 // SlidingWindowUsage returns a burstable VM's average use over its sliding window.
 // It averages only over intervals where the VM was up at both samples, and
-// counts history missing at the window start at the baseline. After a window
-// change, the old window applies until the next sweep.
+// counts history missing at the window start, or before a CPU burst reset, at
+// the baseline. After a window change, the old window applies until the next sweep.
 func (manager *Manager) SlidingWindowUsage(identifier string) (SlidingWindowUsage, error) {
 	desired, err := manager.store.readDesired(identifier)
 	if err != nil {
@@ -245,5 +253,5 @@ func (manager *Manager) SlidingWindowUsage(identifier string) (SlidingWindowUsag
 	if !burst.IsBurstable {
 		return SlidingWindowUsage{}, ErrNotBurstable
 	}
-	return manager.slidingWindowUsage.average(identifier, time.Now(), burst.BaselineCPUMillicores), nil
+	return manager.slidingWindowUsage.average(identifier, time.Now(), burst.BaselineCPUMillicores, desired.CPUBurstResetAt), nil
 }

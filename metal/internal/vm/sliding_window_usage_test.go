@@ -53,7 +53,7 @@ func newBurstableManager(t *testing.T, windowMinutes int) *Manager {
 // assertAverage checks the average at now, with testBaselineMillicores, against wantMilliCPUs.
 func assertAverage(t *testing.T, usage *slidingWindowUsage, now time.Time, wantMilliCPUs uint64) {
 	t.Helper()
-	if got := usage.average(testVirtualMachineID, now, testBaselineMillicores); got.MilliCPUs != wantMilliCPUs {
+	if got := usage.average(testVirtualMachineID, now, testBaselineMillicores, time.Time{}); got.MilliCPUs != wantMilliCPUs {
 		t.Fatalf("MilliCPUs = %d, want %d", got.MilliCPUs, wantMilliCPUs)
 	}
 }

@@ -219,6 +219,10 @@ func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, str
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) ResetCPUBurst(context.Context, string) error {
+	return nil
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {
