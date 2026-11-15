@@ -44,15 +44,19 @@ Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol
 
 ### Average CPU use over a window
 
-`Manager.SlidingWindowUsage` in metald gives the average CPU use of a VM over a recent window, such as the last 5 minutes. The result is in milli-CPUs, where 1,000 milli-CPUs is one CPU busy for the full time.
+`Manager.SlidingWindowUsage` in metald gives the average CPU use of a VM over the last 60 minutes. The result is in milli-CPUs, where 1,000 milli-CPUs is one CPU busy for the full time. `ManagerConfig.SlidingWindow` sets the window.
 
-Metal reads the stored samples in the window and adds the CPU time and the elapsed time of each pair of adjacent samples. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, when the CPU counter fell after a restart, or when both samples have the same second. Thus down time does not lower the average.
+metald keeps one window of samples for each VM in memory, so a call does not read the disk. After the metrics sampler stores a sample, it gives the sample to the VM manager. A sample that the store rejects does not go into memory. The memory use is about 14 KB for each VM with the 60-minute window.
 
-The call returns `ErrNotEnoughSamples` when the window has no usable pair. This includes a VM that has no history on this host.
+After metald starts, the first call for a VM reads the stored samples of the window one time. Later calls use only the samples in memory. metald removes the samples of a VM when the VM is destroyed or moves to another host.
 
-The value includes the Firecracker process threads, so it can be a little more than the vCPU count multiplied by 1,000. A paused VM counts as up with almost no CPU use. If a VM restarts inside one 10-second interval, or while metald is stopped, that interval can show less CPU time than the VM used.
+Metal adds the CPU time and the elapsed time of each pair of adjacent samples in the window. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, or when both samples have the same second. Thus down time does not lower the average.
 
-Each call reads and decodes the full daily sample file, or two files after UTC midnight. Do not call it often for many VMs without a cheaper source.
+When the CPU counter falls, a restart made a new cgroup that counts from 0. Metal counts the new counter value as the CPU time of that pair. The CPU time that the old cgroup used after the previous sample is lost.
+
+The call returns `ErrNotEnoughSamples` when the window has no usable pair. This includes a VM that has no samples on this host.
+
+The value includes the Firecracker process threads, so it can be a little more than the vCPU count multiplied by 1,000. A paused VM counts as up with almost no CPU use. If a restart occurs inside one 10-second interval and the new counter is already more than the old counter, that pair shows less CPU time than the VM used.
 
 ## Terminate a VM
 
