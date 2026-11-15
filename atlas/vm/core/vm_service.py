@@ -13,7 +13,7 @@ from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
 from atlas.metal_server.core.public_ip_service import PublicIPService
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
+from atlas.vm.core.metal_models import MetalCPUBurstStatus, MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
 	IPV4_INTERNET_DESTINATION,
 	IPV6_INTERNET_DESTINATION,
@@ -303,6 +303,15 @@ class VirtualMachineService:
 			return self.metal_client.get_virtual_machine_metrics(
 				cast(str, self.virtual_machine.name), start=start, end=end, max_samples=max_samples
 			)
+		except MetalClientError as error:
+			if error.is_not_found:
+				return None
+			self.raise_metal_error(error)
+
+	def get_cpu_burst_status(self) -> MetalCPUBurstStatus | None:
+		"""Return Metal's CPU burst status, or no value when the virtual machine is absent."""
+		try:
+			return self.metal_client.get_virtual_machine_cpu_burst(cast(str, self.virtual_machine.name))
 		except MetalClientError as error:
 			if error.is_not_found:
 				return None
