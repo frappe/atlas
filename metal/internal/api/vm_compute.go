@@ -46,6 +46,7 @@ func (s *Server) setVirtualMachineCompute(c *echo.Context) error {
 		CPUMillicores:         request.CPUMillicores,
 		MemoryMiB:             request.MemoryMiB,
 		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds,
+		CPUBurst:              request.cpuBurst(),
 	}); err != nil {
 		return err
 	}

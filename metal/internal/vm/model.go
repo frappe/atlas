@@ -9,17 +9,18 @@ import (
 
 // Specification contains the persistent configuration for one VM.
 type Specification struct {
-	CPUMillicores         int                  `json:"cpu_millicores"`
-	MemoryMiB             int                  `json:"memory_mib"`
-	SleepAfterIdleSeconds int                  `json:"sleep_after_idle_seconds,omitempty"`
-	DiskMiB               int                  `json:"disk_mib"`
-	Disk                  Disk                 `json:"disk"`
-	Image                 Image                `json:"image"`
-	Network               NetworkConfiguration `json:"network"`
-	SSHKeys               []string             `json:"ssh_keys"`
-	Hostname              string               `json:"hostname"`
-	UserData              string               `json:"user_data"`
-	Metadata              map[string]string    `json:"metadata"`
+	CPUMillicores         int `json:"cpu_millicores"`
+	MemoryMiB             int `json:"memory_mib"`
+	SleepAfterIdleSeconds int `json:"sleep_after_idle_seconds,omitempty"`
+	CPUBurst
+	DiskMiB  int                  `json:"disk_mib"`
+	Disk     Disk                 `json:"disk"`
+	Image    Image                `json:"image"`
+	Network  NetworkConfiguration `json:"network"`
+	SSHKeys  []string             `json:"ssh_keys"`
+	Hostname string               `json:"hostname"`
+	UserData string               `json:"user_data"`
+	Metadata map[string]string    `json:"metadata"`
 	// RescueImage selects the image for the next cold boot. The VM disk becomes the second drive.
 	RescueImage *Image `json:"rescue_image,omitempty"`
 }
@@ -29,6 +30,15 @@ type Compute struct {
 	CPUMillicores         int
 	MemoryMiB             int
 	SleepAfterIdleSeconds int
+	CPUBurst
+}
+
+// CPUBurst lets a VM use CPU above its baseline. Like the idle timeout, a change
+// applies to a running VM. Omitted fields keep records of other VMs unchanged.
+type CPUBurst struct {
+	IsBurstable           bool `json:"is_burstable,omitempty"`
+	BaselineCPUMillicores int  `json:"baseline_cpu_millicores,omitempty"`
+	SlidingWindowMinutes  int  `json:"sliding_window_minutes,omitempty"`
 }
 
 // Image identifies immutable boot files and their transport URLs.
@@ -144,6 +154,7 @@ func (specification Specification) SameReservation(other Specification) bool {
 	return specification.CPUMillicores == other.CPUMillicores &&
 		specification.MemoryMiB == other.MemoryMiB &&
 		specification.SleepAfterIdleSeconds == other.SleepAfterIdleSeconds &&
+		specification.CPUBurst == other.CPUBurst &&
 		specification.DiskMiB == other.DiskMiB &&
 		specification.Disk == other.Disk &&
 		specification.Image.Name == other.Image.Name &&
@@ -254,6 +265,7 @@ type Information struct {
 	Hostname                        string
 	Metadata                        map[string]string
 	SleepAfterIdleSeconds           int
+	CPUBurst                        CPUBurst
 	MAC                             string
 	PublicIPv4                      string
 	WireGuardMeshIPv6               string

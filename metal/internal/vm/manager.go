@@ -430,6 +430,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		Hostname:                        desired.Specification.Hostname,
 		Metadata:                        maps.Clone(desired.Specification.Metadata),
 		SleepAfterIdleSeconds:           desired.Specification.SleepAfterIdleSeconds,
+		CPUBurst:                        desired.Specification.CPUBurst,
 		MAC:                             observed.NetworkInterface.MACAddress,
 		PublicIPv4:                      desired.Specification.Network.PublicIPv4,
 		Routes:                          slices.Clone(desired.Specification.Network.Routes),
