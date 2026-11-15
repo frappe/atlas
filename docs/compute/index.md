@@ -18,6 +18,10 @@ A resize uses the current host if it has enough capacity. Otherwise, Atlas can r
 
 A burstable VM can use CPU above its baseline. Metal measures its average CPU use over its sliding window, as [average CPU use over a window](#average-cpu-use-over-a-window) explains.
 
+metald checks each running burstable VM every 10 seconds. When the average is above the baseline, metald limits the VM to its baseline with the CPU quota of its systemd unit. When the average falls to 90% of the baseline or lower, metald gives the VM its full `cpu_millicores` again. The gap stops a busy VM from switching at each check. The VM keeps the same number of vCPUs. Only its CPU time is limited.
+
+metald logs `limit VM CPU` or `release VM CPU` with the average and the new limit. The quota of the unit is the limit state, so a metald restart needs no repair. A VM start sets the full CPU, and the next check limits the VM again when its average is still above the baseline. A VM that stops being burstable gets its full CPU at the next check.
+
 | Field | Meaning | Default | Limits |
 |---|---|---|---|
 | `is_burstable` | The VM can use CPU above its baseline. | `false` | |
