@@ -31,6 +31,10 @@ type UnitManager interface {
 	// SetLimits applies resource limits to the running unit.
 	SetLimits(ctx context.Context, id string, limits Limits) error
 
+	// CPUQuota returns the CPU quota of the unit in millicores. A unit without
+	// a quota reports math.MaxInt.
+	CPUQuota(ctx context.Context, id string) (int, error)
+
 	GetUsage(ctx context.Context, id, diskDevice string) (SystemdUnitUsage, error)
 }
 

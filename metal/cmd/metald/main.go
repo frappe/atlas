@@ -372,6 +372,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
 	guestChecker := reconciler.NewGuestChecker(virtualMachineManager, guestCheckInterval, registry, logger)
+	// CPU burst limits follow the 10-second metrics samples that their averages use.
+	cpuBurstLimiter := reconciler.NewCPUBurstLimiter(virtualMachineManager, metrics.SampleInterval, registry, logger)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
 		stores.Snapshots,
@@ -497,6 +499,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
+	daemon.StartWorker(cpuBurstLimiter.Run)
 	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
 		wireGuard: wireGuardManager,

@@ -33,6 +33,8 @@ type fakeRuntime struct {
 	metadata       int
 	diskRefresh    int
 	diskLimitMiBps int
+	cpuLimit       int
+	cpuLimitSets   int
 	inspectError   error
 	onInspect      func()
 	restoreError   error
@@ -217,6 +219,16 @@ func (runtime *fakeRuntime) CheckMigratedGuestSSH(context.Context, RuntimeMachin
 
 func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error) {
 	return runtime.usage, runtime.usageError
+}
+
+func (runtime *fakeRuntime) CPULimit(context.Context, RuntimeMachine) (int, error) {
+	return runtime.cpuLimit, nil
+}
+
+func (runtime *fakeRuntime) SetCPULimit(_ context.Context, _ RuntimeMachine, millicores int) error {
+	runtime.cpuLimit = millicores
+	runtime.cpuLimitSets++
+	return nil
 }
 
 type fakeNetwork struct {
