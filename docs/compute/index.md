@@ -34,7 +34,7 @@ A CPU burst change applies to a running VM, like the idle sleep delay. A move to
 
 Placement and host capacity still use the full `cpu_millicores` of a burstable VM.
 
-Use **Actions → Reset CPU Burst** in Desk to start the average again from now. Atlas calls `POST /v1/vms/{id}/cpu-burst/reset` in Metal, and metald stores the time as `cpu_burst_reset_at` on the VM record. The average then ignores the samples before that time, so that time counts at the baseline. The current CPU limit stays. A limited VM gets its full CPU again only when its average falls to 90% of the baseline. Metal returns 409 `not_burstable` for a VM that is not burstable, and an older metald returns 404.
+Use **Actions → Reset CPU Burst** in Desk to start the average again from now. Atlas calls `POST /v1/vms/{id}/cpu-burst/reset` in Metal, and metald stores the time as `cpu_burst_reset_at` on the VM record. The average then ignores the samples before that time, so that time counts as idle. The reset does not change the CPU limit. At the next check, the average is near 0, so metald gives a limited VM its full CPU again. Metal returns 409 `not_burstable` for a VM that is not burstable, and an older metald returns 404.
 
 Upgrade metald on a host before you make its VMs burstable. An older metald ignores the burst fields. Atlas then repairs the VM record from Metal at the next resize.
 
@@ -78,11 +78,13 @@ metald removes the samples of a VM when the VM stops being burstable, is destroy
 
 Metal adds the CPU time and the elapsed time of each pair of adjacent samples in the window. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, or when both samples have the same second. Thus down time does not lower the average.
 
-When the samples start after the window start, Metal counts the time before the oldest sample as CPU use at the baseline. For example, a VM with 10 minutes of samples in a 60-minute window gets 50 minutes at its baseline. Samples before a [CPU burst reset](#set-cpu-burst) count as missing too. Thus a VM with little history does not get a limit from a short burst. Down time between samples is not counted at the baseline. After metald fills the window from the store, up to 10 seconds at the window start count at the baseline until the next sweep.
+When the samples start after the window start, Metal counts the time before the oldest sample as idle, with no CPU use. For example, a VM with 10 minutes of samples in a 60-minute window gets 50 idle minutes. Samples before a [CPU burst reset](#set-cpu-burst) count as missing too. Thus a new VM can burst. With a baseline of 500 millicores on a 1,000 millicore VM and a 60-minute window, it can use its full CPU for about 30 minutes.
+
+Down time between samples does not count as idle. When metald fills the window from the store, it reads one sample interval before the window start, so a refill adds no missing time.
 
 When the CPU counter falls, a restart made a new cgroup that counts from 0. Metal counts the new counter value as the CPU time of that pair. The CPU time that the old cgroup used after the previous sample is lost.
 
-When the window has no usable time, the call returns the baseline. This includes a VM that has no samples on this host. The CPU limit of the VM then stays the same.
+The call returns `ErrNotEnoughSamples` when metald has no samples of the VM in memory yet, for example before the first sweep after metald starts. The CPU limiter then keeps the current limit of the VM. When the window has no usable time, the call returns 0.
 
 The value includes the Firecracker process threads, so it can be a little more than the vCPU count multiplied by 1,000. A paused VM counts as up with almost no CPU use. If a restart occurs inside one 10-second interval and the new counter is already more than the old counter, that pair shows less CPU time than the VM used.
 
