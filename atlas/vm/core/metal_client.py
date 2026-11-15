@@ -199,6 +199,16 @@ class MetalClient:
 		)
 		return self._virtual_machine(response)
 
+	def reset_virtual_machine_cpu_burst(self, virtual_machine_id: str) -> MetalVirtualMachine:
+		"""Make one VM's sliding window ignore its CPU samples before now."""
+		response = self._request(
+			"POST",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/cpu-burst/reset",
+			expected_status=200,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
 	def delete_virtual_machine(self, virtual_machine_id: str) -> MetalVirtualMachine:
 		"""Store a removal request for one VM."""
 		response = self._request(

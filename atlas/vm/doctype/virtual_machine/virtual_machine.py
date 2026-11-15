@@ -671,6 +671,15 @@ class VirtualMachine(Document):
 		VirtualMachineService(self).request_restart()
 
 	@frappe.whitelist(methods=["POST"])
+	def reset_cpu_burst(self) -> None:
+		"""Make the CPU burst sliding window ignore CPU use before now."""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		if not self.is_burstable:
+			frappe.throw(_("Virtual Machine {0} is not burstable.").format(self.name), exc=AtlasUserError)
+		VirtualMachineService(self).reset_cpu_burst()
+
+	@frappe.whitelist(methods=["POST"])
 	def enable_rescue_mode(self) -> None:
 		"""Use the rescue image from the next cold boot."""
 		self.check_permission("write")
