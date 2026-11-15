@@ -58,7 +58,11 @@ class VirtualMachineResize:
 			if field in resize_values
 		}
 		shape_values = {field: value for field, value in resize_values.items() if field not in sleep_values}
-		migration = self._resize(shape_values) if shape_values or not sleep_values else None
+		migration = None
+		if shape_values or not sleep_values:
+			# Each resize reads the current shape from Metal and sends the complete compute values.
+			with self.service.change_lock("compute"):
+				migration = self._resize(shape_values)
 		if sleep_values:
 			self._set_sleep_times(sleep_values)
 		return migration
