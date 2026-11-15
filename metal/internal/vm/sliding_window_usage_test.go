@@ -185,6 +185,24 @@ func TestSlidingWindowUsagePadsMissingHistoryWithBaseline(t *testing.T) {
 	assertAverage(t, usage, secondsAfterBase(30), 600)
 }
 
+// TestSlidingWindowUsageIgnoresSamplesBeforeReset checks that samples before a
+// CPU burst reset are missing history. Without a reset the window averages 500.
+// A reset at t25 keeps only t30 to t40: 5 CPU seconds and 20 s at 400 give 433.
+// A reset after the newest sample gives the baseline.
+func TestSlidingWindowUsageIgnoresSamplesBeforeReset(t *testing.T) {
+	usage := newTestUsage(upSample(10, 0), upSample(20, 10), upSample(30, 10), upSample(40, 15))
+
+	for _, test := range []struct {
+		resetSeconds  int
+		wantMilliCPUs uint64
+	}{{0, 500}, {25, 433}, {41, testBaselineMillicores}} {
+		got := usage.average(testVirtualMachineID, secondsAfterBase(40), testBaselineMillicores, secondsAfterBase(test.resetSeconds))
+		if got.MilliCPUs != test.wantMilliCPUs {
+			t.Fatalf("reset at t%d: MilliCPUs = %d, want %d", test.resetSeconds, got.MilliCPUs, test.wantMilliCPUs)
+		}
+	}
+}
+
 // TestSlidingWindowUsageReturnsBaselineWithoutUpTime checks that a VM with no
 // ring, one sample, or only down samples over the window averages at the baseline.
 func TestSlidingWindowUsageReturnsBaselineWithoutUpTime(t *testing.T) {
