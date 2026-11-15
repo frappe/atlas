@@ -159,10 +159,13 @@ func (usage *slidingWindowUsage) seed(identifier string, stored []cpuSample) {
 //	pair          |   skip   skip   use       a down sample skips both of its pairs
 //
 //	same second      t30 -> t30         skipped
-//	counter falls    cpu 110 -> 2       skipped; a restart made a new cgroup
 //	missed sweep     t30 -> t50         one 20 s pair
+//	counter falls    cpu 110 -> 2       a restart made a new cgroup that counts
+//	                                    from 0, so the pair adds 2 over the full
+//	                                    interval; the old cgroup's last seconds are lost
 //
-// The ring evicts
+// A restart where the new counter is already above the old one (cpu 15 -> 18)
+// adds 3 instead of 18; it cannot be seen without stored state. The ring evicts
 // by count, so after missed sweeps it can hold samples older than the window,
 // and the time filter drops them.
 func (usage *slidingWindowUsage) average(identifier string, now time.Time) (SlidingWindowUsage, error) {
@@ -180,13 +183,16 @@ func (usage *slidingWindowUsage) average(identifier string, now time.Time) (Slid
 	for index := 1; index < ring.count; index++ {
 		previous, current := ring.at(index-1), ring.at(index)
 		elapsed := current.timestamp.Sub(previous.timestamp)
-		// A restart recreates the cgroup and resets its CPU counter.
-		if previous.timestamp.Before(start) || !previous.isUp || !current.isUp || elapsed <= 0 || current.cpuMicroseconds < previous.cpuMicroseconds {
+		if previous.timestamp.Before(start) || !previous.isUp || !current.isUp || elapsed <= 0 {
 			continue
 		}
 
 		upTime += elapsed
-		cpuMicroseconds += current.cpuMicroseconds - previous.cpuMicroseconds
+		if current.cpuMicroseconds < previous.cpuMicroseconds {
+			cpuMicroseconds += current.cpuMicroseconds
+		} else {
+			cpuMicroseconds += current.cpuMicroseconds - previous.cpuMicroseconds
+		}
 	}
 
 	if upTime == 0 {

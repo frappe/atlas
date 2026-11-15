@@ -88,9 +88,10 @@ func TestSlidingWindowUsageSkipsDownIntervals(t *testing.T) {
 	assertMilliCPUs(t, manager, 1000)
 }
 
-// TestSlidingWindowUsageSkipsCounterReset checks that a falling CPU counter,
-// from a restart, drops that interval instead of underflowing.
-func TestSlidingWindowUsageSkipsCounterReset(t *testing.T) {
+// TestSlidingWindowUsageCountsNewCgroupAfterCounterReset checks that when the
+// counter falls, the new cgroup's whole counter counts as CPU used in that
+// interval: 10 + 2 + 10 CPU seconds over 30 seconds.
+func TestSlidingWindowUsageCountsNewCgroupAfterCounterReset(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	appendCPUSamples(t, manager,
 		storedCPUSample{-40 * time.Second, true, 100},
@@ -99,7 +100,7 @@ func TestSlidingWindowUsageSkipsCounterReset(t *testing.T) {
 		storedCPUSample{-10 * time.Second, true, 12},
 	)
 
-	assertMilliCPUs(t, manager, 1000)
+	assertMilliCPUs(t, manager, 733)
 }
 
 // TestSlidingWindowUsageIgnoresRecordsOutsideWindow checks that samples older
