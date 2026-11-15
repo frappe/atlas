@@ -8,6 +8,7 @@ import time
 METADATA_ADDRESS = ("169.254.169.254", 80)
 METADATA_PATH_PREFIX = "/latest"
 DROP_IN_PATH = pathlib.Path("/run/systemd/network/10-atlas.network.d/mesh.conf")
+SYSTEM_BUS_PATH = pathlib.Path("/run/dbus/system_bus_socket")
 MESH_GATEWAY = "fe80::1"
 MESH_PREFIX = "fdaa::/16"
 # Matches the image routes outside the mesh, which can lead to a 1500-byte network.
@@ -142,6 +143,10 @@ def apply_mesh_network(address, routes, mtu):
             ["ip", "-6", "route", "replace", destination, "via", MESH_GATEWAY, "dev", "eth0", "mtu", str(OUTSIDE_MESH_MTU)],
             check=False,
         )
+
+    # networkctl needs D-Bus, which starts after this early unit. Each failed call logs an error, so wait for it.
+    if not SYSTEM_BUS_PATH.exists():
+        return
 
     DROP_IN_PATH.parent.mkdir(parents=True, exist_ok=True)
     DROP_IN_PATH.write_text(drop_in)
