@@ -557,7 +557,9 @@ function showResizeDialog(frm) {
 				label: __("Baseline CPU (millicores)"),
 				default: frm.doc.baseline_cpu_millicores,
 				depends_on: "is_burstable",
-				description: __("The CPU the VM can always use. Must not exceed CPU. 0 uses 20% of CPU."),
+				description: __(
+					"The CPU the VM can always use. Must not exceed CPU. 0 uses 20% of CPU."
+				),
 			},
 			{
 				fieldname: "sliding_window_minutes",
