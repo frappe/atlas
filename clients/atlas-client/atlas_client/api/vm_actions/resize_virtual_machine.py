@@ -122,16 +122,18 @@ def sync_detailed(
 ) -> Response[ApiErrorResponse | CapacityUnavailableResponse | VirtualMachineResponse]:
     """ Resize VM
 
-     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
-    grows.
+     Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The
+    disk only grows.
 
-    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
-    changes work in any VM state. `0` disables idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and
+    CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a
+    baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline
+    is rejected.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ResizePayload): VM resource and idle shutdown changes.
+        body (ResizePayload): VM resource, idle shutdown, and CPU burst changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,16 +167,18 @@ def sync(
 ) -> ApiErrorResponse | CapacityUnavailableResponse | VirtualMachineResponse | None:
     """ Resize VM
 
-     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
-    grows.
+     Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The
+    disk only grows.
 
-    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
-    changes work in any VM state. `0` disables idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and
+    CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a
+    baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline
+    is rejected.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ResizePayload): VM resource and idle shutdown changes.
+        body (ResizePayload): VM resource, idle shutdown, and CPU burst changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,16 +207,18 @@ async def asyncio_detailed(
 ) -> Response[ApiErrorResponse | CapacityUnavailableResponse | VirtualMachineResponse]:
     """ Resize VM
 
-     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
-    grows.
+     Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The
+    disk only grows.
 
-    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
-    changes work in any VM state. `0` disables idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and
+    CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a
+    baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline
+    is rejected.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ResizePayload): VM resource and idle shutdown changes.
+        body (ResizePayload): VM resource, idle shutdown, and CPU burst changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -246,16 +252,18 @@ async def asyncio(
 ) -> ApiErrorResponse | CapacityUnavailableResponse | VirtualMachineResponse | None:
     """ Resize VM
 
-     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
-    grows.
+     Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The
+    disk only grows.
 
-    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
-    changes work in any VM state. `0` disables idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and
+    CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a
+    baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline
+    is rejected.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ResizePayload): VM resource and idle shutdown changes.
+        body (ResizePayload): VM resource, idle shutdown, and CPU burst changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
