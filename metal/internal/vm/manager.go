@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ type ManagerDependencies struct {
 	Storage   Storage
 	Snapshots Snapshots
 	Traffic   *traffic.Monitor
+	Metrics   *metrics.Store
 	Logger    *slog.Logger
 	Telemetry *telemetry.Registry
 }
@@ -54,6 +56,7 @@ type Manager struct {
 	storage              Storage
 	snapshots            Snapshots
 	traffic              *traffic.Monitor
+	metrics              *metrics.Store
 	logger               *slog.Logger
 	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
@@ -112,6 +115,7 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		storage:              dependencies.Storage,
 		snapshots:            dependencies.Snapshots,
 		traffic:              dependencies.Traffic,
+		metrics:              dependencies.Metrics,
 		logger:               dependencies.Logger,
 		telemetry:            dependencies.Telemetry,
 		sleepUploads:         make(map[string]*sleepUpload),
