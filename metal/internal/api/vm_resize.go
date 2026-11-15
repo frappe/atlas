@@ -11,14 +11,12 @@ import (
 
 // resizeRequest is the complete resource and idle shutdown shape of a VM.
 type resizeRequest struct {
-	CPUMillicores         int `json:"cpu_millicores"`
-	MemoryMiB             int `json:"memory_mib"`
-	DiskMiB               int `json:"disk_mib"`
-	SleepAfterIdleSeconds int `json:"sleep_after_idle_seconds"`
+	computeRequest
+	DiskMiB int `json:"disk_mib"`
 }
 
 func (r resizeRequest) validate() error {
-	if err := (computeRequest{CPUMillicores: r.CPUMillicores, MemoryMiB: r.MemoryMiB, SleepAfterIdleSeconds: r.SleepAfterIdleSeconds}).validate(); err != nil {
+	if err := r.computeRequest.validate(); err != nil {
 		return err
 	}
 	if r.DiskMiB <= 0 {
@@ -68,7 +66,7 @@ func (s *Server) resizeVirtualMachine(c *echo.Context) error {
 	}
 	if err := s.virtualMachineManager.Resize(c.Request().Context(), virtualMachine.ID, vm.Compute{
 		CPUMillicores: request.CPUMillicores, MemoryMiB: request.MemoryMiB,
-		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds,
+		SleepAfterIdleSeconds: request.SleepAfterIdleSeconds, CPUBurst: request.cpuBurst(),
 	}, request.DiskMiB); err != nil {
 		return err
 	}
