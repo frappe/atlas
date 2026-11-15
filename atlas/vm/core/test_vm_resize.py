@@ -180,6 +180,42 @@ class TestVirtualMachineResize(UnitTestCase):
 		)
 		self.create_migration.assert_called_once()
 
+	def test_a_burst_change_alone_fills_defaults_in_place(self) -> None:
+		"""A 2000 millicore VM gets a 400 millicore baseline (20%) and a 60 minute window."""
+		self.assertIsNone(self.apply({"is_burstable": 1}, state="running"))
+
+		burst = {"is_burstable": True, "baseline_cpu_millicores": 400, "sliding_window_minutes": 60}
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0, **burst}
+		)
+		self.virtual_machine.db_set.assert_called_once_with({"sleep_after_idle_seconds": 0, **burst})
+		self.find_server.assert_not_called()
+		self.create_migration.assert_not_called()
+
+	def test_unticking_burstable_clears_the_baseline_and_window(self) -> None:
+		"""A VM that is not burstable keeps no baseline or window, so Metal accepts it."""
+		burst = CPUBurst(True, 800, 30)
+		for field, value in burst.values.items():
+			setattr(self.virtual_machine, field, value)
+
+		self.apply({"is_burstable": 0}, state="running", burst=burst)
+
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001",
+			{"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0, **NOT_BURSTABLE},
+		)
+		self.virtual_machine.db_set.assert_called_once_with({"sleep_after_idle_seconds": 0, **NOT_BURSTABLE})
+
+	def test_a_cpu_below_the_baseline_is_rejected(self) -> None:
+		"""Lowering CPU under a fixed baseline fails before any placement or host write."""
+		with self.assertRaisesRegex(frappe.ValidationError, "Baseline CPU"):
+			self.apply({"cpu_millicores": 1000}, burst=CPUBurst(True, 1500, 60))
+
+		self.find_server.assert_not_called()
+		self.metal_client.set_virtual_machine_compute.assert_not_called()
+		self.metal_client.resize_virtual_machine.assert_not_called()
+		self.virtual_machine.db_set.assert_not_called()
+
 	def test_a_full_current_host_falls_back_to_a_migration(self) -> None:
 		self.metal_client.resize_virtual_machine.side_effect = MetalClientError(
 			"no room", status=409, code="insufficient_capacity"
