@@ -85,7 +85,15 @@ func (manager *Manager) limitCPUBurst(ctx context.Context, identifier string) er
 	target := desired.Specification.CPUMillicores
 	var average uint64
 	if burst.IsBurstable {
-		average = manager.slidingWindowUsage.average(identifier, time.Now(), burst.BaselineCPUMillicores, desired.CPUBurstResetAt).MilliCPUs
+		usage, err := manager.slidingWindowUsage.average(identifier, time.Now(), desired.CPUBurstResetAt)
+		// Until the first sweep after a metald restart builds the ring, keep the current limit.
+		if errors.Is(err, ErrNotEnoughSamples) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		average = usage.MilliCPUs
 		target = cpuLimit(burst, desired.Specification.CPUMillicores, current, average)
 	}
 	if target == current {

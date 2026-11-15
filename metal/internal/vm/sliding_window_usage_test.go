@@ -50,10 +50,14 @@ func newBurstableManager(t *testing.T, windowMinutes int) *Manager {
 	return manager
 }
 
-// assertAverage checks the average at now, with testBaselineMillicores, against wantMilliCPUs.
+// assertAverage checks the average at now, without a CPU burst reset, against wantMilliCPUs.
 func assertAverage(t *testing.T, usage *slidingWindowUsage, now time.Time, wantMilliCPUs uint64) {
 	t.Helper()
-	if got := usage.average(testVirtualMachineID, now, testBaselineMillicores, time.Time{}); got.MilliCPUs != wantMilliCPUs {
+	got, err := usage.average(testVirtualMachineID, now, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MilliCPUs != wantMilliCPUs {
 		t.Fatalf("MilliCPUs = %d, want %d", got.MilliCPUs, wantMilliCPUs)
 	}
 }
@@ -134,7 +138,7 @@ func TestSlidingWindowUsageAveragesCPUTime(t *testing.T) {
 
 // TestSlidingWindowUsageSkipsDownIntervals checks that a down sample skips both
 // of its pairs, so time the VM was down does not lower the average and does not
-// count at the baseline.
+// count as idle.
 func TestSlidingWindowUsageSkipsDownIntervals(t *testing.T) {
 	usage := newTestUsage(upSample(10, 0), upSample(20, 10), downSample(30), upSample(40, 0))
 
@@ -176,39 +180,45 @@ func TestSlidingWindowUsageIgnoresSamplesOutsideWindow(t *testing.T) {
 	assertAverage(t, usage, secondsAfterBase(90), 500)
 }
 
-// TestSlidingWindowUsagePadsMissingHistoryWithBaseline checks that when the ring
-// starts inside the window, the time before its oldest sample counts at the
-// baseline: 10 s at 1000 and 20 s at 400 give 600.
-func TestSlidingWindowUsagePadsMissingHistoryWithBaseline(t *testing.T) {
+// TestSlidingWindowUsageCountsMissingHistoryAsIdle checks that when the ring
+// starts inside the window, the time before its oldest sample counts as idle:
+// 10 s at 1000 and 20 s at 0 give 333.
+func TestSlidingWindowUsageCountsMissingHistoryAsIdle(t *testing.T) {
 	usage := newTestUsage(upSample(20, 0), upSample(30, 10))
 
-	assertAverage(t, usage, secondsAfterBase(30), 600)
+	assertAverage(t, usage, secondsAfterBase(30), 333)
 }
 
 // TestSlidingWindowUsageIgnoresSamplesBeforeReset checks that samples before a
 // CPU burst reset are missing history. Without a reset the window averages 500.
-// A reset at t25 keeps only t30 to t40: 5 CPU seconds and 20 s at 400 give 433.
-// A reset after the newest sample gives the baseline.
+// A reset at t25 keeps only t30 to t40: 5 CPU seconds over 30 s give 166.
+// A reset after the newest sample gives 0.
 func TestSlidingWindowUsageIgnoresSamplesBeforeReset(t *testing.T) {
 	usage := newTestUsage(upSample(10, 0), upSample(20, 10), upSample(30, 10), upSample(40, 15))
 
 	for _, test := range []struct {
 		resetSeconds  int
 		wantMilliCPUs uint64
-	}{{0, 500}, {25, 433}, {41, testBaselineMillicores}} {
-		got := usage.average(testVirtualMachineID, secondsAfterBase(40), testBaselineMillicores, secondsAfterBase(test.resetSeconds))
+	}{{0, 500}, {25, 166}, {41, 0}} {
+		got, err := usage.average(testVirtualMachineID, secondsAfterBase(40), secondsAfterBase(test.resetSeconds))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if got.MilliCPUs != test.wantMilliCPUs {
 			t.Fatalf("reset at t%d: MilliCPUs = %d, want %d", test.resetSeconds, got.MilliCPUs, test.wantMilliCPUs)
 		}
 	}
 }
 
-// TestSlidingWindowUsageReturnsBaselineWithoutUpTime checks that a VM with no
-// ring, one sample, or only down samples over the window averages at the baseline.
-func TestSlidingWindowUsageReturnsBaselineWithoutUpTime(t *testing.T) {
-	assertAverage(t, newSlidingWindowUsage(), secondsAfterBase(10), testBaselineMillicores)
-	assertAverage(t, newTestUsage(upSample(10, 10)), secondsAfterBase(10), testBaselineMillicores)
-	assertAverage(t, newTestUsage(downSample(10), downSample(20), downSample(30), downSample(40)), secondsAfterBase(40), testBaselineMillicores)
+// TestSlidingWindowUsageWithoutUpTime checks that a VM without a ring returns
+// ErrNotEnoughSamples, and that one sample, or only down samples over the
+// window, average 0.
+func TestSlidingWindowUsageWithoutUpTime(t *testing.T) {
+	if _, err := newSlidingWindowUsage().average(testVirtualMachineID, secondsAfterBase(10), time.Time{}); !errors.Is(err, ErrNotEnoughSamples) {
+		t.Fatalf("error = %v, want %v", err, ErrNotEnoughSamples)
+	}
+	assertAverage(t, newTestUsage(upSample(10, 10)), secondsAfterBase(10), 0)
+	assertAverage(t, newTestUsage(downSample(10), downSample(20), downSample(30), downSample(40)), secondsAfterBase(40), 0)
 }
 
 // TestSlidingWindowUsageForgetsVM checks that forget drops the VM's ring.
