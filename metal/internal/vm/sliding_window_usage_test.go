@@ -13,16 +13,14 @@ import (
 
 const slidingWindowVirtualMachineID = "sliding-window"
 
-const slidingWindow = 2 * time.Minute
-
-type cpuSample struct {
+type storedCPUSample struct {
 	offset     time.Duration
 	up         bool
 	cpuSeconds uint64
 }
 
 // appendCPUSamples stores one metrics record per sample at now plus its offset.
-func appendCPUSamples(t *testing.T, manager *Manager, samples ...cpuSample) {
+func appendCPUSamples(t *testing.T, manager *Manager, samples ...storedCPUSample) {
 	t.Helper()
 	if err := os.Mkdir(filepath.Join(manager.configuration.MachinesDirectory, slidingWindowVirtualMachineID), 0o700); err != nil {
 		t.Fatal(err)
@@ -40,10 +38,10 @@ func appendCPUSamples(t *testing.T, manager *Manager, samples ...cpuSample) {
 	}
 }
 
-// assertMilliCPUs checks the average CPU use over slidingWindow.
+// assertMilliCPUs checks the average CPU use over the manager's sliding window.
 func assertMilliCPUs(t *testing.T, manager *Manager, want uint64) {
 	t.Helper()
-	usage, err := manager.SlidingWindowUsage(context.Background(), slidingWindowVirtualMachineID, slidingWindow)
+	usage, err := manager.SlidingWindowUsage(context.Background(), slidingWindowVirtualMachineID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,10 +50,10 @@ func assertMilliCPUs(t *testing.T, manager *Manager, want uint64) {
 	}
 }
 
-// assertNotEnoughSamples checks that slidingWindow has no usable sample pair.
+// assertNotEnoughSamples checks that the sliding window has no usable sample pair.
 func assertNotEnoughSamples(t *testing.T, manager *Manager) {
 	t.Helper()
-	_, err := manager.SlidingWindowUsage(context.Background(), slidingWindowVirtualMachineID, slidingWindow)
+	_, err := manager.SlidingWindowUsage(context.Background(), slidingWindowVirtualMachineID)
 	if !errors.Is(err, ErrNotEnoughSamples) {
 		t.Fatalf("error = %v, want %v", err, ErrNotEnoughSamples)
 	}
@@ -66,10 +64,10 @@ func assertNotEnoughSamples(t *testing.T, manager *Manager) {
 func TestSlidingWindowUsageAveragesCPUTime(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	appendCPUSamples(t, manager,
-		cpuSample{-40 * time.Second, true, 10},
-		cpuSample{-30 * time.Second, true, 15},
-		cpuSample{-20 * time.Second, true, 20},
-		cpuSample{-10 * time.Second, true, 25},
+		storedCPUSample{-40 * time.Second, true, 10},
+		storedCPUSample{-30 * time.Second, true, 15},
+		storedCPUSample{-20 * time.Second, true, 20},
+		storedCPUSample{-10 * time.Second, true, 25},
 	)
 
 	assertMilliCPUs(t, manager, 500)
@@ -80,11 +78,11 @@ func TestSlidingWindowUsageAveragesCPUTime(t *testing.T) {
 func TestSlidingWindowUsageSkipsDownIntervals(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	appendCPUSamples(t, manager,
-		cpuSample{-50 * time.Second, true, 0},
-		cpuSample{-40 * time.Second, true, 10},
-		cpuSample{-30 * time.Second, false, 0},
-		cpuSample{-20 * time.Second, true, 0},
-		cpuSample{-10 * time.Second, true, 10},
+		storedCPUSample{-50 * time.Second, true, 0},
+		storedCPUSample{-40 * time.Second, true, 10},
+		storedCPUSample{-30 * time.Second, false, 0},
+		storedCPUSample{-20 * time.Second, true, 0},
+		storedCPUSample{-10 * time.Second, true, 10},
 	)
 
 	assertMilliCPUs(t, manager, 1000)
@@ -95,10 +93,10 @@ func TestSlidingWindowUsageSkipsDownIntervals(t *testing.T) {
 func TestSlidingWindowUsageSkipsCounterReset(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	appendCPUSamples(t, manager,
-		cpuSample{-40 * time.Second, true, 100},
-		cpuSample{-30 * time.Second, true, 110},
-		cpuSample{-20 * time.Second, true, 2},
-		cpuSample{-10 * time.Second, true, 12},
+		storedCPUSample{-40 * time.Second, true, 100},
+		storedCPUSample{-30 * time.Second, true, 110},
+		storedCPUSample{-20 * time.Second, true, 2},
+		storedCPUSample{-10 * time.Second, true, 12},
 	)
 
 	assertMilliCPUs(t, manager, 1000)
@@ -109,10 +107,10 @@ func TestSlidingWindowUsageSkipsCounterReset(t *testing.T) {
 func TestSlidingWindowUsageIgnoresRecordsOutsideWindow(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	appendCPUSamples(t, manager,
-		cpuSample{-5 * time.Minute, true, 0},
-		cpuSample{-40 * time.Second, true, 300},
-		cpuSample{-30 * time.Second, true, 305},
-		cpuSample{-20 * time.Second, true, 310},
+		storedCPUSample{-61 * time.Minute, true, 0},
+		storedCPUSample{-40 * time.Second, true, 300},
+		storedCPUSample{-30 * time.Second, true, 305},
+		storedCPUSample{-20 * time.Second, true, 310},
 	)
 
 	assertMilliCPUs(t, manager, 500)
@@ -122,7 +120,7 @@ func TestSlidingWindowUsageIgnoresRecordsOutsideWindow(t *testing.T) {
 // ErrNotEnoughSamples.
 func TestSlidingWindowUsageRequiresTwoSamples(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
-	appendCPUSamples(t, manager, cpuSample{-10 * time.Second, true, 10})
+	appendCPUSamples(t, manager, storedCPUSample{-10 * time.Second, true, 10})
 
 	assertNotEnoughSamples(t, manager)
 }
@@ -140,10 +138,10 @@ func TestSlidingWindowUsageWithoutHistory(t *testing.T) {
 func TestSlidingWindowUsageSkipsSamplesWithoutElapsedTime(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	appendCPUSamples(t, manager,
-		cpuSample{-30 * time.Second, true, 0},
-		cpuSample{-20 * time.Second, true, 5},
-		cpuSample{-20 * time.Second, true, 15},
-		cpuSample{-10 * time.Second, true, 20},
+		storedCPUSample{-30 * time.Second, true, 0},
+		storedCPUSample{-20 * time.Second, true, 5},
+		storedCPUSample{-20 * time.Second, true, 15},
+		storedCPUSample{-10 * time.Second, true, 20},
 	)
 
 	assertMilliCPUs(t, manager, 500)
