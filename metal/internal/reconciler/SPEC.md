@@ -18,6 +18,7 @@ This package schedules convergence work. It owns no VM, image, snapshot, or traf
 | `ImageReconciler` | Caches images, prunes unused images, kernels, and staged snapshots. |
 | `MigrationReconciler` | Advances each active destination migration. |
 | `GuestChecker` | Pings running guests every minute, so a silent guest counts as unavailable. |
+| `CPUBurstLimiter` | Runs `Manager.LimitCPUBursts` every 10 seconds, so a burstable VM above its baseline is limited. |
 | `passScheduler` | Runs a pass at startup, on an interval, and on request. |
 
 ## Pass model
