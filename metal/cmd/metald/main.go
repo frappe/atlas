@@ -498,6 +498,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(metricsSampler.Run)
 	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
+		wireGuard: wireGuardManager,
 	}).Run)
 	daemon.StartWorker(telemetry.NewDatumProxy(options.configFile, logger).Run)
 	if trafficMonitor != nil {

@@ -1,6 +1,5 @@
 import json
 
-from alerts import add_alerts
 from bmc_dashboard import add_bmc_dashboard
 from errors_dashboard import add_errors_dashboard
 from host.dashboard import add_host_dashboard
@@ -25,5 +24,4 @@ if __name__ == "__main__":
 	add_errors_dashboard(workbook)
 	add_weekly_trends_dashboard(workbook)
 	add_logs_dashboard(workbook)
-	add_alerts(workbook)
 	print(json.dumps(workbook.export(), indent=1))

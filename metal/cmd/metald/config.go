@@ -83,7 +83,7 @@ func defaultOptions() options {
 		coordinationListen: "127.0.0.1:9001",
 		configFile:         defaultConfigPath,
 		telemetry: telemetryOptions{
-			interval: 30 * time.Second,
+			interval: time.Minute,
 			restartCountUnits: []string{
 				"metal.service", "atlas-host-firewall.service", "wg-quick@wg0.service", "vector.service",
 				"ssh.service", "chrony.service", "systemd-timesyncd.service", "zfs-zed.service",

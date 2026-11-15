@@ -101,13 +101,13 @@ SLO_DAILY = f"""WITH daily AS (
 ),
 rolling AS (
   SELECT d.day AS day, e.slo AS slo, sum(e.good) / sum(e.events) * 100 AS value
-  FROM (SELECT today() - number AS day FROM numbers(28)) AS d
+  FROM (SELECT today() - arrayJoin(range(28)) AS day) AS d
   CROSS JOIN daily AS e
   WHERE e.day <= d.day AND e.day > d.day - 28
   GROUP BY day, slo
 )
 SELECT d.day AS day, s.slo AS series, if(r.slo = '', NULL, r.value) AS value
-FROM (SELECT today() - number AS day FROM numbers(28)) AS d
+FROM (SELECT today() - arrayJoin(range(28)) AS day) AS d
 CROSS JOIN values('slo String', {", ".join(f"'{name}'" for name, _, _ in SLOS)}) AS s
 LEFT JOIN rolling AS r ON r.day = d.day AND r.slo = s.slo"""
 
@@ -146,14 +146,14 @@ api AS (
   FROM (
     SELECT labels['status'] AS status, greatest(max(value) - min(value), 0) AS increase
     FROM samples
-    WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_api_requests_total' AND ts > {MONTH_START}
+    WHERE resource_id = 'atlas' AND metric = 'atlas_api_requests_total' AND ts > {MONTH_START}
     GROUP BY labels
   )
 ),
 atlas_minutes AS (
   -- Minutes are counted from the first push of the month, when measuring began.
   SELECT uniqExact(toStartOfMinute(ts)) AS reported, dateDiff('minute', min(ts), now()) AS elapsed
-  FROM samples WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_metal_servers' AND ts > {MONTH_START}
+  FROM samples WHERE resource_id = 'atlas' AND metric = 'atlas_metal_servers' AND ts > {MONTH_START}
 )
 SELECT 'VM uptime' AS sla, '{VM_UPTIME_TARGET * 100:g}%' AS target,
   (1 - down_minutes / nullIf(wanted_minutes, 0)) * 100 AS this_month,

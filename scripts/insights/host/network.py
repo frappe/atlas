@@ -180,7 +180,7 @@ SECTIONS = [
 				title="Softnet Out of Quota",
 				sql=rate_sql(
 					["system_network_softnet_time_squeezed_total"],
-					"concat('cpu', d.labels['cpu'])",
+					"'all CPUs'",
 					per_second=False,
 				),
 				measure="Squeezes",
