@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
-NETWORK_LOCK_TIMEOUT_SECONDS = 10
+CHANGE_LOCK_TIMEOUT_SECONDS = 10
 
 
 class MetalOperationError(frappe.ValidationError):
@@ -417,7 +417,7 @@ class VirtualMachineService:
 	def apply_network_changes(self, changes: dict[str, Any]) -> dict[str, Any]:
 		"""Validate and apply selected network changes."""
 		self.virtual_machine.validate_network_change()
-		with self.network_lock():
+		with self.change_lock("network"):
 			return self._apply_network_changes(changes)
 
 	def _apply_network_changes(self, changes: dict[str, Any]) -> dict[str, Any]:
@@ -455,25 +455,25 @@ class VirtualMachineService:
 		return self.get_routes_without(IPV4_INTERNET_DESTINATION)
 
 	@contextmanager
-	def network_lock(self) -> Iterator[None]:
-		"""Serialize network changes. Each one reads and replaces the complete Metal network.
+	def change_lock(self, kind: str) -> Iterator[None]:
+		"""Serialize one kind of change, such as "network" or "compute", that reads and replaces a complete Metal value.
 
 		A file lock, not a row lock, so no database lock waits on the Metal calls.
 		"""
 		try:
 			with filelock(
-				f"atlas:vm-network:{self.virtual_machine.name}", timeout=NETWORK_LOCK_TIMEOUT_SECONDS
+				f"atlas:vm-{kind}:{self.virtual_machine.name}", timeout=CHANGE_LOCK_TIMEOUT_SECONDS
 			):
 				yield
 		except LockTimeoutError:
 			frappe.throw(
-				_("Another network change of this Virtual Machine is in progress. Retry later."),
+				_("Another {0} change of this Virtual Machine is in progress. Retry later.").format(kind),
 				exc=AtlasConflictError,
 			)
 
 	def set_routes(self, value: Any) -> dict[str, Any]:
 		"""Replace the complete route list. Metal owns the routes."""
-		with self.network_lock():
+		with self.change_lock("network"):
 			return self.update_network({"routes": [route.as_dict() for route in self.validate_routes(value)]})
 
 	def validate_routes(self, value: Any) -> tuple[Route, ...]:

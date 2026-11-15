@@ -327,7 +327,7 @@ class PublicIPService:
 		from atlas.vm.core.vm_service import VirtualMachineService
 
 		service = VirtualMachineService(virtual_machine)
-		with service.network_lock():
+		with service.change_lock("network"):
 			if pool.is_routed:
 				router = frappe.get_doc("IPv6 Router Server", pool.gateway)
 				route = Route(IPV6_INTERNET_DESTINATION, router.wireguard_mesh_ipv6)
@@ -368,7 +368,7 @@ class PublicIPService:
 		if virtual_machine.is_terminating:
 			return
 		service = VirtualMachineService(virtual_machine)
-		with service.network_lock():
+		with service.change_lock("network"):
 			# A VM that Metal does not hold has no network to change.
 			if not service.get_information():
 				return
