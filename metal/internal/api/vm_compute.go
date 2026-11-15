@@ -8,8 +8,8 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// @Summary	Set virtual machine compute resources and idle shutdown
-// @Description	Store the complete CPU and memory shape. The virtual machine must be stopped.
+// @Summary	Set virtual machine compute resources, idle shutdown, and CPU burst
+// @Description	Store the complete compute configuration. A CPU or memory change needs a stopped virtual machine. Idle shutdown and CPU burst change on a running one.
 // @ID			setVirtualMachineCompute
 // @Tags		Virtual machines
 // @Accept		json

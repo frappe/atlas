@@ -14,6 +14,24 @@ See [guest metadata](vm-records.md#guest-metadata) for the limits on custom meta
 
 A resize uses the current host if it has enough capacity. Otherwise, Atlas can reserve another host and use [migration](migration.md).
 
+### Set CPU burst
+
+A burstable VM can use CPU above its baseline. Metal measures its average CPU use over its sliding window, as [average CPU use over a window](#average-cpu-use-over-a-window) explains.
+
+| Field | Meaning | Default | Limits |
+|---|---|---|---|
+| `is_burstable` | The VM can use CPU above its baseline. | `false` | |
+| `baseline_cpu_millicores` | The CPU that the VM can always use. | 20% of `cpu_millicores` | 1 to `cpu_millicores` |
+| `sliding_window_minutes` | How far back Metal measures average CPU use. | 60 | 1 to 1440 |
+
+Set the fields in the create or resize API request, or with **Actions → Resize VM** in Desk. Atlas fills a default for a value that is unset or `0` on a burstable VM. When a VM stops being burstable, Atlas sets the baseline and the window to `0`.
+
+A CPU burst change applies to a running VM, like the idle sleep delay. A move to another host keeps the settings. Atlas rejects a resize that sets `cpu_millicores` below the baseline. Lower the baseline first.
+
+Placement and host capacity still use the full `cpu_millicores` of a burstable VM.
+
+Upgrade metald on a host before you make its VMs burstable. An older metald ignores the burst fields. Atlas then repairs the VM record from Metal at the next resize.
+
 Read [Metal's requested and applied generations](reconciliation.md) for current progress. The Atlas VM list uses [cached host reports](../region/host-sync.md).
 
 ## Read VM metrics
@@ -44,11 +62,13 @@ Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol
 
 ### Average CPU use over a window
 
-`Manager.SlidingWindowUsage` in metald gives the average CPU use of a VM over the last 60 minutes. The result is in milli-CPUs, where 1,000 milli-CPUs is one CPU busy for the full time. `ManagerConfig.SlidingWindow` sets the window.
+`Manager.SlidingWindowUsage` in metald gives the average CPU use of a [burstable VM](#set-cpu-burst) over its `sliding_window_minutes`. The result is in milli-CPUs, where 1,000 milli-CPUs is one CPU busy for the full time. A VM that is not burstable returns `ErrNotBurstable`.
 
-metald keeps one window of samples for each VM in memory, so a call does not read the disk. After the metrics sampler stores a sample, it gives the sample to the VM manager. A sample that the store rejects does not go into memory. The memory use is about 14 KB for each VM with the 60-minute window.
+metald keeps one window of samples for each burstable VM in memory, so a call does not read the disk. After the metrics sampler stores a sample, it gives the sample to the VM manager. A sample that the store rejects does not go into memory. One window holds one sample for each 10 seconds, plus one. A 60-minute window holds 361 samples and uses about 14 KB.
 
-After metald starts, the first call for a VM reads the stored samples of the window one time. Later calls use only the samples in memory. metald removes the samples of a VM when the VM is destroyed or moves to another host.
+The first sweep after metald starts reads the stored samples of each burstable VM one time. A VM that becomes burstable, or that gets a new window, reads them at its next sweep. Until that sweep, the previous window applies for up to 10 seconds. A sweep that runs out of time logs `keep VM CPU samples` and tries again at the next sweep.
+
+metald removes the samples of a VM when the VM stops being burstable, is destroyed, or moves to another host.
 
 Metal adds the CPU time and the elapsed time of each pair of adjacent samples in the window. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, or when both samples have the same second. Thus down time does not lower the average.
 
