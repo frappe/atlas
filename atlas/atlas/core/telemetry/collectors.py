@@ -231,13 +231,16 @@ class AtlasGauges:
 		self.add("atlas_service_servers", 1, service="cargo", status=cargo_status or "Not Provisioned")
 
 	def add_service_readiness(self) -> None:
-		"""Name the VM of each active service node, and probe its readiness URL. The IPv6 router has none."""
-		nodes = []
+		"""Name the VM of each active service node, and probe its readiness URL. The IPv6 router has none.
+		A WireGuard gateway node is also probed at /healthz, which passes while it serves its devices."""
+		nodes, health_urls = [], {}
 		for doctype, service in SERVICE_DOCTYPES.items():
 			for name in frappe.get_all(doctype, filters={"status": "Active"}, pluck="name"):
 				node = frappe.get_doc(doctype, name)
 				url = None if service == "ipv6_router" else f"https://{node.get_domain()}/readyz"
 				nodes.append((service, name, node.virtual_machine, url))
+				if service == "wireguard_gateway":
+					health_urls[name] = f"https://{node.get_domain()}/healthz"
 
 		cargo = frappe.get_single("Cargo Server")
 		if cargo.status == "Active":
@@ -245,6 +248,7 @@ class AtlasGauges:
 
 		with ThreadPoolExecutor(max_workers=8) as pool:
 			readiness = list(pool.map(is_ready, [url for *_, url in nodes]))
+			health = dict(zip(health_urls, pool.map(is_ready, health_urls.values()), strict=True))
 
 		servers = dict(
 			frappe.get_all(
@@ -264,6 +268,8 @@ class AtlasGauges:
 			self.add("atlas_service_node", 1, **labels)
 			if url:
 				self.add("atlas_service_ready", int(ready), **labels)
+			if service == "wireguard_gateway":
+				self.add("atlas_service_healthy", int(health[name]), **labels)
 
 	def add_jobs(self) -> None:
 		"""Report queue backlogs. A rising failed count means jobs keep failing."""
