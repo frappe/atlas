@@ -5,6 +5,7 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/api"
 	"github.com/frappe/atlas/metal/internal/firecracker"
+	"github.com/frappe/atlas/metal/internal/network"
 	platform "github.com/frappe/atlas/metal/internal/platform"
 	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/frappe/atlas/metal/internal/telemetry/system"
@@ -16,6 +17,7 @@ type telemetrySources struct {
 	virtualMachines *vm.Manager
 	migrations      *migration.Manager
 	runtime         *firecracker.Runtime
+	wireGuard       *network.WireGuardManager
 }
 
 func newTelemetryPusher(
@@ -32,6 +34,8 @@ func newTelemetryPusher(
 	registry.Register("virtual_machines", telemetry.CollectorFunc(sources.virtualMachines.CollectTelemetry))
 	registry.Register("migrations", telemetry.CollectorFunc(sources.migrations.CollectTelemetry))
 	registry.Register("runtime", telemetry.CollectorFunc(sources.runtime.CollectTelemetry))
+	registry.Register("mesh", telemetry.CollectorFunc(sources.wireGuard.CollectTelemetry))
+	registry.Register("public_network", telemetry.CollectorFunc(network.CollectPublicTelemetry))
 	system.Register(registry, system.Config{Pool: options.pool, RestartCountUnits: options.telemetry.restartCountUnits, Systemd: units})
 
 	client := telemetry.NewClient(options.configFile, logger)

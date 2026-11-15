@@ -51,7 +51,7 @@ The VM of each active proxy, WireGuard gateway, and IPv6 router node, and the Ca
 - The agent adds the role file of the service from `atlas/atlas/core/telemetry/agent_roles/`.
 - Proxy: the agent reads the JSON nginx access log and sends only counts and times: `proxy_requests_total` by status class and origin (`proxy` when the last upstream sent no response header, so the proxy made the answer, `upstream` when the site answered, also with its own 502 or 504), `proxy_request_seconds_total`, `proxy_upstream_seconds_total`, and `proxy_slow_requests_total` for requests over 1 second. Access lines stay on the node, because they hold client addresses. nginx error lines at `error` or worse go to the logs, except the upstream errors (refused, reset, timed out) that the site and proxy checks cover.
 - IPv6 router: `ipv6_router_program_attached` is 1 while the tc eBPF program is attached to `eth0`.
-- WireGuard gateway: `wireguard_peers` and `wireguard_peers_active`, the peers with a handshake in the last 3 minutes. A root timer of the gateway writes the counts, because reading WireGuard needs root.
+- WireGuard gateway: `wireguard_peers` and `wireguard_peers_active`, the peers with a handshake in the last 3 minutes. A root timer of the gateway writes the counts, because reading WireGuard needs root. Atlas also probes `/healthz` of each active gateway node each minute and sends `atlas_service_healthy`. It passes while the node has its peer state and `wg0` is configured.
 
 To repair one node or the Cargo VM, run **Configure Telemetry** (`configure_telemetry`) on its form.
 
@@ -70,6 +70,7 @@ Put VM, request, and migration IDs in logs. The `atlas_service_node` and `atlas_
 | `metal_migration_*` | Destination host | State transitions, duration, downtime, and transfer size |
 | `metal_image_*`, `metal_snapshot_*` | Storage | Image import, snapshot creation, and snapshot upload duration and size |
 | `metal_process_*`, `metal_telemetry_*` | metald | Start time, memory, goroutines, pushes, dropped events |
+| `metal_network_*` | metald | `metal_network_mesh_peer_connected{peer}`: 1 when the WireGuard tunnel to that peer host had a handshake in the last 3 minutes. Each peer sends a keepalive every 25 seconds, so a working tunnel always has one. `metal_network_public_up`: 1 while the device of the IPv4 default route is up. |
 
 | `atlas_*` | Atlas, as resource `atlas` | Regional inventory, the machines that must send (`atlas_machine`), capacity, migrations, placement, API calls, queues, public IPs, images, service readiness, the free space of its own root, bench, and MariaDB file systems, and the days left on the wildcard and metald TLS certificates |
 | `system_*` | The Datum agent on service VMs and the Cargo VM | The machine metrics of the contract |
@@ -172,7 +173,7 @@ Beacon, the incident manager, reads `GET /api/atlas/beacon/resources` to know wh
 
 ## Beacon rules
 
-Beacon reads its alert rules, services and runbooks for Atlas, metald, hosts and the regional services from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule, `.http` and `.tls` files are checks that Beacon makes from outside the region (the Atlas API and its certificate), `beacon/services/<service>.sql` is one SLO service (a file with `-- measurement: Declared` and no query is a declared service: published incidents in Beacon set its status, as for the Networking group), and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
+Beacon reads its alert rules, services and runbooks for Atlas, metald, hosts and the regional services from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule, `.http` and `.tls` files are checks that Beacon makes from outside the region (the Atlas API and its certificate), `beacon/services/<service>.sql` is one SLO service (a file with `-- measurement: Declared` and no query is a declared service: published incidents in Beacon set its status), and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
 
 ## BMC hardware
 
