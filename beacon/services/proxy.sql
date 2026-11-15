@@ -3,6 +3,8 @@
 -- scope: Region
 -- slo_target: 99.9
 -- sort_order: 3
+-- major_outage_below: 50
+-- Proxies share the traffic, so one proxy of three down gives about 67%. That is a Partial Outage. Two down is Major.
 -- Only the proxy VMs that Atlas lists count, because any sender can send proxy_requests_total.
 -- Each row names the proxy node, not its VM, so a firing alert on the node, such as Service node not ready, makes a silent proxy count as bad.
 -- A proxy keeps its row for 30 minutes after its last sample, so Beacon can count it as silent. A silent row has its average events of a minute, all good: Beacon makes them bad only under a cause alert.
