@@ -87,6 +87,7 @@ The migration lifecycle lives in [internal/vm/migration/SPEC.md](migration/SPEC.
 
 - Host packages implement `Runtime`, `Network`, `Storage`, and `Snapshots`.
 - `RuntimeUsage` carries a runtime's CPU time, memory, and disk I/O to the VM metrics sampler.
+- `sliding_window_usage.go` owns `Manager.SlidingWindowUsage`. It reads history from the optional `ManagerDependencies.Metrics` store and returns `ErrNotEnoughSamples` without a usable sample pair. See [average CPU use over a window](../../../docs/compute/index.md#average-cpu-use-over-a-window). `sliding_window_usage_test.go` checks down intervals, counter resets, same-second samples, and the window limit.
 - The daemon traffic listener passes each `traffic.Event` to `Manager.RestoreAfterTraffic`, then wakes the restore reconciler.
 - `WarmImageBuilder` creates shared start artifacts. It does not use the saved state of an idle VM.
 
