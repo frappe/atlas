@@ -60,4 +60,4 @@ Atlas - Platform Services shows each node's uptime this month. The Platform Serv
 
 ## Alerts
 
-Beacon sends the alerts. The rules are in [beacon/rules](../../beacon/rules/). The workbook has no Insights Alerts.
+Beacon sends the alerts. The rules are in [beacon/rules](https://github.com/frappe/atlas/tree/develop/beacon/rules). The workbook has no Insights Alerts.
