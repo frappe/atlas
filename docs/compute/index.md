@@ -42,6 +42,18 @@ Each sample is the latest sample in its bucket, with disk I/O rates averaged acr
 
 Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol counters read direct transport headers; IPv6 extension headers and later IPv4 fragments still increase the total packet count but not the protocol count. A Metal restart or TAP reattachment resets network counters, so discard a negative counter difference when calculating rates.
 
+### Average CPU use over a window
+
+`Manager.SlidingWindowUsage` in metald gives the average CPU use of a VM over a recent window, such as the last 5 minutes. The result is in milli-CPUs, where 1,000 milli-CPUs is one CPU busy for the full time.
+
+Metal reads the stored samples in the window and adds the CPU time and the elapsed time of each pair of adjacent samples. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, when the CPU counter fell after a restart, or when both samples have the same second. Thus down time does not lower the average.
+
+The call returns `ErrNotEnoughSamples` when the window has no usable pair. This includes a VM that has no history on this host.
+
+The value includes the Firecracker process threads, so it can be a little more than the vCPU count multiplied by 1,000. A paused VM counts as up with almost no CPU use. If a VM restarts inside one 10-second interval, or while metald is stopped, that interval can show less CPU time than the VM used.
+
+Each call reads and decodes the full daily sample file, or two files after UTC midnight. Do not call it often for many VMs without a cheaper source.
+
 ## Terminate a VM
 
 1. Atlas requests destruction and marks its record as terminating.
