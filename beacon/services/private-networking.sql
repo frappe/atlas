@@ -1,0 +1,8 @@
+-- title: Private networking
+-- description: Servers reach each other over the private network.
+-- scope: Region
+-- measurement: Declared
+-- status_page_group: Networking
+-- slo_target: 99.9
+-- sort_order: 6
+-- No metric yet. Published incidents in Beacon set the status.
