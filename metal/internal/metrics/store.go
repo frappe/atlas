@@ -142,7 +142,7 @@ func scanRecords(ctx context.Context, path string, start, end time.Time, accept 
 }
 
 var steps = []time.Duration{
-	sampleInterval, 20 * time.Second, 30 * time.Second,
+	SampleInterval, 20 * time.Second, 30 * time.Second,
 	time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute, 15 * time.Minute, 30 * time.Minute,
 	time.Hour, 3 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour,
 }

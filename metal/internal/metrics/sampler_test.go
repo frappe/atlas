@@ -21,6 +21,8 @@ func (source *parallelSource) ListIDs(context.Context) ([]string, error) {
 	return []string{"one", "two"}, nil
 }
 
+func (source *parallelSource) RecordMetrics(string, Record) {}
+
 func (source *parallelSource) Metrics(ctx context.Context, _ string) (Sample, error) {
 	if source.calls.Add(1) == 2 {
 		close(source.started)

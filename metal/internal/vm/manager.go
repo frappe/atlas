@@ -24,6 +24,9 @@ import (
 // defaultFastApplyTimeout bounds an immediate guest update.
 const defaultFastApplyTimeout = 2 * time.Second
 
+// defaultSlidingWindow is how far back SlidingWindowUsage averages by default.
+const defaultSlidingWindow = 60 * time.Minute
+
 const informationAttempts = 3
 
 const informationRetryDelay = 5 * time.Millisecond
@@ -33,6 +36,7 @@ type ManagerConfig struct {
 	MachinesDirectory string
 	UserIDRange       UserIDRange
 	FastApplyTimeout  time.Duration
+	SlidingWindow     time.Duration
 }
 
 // ManagerDependencies contains the host services used by Manager.
@@ -57,6 +61,7 @@ type Manager struct {
 	snapshots            Snapshots
 	traffic              *traffic.Monitor
 	metrics              *metrics.Store
+	slidingWindowUsage   *slidingWindowUsage
 	logger               *slog.Logger
 	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
@@ -101,6 +106,9 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 	if configuration.FastApplyTimeout <= 0 {
 		configuration.FastApplyTimeout = defaultFastApplyTimeout
 	}
+	if configuration.SlidingWindow <= 0 {
+		configuration.SlidingWindow = defaultSlidingWindow
+	}
 	if dependencies.Runtime == nil || dependencies.Network == nil || dependencies.Storage == nil || dependencies.Snapshots == nil || dependencies.Telemetry == nil {
 		return nil, fmt.Errorf("VM manager dependencies are required")
 	}
@@ -116,6 +124,7 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		snapshots:            dependencies.Snapshots,
 		traffic:              dependencies.Traffic,
 		metrics:              dependencies.Metrics,
+		slidingWindowUsage:   newSlidingWindowUsage(configuration.SlidingWindow),
 		logger:               dependencies.Logger,
 		telemetry:            dependencies.Telemetry,
 		sleepUploads:         make(map[string]*sleepUpload),
