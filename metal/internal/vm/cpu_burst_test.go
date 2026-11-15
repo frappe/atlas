@@ -32,9 +32,9 @@ func TestCPULimit(t *testing.T) {
 	}
 }
 
-// TestLimitCPUBursts checks that the job skips a VM that is not running, throttles
-// a busy burstable VM once, releases it after a quiet window, and releases it when
-// burst is turned off.
+// TestLimitCPUBursts checks that the job skips a VM that is not running, keeps
+// the limit of a VM without samples in memory, throttles a busy burstable VM once,
+// releases it after a quiet window, and releases it when burst is turned off.
 func TestLimitCPUBursts(t *testing.T) {
 	manager, runtime, _, _ := newTestManager(t)
 	specification := testSpecification()
@@ -74,6 +74,14 @@ func TestLimitCPUBursts(t *testing.T) {
 	if err := manager.store.writeObserved("machine-1", observed); err != nil {
 		t.Fatal(err)
 	}
+
+	// After a metald restart, a limited VM has no ring until the next sweep.
+	manager.slidingWindowUsage.forget("machine-1")
+	runtime.cpuLimit = 1000
+	limit(1000, 0)
+	runtime.cpuLimit = 2000
+	averageOverWindow(1500)
+
 	limit(1000, 1)
 	limit(1000, 1)
 
