@@ -133,7 +133,8 @@ func TestSlidingWindowUsageAveragesCPUTime(t *testing.T) {
 }
 
 // TestSlidingWindowUsageSkipsDownIntervals checks that a down sample skips both
-// of its pairs, so time the VM was down does not lower the average.
+// of its pairs, so time the VM was down does not lower the average and does not
+// count at the baseline.
 func TestSlidingWindowUsageSkipsDownIntervals(t *testing.T) {
 	usage := newTestUsage(upSample(10, 0), upSample(20, 10), downSample(30), upSample(40, 0))
 
@@ -173,6 +174,15 @@ func TestSlidingWindowUsageIgnoresSamplesOutsideWindow(t *testing.T) {
 	usage := newTestUsage(upSample(20, 0), upSample(30, 0), upSample(40, 0), upSample(70, 50), upSample(80, 55))
 
 	assertAverage(t, usage, secondsAfterBase(90), 500)
+}
+
+// TestSlidingWindowUsagePadsMissingHistoryWithBaseline checks that when the ring
+// starts inside the window, the time before its oldest sample counts at the
+// baseline: 10 s at 1000 and 20 s at 400 give 600.
+func TestSlidingWindowUsagePadsMissingHistoryWithBaseline(t *testing.T) {
+	usage := newTestUsage(upSample(20, 0), upSample(30, 10))
+
+	assertAverage(t, usage, secondsAfterBase(30), 600)
 }
 
 // TestSlidingWindowUsageReturnsBaselineWithoutUpTime checks that a VM with no
