@@ -281,18 +281,20 @@ func TestSlidingWindowUsageReadsTheStoreOnce(t *testing.T) {
 	assertRing(t, manager, time.Hour, 3)
 }
 
-// TestSlidingWindowUsageRebuildsRingWhenWindowChanges checks that after the
-// window grows, the next record refills the ring from the store, so it gets the
-// older samples: 5 samples in 2 minutes instead of 2 in 1 minute.
+// TestSlidingWindowUsageRebuildsRingWhenWindowChanges checks that a refill
+// reads one sample interval before the window, so the 1-minute ring keeps the
+// sample 65 s back, and that after the window grows, the next record refills
+// the ring with the older samples: 6 samples in 2 minutes instead of 3.
 func TestSlidingWindowUsageRebuildsRingWhenWindowChanges(t *testing.T) {
 	manager := newBurstableManager(t, 1)
 	appendStoredSamples(t, manager,
 		storedCPUSample{-110 * time.Second, true, 0},
 		storedCPUSample{-100 * time.Second, true, 20},
+		storedCPUSample{-65 * time.Second, true, 20},
 		storedCPUSample{-40 * time.Second, true, 20},
 	)
 	recordSamples(t, manager, storedCPUSample{-30 * time.Second, true, 25})
-	assertRing(t, manager, time.Minute, 2)
+	assertRing(t, manager, time.Minute, 3)
 
 	burst := CPUBurst{IsBurstable: true, BaselineCPUMillicores: testBaselineMillicores, SlidingWindowMinutes: 2}
 	if err := manager.SetCompute(context.Background(), testVirtualMachineID, Compute{CPUMillicores: 2000, MemoryMiB: 2048, CPUBurst: burst}); err != nil {
@@ -300,7 +302,7 @@ func TestSlidingWindowUsageRebuildsRingWhenWindowChanges(t *testing.T) {
 	}
 	recordSamples(t, manager, storedCPUSample{-25 * time.Second, true, 25})
 
-	assertRing(t, manager, 2*time.Minute, 5)
+	assertRing(t, manager, 2*time.Minute, 6)
 }
 
 // TestSlidingWindowUsageNeedsABurstableVM checks that an unknown VM returns
