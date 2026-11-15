@@ -28,14 +28,24 @@ func downSample(seconds int) cpuSample {
 	return cpuSample{timestamp: secondsAfterBase(seconds)}
 }
 
-// newTestUsage returns a 30-second window, so each ring holds 4 samples, with
-// samples recorded in order.
+// newTestUsage returns a ring with a 30-second window, so it holds 4 samples,
+// built from samples in order.
 func newTestUsage(samples ...cpuSample) *slidingWindowUsage {
-	usage := newSlidingWindowUsage(30 * time.Second)
-	for _, sample := range samples {
-		usage.record(testVirtualMachineID, sample)
-	}
+	usage := newSlidingWindowUsage()
+	usage.seed(testVirtualMachineID, 30*time.Second, samples)
 	return usage
+}
+
+// newBurstableManager returns a manager with one burstable VM that averages over windowMinutes.
+func newBurstableManager(t *testing.T, windowMinutes int) *Manager {
+	t.Helper()
+	manager, _, _, _ := newTestManager(t)
+	specification := testSpecification()
+	specification.CPUBurst = CPUBurst{IsBurstable: true, BaselineCPUMillicores: 400, SlidingWindowMinutes: windowMinutes}
+	if _, err := manager.Create(context.Background(), testVirtualMachineID, specification); err != nil {
+		t.Fatal(err)
+	}
+	return manager
 }
 
 // assertAverage checks the average at now against wantMilliCPUs.
@@ -65,21 +75,34 @@ type storedCPUSample struct {
 	cpuSeconds uint64
 }
 
-// appendStoredSamples writes records to the store, as the sampler does, without
-// recording them in the ring.
-func appendStoredSamples(t *testing.T, manager *Manager, samples ...storedCPUSample) {
+// appendStoredSamples writes records to the store without recording them in the
+// ring, and returns the last record.
+func appendStoredSamples(t *testing.T, manager *Manager, samples ...storedCPUSample) metrics.Record {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(manager.configuration.MachinesDirectory, testVirtualMachineID), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	now := time.Now().UTC()
+	var record metrics.Record
 	for _, sample := range samples {
-		record := metrics.Record{Timestamp: now.Add(sample.offset), Metrics: metrics.Sample{
+		record = metrics.Record{Timestamp: now.Add(sample.offset), Metrics: metrics.Sample{
 			Up:           sample.up,
 			ComputeUsage: metrics.ComputeUsage{CPUTimeMicroseconds: sample.cpuSeconds * 1_000_000},
 		}}
 		if err := manager.metrics.Append(testVirtualMachineID, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return record
+}
+
+// recordSamples stores each sample and then gives it to RecordMetrics, as the sampler does.
+func recordSamples(t *testing.T, manager *Manager, samples ...storedCPUSample) {
+	t.Helper()
+	for _, sample := range samples {
+		record := appendStoredSamples(t, manager, sample)
+		if err := manager.RecordMetrics(context.Background(), testVirtualMachineID, record); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -88,7 +111,7 @@ func appendStoredSamples(t *testing.T, manager *Manager, samples ...storedCPUSam
 // assertManagerMilliCPUs checks the manager's sliding window average for testVirtualMachineID.
 func assertManagerMilliCPUs(t *testing.T, manager *Manager, wantMilliCPUs uint64) {
 	t.Helper()
-	got, err := manager.SlidingWindowUsage(context.Background(), testVirtualMachineID)
+	got, err := manager.SlidingWindowUsage(testVirtualMachineID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,81 +201,38 @@ func TestSlidingWindowUsageForgetsVM(t *testing.T) {
 	assertNotEnoughSamples(t, usage, secondsAfterBase(20))
 }
 
-// TestSlidingWindowUsageSeedKeepsNewerRecordedSamples checks that seeding keeps
-// a sample recorded while History read the file, and does not duplicate the
-// sample that is both stored and recorded.
-func TestSlidingWindowUsageSeedKeepsNewerRecordedSamples(t *testing.T) {
-	usage := newTestUsage(upSample(30, 0), upSample(40, 0))
-	usage.seed(testVirtualMachineID, []cpuSample{upSample(10, 0), upSample(20, 0), upSample(30, 0)})
-
-	ring := usage.rings[testVirtualMachineID]
-	if !ring.isSeeded || ring.count != 4 {
-		t.Fatalf("isSeeded = %t, count = %d, want true and 4", ring.isSeeded, ring.count)
-	}
-	for index, seconds := range []int{10, 20, 30, 40} {
-		if got := ring.at(index).timestamp; !got.Equal(secondsAfterBase(seconds)) {
-			t.Fatalf("at(%d) = %v, want %v", index, got, secondsAfterBase(seconds))
-		}
-	}
-}
-
-// TestSlidingWindowUsageSeedsFromStoreAfterRestart checks that a manager with
-// no samples in memory reads the stored samples on its first call.
+// TestSlidingWindowUsageSeedsFromStoreAfterRestart checks that the first record
+// after a metald restart fills the ring from the store, so earlier samples count.
 func TestSlidingWindowUsageSeedsFromStoreAfterRestart(t *testing.T) {
-	manager, _, _, _ := newTestManager(t)
+	manager := newBurstableManager(t, 60)
 	appendStoredSamples(t, manager,
 		storedCPUSample{-40 * time.Second, true, 10},
 		storedCPUSample{-30 * time.Second, true, 15},
 		storedCPUSample{-20 * time.Second, true, 20},
-		storedCPUSample{-10 * time.Second, true, 25},
 	)
+	recordSamples(t, manager, storedCPUSample{-10 * time.Second, true, 25})
 
 	assertManagerMilliCPUs(t, manager, 500)
 }
 
-// TestSlidingWindowUsageSeedsOnlyOnce checks that after the first call, only
-// recorded samples change the result. A sample written only to the store, which
-// would raise the average to 1000, is not read again.
-func TestSlidingWindowUsageSeedsOnlyOnce(t *testing.T) {
-	manager, _, _, _ := newTestManager(t)
-	appendStoredSamples(t, manager,
+// TestSlidingWindowUsageReadsTheStoreOnce checks that once the ring exists,
+// records go only to memory: the average survives removal of the stored files.
+func TestSlidingWindowUsageReadsTheStoreOnce(t *testing.T) {
+	manager := newBurstableManager(t, 60)
+	recordSamples(t, manager,
 		storedCPUSample{-40 * time.Second, true, 10},
 		storedCPUSample{-30 * time.Second, true, 15},
-		storedCPUSample{-20 * time.Second, true, 20},
-		storedCPUSample{-10 * time.Second, true, 25},
 	)
+	if err := os.RemoveAll(filepath.Join(manager.configuration.MachinesDirectory, testVirtualMachineID, "metrics")); err != nil {
+		t.Fatal(err)
+	}
+
+	record := metrics.Record{Timestamp: time.Now().UTC().Add(-20 * time.Second), Metrics: metrics.Sample{
+		Up: true, ComputeUsage: metrics.ComputeUsage{CPUTimeMicroseconds: 20_000_000},
+	}}
+	if err := manager.RecordMetrics(context.Background(), testVirtualMachineID, record); err != nil {
+		t.Fatal(err)
+	}
+
 	assertManagerMilliCPUs(t, manager, 500)
-
-	appendStoredSamples(t, manager, storedCPUSample{-5 * time.Second, true, 45})
-
-	assertManagerMilliCPUs(t, manager, 500)
-}
-
-// TestSlidingWindowUsageRecordsSampledMetrics checks that samples from
-// RecordMetrics give an average when the store has none.
-func TestSlidingWindowUsageRecordsSampledMetrics(t *testing.T) {
-	manager, _, _, _ := newTestManager(t)
-	now := time.Now().UTC()
-	for _, record := range []metrics.Record{
-		{Timestamp: now.Add(-20 * time.Second), Metrics: metrics.Sample{Up: true}},
-		{Timestamp: now.Add(-10 * time.Second), Metrics: metrics.Sample{Up: true, ComputeUsage: metrics.ComputeUsage{CPUTimeMicroseconds: 10_000_000}}},
-	} {
-		manager.RecordMetrics(testVirtualMachineID, record)
-	}
-
-	assertManagerMilliCPUs(t, manager, 1000)
-}
-
-// TestSlidingWindowUsageMakesNoRingForUnknownVM checks that asking for a VM
-// without samples leaves no ring behind.
-func TestSlidingWindowUsageMakesNoRingForUnknownVM(t *testing.T) {
-	manager, _, _, _ := newTestManager(t)
-
-	_, err := manager.SlidingWindowUsage(context.Background(), testVirtualMachineID)
-	if !errors.Is(err, ErrNotEnoughSamples) {
-		t.Fatalf("error = %v, want %v", err, ErrNotEnoughSamples)
-	}
-	if len(manager.slidingWindowUsage.rings) != 0 {
-		t.Fatalf("rings = %d, want 0", len(manager.slidingWindowUsage.rings))
-	}
 }

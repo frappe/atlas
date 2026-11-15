@@ -22,7 +22,7 @@ func (source *parallelSource) ListIDs(context.Context) ([]string, error) {
 	return []string{"one", "two"}, nil
 }
 
-func (source *parallelSource) RecordMetrics(string, Record) {}
+func (source *parallelSource) RecordMetrics(context.Context, string, Record) error { return nil }
 
 func (source *parallelSource) Metrics(ctx context.Context, _ string) (Sample, error) {
 	if source.calls.Add(1) == 2 {
@@ -100,10 +100,11 @@ func (source *recordingSource) Metrics(context.Context, string) (Sample, error) 
 	return Sample{Up: true, ComputeUsage: ComputeUsage{CPUTimeMicroseconds: 42}}, nil
 }
 
-func (source *recordingSource) RecordMetrics(identifier string, record Record) {
+func (source *recordingSource) RecordMetrics(_ context.Context, identifier string, record Record) error {
 	source.mutex.Lock()
 	defer source.mutex.Unlock()
 	source.recorded[identifier] = record
+	return nil
 }
 
 // collectFrom runs one sweep over identifiers in a store where only the
