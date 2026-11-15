@@ -13,6 +13,8 @@ import (
 
 const testVirtualMachineID = "sliding-window"
 
+const testBaselineMillicores = 400
+
 // baseTime is a fixed clock, so ring-level tests never read time.Now.
 var baseTime = time.Unix(1_700_000_000, 0).UTC()
 
@@ -41,30 +43,18 @@ func newBurstableManager(t *testing.T, windowMinutes int) *Manager {
 	t.Helper()
 	manager, _, _, _ := newTestManager(t)
 	specification := testSpecification()
-	specification.CPUBurst = CPUBurst{IsBurstable: true, BaselineCPUMillicores: 400, SlidingWindowMinutes: windowMinutes}
+	specification.CPUBurst = CPUBurst{IsBurstable: true, BaselineCPUMillicores: testBaselineMillicores, SlidingWindowMinutes: windowMinutes}
 	if _, err := manager.Create(context.Background(), testVirtualMachineID, specification); err != nil {
 		t.Fatal(err)
 	}
 	return manager
 }
 
-// assertAverage checks the average at now against wantMilliCPUs.
+// assertAverage checks the average at now, with testBaselineMillicores, against wantMilliCPUs.
 func assertAverage(t *testing.T, usage *slidingWindowUsage, now time.Time, wantMilliCPUs uint64) {
 	t.Helper()
-	got, err := usage.average(testVirtualMachineID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.MilliCPUs != wantMilliCPUs {
+	if got := usage.average(testVirtualMachineID, now, testBaselineMillicores); got.MilliCPUs != wantMilliCPUs {
 		t.Fatalf("MilliCPUs = %d, want %d", got.MilliCPUs, wantMilliCPUs)
-	}
-}
-
-// assertNotEnoughSamples checks that the average at now has no usable pair.
-func assertNotEnoughSamples(t *testing.T, usage *slidingWindowUsage, now time.Time) {
-	t.Helper()
-	if _, err := usage.average(testVirtualMachineID, now); !errors.Is(err, ErrNotEnoughSamples) {
-		t.Fatalf("error = %v, want %v", err, ErrNotEnoughSamples)
 	}
 }
 
@@ -108,15 +98,14 @@ func recordSamples(t *testing.T, manager *Manager, samples ...storedCPUSample) {
 	}
 }
 
-// assertManagerMilliCPUs checks the manager's sliding window average for testVirtualMachineID.
-func assertManagerMilliCPUs(t *testing.T, manager *Manager, wantMilliCPUs uint64) {
+// assertRing checks the window and sample count of testVirtualMachineID's ring.
+// Manager tests check the ring, not the average, because a ring refilled from
+// the store starts inside the window by a wall-clock-dependent amount.
+func assertRing(t *testing.T, manager *Manager, wantWindow time.Duration, wantCount int) {
 	t.Helper()
-	got, err := manager.SlidingWindowUsage(testVirtualMachineID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.MilliCPUs != wantMilliCPUs {
-		t.Fatalf("MilliCPUs = %d, want %d", got.MilliCPUs, wantMilliCPUs)
+	ring := manager.slidingWindowUsage.rings[testVirtualMachineID]
+	if ring == nil || ring.window != wantWindow || ring.count != wantCount {
+		t.Fatalf("ring = %+v, want window %v with %d samples", ring, wantWindow, wantCount)
 	}
 }
 
@@ -165,7 +154,7 @@ func TestSlidingWindowUsageCountsNewCgroupAfterCounterReset(t *testing.T) {
 func TestSlidingWindowUsageSkipsSamplesWithoutElapsedTime(t *testing.T) {
 	usage := newTestUsage(upSample(10, 0), upSample(20, 5), upSample(20, 15), upSample(30, 20))
 
-	assertAverage(t, usage, secondsAfterBase(30), 500)
+	assertAverage(t, usage, secondsAfterBase(40), 500)
 }
 
 // TestSlidingWindowUsageUsesPairAcrossMissedSweep checks that a missed sweep
@@ -173,7 +162,7 @@ func TestSlidingWindowUsageSkipsSamplesWithoutElapsedTime(t *testing.T) {
 func TestSlidingWindowUsageUsesPairAcrossMissedSweep(t *testing.T) {
 	usage := newTestUsage(upSample(10, 0), upSample(30, 10))
 
-	assertAverage(t, usage, secondsAfterBase(30), 500)
+	assertAverage(t, usage, secondsAfterBase(40), 500)
 }
 
 // TestSlidingWindowUsageIgnoresSamplesOutsideWindow checks that the time filter
@@ -186,19 +175,22 @@ func TestSlidingWindowUsageIgnoresSamplesOutsideWindow(t *testing.T) {
 	assertAverage(t, usage, secondsAfterBase(90), 500)
 }
 
-// TestSlidingWindowUsageRequiresTwoSamples checks that a VM with one sample, or
-// none, returns ErrNotEnoughSamples.
-func TestSlidingWindowUsageRequiresTwoSamples(t *testing.T) {
-	assertNotEnoughSamples(t, newTestUsage(upSample(10, 10)), secondsAfterBase(10))
-	assertNotEnoughSamples(t, newTestUsage(), secondsAfterBase(10))
+// TestSlidingWindowUsageReturnsBaselineWithoutUpTime checks that a VM with no
+// ring, one sample, or only down samples over the window averages at the baseline.
+func TestSlidingWindowUsageReturnsBaselineWithoutUpTime(t *testing.T) {
+	assertAverage(t, newSlidingWindowUsage(), secondsAfterBase(10), testBaselineMillicores)
+	assertAverage(t, newTestUsage(upSample(10, 10)), secondsAfterBase(10), testBaselineMillicores)
+	assertAverage(t, newTestUsage(downSample(10), downSample(20), downSample(30), downSample(40)), secondsAfterBase(40), testBaselineMillicores)
 }
 
-// TestSlidingWindowUsageForgetsVM checks that a forgotten VM has no samples.
+// TestSlidingWindowUsageForgetsVM checks that forget drops the VM's ring.
 func TestSlidingWindowUsageForgetsVM(t *testing.T) {
 	usage := newTestUsage(upSample(10, 0), upSample(20, 10))
 	usage.forget(testVirtualMachineID)
 
-	assertNotEnoughSamples(t, usage, secondsAfterBase(20))
+	if len(usage.rings) != 0 {
+		t.Fatalf("rings = %d, want 0", len(usage.rings))
+	}
 }
 
 // TestSlidingWindowUsageRecordNeedsARing checks that record builds nothing for a
@@ -226,7 +218,7 @@ func TestSlidingWindowUsageSeedsFromStoreAfterRestart(t *testing.T) {
 	)
 	recordSamples(t, manager, storedCPUSample{-10 * time.Second, true, 25})
 
-	assertManagerMilliCPUs(t, manager, 500)
+	assertRing(t, manager, time.Hour, 4)
 }
 
 // TestSlidingWindowUsageReadsTheStoreOnce checks that once the ring exists,
@@ -248,12 +240,12 @@ func TestSlidingWindowUsageReadsTheStoreOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertManagerMilliCPUs(t, manager, 500)
+	assertRing(t, manager, time.Hour, 3)
 }
 
 // TestSlidingWindowUsageRebuildsRingWhenWindowChanges checks that after the
-// window grows, the next record refills the ring from the store, so the older
-// samples count: 25 CPU seconds over 85 seconds instead of 5 over 15.
+// window grows, the next record refills the ring from the store, so it gets the
+// older samples: 5 samples in 2 minutes instead of 2 in 1 minute.
 func TestSlidingWindowUsageRebuildsRingWhenWindowChanges(t *testing.T) {
 	manager := newBurstableManager(t, 1)
 	appendStoredSamples(t, manager,
@@ -262,15 +254,15 @@ func TestSlidingWindowUsageRebuildsRingWhenWindowChanges(t *testing.T) {
 		storedCPUSample{-40 * time.Second, true, 20},
 	)
 	recordSamples(t, manager, storedCPUSample{-30 * time.Second, true, 25})
-	assertManagerMilliCPUs(t, manager, 500)
+	assertRing(t, manager, time.Minute, 2)
 
-	burst := CPUBurst{IsBurstable: true, BaselineCPUMillicores: 400, SlidingWindowMinutes: 2}
+	burst := CPUBurst{IsBurstable: true, BaselineCPUMillicores: testBaselineMillicores, SlidingWindowMinutes: 2}
 	if err := manager.SetCompute(context.Background(), testVirtualMachineID, Compute{CPUMillicores: 2000, MemoryMiB: 2048, CPUBurst: burst}); err != nil {
 		t.Fatal(err)
 	}
 	recordSamples(t, manager, storedCPUSample{-25 * time.Second, true, 25})
 
-	assertManagerMilliCPUs(t, manager, 294)
+	assertRing(t, manager, 2*time.Minute, 5)
 }
 
 // TestSlidingWindowUsageNeedsABurstableVM checks that an unknown VM returns
