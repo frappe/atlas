@@ -52,11 +52,13 @@ class VirtualMachine(Document):
 
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
+		baseline_cpu_millicores: DF.Int
 		coma_after_idle_seconds: DF.Int
 		cpu_millicores: DF.Int
 		deep_sleep_after_idle_seconds: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
+		is_burstable: DF.Check
 		is_draft: DF.Check
 		is_network_gateway: DF.Check
 		is_privileged: DF.Check
@@ -68,6 +70,7 @@ class VirtualMachine(Document):
 		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int
+		sliding_window_minutes: DF.Int
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		virtual_machine_image: DF.Data
@@ -602,8 +605,11 @@ class VirtualMachine(Document):
 		sleep_after_idle_seconds: int | None = None,
 		deep_sleep_after_idle_seconds: int | None = None,
 		coma_after_idle_seconds: int | None = None,
+		is_burstable: bool | int | None = None,
+		baseline_cpu_millicores: int | None = None,
+		sliding_window_minutes: int | None = None,
 	) -> str | None:
-		"""Change resources or sleep delays. Return the migration name when the VM must move."""
+		"""Change resources, sleep delays, or CPU burst. Return the migration name when the VM must move."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
@@ -620,6 +626,8 @@ class VirtualMachine(Document):
 			"sleep_after_idle_seconds": sleep_after_idle_seconds,
 			"deep_sleep_after_idle_seconds": deep_sleep_after_idle_seconds,
 			"coma_after_idle_seconds": coma_after_idle_seconds,
+			"baseline_cpu_millicores": baseline_cpu_millicores,
+			"sliding_window_minutes": sliding_window_minutes,
 		}
 		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
@@ -627,6 +635,11 @@ class VirtualMachine(Document):
 			changes = {field: int(value) for field, value in values.items() if value is not None}
 		except TypeError, ValueError:
 			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
+		if is_burstable is not None:
+			try:
+				changes["is_burstable"] = int(strict_bool(is_burstable, "is_burstable"))
+			except ValueError as error:
+				frappe.throw(_(str(error)), exc=AtlasUserError)
 		return VirtualMachineResize(self).apply(changes)
 
 	def update_disk(self, changes: dict[str, int]) -> dict[str, Any]:

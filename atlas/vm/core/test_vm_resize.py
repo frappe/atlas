@@ -6,18 +6,23 @@ import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.models import VirtualMachineShape
+from atlas.vm.core.models import CPUBurst, VirtualMachineShape
 from atlas.vm.core.placement import CurrentPlacement
 from atlas.vm.core.vm_resize import VirtualMachineResize
 from atlas.vm.core.vm_service import MetalOperationError, VirtualMachineService
 from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
+NO_BURST = CPUBurst()
+NOT_BURSTABLE = NO_BURST.values
 
-def build_information(state: str = "stopped") -> SimpleNamespace:
+
+def build_information(state: str = "stopped", burst: CPUBurst = NO_BURST) -> SimpleNamespace:
 	"""Return one Metal record with a 2 CPU, 2 GiB, 20 GiB shape."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
-			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
+			compute=SimpleNamespace(
+				cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0, **burst.values
+			),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),
 		observed=SimpleNamespace(state=state),
@@ -37,6 +42,9 @@ class TestVirtualMachineResize(UnitTestCase):
 			sleep_after_idle_seconds=0,
 			deep_sleep_after_idle_seconds=0,
 			coma_after_idle_seconds=0,
+			is_burstable=0,
+			baseline_cpu_millicores=0,
+			sliding_window_minutes=0,
 			placement_rules=None,
 		)
 		self.virtual_machine.db_set = Mock(side_effect=self.db_set)
@@ -60,17 +68,23 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.addCleanup(active_patch.stop)
 		return mock
 
-	def apply(self, changes: dict[str, int], state: str = "stopped") -> str | None:
-		with patch.object(self.resize.service, "require_information", return_value=build_information(state)):
+	def apply(
+		self, changes: dict[str, int], state: str = "stopped", burst: CPUBurst = NO_BURST
+	) -> str | None:
+		information = build_information(state, burst)
+		with patch.object(self.resize.service, "require_information", return_value=information):
 			return self.resize.apply(changes)
 
 	def test_an_idle_change_alone_stays_in_place_on_a_running_virtual_machine(self) -> None:
 		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
+			"VM-00001",
+			{"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800, **NOT_BURSTABLE},
 		)
-		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
+		self.virtual_machine.db_set.assert_called_once_with(
+			{"sleep_after_idle_seconds": 1800, **NOT_BURSTABLE}
+		)
 		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 		self.find_server.assert_not_called()
 
@@ -88,6 +102,7 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 4096,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 0,
+				**NOT_BURSTABLE,
 			}
 		)
 
@@ -104,6 +119,7 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 2048,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 600,
+				**NOT_BURSTABLE,
 			}
 		)
 
@@ -130,13 +146,15 @@ class TestVirtualMachineResize(UnitTestCase):
 	def test_a_fitting_host_sets_the_complete_shape(self) -> None:
 		self.assertIsNone(self.apply({"cpu_millicores": 4000, "disk_mib": 40960}))
 
-		self.metal_client.resize_virtual_machine.assert_called_once_with(
-			"VM-00001",
-			{"cpu_millicores": 4000, "memory_mib": 2048, "disk_mib": 40960, "sleep_after_idle_seconds": 0},
-		)
-		self.virtual_machine.db_set.assert_called_once_with(
-			{"cpu_millicores": 4000, "memory_mib": 2048, "disk_mib": 40960, "sleep_after_idle_seconds": 0}
-		)
+		resized = {
+			"cpu_millicores": 4000,
+			"memory_mib": 2048,
+			"disk_mib": 40960,
+			"sleep_after_idle_seconds": 0,
+			**NOT_BURSTABLE,
+		}
+		self.metal_client.resize_virtual_machine.assert_called_once_with("VM-00001", resized)
+		self.virtual_machine.db_set.assert_called_once_with(resized)
 		self.create_migration.assert_not_called()
 
 	def test_another_host_starts_a_resize_migration(self) -> None:
@@ -157,7 +175,8 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.apply({"memory_mib": 8192, "sleep_after_idle_seconds": 600})
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 600}
+			"VM-00001",
+			{"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 600, **NOT_BURSTABLE},
 		)
 		self.create_migration.assert_called_once()
 

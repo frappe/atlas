@@ -36,7 +36,9 @@ from atlas.vm.core.models import (
 	MAXIMUM_CPU_MILLICORES,
 	MAXIMUM_FIREWALL_PREFIXES,
 	MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+	MAXIMUM_SLIDING_WINDOW_MINUTES,
 	MINIMUM_CPU_MILLICORES,
+	CPUBurst,
 	FirewallConfiguration,
 	FirewallRule,
 	VirtualMachineCreateRequest,
@@ -529,6 +531,19 @@ class CreateVirtualMachinePayload(StrictModel):
 		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
 		description="Idle time before Atlas offloads the disk. Zero disables it.",
 	)
+	is_burstable: bool = Field(default=False, description="Whether the VM can use CPU above its baseline.")
+	baseline_cpu_millicores: int = Field(
+		default=0,
+		ge=0,
+		le=MAXIMUM_CPU_MILLICORES,
+		description="CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+	)
+	sliding_window_minutes: int = Field(
+		default=0,
+		ge=0,
+		le=MAXIMUM_SLIDING_WINDOW_MINUTES,
+		description="How far back the average CPU use of a burstable VM is measured. Zero uses 60.",
+	)
 	disk_throughput_mibps: int = Field(
 		default=0, ge=0, description="Disk throughput limit in MiB/s. Zero removes the limit."
 	)
@@ -568,6 +583,19 @@ class CreateVirtualMachinePayload(StrictModel):
 		)
 		return self
 
+	@model_validator(mode="after")
+	def validate_cpu_burst(self) -> CreateVirtualMachinePayload:
+		"""Require a baseline that fits the CPU."""
+		_ = self.cpu_burst
+		return self
+
+	@property
+	def cpu_burst(self) -> CPUBurst:
+		"""Return the CPU burst settings with defaults for unset values."""
+		return CPUBurst.for_cpu(
+			self.is_burstable, self.baseline_cpu_millicores, self.sliding_window_minutes, self.cpu_millicores
+		)
+
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
 		"""Build the domain request for this API payload."""
 		return VirtualMachineCreateRequest(
@@ -586,6 +614,7 @@ class CreateVirtualMachinePayload(StrictModel):
 			sleep_after_idle_seconds=self.sleep_after_idle_seconds,
 			deep_sleep_after_idle_seconds=self.deep_sleep_after_idle_seconds,
 			coma_after_idle_seconds=self.coma_after_idle_seconds,
+			burst=self.cpu_burst,
 			disk_throughput_mibps=self.disk_throughput_mibps,
 			disk_iops=self.disk_iops,
 			private_network_throughput_mibps=self.private_network_throughput_mibps,
@@ -599,7 +628,7 @@ class CreateVirtualMachinePayload(StrictModel):
 
 
 class ResizePayload(PatchPayload):
-	"""VM resource and idle shutdown changes."""
+	"""VM resource, idle shutdown, and CPU burst changes."""
 
 	cpu_millicores: int | None = Field(
 		default=None,
@@ -628,6 +657,22 @@ class ResizePayload(PatchPayload):
 		ge=0,
 		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
 		description="New idle time before Atlas offloads the disk. Zero disables it.",
+	)
+	is_burstable: bool | None = Field(
+		default=None,
+		description="Whether the VM can use CPU above its baseline. False clears the baseline and window.",
+	)
+	baseline_cpu_millicores: int | None = Field(
+		default=None,
+		ge=0,
+		le=MAXIMUM_CPU_MILLICORES,
+		description="New CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+	)
+	sliding_window_minutes: int | None = Field(
+		default=None,
+		ge=0,
+		le=MAXIMUM_SLIDING_WINDOW_MINUTES,
+		description="New sliding window of a burstable VM in minutes. Zero uses 60.",
 	)
 
 
@@ -788,6 +833,13 @@ class VirtualMachineResponse(BaseModel):
 	coma_after_idle_seconds: int = Field(
 		default=0, description="Idle time before disk offload. Zero disables it."
 	)
+	is_burstable: bool = Field(default=False, description="Whether the VM can use CPU above its baseline.")
+	baseline_cpu_millicores: int = Field(
+		default=0, description="CPU a burstable VM can always use. Zero when not burstable."
+	)
+	sliding_window_minutes: int = Field(
+		default=0, description="How far back average CPU use is measured. Zero when not burstable."
+	)
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
@@ -811,6 +863,9 @@ class VirtualMachineResponse(BaseModel):
 			sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
 			deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
 			coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
+			is_burstable=bool(virtual_machine.is_burstable),
+			baseline_cpu_millicores=virtual_machine.baseline_cpu_millicores,
+			sliding_window_minutes=virtual_machine.sliding_window_minutes,
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
@@ -865,6 +920,13 @@ class VirtualMachineCompute(BaseModel):
 	)
 	coma_after_idle_seconds: int = Field(
 		default=0, description="Idle time before disk offload. Zero disables it."
+	)
+	is_burstable: bool = Field(default=False, description="Whether the VM can use CPU above its baseline.")
+	baseline_cpu_millicores: int = Field(
+		default=0, description="CPU a burstable VM can always use. Zero when not burstable."
+	)
+	sliding_window_minutes: int = Field(
+		default=0, description="How far back average CPU use is measured. Zero when not burstable."
 	)
 
 
@@ -1019,6 +1081,9 @@ class VirtualMachineDetailResponse(BaseModel):
 				sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
 				deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
 				coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
+				is_burstable=bool(virtual_machine.is_burstable),
+				baseline_cpu_millicores=virtual_machine.baseline_cpu_millicores,
+				sliding_window_minutes=virtual_machine.sliding_window_minutes,
 			),
 			disk=VirtualMachineDisk(
 				size_mib=virtual_machine.disk_mib,
