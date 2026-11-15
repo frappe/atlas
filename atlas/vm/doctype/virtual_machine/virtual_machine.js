@@ -68,6 +68,13 @@ frappe.ui.form.on("Virtual Machine", {
 			ACTIONS_DIVIDER,
 			[__("Resize VM"), () => showResizeDialog(frm), true, ACTIONS],
 			[
+				__("Reset CPU Burst"),
+				"reset_cpu_burst",
+				Boolean(frm.doc.is_burstable),
+				ACTIONS,
+				__("Resetting..."),
+			],
+			[
 				__("Edit Sleep Configuration"),
 				() => showEditSleepConfigurationDialog(frm),
 				true,

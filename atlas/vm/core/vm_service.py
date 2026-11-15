@@ -316,6 +316,14 @@ class VirtualMachineService:
 			)
 		)
 
+	def reset_cpu_burst(self) -> None:
+		"""Make Metal ignore CPU samples before now in the sliding window."""
+		self.perform_metal_operation(
+			lambda metal_client: metal_client.reset_virtual_machine_cpu_burst(
+				cast(str, self.virtual_machine.name)
+			)
+		)
+
 	def set_compute(self, compute: dict[str, Any]) -> dict[str, Any]:
 		"""Set the complete compute values in Metal."""
 		information = self.perform_metal_operation(
