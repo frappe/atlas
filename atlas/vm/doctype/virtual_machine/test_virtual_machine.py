@@ -450,6 +450,16 @@ class TestVirtualMachineResize(UnitTestCase):
 			with self.assertRaises((AtlasUserError, FrappeTypeError)):
 				virtual_machine.resize(sleep_after_idle_seconds=value)
 
+	def test_reset_cpu_burst_rejects_a_virtual_machine_that_is_not_burstable(self) -> None:
+		"""Reset CPU Burst needs a burstable VM and does not call Metal without one."""
+		virtual_machine = self.build_virtual_machine()
+		virtual_machine.is_burstable = 0
+
+		with patch.object(virtual_machine_module, "VirtualMachineService") as service:
+			with self.assertRaisesRegex(AtlasUserError, "not burstable"):
+				virtual_machine.reset_cpu_burst()
+		service.assert_not_called()
+
 	def test_resize_disk_rejects_a_non_integer_value(self) -> None:
 		virtual_machine = self.build_virtual_machine()
 
