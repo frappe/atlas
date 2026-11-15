@@ -24,6 +24,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	virtualMachineRoutes.PUT("/:id/rescue-mode", s.enableVirtualMachineRescueMode)
 	virtualMachineRoutes.DELETE("/:id/rescue-mode", s.disableVirtualMachineRescueMode)
 	virtualMachineRoutes.PUT("/:id/compute", s.setVirtualMachineCompute)
+	virtualMachineRoutes.POST("/:id/cpu-burst/reset", s.resetVirtualMachineCPUBurst)
 	virtualMachineRoutes.PUT("/:id/disk", s.setVirtualMachineDisk)
 	virtualMachineRoutes.PUT("/:id/resize", s.resizeVirtualMachine)
 	virtualMachineRoutes.PUT("/:id/network", s.setVirtualMachineNetwork)

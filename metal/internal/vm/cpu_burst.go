@@ -15,6 +15,19 @@ const cpuLimitTimeout = 5 * time.Second
 // on every pass.
 const releasePercent = 90
 
+// ResetCPUBurst stores now as the VM's CPU burst reset time, so the sliding window
+// average ignores earlier samples. The current CPU limit stays.
+func (manager *Manager) ResetCPUBurst(ctx context.Context, identifier string) error {
+	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if !record.Specification.CPUBurst.IsBurstable {
+			return false, ErrNotBurstable
+		}
+		// Samples have whole seconds, so a sample in the reset second counts.
+		record.CPUBurstResetAt = time.Now().UTC().Truncate(time.Second)
+		return true, nil
+	})
+}
+
 // LimitCPUBursts throttles each running burstable VM whose average CPU use is above
 // its baseline, and releases it when the average falls to 90% of the baseline.
 // One VM's error does not stop the others.
@@ -72,7 +85,7 @@ func (manager *Manager) limitCPUBurst(ctx context.Context, identifier string) er
 	target := desired.Specification.CPUMillicores
 	var average uint64
 	if burst.IsBurstable {
-		average = manager.slidingWindowUsage.average(identifier, time.Now(), burst.BaselineCPUMillicores).MilliCPUs
+		average = manager.slidingWindowUsage.average(identifier, time.Now(), burst.BaselineCPUMillicores, desired.CPUBurstResetAt).MilliCPUs
 		target = cpuLimit(burst, desired.Specification.CPUMillicores, current, average)
 	}
 	if target == current {
