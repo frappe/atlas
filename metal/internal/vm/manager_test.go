@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
@@ -290,14 +291,20 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 	runtime := &fakeRuntime{state: StateStopped}
 	network := &fakeNetwork{}
 	storage := &fakeStorage{hasDisk: true}
+	directory := t.TempDir()
+	metricsStore, err := metrics.NewStore(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager, err := NewManager(
-		ManagerConfig{MachinesDirectory: t.TempDir(), UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
+		ManagerConfig{MachinesDirectory: directory, UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
 		ManagerDependencies{
 			Runtime:   runtime,
 			Network:   network,
 			Storage:   storage,
 			Snapshots: fakeSnapshots{},
 			Traffic:   &traffic.Monitor{},
+			Metrics:   metricsStore,
 			Telemetry: telemetry.NewRegistry(nil),
 		},
 	)
