@@ -201,6 +201,20 @@ func TestSlidingWindowUsageForgetsVM(t *testing.T) {
 	assertNotEnoughSamples(t, usage, secondsAfterBase(20))
 }
 
+// TestSlidingWindowUsageRecordNeedsARing checks that record builds nothing for a
+// VM without a ring, or with a ring for another window, and asks for a refill.
+func TestSlidingWindowUsageRecordNeedsARing(t *testing.T) {
+	usage := newSlidingWindowUsage()
+	if usage.record(testVirtualMachineID, 30*time.Second, upSample(10, 0)) || len(usage.rings) != 0 {
+		t.Fatalf("record without a ring: rings = %d, want 0 and false", len(usage.rings))
+	}
+
+	usage = newTestUsage(upSample(10, 0))
+	if usage.record(testVirtualMachineID, time.Minute, upSample(20, 0)) || usage.rings[testVirtualMachineID].count != 1 {
+		t.Fatal("record into a ring for another window")
+	}
+}
+
 // TestSlidingWindowUsageSeedsFromStoreAfterRestart checks that the first record
 // after a metald restart fills the ring from the store, so earlier samples count.
 func TestSlidingWindowUsageSeedsFromStoreAfterRestart(t *testing.T) {
@@ -235,4 +249,52 @@ func TestSlidingWindowUsageReadsTheStoreOnce(t *testing.T) {
 	}
 
 	assertManagerMilliCPUs(t, manager, 500)
+}
+
+// TestSlidingWindowUsageRebuildsRingWhenWindowChanges checks that after the
+// window grows, the next record refills the ring from the store, so the older
+// samples count: 25 CPU seconds over 85 seconds instead of 5 over 15.
+func TestSlidingWindowUsageRebuildsRingWhenWindowChanges(t *testing.T) {
+	manager := newBurstableManager(t, 1)
+	appendStoredSamples(t, manager,
+		storedCPUSample{-110 * time.Second, true, 0},
+		storedCPUSample{-100 * time.Second, true, 20},
+		storedCPUSample{-40 * time.Second, true, 20},
+	)
+	recordSamples(t, manager, storedCPUSample{-30 * time.Second, true, 25})
+	assertManagerMilliCPUs(t, manager, 500)
+
+	burst := CPUBurst{IsBurstable: true, BaselineCPUMillicores: 400, SlidingWindowMinutes: 2}
+	if err := manager.SetCompute(context.Background(), testVirtualMachineID, Compute{CPUMillicores: 2000, MemoryMiB: 2048, CPUBurst: burst}); err != nil {
+		t.Fatal(err)
+	}
+	recordSamples(t, manager, storedCPUSample{-25 * time.Second, true, 25})
+
+	assertManagerMilliCPUs(t, manager, 294)
+}
+
+// TestSlidingWindowUsageNeedsABurstableVM checks that an unknown VM returns
+// ErrNotFound, a VM that is not burstable returns ErrNotBurstable, and turning
+// burst off drops the ring at the next record.
+func TestSlidingWindowUsageNeedsABurstableVM(t *testing.T) {
+	manager := newBurstableManager(t, 60)
+	recordSamples(t, manager,
+		storedCPUSample{-20 * time.Second, true, 0},
+		storedCPUSample{-10 * time.Second, true, 10},
+	)
+
+	if err := manager.SetCompute(context.Background(), testVirtualMachineID, Compute{CPUMillicores: 2000, MemoryMiB: 2048}); err != nil {
+		t.Fatal(err)
+	}
+	recordSamples(t, manager, storedCPUSample{0, true, 20})
+
+	if _, err := manager.SlidingWindowUsage("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing VM error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := manager.SlidingWindowUsage(testVirtualMachineID); !errors.Is(err, ErrNotBurstable) {
+		t.Fatalf("error = %v, want %v", err, ErrNotBurstable)
+	}
+	if len(manager.slidingWindowUsage.rings) != 0 {
+		t.Fatalf("rings = %d, want 0", len(manager.slidingWindowUsage.rings))
+	}
 }
