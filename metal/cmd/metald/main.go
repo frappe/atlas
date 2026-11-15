@@ -328,6 +328,10 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		registry,
 	)
 	virtualMachineRuntime.RecoverSSHSessions()
+	metricsStore, err := metrics.NewStore(options.cfg.MachinesDir)
+	if err != nil {
+		return fmt.Errorf("configure metrics store: %w", err)
+	}
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,
@@ -338,6 +342,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 			Storage:   stores.VirtualMachines,
 			Snapshots: stores.Snapshots,
 			Traffic:   trafficMonitor,
+			Metrics:   metricsStore,
 			Logger:    logger,
 			Telemetry: registry,
 		},
@@ -415,10 +420,6 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	hostService, err := host.NewService(hostDependencies)
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
-	}
-	metricsStore, err := metrics.NewStore(options.cfg.MachinesDir)
-	if err != nil {
-		return fmt.Errorf("configure metrics store: %w", err)
 	}
 	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, logger)
 

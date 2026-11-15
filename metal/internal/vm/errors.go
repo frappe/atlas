@@ -20,6 +20,9 @@ var ErrInUse = errors.New("vm: in use")
 // ErrMetadataServiceTooLarge indicates that the guest values do not fit in MMDS.
 var ErrMetadataServiceTooLarge = errors.New("vm: metadata service document is too large")
 
+// ErrNotEnoughSamples indicates that a window has fewer than two usable metric samples.
+var ErrNotEnoughSamples = errors.New("vm: not enough samples")
+
 // TransitionError reports a missing state transition.
 type TransitionError struct {
 	DesiredState  State
