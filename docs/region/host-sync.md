@@ -42,7 +42,7 @@ Reports have no expiry. A host that omits the optional report clears its stored 
 
 A complete set repairs policy after a restart or missed sync. Atlas includes a peer only after it has keys, network addresses, and a private interface MAC.
 
-The Atlas `Virtual Machine State` record remains a **cache**. Its `server` field is the host that sent the last report, so it follows the VM after a migration. Read Metal when you need current guest state.
+The Atlas `Virtual Machine State` record remains a **cache**. Its `server` field is the host that sent the last report, so it follows the VM after a migration. Read Metal when you need current guest state. The [CPU burst status](../compute/index.md#read-cpu-burst-status) on the form is read from Metal, not from the cache.
 
 ## Failure and recovery
 
