@@ -5,6 +5,7 @@ from uuid import uuid7
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
+from atlas.atlas.core.exceptions import AtlasConflictError
 from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.models import CPUBurst, VirtualMachineShape
 from atlas.vm.core.placement import CurrentPlacement
@@ -74,6 +75,17 @@ class TestVirtualMachineResize(UnitTestCase):
 		information = build_information(state, burst)
 		with patch.object(self.resize.service, "require_information", return_value=information):
 			return self.resize.apply(changes)
+
+	def test_a_concurrent_compute_change_gets_a_conflict(self) -> None:
+		"""A resize while another resize of the VM runs gets a conflict, so neither overwrites the other's compute values."""
+		with (
+			patch("atlas.vm.core.vm_service.CHANGE_LOCK_TIMEOUT_SECONDS", 0),
+			VirtualMachineService(self.virtual_machine).change_lock("compute"),
+			self.assertRaises(AtlasConflictError),
+		):
+			self.apply({"sleep_after_idle_seconds": 1800}, state="running")
+
+		self.metal_client.set_virtual_machine_compute.assert_not_called()
 
 	def test_an_idle_change_alone_stays_in_place_on_a_running_virtual_machine(self) -> None:
 		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
