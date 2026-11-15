@@ -4,8 +4,9 @@
 -- slo_target: 99.9
 -- sort_order: 3
 -- Only the proxy VMs that Atlas lists count, because any sender can send proxy_requests_total.
+-- Each row names the proxy node, not its VM, so a firing alert on the node, such as Service node not ready, makes a silent proxy count as bad.
 -- A proxy error is a 5xx that the proxy made itself (origin proxy). A 5xx from the site's own code is good here.
-SELECT c.resource_id AS resource_id,
+SELECT n.node AS resource_id,
        toInt64(c.valid - c.bad) AS good,
        toInt64(c.valid) AS valid,
        t.last_ts AS last_ts
@@ -14,12 +15,13 @@ FROM (
            sumIf(increase, labels['status_class'] = '5xx' AND labels['origin'] = 'proxy') AS bad,
            sum(increase) AS valid
     FROM datum.counter_increase(metric = 'proxy_requests_total', window = 90)
-    WHERE resource_id IN (
-        SELECT labels['virtual_machine'] FROM datum.samples_recent
-        WHERE metric = 'atlas_service_node' AND resource_id = 'atlas' AND labels['service'] = 'proxy' AND ts > now() - INTERVAL 15 MINUTE
-    )
     GROUP BY resource_id
 ) AS c
+INNER JOIN (
+    SELECT DISTINCT labels['virtual_machine'] AS virtual_machine, labels['node'] AS node
+    FROM datum.samples_recent
+    WHERE metric = 'atlas_service_node' AND resource_id = 'atlas' AND labels['service'] = 'proxy' AND ts > now() - INTERVAL 15 MINUTE
+) AS n ON n.virtual_machine = c.resource_id
 INNER JOIN (
     SELECT resource_id, max(ts) AS last_ts
     FROM datum.samples_recent
