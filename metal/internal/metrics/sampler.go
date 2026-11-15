@@ -18,8 +18,8 @@ type VirtualMachineSource interface {
 	ListIDs(context.Context) ([]string, error)
 	Metrics(context.Context, string) (Sample, error)
 	// RecordMetrics receives each record after the store keeps it. It runs in
-	// the sweep workers, so it must return quickly.
-	RecordMetrics(identifier string, record Record)
+	// the sweep workers. An error leaves the stored record in place.
+	RecordMetrics(ctx context.Context, identifier string, record Record) error
 }
 
 // Sampler owns the periodic collection worker; Store owns persisted history.
@@ -91,7 +91,9 @@ func (sampler *Sampler) Collect(ctx context.Context) {
 					record := Record{Timestamp: timestamp, Metrics: usage}
 					err = sampler.store.Append(identifier, record)
 					if err == nil {
-						sampler.virtualMachines.RecordMetrics(identifier, record)
+						if err := sampler.virtualMachines.RecordMetrics(ctx, identifier, record); err != nil {
+							sampler.logger.Warn("keep VM CPU samples", "virtual_machine", identifier, "error", err)
+						}
 						sampler.previousDiskMu.Lock()
 						if usage.Up {
 							sampler.previousDisk[identifier] = diskSnapshot{counters: usage.Counters, time: timestamp}
