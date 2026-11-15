@@ -415,6 +415,14 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+            "maximum": 32000,
+            "minimum": 0,
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before Atlas offloads the disk. Zero disables it.",
@@ -478,6 +486,12 @@
             "default": true,
             "description": "Reach the IPv4 internet through host NAT. A public IPv4 address needs it. Without it and without a public IPv6 address, the VM reaches only the mesh.",
             "title": "Ipv4 Internet Access",
+            "type": "boolean"
+          },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
             "type": "boolean"
           },
           "is_privileged": {
@@ -570,6 +584,14 @@
             "maximum": 9223372036,
             "minimum": 0,
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back the average CPU use of a burstable VM is measured. Zero uses 60.",
+            "maximum": 1440,
+            "minimum": 0,
+            "title": "Sliding Window Minutes",
             "type": "integer"
           },
           "ssh_keys": {
@@ -1961,8 +1983,23 @@
       },
       "ResizePayload": {
         "additionalProperties": false,
-        "description": "VM resource and idle shutdown changes.",
+        "description": "VM resource, idle shutdown, and CPU burst changes.",
         "properties": {
+          "baseline_cpu_millicores": {
+            "anyOf": [
+              {
+                "maximum": 32000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+            "title": "Baseline Cpu Millicores"
+          },
           "coma_after_idle_seconds": {
             "anyOf": [
               {
@@ -2022,6 +2059,19 @@
             "description": "New root disk capacity in MiB.",
             "title": "Disk Mib"
           },
+          "is_burstable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Whether the VM can use CPU above its baseline. False clears the baseline and window.",
+            "title": "Is Burstable"
+          },
           "memory_mib": {
             "anyOf": [
               {
@@ -2050,6 +2100,21 @@
             "default": null,
             "description": "New idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds"
+          },
+          "sliding_window_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New sliding window of a burstable VM in minutes. Zero uses 60.",
+            "title": "Sliding Window Minutes"
           }
         },
         "title": "ResizePayload",
@@ -2155,6 +2220,12 @@
       "VirtualMachineCompute": {
         "description": "The compute shape of one virtual machine.",
         "properties": {
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use. Zero when not burstable.",
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before disk offload. Zero disables it.",
@@ -2172,6 +2243,12 @@
             "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
+            "type": "boolean"
+          },
           "memory_mib": {
             "description": "Memory capacity in MiB.",
             "title": "Memory Mib",
@@ -2180,6 +2257,12 @@
           "sleep_after_idle_seconds": {
             "description": "Idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back average CPU use is measured. Zero when not burstable.",
+            "title": "Sliding Window Minutes",
             "type": "integer"
           }
         },
@@ -2605,6 +2688,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use. Zero when not burstable.",
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before disk offload. Zero disables it.",
@@ -2642,6 +2731,12 @@
             "description": "Image used to create the virtual machine.",
             "title": "Image Id",
             "type": "string"
+          },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
+            "type": "boolean"
           },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
@@ -2683,6 +2778,12 @@
           "sleep_after_idle_seconds": {
             "description": "Idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back average CPU use is measured. Zero when not burstable.",
+            "title": "Sliding Window Minutes",
             "type": "integer"
           },
           "state_synced_at": {
@@ -2967,6 +3068,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use. Zero when not burstable.",
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before disk offload. Zero disables it.",
@@ -3005,6 +3112,12 @@
             "title": "Image Id",
             "type": "string"
           },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
+            "type": "boolean"
+          },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
             "title": "Is Termination Protected",
@@ -3040,6 +3153,12 @@
           "sleep_after_idle_seconds": {
             "description": "Idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back average CPU use is measured. Zero when not burstable.",
+            "title": "Sliding Window Minutes",
             "type": "integer"
           },
           "tags": {
@@ -5785,7 +5904,7 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/actions/resize": {
       "post": {
-        "description": "Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only grows.\n\nStop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only changes work in any VM state. `0` disables idle shutdown.",
+        "description": "Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The disk only grows.\n\nStop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline is rejected.",
         "operationId": "resize_virtual_machine",
         "parameters": [
           {
