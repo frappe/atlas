@@ -55,6 +55,9 @@ class MetalCompute:
 	cpu_millicores: int
 	memory_mib: int
 	sleep_after_idle_seconds: int
+	is_burstable: bool = False
+	baseline_cpu_millicores: int = 0
+	sliding_window_minutes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,6 +383,10 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
 			memory_mib=integer_field(compute, "memory_mib"),
 			sleep_after_idle_seconds=integer_field(compute, "sleep_after_idle_seconds"),
+			# A host that is not upgraded yet omits the burst fields.
+			is_burstable=boolean_field(compute, "is_burstable", default=False),
+			baseline_cpu_millicores=integer_field(compute, "baseline_cpu_millicores", default=0),
+			sliding_window_minutes=integer_field(compute, "sliding_window_minutes", default=0),
 		),
 		disk=MetalDisk(
 			size_mib=integer_field(disk, "size_mib"),

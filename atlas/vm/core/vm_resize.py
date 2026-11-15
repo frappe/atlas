@@ -11,6 +11,7 @@ from atlas.vm.core.models import (
 	MAXIMUM_CPU_MILLICORES,
 	MAXIMUM_SLEEP_AFTER_IDLE_SECONDS,
 	MINIMUM_CPU_MILLICORES,
+	CPUBurst,
 	VirtualMachineShape,
 	validate_sleep_times,
 )
@@ -32,6 +33,9 @@ RESIZE_FIELDS = (
 	"sleep_after_idle_seconds",
 	"deep_sleep_after_idle_seconds",
 	"coma_after_idle_seconds",
+	"is_burstable",
+	"baseline_cpu_millicores",
+	"sliding_window_minutes",
 )
 
 
@@ -60,14 +64,14 @@ class VirtualMachineResize:
 		return migration
 
 	def _resize(self, resize_values: dict[str, int]) -> str | None:
-		"""Apply resource and Metal idle shutdown changes."""
+		"""Apply resource, idle shutdown, and CPU burst changes."""
 		information = self.service.require_information()
 		current_shape = self._get_current_shape(information)
 		target_shape = self._get_target_shape(current_shape, resize_values)
 		if target_shape.has_same_resources(current_shape):
 			self._sync_shape(current_shape)
 			if target_shape != current_shape:
-				self._set_idle_shutdown(current_shape, target_shape.sleep_after_idle_seconds)
+				self._set_compute_options(current_shape, target_shape)
 			return None
 		if information.observed.state != "stopped":
 			frappe.throw(_("Stop the Virtual Machine before you resize it."), exc=AtlasUserError)
@@ -87,9 +91,12 @@ class VirtualMachineResize:
 				if not error.is_insufficient_capacity:
 					self.service.raise_metal_error(error)
 
-		# The idle delay needs no capacity, so it changes on the source and the move keeps it.
-		if target_shape.sleep_after_idle_seconds != current_shape.sleep_after_idle_seconds:
-			self._set_idle_shutdown(current_shape, target_shape.sleep_after_idle_seconds)
+		# The idle delay and CPU burst need no capacity, so they change on the source and the move keeps them.
+		if (target_shape.sleep_after_idle_seconds, target_shape.burst) != (
+			current_shape.sleep_after_idle_seconds,
+			current_shape.burst,
+		):
+			self._set_compute_options(current_shape, target_shape)
 		return MigrationService.create(
 			self.virtual_machine,
 			destination_metal_server=destination if destination != self.virtual_machine.server else None,
@@ -144,6 +151,8 @@ class VirtualMachineResize:
 			frappe.throw(_("Disk size must be positive."), exc=AtlasUserError)
 		if not 0 <= resize_values.get("sleep_after_idle_seconds", 0) <= MAXIMUM_SLEEP_AFTER_IDLE_SECONDS:
 			frappe.throw(_("Idle shutdown delay is out of range."), exc=AtlasUserError)
+		if resize_values.get("is_burstable", 0) not in (0, 1):
+			frappe.throw(_("Burstable must be 0 or 1."), exc=AtlasUserError)
 
 	@staticmethod
 	def _get_current_shape(information: MetalVirtualMachine) -> VirtualMachineShape:
@@ -154,6 +163,7 @@ class VirtualMachineResize:
 			compute.memory_mib,
 			information.desired.disk.size_mib,
 			compute.sleep_after_idle_seconds,
+			CPUBurst(compute.is_burstable, compute.baseline_cpu_millicores, compute.sliding_window_minutes),
 		)
 
 	@staticmethod
@@ -161,11 +171,24 @@ class VirtualMachineResize:
 		current_shape: VirtualMachineShape, resize_values: dict[str, int]
 	) -> VirtualMachineShape:
 		"""Return the current shape with the changed values. A disk only grows."""
+		cpu_millicores = resize_values.get("cpu_millicores", current_shape.cpu_millicores)
+		burst = current_shape.burst
+		try:
+			burst = CPUBurst.for_cpu(
+				bool(resize_values.get("is_burstable", burst.is_burstable)),
+				resize_values.get("baseline_cpu_millicores", burst.baseline_cpu_millicores),
+				resize_values.get("sliding_window_minutes", burst.sliding_window_minutes),
+				cpu_millicores,
+			)
+		except ValueError as error:
+			frappe.throw(_(str(error)), exc=AtlasUserError)
+
 		target_shape = VirtualMachineShape(
-			resize_values.get("cpu_millicores", current_shape.cpu_millicores),
+			cpu_millicores,
 			resize_values.get("memory_mib", current_shape.memory_mib),
 			resize_values.get("disk_mib", current_shape.disk_mib),
 			resize_values.get("sleep_after_idle_seconds", current_shape.sleep_after_idle_seconds),
+			burst,
 		)
 		if target_shape.disk_mib < current_shape.disk_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
@@ -184,31 +207,24 @@ class VirtualMachineResize:
 			virtual_machine=self.virtual_machine.name,
 		)
 
-	def _set_idle_shutdown(self, current: VirtualMachineShape, sleep_after_idle_seconds: int) -> None:
-		"""Change only the idle shutdown delay on the current host."""
-		self.service.set_compute({**current.compute, "sleep_after_idle_seconds": sleep_after_idle_seconds})
-		self.virtual_machine.db_set("sleep_after_idle_seconds", sleep_after_idle_seconds)
+	def _set_compute_options(self, current: VirtualMachineShape, target: VirtualMachineShape) -> None:
+		"""Change only the idle shutdown delay and CPU burst on the current host."""
+		if target.burst.baseline_cpu_millicores > current.cpu_millicores:
+			frappe.throw(
+				_("The baseline CPU must fit the current CPU while the Virtual Machine moves. Resize first."),
+				exc=AtlasUserError,
+			)
+		options = {"sleep_after_idle_seconds": target.sleep_after_idle_seconds, **target.burst.values}
+		self.service.set_compute({**current.compute, **options})
+		self.virtual_machine.db_set(options)
 
 	def _sync_shape(self, shape: VirtualMachineShape) -> None:
 		"""Store Metal values when a previous request response was lost."""
-		values = {
-			"cpu_millicores": shape.cpu_millicores,
-			"memory_mib": shape.memory_mib,
-			"disk_mib": shape.disk_mib,
-			"sleep_after_idle_seconds": shape.sleep_after_idle_seconds,
-		}
-		if any(getattr(self.virtual_machine, field) != value for field, value in values.items()):
-			self.virtual_machine.db_set(values)
+		if any(getattr(self.virtual_machine, field) != value for field, value in shape.resize.items()):
+			self.virtual_machine.db_set(shape.resize)
 
 	def _resize_in_place(self, target: VirtualMachineShape) -> None:
 		"""Store the complete target shape on the current host."""
 		name = cast(str, self.virtual_machine.name)
 		self.service.metal_client.resize_virtual_machine(name, target.resize)
-		self.virtual_machine.db_set(
-			{
-				"cpu_millicores": target.cpu_millicores,
-				"memory_mib": target.memory_mib,
-				"disk_mib": target.disk_mib,
-				"sleep_after_idle_seconds": target.sleep_after_idle_seconds,
-			}
-		)
+		self.virtual_machine.db_set(target.resize)

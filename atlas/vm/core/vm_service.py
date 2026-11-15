@@ -153,6 +153,7 @@ class VirtualMachineService:
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 				"deep_sleep_after_idle_seconds": request.deep_sleep_after_idle_seconds,
 				"coma_after_idle_seconds": request.coma_after_idle_seconds,
+				**request.burst.values,
 				"tags": [{"key": key, "value": value} for key, value in request.tags.items()],
 				"placement_rules": frappe.as_json(request.placement_rules.as_list())
 				if request.placement_rules.nodes
@@ -173,6 +174,7 @@ class VirtualMachineService:
 				"cpu_millicores": request.cpu_millicores,
 				"memory_mib": request.memory_mib,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
+				**request.burst.values,
 			},
 			"disk": {
 				"size_mib": request.disk_mib,
