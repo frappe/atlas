@@ -30,15 +30,16 @@ func (manager *Manager) SlidingWindowUsage(ctx context.Context, identifier strin
 	var upTime time.Duration
 	for index := 1; index < len(records); index++ {
 		previous, current := records[index-1].Metrics, records[index].Metrics
+		elapsed := records[index].Timestamp.Sub(records[index-1].Timestamp)
 		// A restart recreates the cgroup and resets its CPU counter.
-		if !previous.Up || !current.Up || current.CPUTimeMicroseconds < previous.CPUTimeMicroseconds {
+		if !previous.Up || !current.Up || elapsed <= 0 || current.CPUTimeMicroseconds < previous.CPUTimeMicroseconds {
 			continue
 		}
 		cpuMicroseconds += current.CPUTimeMicroseconds - previous.CPUTimeMicroseconds
-		upTime += records[index].Timestamp.Sub(records[index-1].Timestamp)
+		upTime += elapsed
 	}
 
-	if upTime <= 0 {
+	if upTime == 0 {
 		return SlidingWindowUsage{}, ErrNotEnoughSamples
 	}
 	return SlidingWindowUsage{MilliCPUs: cpuMicroseconds * 1000 / uint64(upTime.Microseconds())}, nil
