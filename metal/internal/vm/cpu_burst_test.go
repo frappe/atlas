@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -85,4 +86,57 @@ func TestLimitCPUBursts(t *testing.T) {
 		t.Fatal(err)
 	}
 	limit(2000, 4)
+}
+
+// TestResetCPUBurstHidesEarlierSamplesFromTheLimiter checks that a reset stores
+// the time in whole seconds and keeps the current CPU limit, and that the limiter
+// then ignores the busy samples before it. A VM that is not burstable cannot reset.
+func TestResetCPUBurstHidesEarlierSamplesFromTheLimiter(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	specification := testSpecification()
+	specification.CPUBurst = CPUBurst{IsBurstable: true, BaselineCPUMillicores: 1000, SlidingWindowMinutes: 1}
+	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.State = StateRunning
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
+	runtime.cpuLimit = 2000
+
+	// Without the reset, these samples average 1500 and the VM is limited.
+	now := time.Now().Truncate(time.Second)
+	manager.slidingWindowUsage.seed("machine-1", time.Minute, []cpuSample{
+		{timestamp: now.Add(-70 * time.Second)},
+		{timestamp: now.Add(-50 * time.Second), isUp: true},
+		{timestamp: now.Add(-10 * time.Second), isUp: true, cpuMicroseconds: 1500 * 40_000},
+	})
+	if err := manager.ResetCPUBurst(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	desired, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resetAt := desired.CPUBurstResetAt; resetAt.IsZero() || !resetAt.Equal(resetAt.Truncate(time.Second)) {
+		t.Fatalf("CPUBurstResetAt = %v, want a time in whole seconds", resetAt)
+	}
+	if err := manager.LimitCPUBursts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.cpuLimit != 2000 || runtime.cpuLimitSets != 0 {
+		t.Fatalf("limit = %d after %d sets, want 2000 after 0", runtime.cpuLimit, runtime.cpuLimitSets)
+	}
+
+	if _, err := manager.Create(context.Background(), "machine-2", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ResetCPUBurst(context.Background(), "machine-2"); !errors.Is(err, ErrNotBurstable) {
+		t.Fatalf("error = %v, want %v", err, ErrNotBurstable)
+	}
 }
