@@ -353,7 +353,7 @@ RestartSec=5
 WatchdogSec=60
 # Keep PTY masters across a metald restart or stop.
 NotifyAccess=main
-FileDescriptorStoreMax=1024
+FileDescriptorStoreMax=4096
 FileDescriptorStorePreserve=yes
 
 [Install]

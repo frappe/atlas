@@ -3,6 +3,7 @@ package firecracker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -125,5 +126,25 @@ func TestSSHSessionKeyIsReadableOnlyByTheOwner(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("key file mode is %v, want 0600", info.Mode().Perm())
+	}
+}
+
+// One VM at its session limit does not block the SSH console of another VM on the host.
+func TestSSHSessionLimitIsPerVirtualMachine(t *testing.T) {
+	runtime := NewRuntime(Config{}, &stubUnits{}, &stubSSHUnits{}, nil, nil, &recordingBroker{}, nil, telemetry.NewRegistry(nil))
+	add := func(sessionID, virtualMachineID string) error {
+		return runtime.addSSHSession(runtime.newSSHSession(sessionID, sshSessionRecord{VirtualMachineID: virtualMachineID}))
+	}
+
+	for index := range maxConcurrentSSHSessionsPerVirtualMachine {
+		if err := add(fmt.Sprintf("ssh-%d", index), "vm-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := add("ssh-over", "vm-1"); err == nil {
+		t.Fatal("a VM opened more sessions than its limit")
+	}
+	if err := add("ssh-other", "vm-2"); err != nil {
+		t.Fatalf("another VM could not open a session: %v", err)
 	}
 }
