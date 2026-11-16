@@ -22,6 +22,8 @@ const (
 	// The VM disk is the second drive in rescue mode.
 	rescuedDriveIdentifier = "drive1"
 	rescuedDrivePath       = "/disk.img"
+	// Each guest has its own vsock device, so all use the first unreserved context ID.
+	guestVsockID = 3
 
 	// guestNetworkMask is the guest network size. Every guest is alone in its
 	// namespace, so one fixed mask serves them all.
@@ -87,6 +89,10 @@ func configure(
 		FreePageReporting:                true,
 	}
 	if err := client.PutBalloonConfig(operationContext, balloonConfiguration); err != nil {
+		return err
+	}
+
+	if err := client.PutVsock(operationContext, api.VsockConfig{GuestCID: guestVsockID, UDSPath: vsockSocketRelativePath}); err != nil {
 		return err
 	}
 

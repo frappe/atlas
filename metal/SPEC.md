@@ -11,11 +11,12 @@ For Go code, follow the repository [Go anti-pattern rules](../llm/go-code-review
 ## Layout
 
 ```text
-cmd/metald/     metald executable
-internal/       packages, each with a SPEC.md
-scripts/        host bootstrap scripts
-test/           integration test data
-Makefile        builds metald into dist/
+cmd/metald/             metald executable
+cmd/atlas-guest-agent/  agent that VM images install
+internal/               packages, each with a SPEC.md
+scripts/                host bootstrap scripts
+test/                   integration test data
+Makefile                builds metald and atlas-guest-agent into dist/
 ```
 
 The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/`.
@@ -30,6 +31,7 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | [api](internal/api/SPEC.md) | Thin HTTP handlers. |
 | [host](internal/host/SPEC.md) | Host synchronization and capacity. |
 | [console](internal/console/SPEC.md) | VM serial consoles over PTYs. |
+| [guestagent](internal/guestagent/SPEC.md) | The `atlas-guest-agent` binary inside each VM. |
 | [reconciler](internal/reconciler/SPEC.md) | VM and image loops. |
 | [storage](internal/storage/SPEC.md) | ZFS pool, disks, images, and snapshots. |
 | [network](internal/network/SPEC.md) | VM networks and WireGuard peers. |
@@ -41,11 +43,12 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | Package | Imports |
 | --- | --- |
 | `cmd/metald` | api, host, reconciler, firecracker, storage, network, vm/migration, network/traffic, metrics, telemetry |
-| `vm` | console, metrics, network/traffic, platform |
+| `cmd/atlas-guest-agent` | guestagent |
+| `vm` | console, guestagent, metrics, network/traffic, platform |
 | `api` | vm, host, console, vm/migration |
 | `host` | vm, network, storage, vm/migration |
 | `reconciler` | vm, storage, vm/migration |
-| `firecracker` | vm, storage, platform, console, Firecracker API |
+| `firecracker` | vm, storage, platform, console, guestagent, Firecracker API |
 | `storage` | vm, platform |
 | `network` | vm, platform, network/traffic |
 | `vm/migration` | vm, storage, platform |

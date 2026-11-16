@@ -80,6 +80,19 @@ Sent traffic includes ICMP, UDP, TCP SYN, and TCP RST packet counters. Disk use 
 
 Memory use is the guest's own report through the Firecracker balloon device. A VM that booted without the balloon device, or that sends no valid report, shows the memory charged to its Firecracker cgroup. That value includes host page cache, so it can be larger than the VM memory.
 
+A VM image with the `atlas-guest-agent` binary also reports its own view in `guest`: the load average, memory from `/proc/meminfo`, and the size and use of the root file system. Metal asks the guest over vsock, a host-to-guest socket that does not use the guest network, so a guest firewall cannot block it. Metal asks only a running VM. The vsock handshake waits at most 50 ms, and the report waits at most 1 second. After a guest does not answer the handshake, the next minute of samples skips it.
+
+When Metal gets no report, `guest.system_state` is `unreachable` and the other `guest` values are zero. This occurs for an older image, a VM that has not cold-booted since the vsock device was added, and a VM that is not running.
+
+Metal also asks the agent for these jobs. Without an agent, each job works as before:
+
+| Job | With the agent | Without the agent |
+|---|---|---|
+| Snapshot of a running VM | The guest freezes its file systems, so the image is clean. | The image is crash-consistent. |
+| Sleep or live migration of a running VM | The guest freezes before Metal saves its memory. A cold boot after a failed restore then finds a clean disk. The restore resets the vsock connections, so the guest thaws when it resumes. | A cold boot after a failed restore replays the file system journal. |
+| Disk resize of a running VM | The guest grows the root file system at once. | The guest grows it at the next boot. |
+| Stop | The guest reboots cleanly, also when it ignores Ctrl-Alt-Del. | Metal sends Ctrl-Alt-Del. |
+
 Disk rates come from the VM systemd cgroup's `io.stat` counters for the root disk device. Metal stores whole read and write bytes per second and milli-IOPS, where 1,000 milli-IOPS is one operation per second.
 
 The first sample after Metal starts, and the first sample after a counter reset, stores zero rates. Configured throughput and IOPS limits are zero when unlimited.

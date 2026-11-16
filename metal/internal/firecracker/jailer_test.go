@@ -32,21 +32,23 @@ func TestLayout(t *testing.T) {
 
 func TestSockPathFitsSunPath(t *testing.T) {
 	id := uuid.Must(uuid.NewV7()).String()
-	if got := len(DefaultConfig().socketPath(id)); got > 108 {
-		t.Errorf("socketPath is %d bytes, over the 108 byte limit", got)
+	for _, path := range []string{DefaultConfig().socketPath(id), DefaultConfig().vsockSocketPath(id)} {
+		if len(path) > 108 {
+			t.Errorf("%s is %d bytes, over the 108 byte limit", path, len(path))
+		}
 	}
 	if len(DefaultConfig().chrootSocketPath(id)) <= 108 {
 		t.Log("the chroot path fits today, but the link is what keeps it safe")
 	}
 }
 
-func TestLinkSocket(t *testing.T) {
+func TestLinkSockets(t *testing.T) {
 	c := testConfig(t.TempDir())
-	if err := c.linkSocket("abc"); err != nil {
+	if err := c.linkSockets("abc"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.linkSocket("abc"); err != nil {
-		t.Fatalf("linkSocket is not repeatable: %v", err)
+	if err := c.linkSockets("abc"); err != nil {
+		t.Fatalf("linkSockets is not repeatable: %v", err)
 	}
 	got, err := os.Readlink(c.socketPath("abc"))
 	if err != nil {

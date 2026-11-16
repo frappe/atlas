@@ -13,7 +13,7 @@ VERSION ?= $(shell cat VERSION)+dev
 
 GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$(VERSION)"
 
-.PHONY: bpf build clean openapi test vet version
+.PHONY: bpf build clean guest-agent openapi test vet version
 
 bpf: $(BPF_OBJECT)
 
@@ -35,8 +35,14 @@ build: openapi bpf
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(OUTPUT_DIRECTORY)/$(BINARY_NAME)-linux-amd64 ./cmd/metald
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(OUTPUT_DIRECTORY)/$(BINARY_NAME)-linux-arm64 ./cmd/metald
 
+# VM images install the agent, so hosts never need it.
+guest-agent:
+	mkdir -p $(OUTPUT_DIRECTORY)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(OUTPUT_DIRECTORY)/atlas-guest-agent-linux-amd64 ./cmd/atlas-guest-agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(OUTPUT_DIRECTORY)/atlas-guest-agent-linux-arm64 ./cmd/atlas-guest-agent
+
 openapi:
-	$(SWAG) init -g main.go --dir ./cmd/metald,./$(SPEC_DIRECTORY),./internal/vm --parseInternal --outputTypes json -o $(SPEC_DIRECTORY)
+	$(SWAG) init -g main.go --dir ./cmd/metald,./$(SPEC_DIRECTORY),./internal/vm,./internal/guestagent --parseInternal --outputTypes json -o $(SPEC_DIRECTORY)
 
 version:
 	@echo $(VERSION)

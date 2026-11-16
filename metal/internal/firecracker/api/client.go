@@ -124,6 +124,11 @@ func (client *Client) GetBalloonStatistics(ctx context.Context) (BalloonStatisti
 	return statistics, err
 }
 
+// PutVsock adds the vsock device.
+func (client *Client) PutVsock(ctx context.Context, configuration VsockConfig) error {
+	return client.send(ctx, http.MethodPut, "/vsock", configuration, nil)
+}
+
 // PutMMDSConfig configures the metadata service.
 func (client *Client) PutMMDSConfig(ctx context.Context, configuration MMDSConfig) error {
 	return client.send(ctx, http.MethodPut, "/mmds/config", configuration, nil)

@@ -1197,6 +1197,45 @@ class VirtualMachineNetworkUsage(BaseModel):
 	sent_tcp_rst_packets: int = Field(default=0, description="Cumulative TCP RST packets sent by the guest.")
 
 
+class VirtualMachineGuestMemory(BaseModel):
+	"""Memory use that the guest kernel reports in `/proc/meminfo`."""
+
+	total_bytes: int = 0
+	free_bytes: int = Field(default=0, description="Memory that nothing uses, not even the page cache.")
+	available_bytes: int = Field(
+		default=0, description="Memory that new work can use without swap, including reclaimable cache."
+	)
+	cached_bytes: int = Field(default=0, description="Memory that the page cache uses.")
+	swap_total_bytes: int = 0
+	swap_free_bytes: int = 0
+
+
+class VirtualMachineGuestFilesystem(BaseModel):
+	"""Size and use of the guest root file system."""
+
+	size_bytes: int = 0
+	used_bytes: int = 0
+	inodes_total: int = 0
+	inodes_used: int = 0
+
+
+class VirtualMachineGuestUsage(BaseModel):
+	"""Resource use that the guest agent reports from inside the VM. The defaults describe a guest that did not answer."""
+
+	load_average: list[float] = Field(
+		default_factory=lambda: [0.0, 0.0, 0.0],
+		min_length=3,
+		max_length=3,
+		description="Load average over 1, 5 and 15 minutes.",
+	)
+	memory: VirtualMachineGuestMemory = Field(default_factory=VirtualMachineGuestMemory)
+	root_filesystem: VirtualMachineGuestFilesystem = Field(default_factory=VirtualMachineGuestFilesystem)
+	system_state: str = Field(
+		default="unreachable",
+		description="Output of `systemctl is-system-running`, such as `running` or `degraded`. `unreachable` when the guest agent did not answer.",
+	)
+
+
 class VirtualMachineMetricsQuery(StrictModel):
 	start: AwareDatetime | None = None
 	end: AwareDatetime | None = None
@@ -1217,9 +1256,69 @@ class VirtualMachineMetricsSample(BaseModel):
 	compute: VirtualMachineComputeUsage
 	disk: VirtualMachineDiskUsage
 	network: VirtualMachineNetworkUsage
+	guest: VirtualMachineGuestUsage = Field(
+		default_factory=VirtualMachineGuestUsage,
+		description="When the image has no guest agent, the VM is not running, or the guest does not answer in time, `system_state` is `unreachable` and the other values are zero.",
+	)
 
 
 class VirtualMachineMetricsResponse(BaseModel):
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "vm-00001",
+					"samples": [
+						{
+							"timestamp": 1794837563,
+							"up": True,
+							"compute": {"cpu_microseconds": 45968891, "memory_bytes": 258686976},
+							"disk": {
+								"size_mib": 12288,
+								"used_mib": 390,
+								"throughput_limit_mibps": 0,
+								"iops_limit": 0,
+								"read_bytes_per_second": 1045943,
+								"write_bytes_per_second": 502709,
+								"read_milli_iops": 2672,
+								"write_milli_iops": 123933,
+							},
+							"network": {
+								"received_bytes": 81974642,
+								"received_packets": 14273,
+								"sent_bytes": 288502,
+								"sent_packets": 2932,
+								"sent_icmp_packets": 32,
+								"sent_udp_packets": 48,
+								"sent_tcp_syn_packets": 32,
+								"sent_tcp_rst_packets": 7,
+							},
+							"guest": {
+								"load_average": [0.03, 0.05, 0.01],
+								"memory": {
+									"total_bytes": 1008353280,
+									"free_bytes": 655757312,
+									"available_bytes": 749666304,
+									"cached_bytes": 215384064,
+									"swap_total_bytes": 0,
+									"swap_free_bytes": 0,
+								},
+								"root_filesystem": {
+									"size_bytes": 12594667520,
+									"used_bytes": 1521377280,
+									"inodes_total": 786432,
+									"inodes_used": 48938,
+								},
+								"system_state": "running",
+							},
+						}
+					],
+					"sample_interval_seconds": 10,
+				}
+			]
+		}
+	)
+
 	id: str
 	samples: list[VirtualMachineMetricsSample]
 	sample_interval_seconds: int = Field(default=0, description="Seconds covered by each sample.")
