@@ -7,15 +7,19 @@ import (
 	"time"
 )
 
-const sampleInterval = 10 * time.Second
+// SampleInterval is the time between two samples of one VM.
+const SampleInterval = 10 * time.Second
 const sampleBudget = 9 * time.Second
 const pruneInterval = time.Hour
 const maximumConcurrentSamples = 16
 
-// VirtualMachineSource lists VMs and reads their current use.
+// VirtualMachineSource lists VMs, reads their current use, and receives each stored record.
 type VirtualMachineSource interface {
 	ListIDs(context.Context) ([]string, error)
 	Metrics(context.Context, string) (Sample, error)
+	// RecordMetrics receives each record after the store keeps it. It runs in
+	// the sweep workers. An error leaves the stored record in place.
+	RecordMetrics(ctx context.Context, identifier string, record Record) error
 }
 
 // Sampler owns the periodic collection worker; Store owns persisted history.
@@ -39,7 +43,7 @@ func NewSampler(store *Store, virtualMachines VirtualMachineSource, logger *slog
 
 // Run samples VMs every ten seconds and prunes old samples hourly.
 func (sampler *Sampler) Run(ctx context.Context) {
-	sampleTicker := time.NewTicker(sampleInterval)
+	sampleTicker := time.NewTicker(SampleInterval)
 	pruneTicker := time.NewTicker(pruneInterval)
 	defer sampleTicker.Stop()
 	defer pruneTicker.Stop()
@@ -84,8 +88,12 @@ func (sampler *Sampler) Collect(ctx context.Context) {
 					sampler.previousDiskMu.Lock()
 					usage = sampler.withDiskRates(identifier, timestamp, usage)
 					sampler.previousDiskMu.Unlock()
-					err = sampler.store.Append(identifier, Record{Timestamp: timestamp, Metrics: usage})
+					record := Record{Timestamp: timestamp, Metrics: usage}
+					err = sampler.store.Append(identifier, record)
 					if err == nil {
+						if err := sampler.virtualMachines.RecordMetrics(ctx, identifier, record); err != nil {
+							sampler.logger.Warn("keep VM CPU samples", "virtual_machine", identifier, "error", err)
+						}
 						sampler.previousDiskMu.Lock()
 						if usage.Up {
 							sampler.previousDisk[identifier] = diskSnapshot{counters: usage.Counters, time: timestamp}

@@ -328,6 +328,10 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		registry,
 	)
 	virtualMachineRuntime.RecoverSSHSessions()
+	metricsStore, err := metrics.NewStore(options.cfg.MachinesDir)
+	if err != nil {
+		return fmt.Errorf("configure metrics store: %w", err)
+	}
 	virtualMachineManager, err := vm.NewManager(
 		vm.ManagerConfig{
 			MachinesDirectory: options.cfg.MachinesDir,
@@ -338,6 +342,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 			Storage:   stores.VirtualMachines,
 			Snapshots: stores.Snapshots,
 			Traffic:   trafficMonitor,
+			Metrics:   metricsStore,
 			Logger:    logger,
 			Telemetry: registry,
 		},
@@ -367,6 +372,8 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		reconciler.VirtualMachineConfig{Logger: logger, Telemetry: registry},
 	)
 	guestChecker := reconciler.NewGuestChecker(virtualMachineManager, guestCheckInterval, registry, logger)
+	// CPU burst limits follow the 10-second metrics samples that their averages use.
+	cpuBurstLimiter := reconciler.NewCPUBurstLimiter(virtualMachineManager, metrics.SampleInterval, registry, logger)
 	imageReconciler := reconciler.NewImageReconciler(
 		stores.Images,
 		stores.Snapshots,
@@ -415,10 +422,6 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	hostService, err := host.NewService(hostDependencies)
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
-	}
-	metricsStore, err := metrics.NewStore(options.cfg.MachinesDir)
-	if err != nil {
-		return fmt.Errorf("configure metrics store: %w", err)
 	}
 	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, logger)
 
@@ -496,6 +499,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
 	daemon.StartWorker(metricsSampler.Run)
+	daemon.StartWorker(cpuBurstLimiter.Run)
 	daemon.StartWorker(newTelemetryPusher(options, logger, registry, units, versions, telemetrySources{
 		virtualMachines: virtualMachineManager, migrations: migrationManager, runtime: virtualMachineRuntime,
 		wireGuard: wireGuardManager,

@@ -40,7 +40,8 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 
 | Package | Imports |
 | --- | --- |
-| `cmd/metald` | api, host, reconciler, firecracker, storage, network, vm/migration, network/traffic, telemetry |
+| `cmd/metald` | api, host, reconciler, firecracker, storage, network, vm/migration, network/traffic, metrics, telemetry |
+| `vm` | console, metrics, network/traffic, platform |
 | `api` | vm, host, console, vm/migration |
 | `host` | vm, network, storage, vm/migration |
 | `reconciler` | vm, storage, vm/migration |

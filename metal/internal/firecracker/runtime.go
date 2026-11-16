@@ -252,6 +252,20 @@ func (runtime *Runtime) IsInRescueMode(identifier string) bool {
 	return err == nil
 }
 
+// CPULimit returns the CPU quota of the running VM in millicores.
+func (runtime *Runtime) CPULimit(ctx context.Context, machine vm.RuntimeMachine) (int, error) {
+	return runtime.units.CPUQuota(ctx, machine.ID)
+}
+
+// SetCPULimit changes the CPU quota of the running VM until its next start.
+// SetLimits skips a zero limit, so a zero here would silently do nothing.
+func (runtime *Runtime) SetCPULimit(ctx context.Context, machine vm.RuntimeMachine, millicores int) error {
+	if millicores <= 0 {
+		return fmt.Errorf("CPU limit of VM %s must be positive, got %d", machine.ID, millicores)
+	}
+	return runtime.units.SetLimits(ctx, machine.ID, platform.Limits{CPUMillicores: millicores})
+}
+
 // GetUsage reads CPU and disk use from the unit cgroup and memory from the
 // guest balloon report. Without a valid report, memory is from the cgroup.
 func (runtime *Runtime) GetUsage(ctx context.Context, input vm.RuntimeMachine) (vm.RuntimeUsage, error) {

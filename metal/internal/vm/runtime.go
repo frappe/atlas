@@ -45,6 +45,11 @@ type Runtime interface {
 	// CheckMigratedGuestSSH verifies guest responsiveness when configured on the host.
 	CheckMigratedGuestSSH(context.Context, RuntimeMachine) error
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
+	// CPULimit returns the CPU quota of the running VM in millicores.
+	CPULimit(context.Context, RuntimeMachine) (int, error)
+	// SetCPULimit changes the CPU quota of the running VM. The next start applies
+	// cpu_millicores again.
+	SetCPULimit(ctx context.Context, machine RuntimeMachine, millicores int) error
 	// Ping returns nil when the guest answers one ICMP echo.
 	Ping(context.Context, RuntimeMachine) error
 }

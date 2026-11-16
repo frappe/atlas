@@ -219,6 +219,14 @@ func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, str
 	return nil
 }
 
+func (manager *fakeVirtualMachineManager) ResetCPUBurst(context.Context, string) error {
+	return nil
+}
+
+func (manager *fakeVirtualMachineManager) CPUBurstStatus(context.Context, string) (vm.CPUBurstStatus, error) {
+	return vm.CPUBurstStatus{}, vm.ErrNotBurstable
+}
+
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
 	virtualMachine, found := manager.virtualMachines[id]
 	if !found {
@@ -765,6 +773,31 @@ func TestSetComputeRejectsAnUnsafeIdleTimeout(t *testing.T) {
 
 	body := `{"cpu_millicores":1000,"memory_mib":512,"sleep_after_idle_seconds":9223372037}`
 	do(t, srv, http.MethodPut, "/v1/vms/vm1/compute", body, http.StatusBadRequest)
+}
+
+// TestComputeRejectsInvalidBurstSettings checks that a burstable VM needs a
+// baseline within its CPU and a window within one day, and that a VM that is
+// not burstable keeps no burst values. Both limits themselves are accepted.
+func TestComputeRejectsInvalidBurstSettings(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	for name, burst := range map[string]string{
+		"no baseline":            `"is_burstable":true,"baseline_cpu_millicores":0,"sliding_window_minutes":60`,
+		"baseline above cpu":     `"is_burstable":true,"baseline_cpu_millicores":1001,"sliding_window_minutes":60`,
+		"no window":              `"is_burstable":true,"baseline_cpu_millicores":200,"sliding_window_minutes":0`,
+		"window above one day":   `"is_burstable":true,"baseline_cpu_millicores":200,"sliding_window_minutes":1441`,
+		"baseline without burst": `"is_burstable":false,"baseline_cpu_millicores":200`,
+		"window without burst":   `"is_burstable":false,"sliding_window_minutes":60`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"cpu_millicores":1000,"memory_mib":512,` + burst + `}`
+			do(t, srv, http.MethodPut, "/v1/vms/vm1/compute", body, http.StatusBadRequest)
+		})
+	}
+
+	limits := `{"cpu_millicores":1000,"memory_mib":512,"is_burstable":true,"baseline_cpu_millicores":1000,"sliding_window_minutes":1440}`
+	do(t, srv, http.MethodPut, "/v1/vms/vm1/compute", limits, http.StatusAccepted)
 }
 
 func TestSetNetworkStoresTheCompleteSpecification(t *testing.T) {

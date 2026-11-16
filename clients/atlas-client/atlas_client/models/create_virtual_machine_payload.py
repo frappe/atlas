@@ -36,6 +36,8 @@ class CreateVirtualMachinePayload:
             disk_mib (int): Root disk capacity in MiB.
             image_id (str): Image used to create the virtual machine.
             memory_mib (int): Memory capacity in MiB.
+            baseline_cpu_millicores (int | Unset): CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.
+                Default: 0.
             coma_after_idle_seconds (int | Unset): Idle time before Atlas offloads the disk. Zero disables it. Default: 0.
             deep_sleep_after_idle_seconds (int | Unset): Idle time before Atlas offloads saved memory. Zero disables it.
                 Default: 0.
@@ -45,6 +47,7 @@ class CreateVirtualMachinePayload:
             hostname (str | Unset): Guest hostname. Default: ''.
             ipv4_internet_access (bool | Unset): Reach the IPv4 internet through host NAT. A public IPv4 address needs it.
                 Without it and without a public IPv6 address, the VM reaches only the mesh. Default: True.
+            is_burstable (bool | Unset): Whether the VM can use CPU above its baseline. Default: False.
             is_privileged (bool | Unset): Whether the guest can reach every tenant through the mesh. Default: False.
             is_termination_protected (bool | Unset): Whether deletion is blocked. Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset): Custom guest metadata.
@@ -58,6 +61,8 @@ class CreateVirtualMachinePayload:
             public_network_throughput_mibps (int | Unset): Public network throughput limit in MiB/s. Zero removes the limit.
                 Default: 0.
             sleep_after_idle_seconds (int | Unset): Idle time before automatic stop. Zero disables it. Default: 0.
+            sliding_window_minutes (int | Unset): How far back the average CPU use of a burstable VM is measured. Zero uses
+                60. Default: 0.
             ssh_keys (list[str] | Unset): Authorized SSH public keys.
             tags (CreateVirtualMachinePayloadTags | Unset): Resource tags as key-value pairs.
             user_data (str | Unset): Cloud-init user data supplied to the guest. Default: ''.
@@ -67,6 +72,7 @@ class CreateVirtualMachinePayload:
     disk_mib: int
     image_id: str
     memory_mib: int
+    baseline_cpu_millicores: int | Unset = 0
     coma_after_idle_seconds: int | Unset = 0
     deep_sleep_after_idle_seconds: int | Unset = 0
     disk_iops: int | Unset = 0
@@ -74,6 +80,7 @@ class CreateVirtualMachinePayload:
     firewall: FirewallPayload | Unset = UNSET
     hostname: str | Unset = ''
     ipv4_internet_access: bool | Unset = True
+    is_burstable: bool | Unset = False
     is_privileged: bool | Unset = False
     is_termination_protected: bool | Unset = False
     metadata: CreateVirtualMachinePayloadMetadata | Unset = UNSET
@@ -83,6 +90,7 @@ class CreateVirtualMachinePayload:
     public_ipv6: None | str | Unset = UNSET
     public_network_throughput_mibps: int | Unset = 0
     sleep_after_idle_seconds: int | Unset = 0
+    sliding_window_minutes: int | Unset = 0
     ssh_keys: list[str] | Unset = UNSET
     tags: CreateVirtualMachinePayloadTags | Unset = UNSET
     user_data: str | Unset = ''
@@ -106,6 +114,8 @@ class CreateVirtualMachinePayload:
 
         memory_mib = self.memory_mib
 
+        baseline_cpu_millicores = self.baseline_cpu_millicores
+
         coma_after_idle_seconds = self.coma_after_idle_seconds
 
         deep_sleep_after_idle_seconds = self.deep_sleep_after_idle_seconds
@@ -121,6 +131,8 @@ class CreateVirtualMachinePayload:
         hostname = self.hostname
 
         ipv4_internet_access = self.ipv4_internet_access
+
+        is_burstable = self.is_burstable
 
         is_privileged = self.is_privileged
 
@@ -164,6 +176,8 @@ class CreateVirtualMachinePayload:
 
         sleep_after_idle_seconds = self.sleep_after_idle_seconds
 
+        sliding_window_minutes = self.sliding_window_minutes
+
         ssh_keys: list[str] | Unset = UNSET
         if not isinstance(self.ssh_keys, Unset):
             ssh_keys = self.ssh_keys
@@ -185,6 +199,8 @@ class CreateVirtualMachinePayload:
             "image_id": image_id,
             "memory_mib": memory_mib,
         })
+        if baseline_cpu_millicores is not UNSET:
+            field_dict["baseline_cpu_millicores"] = baseline_cpu_millicores
         if coma_after_idle_seconds is not UNSET:
             field_dict["coma_after_idle_seconds"] = coma_after_idle_seconds
         if deep_sleep_after_idle_seconds is not UNSET:
@@ -199,6 +215,8 @@ class CreateVirtualMachinePayload:
             field_dict["hostname"] = hostname
         if ipv4_internet_access is not UNSET:
             field_dict["ipv4_internet_access"] = ipv4_internet_access
+        if is_burstable is not UNSET:
+            field_dict["is_burstable"] = is_burstable
         if is_privileged is not UNSET:
             field_dict["is_privileged"] = is_privileged
         if is_termination_protected is not UNSET:
@@ -217,6 +235,8 @@ class CreateVirtualMachinePayload:
             field_dict["public_network_throughput_mibps"] = public_network_throughput_mibps
         if sleep_after_idle_seconds is not UNSET:
             field_dict["sleep_after_idle_seconds"] = sleep_after_idle_seconds
+        if sliding_window_minutes is not UNSET:
+            field_dict["sliding_window_minutes"] = sliding_window_minutes
         if ssh_keys is not UNSET:
             field_dict["ssh_keys"] = ssh_keys
         if tags is not UNSET:
@@ -245,6 +265,8 @@ class CreateVirtualMachinePayload:
 
         memory_mib = d.pop("memory_mib")
 
+        baseline_cpu_millicores = d.pop("baseline_cpu_millicores", UNSET)
+
         coma_after_idle_seconds = d.pop("coma_after_idle_seconds", UNSET)
 
         deep_sleep_after_idle_seconds = d.pop("deep_sleep_after_idle_seconds", UNSET)
@@ -266,6 +288,8 @@ class CreateVirtualMachinePayload:
         hostname = d.pop("hostname", UNSET)
 
         ipv4_internet_access = d.pop("ipv4_internet_access", UNSET)
+
+        is_burstable = d.pop("is_burstable", UNSET)
 
         is_privileged = d.pop("is_privileged", UNSET)
 
@@ -346,6 +370,8 @@ class CreateVirtualMachinePayload:
 
         sleep_after_idle_seconds = d.pop("sleep_after_idle_seconds", UNSET)
 
+        sliding_window_minutes = d.pop("sliding_window_minutes", UNSET)
+
         ssh_keys = cast(list[str], d.pop("ssh_keys", UNSET))
 
 
@@ -366,6 +392,7 @@ class CreateVirtualMachinePayload:
             disk_mib=disk_mib,
             image_id=image_id,
             memory_mib=memory_mib,
+            baseline_cpu_millicores=baseline_cpu_millicores,
             coma_after_idle_seconds=coma_after_idle_seconds,
             deep_sleep_after_idle_seconds=deep_sleep_after_idle_seconds,
             disk_iops=disk_iops,
@@ -373,6 +400,7 @@ class CreateVirtualMachinePayload:
             firewall=firewall,
             hostname=hostname,
             ipv4_internet_access=ipv4_internet_access,
+            is_burstable=is_burstable,
             is_privileged=is_privileged,
             is_termination_protected=is_termination_protected,
             metadata=metadata,
@@ -382,6 +410,7 @@ class CreateVirtualMachinePayload:
             public_ipv6=public_ipv6,
             public_network_throughput_mibps=public_network_throughput_mibps,
             sleep_after_idle_seconds=sleep_after_idle_seconds,
+            sliding_window_minutes=sliding_window_minutes,
             ssh_keys=ssh_keys,
             tags=tags,
             user_data=user_data,

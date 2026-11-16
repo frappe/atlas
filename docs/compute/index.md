@@ -14,6 +14,62 @@ See [guest metadata](vm-records.md#guest-metadata) for the limits on custom meta
 
 A resize uses the current host if it has enough capacity. Otherwise, Atlas can reserve another host and use [migration](migration.md).
 
+### Set CPU burst
+
+A burstable VM can use CPU above its baseline. Metal measures its average CPU use over its sliding window, as [average CPU use over a window](#average-cpu-use-over-a-window) explains.
+
+metald checks each running burstable VM every 10 seconds. When the average is above the baseline, metald limits the VM to its baseline with the CPU quota of its systemd unit. When the average falls to 90% of the baseline or lower, metald gives the VM its full `cpu_millicores` again. The gap stops a busy VM from switching at each check. The VM keeps the same number of vCPUs. Only its CPU time is limited.
+
+metald logs `limit VM CPU` or `release VM CPU` with the average and the new limit. The quota of the unit is the limit state, so a metald restart needs no repair. A VM start sets the full CPU, and the next check limits the VM again when its average is still above the baseline. A VM that stops being burstable gets its full CPU at the next check.
+
+| Field | Meaning | Default | Limits |
+|---|---|---|---|
+| `is_burstable` | The VM can use CPU above its baseline. | `false` | |
+| `baseline_cpu_millicores` | The CPU that the VM can always use. | 20% of `cpu_millicores` | 1 to `cpu_millicores` |
+| `sliding_window_minutes` | How far back Metal measures average CPU use. | 60 | 1 to 1440 |
+
+Set the fields in the create or resize API request, or with **Actions → Resize VM** in Desk. Atlas fills a default for a value that is unset or `0` on a burstable VM. When a VM stops being burstable, Atlas sets the baseline and the window to `0`.
+
+A CPU burst change applies to a running VM, like the idle sleep delay. A move to another host keeps the settings. Atlas rejects a resize that sets `cpu_millicores` below the baseline. Lower the baseline first.
+
+Placement and host capacity still use the full `cpu_millicores` of a burstable VM.
+
+Use **Actions → Reset CPU Burst** in Desk to start the average again from now. Atlas calls `POST /v1/vms/{id}/cpu-burst/reset` in Metal, and metald stores the time as `cpu_burst_reset_at` on the VM record. The average then ignores the samples before that time, so that time counts as idle. The reset does not change the CPU limit. At the next check, the average is near 0, so metald gives a limited VM its full CPU again. Metal returns 409 `not_burstable` for a VM that is not burstable, and an older metald returns 404.
+
+### Read CPU burst status
+
+The **CPU Burst** section of a burstable VM's **Virtual Machine State** form shows the current status. Atlas reads it from Metal when the form opens, not from host sync. If Metal does not answer, the form shows the error. The section does not show for a VM that is not burstable.
+
+`GET /v1/vms/{id}/cpu-burst` in Metal returns the same status:
+
+```json
+{
+  "cpu_millicores": 1000,
+  "baseline_cpu_millicores": 500,
+  "release_cpu_millicores": 450,
+  "sliding_window_minutes": 60,
+  "average_cpu_millicores": 512,
+  "cpu_limit_millicores": 500,
+  "is_limited": true,
+  "up_seconds": 3550,
+  "idle_seconds": 50,
+  "reset_at": "2026-11-16T04:30:00Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `release_cpu_millicores` | A limited VM gets its full CPU again when its average falls to this value or lower. It is 90% of the baseline. |
+| `average_cpu_millicores` | The sliding window average. It is absent until metald has samples of the VM in memory. |
+| `cpu_limit_millicores` | The current CPU quota of the VM. It is absent when the VM is not running. |
+| `up_seconds` | The time of the sample pairs in the average. |
+| `idle_seconds` | The missing history that the average counts as idle. |
+| `reset_at` | The last CPU burst reset. It is absent when the VM was never reset. |
+
+A VM that is not burstable gets 409 `not_burstable`. An older metald returns 404, and Atlas then shows no status.
+
+Upgrade metald on a host before you make its VMs burstable. An older metald ignores the burst fields. Atlas then repairs the VM record from Metal at the next resize.
+
 Read [Metal's requested and applied generations](reconciliation.md) for current progress. The Atlas VM list uses [cached host reports](../region/host-sync.md).
 
 ## Read VM metrics
@@ -41,6 +97,28 @@ Optional `max_samples` sets the most samples to return, from 10 to 2000. The def
 Each sample is the latest sample in its bucket, with disk I/O rates averaged across the bucket. `sample_interval_seconds` is the bucket length. Network and CPU values are cumulative counters; divide the difference between adjacent samples by their elapsed seconds to calculate an average rate.
 
 Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol counters read direct transport headers; IPv6 extension headers and later IPv4 fragments still increase the total packet count but not the protocol count. A Metal restart or TAP reattachment resets network counters, so discard a negative counter difference when calculating rates.
+
+### Average CPU use over a window
+
+metald averages the CPU use of a [burstable VM](#set-cpu-burst) over its `sliding_window_minutes`. The CPU limiter and the [CPU burst status](#read-cpu-burst-status) use this average. The result is in milli-CPUs, where 1,000 milli-CPUs is one CPU busy for the full time.
+
+metald keeps one window of samples for each burstable VM in memory, so a call does not read the disk. After the metrics sampler stores a sample, it gives the sample to the VM manager. A sample that the store rejects does not go into memory. One window holds one sample for each 10 seconds, plus one. A 60-minute window holds 361 samples and uses about 14 KB.
+
+The first sweep after metald starts reads the stored samples of each burstable VM one time. A VM that becomes burstable, or that gets a new window, reads them at its next sweep. Until that sweep, the previous window applies for up to 10 seconds. A sweep that runs out of time logs `keep VM CPU samples` and tries again at the next sweep.
+
+metald removes the samples of a VM when the VM stops being burstable, is destroyed, or moves to another host.
+
+Metal adds the CPU time and the elapsed time of each pair of adjacent samples in the window. It divides the CPU time by the elapsed time. It skips a pair when the VM was down at either sample, or when both samples have the same second. Thus down time does not lower the average.
+
+When the samples start after the window start, Metal counts the time before the oldest sample as idle, with no CPU use. For example, a VM with 10 minutes of samples in a 60-minute window gets 50 idle minutes. Samples before a [CPU burst reset](#set-cpu-burst) count as missing too. Thus a new VM can burst. With a baseline of 500 millicores on a 1,000 millicore VM and a 60-minute window, it can use its full CPU for about 30 minutes.
+
+Down time between samples does not count as idle. When metald fills the window from the store, it reads one sample interval before the window start, so a refill adds no missing time.
+
+When the CPU counter falls, a restart made a new cgroup that counts from 0. Metal counts the new counter value as the CPU time of that pair. The CPU time that the old cgroup used after the previous sample is lost.
+
+metald has no average when it has no samples of the VM in memory yet, for example before the first sweep after metald starts. The CPU limiter then keeps the current limit of the VM, and the status has no `average_cpu_millicores`. When the window has no usable time, the average is 0.
+
+The value includes the Firecracker process threads, so it can be a little more than the vCPU count multiplied by 1,000. A paused VM counts as up with almost no CPU use. If a restart occurs inside one 10-second interval and the new counter is already more than the old counter, that pair shows less CPU time than the VM used.
 
 ## Terminate a VM
 

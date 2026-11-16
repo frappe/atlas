@@ -39,6 +39,8 @@ type DesiredRecord struct {
 	SpecificationGeneration uint64        `json:"specification_generation,omitempty"`
 	State                   State         `json:"state"`
 	Specification           Specification `json:"specification"`
+	// CPUBurstResetAt hides older CPU samples from the sliding window average.
+	CPUBurstResetAt time.Time `json:"cpu_burst_reset_at,omitzero"`
 }
 
 // ObservedRecord stores reconciliation progress and observed state.
