@@ -259,6 +259,10 @@ func (m *machine) saveAndStop(ctx context.Context) (saveError error) {
 	pausedByThisCall := false
 	switch state {
 	case vm.StateRunning:
+		// A cold boot from this disk, after a failed restore, then finds clean file systems.
+		// The restore resets every vsock connection, so the guest thaws when it resumes.
+		thaw := m.runtime.FreezeGuestFilesystems(ctx, m.input)
+		defer thaw()
 		if err := m.api.Pause(ctx); err != nil {
 			return fmt.Errorf("pause before save: %w", err)
 		}
