@@ -67,6 +67,7 @@ type Runtime struct {
 	serialBroker          serialBroker
 	sshMutex              sync.Mutex
 	sshSessions           map[string]*sshSession
+	silentGuests          silentGuests
 	logger                *slog.Logger
 	telemetry             *telemetry.Registry
 }
@@ -190,6 +191,7 @@ func (runtime *Runtime) Pause(ctx context.Context, input vm.RuntimeMachine) erro
 
 // Resume resumes a paused Firecracker virtual machine.
 func (runtime *Runtime) Resume(ctx context.Context, input vm.RuntimeMachine) error {
+	runtime.silentGuests.forget(input.ID)
 	return runtime.newMachine(input).Resume(ctx)
 }
 
@@ -199,6 +201,7 @@ func (runtime *Runtime) Remove(ctx context.Context, input vm.RuntimeMachine) err
 		return err
 	}
 
+	runtime.silentGuests.forget(input.ID)
 	for _, link := range []string{runtime.configuration.socketPath(input.ID), runtime.configuration.vsockSocketPath(input.ID)} {
 		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove Firecracker socket: %w", err)

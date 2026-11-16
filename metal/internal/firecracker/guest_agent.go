@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/guestagent"
@@ -16,6 +18,12 @@ import (
 )
 
 const (
+	// guestHandshakeTimeout bounds the vsock handshake. A guest with a vsock driver
+	// answers in under a millisecond. A guest without one never answers.
+	guestHandshakeTimeout = 50 * time.Millisecond
+	// silentGuestRetryInterval is how long the usage report skips a guest that did not answer the handshake.
+	silentGuestRetryInterval = time.Minute
+
 	guestUsageTimeout  = time.Second
 	guestFreezeTimeout = 10 * time.Second
 	// guestGrowTimeout keeps the reconcile pass short, because it holds the VM operation lock.
@@ -28,7 +36,13 @@ const (
 // GetGuestUsage asks the guest agent for its usage report. It returns nil when
 // the VM has no vsock device or agent, or does not answer.
 func (runtime *Runtime) GetGuestUsage(ctx context.Context, input vm.RuntimeMachine) *guestagent.Usage {
+	if runtime.silentGuests.isSkipped(input.ID) {
+		return nil
+	}
 	connection, reader, err := runtime.dialGuestAgent(ctx, input.ID, guestagent.UsagePort, guestUsageTimeout)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		runtime.silentGuests.skip(input.ID)
+	}
 	if err != nil {
 		return nil
 	}
@@ -85,26 +99,60 @@ func (runtime *Runtime) requestGuestReboot(ctx context.Context, identifier strin
 
 // dialGuestAgent connects to a guest agent port with the Firecracker
 // host-initiated vsock handshake: the host sends "CONNECT <port>\n" and
-// Firecracker answers "OK <host port>\n". timeout bounds the whole exchange.
+// Firecracker answers "OK <host port>\n". timeout bounds the job after the handshake.
 func (runtime *Runtime) dialGuestAgent(ctx context.Context, identifier string, port int, timeout time.Duration) (net.Conn, *bufio.Reader, error) {
-	dialer := net.Dialer{Timeout: timeout}
+	dialer := net.Dialer{Timeout: guestHandshakeTimeout}
 	connection, err := dialer.DialContext(ctx, "unix", runtime.configuration.vsockSocketPath(identifier))
 	if err != nil {
 		return nil, nil, err
 	}
+
 	reader := bufio.NewReader(io.LimitReader(connection, guestReplyMaximumBytes))
-	err = connection.SetDeadline(time.Now().Add(timeout))
+	err = connection.SetDeadline(time.Now().Add(guestHandshakeTimeout))
 	if err == nil {
 		_, err = fmt.Fprintf(connection, "CONNECT %d\n", port)
 	}
 	if err == nil {
 		err = readReply(reader, "OK")
 	}
+	if err == nil {
+		err = connection.SetDeadline(time.Now().Add(timeout))
+	}
 	if err != nil {
 		connection.Close()
 		return nil, nil, err
 	}
 	return connection, reader, nil
+}
+
+// silentGuests remembers guests that did not answer the vsock handshake, such as an
+// image without vsock kernel modules, so that each metrics sample does not wait again.
+type silentGuests struct {
+	mutex   sync.Mutex
+	retryAt map[string]time.Time
+}
+
+func (guests *silentGuests) isSkipped(identifier string) bool {
+	guests.mutex.Lock()
+	defer guests.mutex.Unlock()
+	return time.Now().Before(guests.retryAt[identifier])
+}
+
+func (guests *silentGuests) skip(identifier string) {
+	guests.mutex.Lock()
+	defer guests.mutex.Unlock()
+	if guests.retryAt == nil {
+		guests.retryAt = map[string]time.Time{}
+	}
+	guests.retryAt[identifier] = time.Now().Add(silentGuestRetryInterval)
+}
+
+// forget retries the guest at once, because a new boot can load the vsock driver and a
+// pause can make a healthy guest miss one handshake.
+func (guests *silentGuests) forget(identifier string) {
+	guests.mutex.Lock()
+	defer guests.mutex.Unlock()
+	delete(guests.retryAt, identifier)
 }
 
 // readReply reads one line that starts with want. The agent sends "error <reason>" on failure.

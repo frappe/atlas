@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -41,6 +42,39 @@ func TestGrowGuestRootFilesystemReturnsAgentError(t *testing.T) {
 	err := runtime.GrowGuestRootFilesystem(context.Background(), vm.RuntimeMachine{ID: "vm"})
 	if err == nil || err.Error() != "cannot grow a btrfs root file system" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSilentGuestIsSkippedAfterOneHandshakeTimeout(t *testing.T) {
+	runtime := &Runtime{configuration: testConfig(t.TempDir())}
+	socketPath := runtime.configuration.vsockSocketPath("vm")
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	var connections atomic.Int32
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			t.Cleanup(func() { connection.Close() })
+		}
+	}()
+
+	for range 2 {
+		if usage := runtime.GetGuestUsage(context.Background(), vm.RuntimeMachine{ID: "vm"}); usage != nil {
+			t.Fatalf("usage = %+v, want nil from a silent guest", usage)
+		}
+	}
+	if count := connections.Load(); count != 1 {
+		t.Fatalf("connections = %d, want 1 because the second request skips the silent guest", count)
 	}
 }
 

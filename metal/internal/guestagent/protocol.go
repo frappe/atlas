@@ -14,6 +14,9 @@ const (
 	RebootPort             = 100003
 )
 
+// SystemStateUnreachable is the system state that metald reports when the guest agent does not answer.
+const SystemStateUnreachable = "unreachable"
+
 // WriteReply writes "ok", or "error <reason>" when err is not nil.
 func WriteReply(writer io.Writer, err error) error {
 	if err != nil {

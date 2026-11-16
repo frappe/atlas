@@ -80,7 +80,9 @@ Sent traffic includes ICMP, UDP, TCP SYN, and TCP RST packet counters. Disk use 
 
 Memory use is the guest's own report through the Firecracker balloon device. A VM that booted without the balloon device, or that sends no valid report, shows the memory charged to its Firecracker cgroup. That value includes host page cache, so it can be larger than the VM memory.
 
-A VM image with the `atlas-guest-agent` binary also reports its own view in `guest`: the load average, memory from `/proc/meminfo`, and the size and use of the root file system. Metal asks the guest over vsock, a host-to-guest socket that does not use the guest network, so a guest firewall cannot block it. Metal asks only a running VM, and waits at most 1 second. An older image, or a VM that has not cold-booted since the vsock device was added, has no `guest` value.
+A VM image with the `atlas-guest-agent` binary also reports its own view in `guest`: the load average, memory from `/proc/meminfo`, and the size and use of the root file system. Metal asks the guest over vsock, a host-to-guest socket that does not use the guest network, so a guest firewall cannot block it. Metal asks only a running VM. The vsock handshake waits at most 50 ms, and the report waits at most 1 second. After a guest does not answer the handshake, the next minute of samples skips it.
+
+When Metal gets no report, `guest.system_state` is `unreachable` and the other `guest` values are zero. This occurs for an older image, a VM that has not cold-booted since the vsock device was added, and a VM that is not running.
 
 Metal also asks the agent for these jobs. Without an agent, each job works as before:
 
