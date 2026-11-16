@@ -89,6 +89,8 @@ func publicAPIError(err error) *apiError {
 		return newAPIError(http.StatusConflict, "image_content_conflict", "image reference identifies different content")
 	case errors.Is(err, vm.ErrRescueMode):
 		return newAPIError(http.StatusConflict, "in_rescue_mode", "virtual machine is in rescue mode")
+	case errors.Is(err, vm.ErrNotBurstable):
+		return newAPIError(http.StatusConflict, "not_burstable", "virtual machine is not burstable")
 	case errors.Is(err, vm.ErrConflict), errors.Is(err, storage.ErrInUse):
 		return newAPIError(http.StatusConflict, "conflict", "resource conflict")
 	case errors.Is(err, storage.ErrShuttingDown):

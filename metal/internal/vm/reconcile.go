@@ -565,6 +565,7 @@ func (manager *Manager) reconcileDestroyed(
 	if err := manager.store.remove(desired.ID); err != nil {
 		return fmt.Errorf("remove virtual machine records: %w", err)
 	}
+	manager.slidingWindowUsage.forget(desired.ID)
 	return nil
 }
 

@@ -92,8 +92,9 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 
 		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
 			record.Specification.MemoryMiB != compute.MemoryMiB
-		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
-		if !shapeChanged && !timeoutChanged && record.State == StateRunning {
+		optionsChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds ||
+			record.Specification.CPUBurst != compute.CPUBurst
+		if !shapeChanged && !optionsChanged && record.State == StateRunning {
 			return false, nil
 		}
 
@@ -112,6 +113,7 @@ func (manager *Manager) SetCompute(ctx context.Context, identifier string, compu
 		}
 
 		record.Specification.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+		record.Specification.CPUBurst = compute.CPUBurst
 		return true, nil
 	})
 }
@@ -155,8 +157,9 @@ func (manager *Manager) Resize(ctx context.Context, identifier string, compute C
 			}
 		}
 
-		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
-		if !shapeChanged && !timeoutChanged {
+		optionsChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds ||
+			record.Specification.CPUBurst != compute.CPUBurst
+		if !shapeChanged && !optionsChanged {
 			return false, nil
 		}
 
@@ -164,6 +167,7 @@ func (manager *Manager) Resize(ctx context.Context, identifier string, compute C
 		record.Specification.MemoryMiB = compute.MemoryMiB
 		record.Specification.DiskMiB = diskMiB
 		record.Specification.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+		record.Specification.CPUBurst = compute.CPUBurst
 		if shapeChanged {
 			record.SpecificationGeneration++
 			record.State = StateRunning

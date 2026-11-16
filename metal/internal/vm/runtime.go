@@ -55,6 +55,11 @@ type Runtime interface {
 	FreezeGuestFilesystems(context.Context, RuntimeMachine) (thaw func())
 	// GrowGuestRootFilesystem returns nil when the guest has no agent.
 	GrowGuestRootFilesystem(context.Context, RuntimeMachine) error
+	// CPULimit returns the CPU quota of the running VM in millicores.
+	CPULimit(context.Context, RuntimeMachine) (int, error)
+	// SetCPULimit changes the CPU quota of the running VM. The next start applies
+	// cpu_millicores again.
+	SetCPULimit(ctx context.Context, machine RuntimeMachine, millicores int) error
 	// Ping returns nil when the guest answers one ICMP echo.
 	Ping(context.Context, RuntimeMachine) error
 }

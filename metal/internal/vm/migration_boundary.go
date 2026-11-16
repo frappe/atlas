@@ -50,6 +50,7 @@ func (host *MigrationHost) WriteObserved(virtualMachineID string, record Observe
 
 // RemoveVirtualMachineRecords removes the VM record directory, including migration state.
 func (host *MigrationHost) RemoveVirtualMachineRecords(virtualMachineID string) error {
+	host.manager.slidingWindowUsage.forget(virtualMachineID)
 	return host.manager.store.remove(virtualMachineID)
 }
 
