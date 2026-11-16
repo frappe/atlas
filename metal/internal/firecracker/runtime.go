@@ -26,7 +26,7 @@ import (
 
 const (
 	// maxConcurrentSSHSessions limits host-wide SSH console sessions.
-	maxConcurrentSSHSessions = 32
+	maxConcurrentSSHSessions = 2048
 
 	// maxConcurrentSSHSessionsPerVirtualMachine stops one VM from using every host slot.
 	maxConcurrentSSHSessionsPerVirtualMachine = 4
