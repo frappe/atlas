@@ -60,8 +60,10 @@ rootfs=$BULK/downloads/ubuntu.ext4
 IMAGE_VERSION=${METALD_IMAGE_VERSION:-22.04}
 # The builder creates the guest image when it is absent.
 if [[ ! -f $rootfs ]]; then
+	make -C "$SCRIPT_DIR/.." guest-agent
 	"$IMAGE_BUILDER" --output "$rootfs" --kernel-output "$BULK/downloads/ubuntu-vmlinux" \
-		--platform "$IMAGE_ARCHITECTURE" --version "$IMAGE_VERSION"
+		--guest-agent "$SCRIPT_DIR/../dist/atlas-guest-agent-linux-$IMAGE_ARCHITECTURE" \
+		--architecture "$IMAGE_ARCHITECTURE" --version "$IMAGE_VERSION"
 fi
 
 step "guest kernel (firecracker CI build)"

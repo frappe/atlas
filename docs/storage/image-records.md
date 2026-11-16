@@ -19,6 +19,8 @@ The Ubuntu builder publishes a kernel and root filesystem as a new Available Sys
 
 Each Ubuntu image build uses the latest Ubuntu cloud image release and the newest kernel that Ubuntu supports for that release: the HWE (hardware enablement) kernel for 22.04 and 24.04, and the generic kernel for 26.04. The rescue image uses the 24.04 steps. The build log shows the download URLs.
 
+Each image includes [`atlas-guest-agent`](../compute/index.md#read-vm-metrics). The builder compiles it from `metal/` with `make guest-agent` for the image architecture, so the build host needs `make`. Atlas downloads a Go toolchain when the host has none. On macOS, the build runs in Docker.
+
 The builder checks earlier Available images with the same title, architecture, and purpose tag. If one has the same digests, the build changes nothing.
 
 After base image publication, the builder retires the earlier base images. Rescue builds keep earlier images. See [rescue mode](../compute/rescue.md).

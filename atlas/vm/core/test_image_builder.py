@@ -20,7 +20,9 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			TemporaryDirectory() as temporary_directory,
 			patch("atlas.vm.core.image_builder.IS_MACOS", False),
 			patch("atlas.vm.core.image_builder.os.geteuid", return_value=1000),
-			patch("atlas.vm.core.image_builder.build_guest_agent", return_value=Path("atlas-guest-agent")),
+			patch(
+				"atlas.vm.core.image_builder.build_guest_agent", return_value=Path("atlas-guest-agent")
+			) as build_guest_agent,
 			patch("atlas.vm.core.image_builder.subprocess.run") as run,
 		):
 			image_path, kernel_path = build_ubuntu_image("24.04", "amd64", True, Path(temporary_directory))
@@ -29,6 +31,7 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertEqual(command[0], "sudo")
 		self.assertTrue(str(command[1]).endswith("vm/scripts/build_ubuntu_server_image.sh"))
 		self.assertIn("--minimal", command)
+		build_guest_agent.assert_called_once_with("amd64")
 		self.assertEqual(command[command.index("--guest-agent") + 1], Path("atlas-guest-agent"))
 		self.assertEqual(image_path.name, "ubuntu-24.04-minimal-amd64.ext4")
 		self.assertEqual(kernel_path.name, "vmlinux-ubuntu-24.04-minimal-server")
