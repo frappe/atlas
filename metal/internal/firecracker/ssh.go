@@ -186,10 +186,20 @@ func (runtime *Runtime) newSSHSession(id string, record sshSessionRecord) *sshSe
 	return &sshSession{runtime: runtime, record: record, id: id, done: make(chan struct{})}
 }
 
-// addSSHSession registers a session within the host-wide session limit.
+// addSSHSession registers a session within the per-VM and host-wide session limits.
 func (runtime *Runtime) addSSHSession(session *sshSession) error {
 	runtime.sshMutex.Lock()
 	defer runtime.sshMutex.Unlock()
+
+	virtualMachineSessions := 0
+	for _, existing := range runtime.sshSessions {
+		if existing.record.VirtualMachineID == session.record.VirtualMachineID {
+			virtualMachineSessions++
+		}
+	}
+	if virtualMachineSessions >= maxConcurrentSSHSessionsPerVirtualMachine {
+		return fmt.Errorf("ssh session limit reached for virtual machine %s", session.record.VirtualMachineID)
+	}
 
 	if len(runtime.sshSessions) >= maxConcurrentSSHSessions {
 		return fmt.Errorf("ssh session limit reached")

@@ -24,8 +24,13 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// maxConcurrentSSHSessions limits host-wide SSH console sessions.
-const maxConcurrentSSHSessions = 32
+const (
+	// maxConcurrentSSHSessions limits host-wide SSH console sessions.
+	maxConcurrentSSHSessions = 32
+
+	// maxConcurrentSSHSessionsPerVirtualMachine stops one VM from using every host slot.
+	maxConcurrentSSHSessionsPerVirtualMachine = 4
+)
 
 // virtualMachineStorage prepares and releases the disk of one VM.
 type virtualMachineStorage interface {
