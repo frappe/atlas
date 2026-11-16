@@ -17,16 +17,16 @@ func TestTrafficControlStepsLimitPrivateAndPublicTraffic(t *testing.T) {
 	got := trafficControlSteps("metal-vm-1", "vg-1000", request)
 	want := [][]string{
 		{"ip", "netns", "exec", "metal-vm-1", "tc", "qdisc", "add", "dev", "vg-1000", "clsact"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "10.0.0.0/8", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "10.0.0.0/8", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "172.16.0.0/12", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "172.16.0.0/12", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "192.168.0.0/16", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "192.168.0.0/16", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ipv6", "prio", "11", "flower", "dst_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ipv6", "prio", "11", "flower", "src_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "20", "flower", "action", "police", "rate", "50mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "20", "flower", "action", "police", "rate", "50mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "10.0.0.0/8", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "10.0.0.0/8", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "172.16.0.0/12", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "172.16.0.0/12", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "192.168.0.0/16", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "192.168.0.0/16", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ipv6", "prio", "11", "flower", "dst_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ipv6", "prio", "11", "flower", "src_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "20", "flower", "action", "police", "rate", "50mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "20", "flower", "action", "police", "rate", "50mibps", "burst", "1mb", "mtu", "64kb", "conform-exceed", "drop/ok"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("traffic control steps = %#v, want %#v", got, want)
