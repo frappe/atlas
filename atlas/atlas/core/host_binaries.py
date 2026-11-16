@@ -289,11 +289,11 @@ def build_host_binary(binary: HostBinary, version: str) -> Path:
 	return artifact
 
 
-def build_guest_agent() -> Path:
-	"""Build the atlas-guest-agent binary that VM images install, and return its path."""
+def build_guest_agent(architecture: str) -> Path:
+	"""Build the atlas-guest-agent binaries that VM images install, and return the one for architecture."""
 	module_path = repository_path() / "metal"
 	run_make(module_path, ["guest-agent"])
-	return module_path / "dist" / "atlas-guest-agent-linux-amd64"
+	return module_path / "dist" / f"atlas-guest-agent-linux-{architecture}"
 
 
 def run_make(module_path: Path, arguments: list[str]) -> None:
