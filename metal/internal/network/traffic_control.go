@@ -9,9 +9,11 @@ import (
 )
 
 // One tc priority holds one protocol, so IPv4 and IPv6 filters need separate
-// priorities. Both private priorities outrank the public one.
+// priorities. Both private priorities outrank the public one. Without an mtu, a
+// tc policer drops every packet over 2 KB, which includes jumbo mesh packets.
 const (
 	trafficControlBurst        = "1mb"
+	trafficControlMTU          = "64kb"
 	privateIPv4TrafficPriority = "10"
 	privateIPv6TrafficPriority = "11"
 	publicTrafficPriority      = "20"
@@ -135,7 +137,7 @@ func policeFilter(prefix []string, device, direction, protocol, priority, matchF
 		arguments = append(arguments, matchField, matchPrefix)
 	}
 	arguments = append(arguments,
-		"action", "police", "rate", rate, "burst", trafficControlBurst,
+		"action", "police", "rate", rate, "burst", trafficControlBurst, "mtu", trafficControlMTU,
 		"conform-exceed", "drop/ok",
 	)
 
