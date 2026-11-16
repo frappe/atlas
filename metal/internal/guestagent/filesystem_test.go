@@ -24,11 +24,11 @@ proc /proc proc rw,nosuid 0 0
 	}
 }
 
-func TestRootDeviceUsesTheLastRootMount(t *testing.T) {
+func TestRootDeviceUsesTheLastRootMountAndFallsBackToTheDeviceNumber(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mountinfo")
 	writeFile(t, path, `21 1 254:0 / / rw,relatime shared:1 - ext4 /dev/root rw
 22 21 0:5 / /proc rw,nosuid shared:2 - proc proc rw
-30 21 254:16 / / rw,relatime - xfs /dev/root rw
+30 21 254:16 / / rw,relatime - xfs /dev/atlas-test-missing-root rw
 `)
 
 	device, filesystemType, err := rootDevice(path)
