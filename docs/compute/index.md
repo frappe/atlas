@@ -82,11 +82,12 @@ Memory use is the guest's own report through the Firecracker balloon device. A V
 
 A VM image with the `atlas-guest-agent` binary also reports its own view in `guest`: the load average, memory from `/proc/meminfo`, and the size and use of the root file system. Metal asks the guest over vsock, a host-to-guest socket that does not use the guest network, so a guest firewall cannot block it. Metal asks only a running VM, and waits at most 1 second. An older image, or a VM that has not cold-booted since the vsock device was added, has no `guest` value.
 
-Metal also asks the agent for three jobs. Without an agent, each job works as before:
+Metal also asks the agent for these jobs. Without an agent, each job works as before:
 
 | Job | With the agent | Without the agent |
 |---|---|---|
 | Snapshot of a running VM | The guest freezes its file systems, so the image is clean. | The image is crash-consistent. |
+| Sleep or live migration of a running VM | The guest freezes before Metal saves its memory. A cold boot after a failed restore then finds a clean disk. The restore resets the vsock connections, so the guest thaws when it resumes. | A cold boot after a failed restore replays the file system journal. |
 | Disk resize of a running VM | The guest grows the root file system at once. | The guest grows it at the next boot. |
 | Stop | The guest reboots cleanly, also when it ignores Ctrl-Alt-Del. | Metal sends Ctrl-Alt-Del. |
 
