@@ -10,8 +10,11 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// apiSocketRelativePath is the firecracker API socket path relative to the chroot root.
-const apiSocketRelativePath = "run/firecracker.socket"
+// Firecracker socket paths relative to the chroot root.
+const (
+	apiSocketRelativePath   = "run/firecracker.socket"
+	vsockSocketRelativePath = "run/vsock.socket"
+)
 
 // firecrackerLogRelativePath is the Firecracker log path inside the chroot.
 const firecrackerLogRelativePath = "firecracker.log"
@@ -33,16 +36,30 @@ func (configuration Config) chrootSocketPath(id string) string {
 	return filepath.Join(configuration.chrootRoot(id), apiSocketRelativePath)
 }
 
-// linkSocket creates the short socket symlink before Firecracker starts.
-func (configuration Config) linkSocket(id string) error {
+// vsockSocketPath returns the short path metald dials for a VM's vsock device.
+func (configuration Config) vsockSocketPath(id string) string {
+	return filepath.Join(configuration.SocketsDir, id+".vsock")
+}
+
+// linkSockets creates the short socket symlinks before Firecracker starts,
+// because a jail path can exceed the 108-byte Unix socket path limit.
+func (configuration Config) linkSockets(id string) error {
 	if err := os.MkdirAll(configuration.SocketsDir, 0o700); err != nil {
 		return err
 	}
-	link := configuration.socketPath(id)
-	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
-		return err
+	links := map[string]string{
+		configuration.socketPath(id):      configuration.chrootSocketPath(id),
+		configuration.vsockSocketPath(id): filepath.Join(configuration.chrootRoot(id), vsockSocketRelativePath),
 	}
-	return os.Symlink(configuration.chrootSocketPath(id), link)
+	for link, target := range links {
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Symlink(target, link); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // jailerArgs builds the argv the systemd unit runs: jailer flags, then "--",

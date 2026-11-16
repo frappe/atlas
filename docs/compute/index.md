@@ -24,6 +24,8 @@ Sent traffic includes ICMP, UDP, TCP SYN, and TCP RST packet counters. Disk use 
 
 Memory use is the guest's own report through the Firecracker balloon device. A VM that booted without the balloon device, or that sends no valid report, shows the memory charged to its Firecracker cgroup. That value includes host page cache, so it can be larger than the VM memory.
 
+A VM image with the `atlas-guest-agent` binary also reports its own view in `guest`: the load average, memory from `/proc/meminfo`, and the size and use of the root file system. Metal asks the guest over vsock, a host-to-guest socket that does not use the guest network, so a guest firewall cannot block it. Metal asks only a running VM, and waits at most 1 second. An older image, or a VM that has not cold-booted since the vsock device was added, has no `guest` value.
+
 Disk rates come from the VM systemd cgroup's `io.stat` counters for the root disk device. Metal stores whole read and write bytes per second and milli-IOPS, where 1,000 milli-IOPS is one operation per second.
 
 The first sample after Metal starts, and the first sample after a counter reset, stores zero rates. Configured throughput and IOPS limits are zero when unlimited.

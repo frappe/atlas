@@ -47,7 +47,7 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | `api` | vm, host, console, vm/migration |
 | `host` | vm, network, storage, vm/migration |
 | `reconciler` | vm, storage, vm/migration |
-| `firecracker` | vm, storage, platform, console, Firecracker API |
+| `firecracker` | vm, storage, platform, console, guestagent, Firecracker API |
 | `storage` | vm, platform |
 | `network` | vm, platform, network/traffic |
 | `vm/migration` | vm, storage, platform |

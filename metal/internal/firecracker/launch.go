@@ -65,7 +65,7 @@ func (runtime *Runtime) prepareLaunch(ctx context.Context, configuration vm.Runt
 	); err != nil {
 		return err
 	}
-	if err := runtime.configuration.linkSocket(configuration.ID); err != nil {
+	if err := runtime.configuration.linkSockets(configuration.ID); err != nil {
 		return err
 	}
 	// Open the PTY before systemd starts the unit.
