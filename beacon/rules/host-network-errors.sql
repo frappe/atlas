@@ -4,7 +4,9 @@
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600
--- A link is down when the interface is up and has no carrier: Medium. More than 10 NIC errors in 1 h are Low.
+-- A link is down when the interface is up and has no carrier: Medium. More than 10 NIC errors in 1 h are Low. Only Ethernet NICs
+-- (en*, eth*) count errors: WireGuard counts unauthenticated packets and packets for a peer without a session as errors, and a
+-- bond or VLAN repeats the errors of its NICs.
 SELECT resource_id, concat('link-down:', interface) AS alert_key, 1 AS value, concat(interface, ' has no carrier') AS detail, 'Medium' AS severity
 FROM (
     SELECT resource_id, labels['interface'] AS interface,
@@ -29,6 +31,7 @@ FROM (
         SELECT resource_id, labels['interface'], increase
         FROM datum.counter_increase(metric = 'system_network_rx_crc_errors_total', window = 3600)
     )
+    WHERE match(interface, '^(en|eth)')
     GROUP BY resource_id, interface
 )
 WHERE errors > 10
