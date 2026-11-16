@@ -30,6 +30,39 @@ class TestMetalMetrics(UnitTestCase):
 		)
 		self.assertEqual(sample.timestamp, 1791115200)
 		self.assertEqual(sample.disk.read_milli_iops, 100)
+		self.assertEqual(sample.guest.system_state, "unreachable")
+		self.assertEqual(sample.guest.memory.total_bytes, 0)
+
+	def test_reads_the_guest_usage_report(self) -> None:
+		sample = MetalVirtualMachineMetricsSample.from_dict(
+			{
+				"timestamp": 1791115200,
+				"up": True,
+				"compute": {"cpu_microseconds": 100, "memory_bytes": 1024},
+				"disk": {"size_mib": 4096, "used_mib": 512},
+				"network": {"received_bytes": 0, "received_packets": 0, "sent_bytes": 0, "sent_packets": 0},
+				"guest": {
+					"load_average": [1.5, 1, 0],
+					"memory": {
+						"total_bytes": 4096,
+						"free_bytes": 1024,
+						"available_bytes": 2048,
+						"cached_bytes": 512,
+						"swap_total_bytes": 0,
+						"swap_free_bytes": 0,
+					},
+					"root_filesystem": {
+						"size_bytes": 8192,
+						"used_bytes": 4096,
+						"inodes_total": 100,
+						"inodes_used": 10,
+					},
+				},
+			}
+		)
+		self.assertEqual(sample.guest.load_average, (1.5, 1.0, 0.0))
+		self.assertEqual(sample.guest.memory.available_bytes, 2048)
+		self.assertEqual(sample.guest.system_state, "unknown")
 
 
 def complete_response() -> dict:
