@@ -84,7 +84,10 @@ from .virtual_machine_detail_response_tags import VirtualMachineDetailResponseTa
 from .virtual_machine_disk import VirtualMachineDisk
 from .virtual_machine_disk_usage import VirtualMachineDiskUsage
 from .virtual_machine_guest import VirtualMachineGuest
+from .virtual_machine_guest_filesystem import VirtualMachineGuestFilesystem
+from .virtual_machine_guest_memory import VirtualMachineGuestMemory
 from .virtual_machine_guest_metadata import VirtualMachineGuestMetadata
+from .virtual_machine_guest_usage import VirtualMachineGuestUsage
 from .virtual_machine_list_response import VirtualMachineListResponse
 from .virtual_machine_list_response_architecture import VirtualMachineListResponseArchitecture
 from .virtual_machine_list_response_tags import VirtualMachineListResponseTags
@@ -183,7 +186,10 @@ __all__ = (
     "VirtualMachineDisk",
     "VirtualMachineDiskUsage",
     "VirtualMachineGuest",
+    "VirtualMachineGuestFilesystem",
+    "VirtualMachineGuestMemory",
     "VirtualMachineGuestMetadata",
+    "VirtualMachineGuestUsage",
     "VirtualMachineListResponse",
     "VirtualMachineListResponseArchitecture",
     "VirtualMachineListResponseTags",
