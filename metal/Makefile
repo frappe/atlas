@@ -41,7 +41,7 @@ guest-agent:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(OUTPUT_DIRECTORY)/atlas-guest-agent-linux-amd64 ./cmd/atlas-guest-agent
 
 openapi:
-	$(SWAG) init -g main.go --dir ./cmd/metald,./$(SPEC_DIRECTORY),./internal/vm --parseInternal --outputTypes json -o $(SPEC_DIRECTORY)
+	$(SWAG) init -g main.go --dir ./cmd/metald,./$(SPEC_DIRECTORY),./internal/vm,./internal/guestagent --parseInternal --outputTypes json -o $(SPEC_DIRECTORY)
 
 version:
 	@echo $(VERSION)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frappe/atlas/metal/internal/guestagent"
 	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 
@@ -219,6 +220,10 @@ func (runtime *fakeRuntime) CheckMigratedGuestSSH(context.Context, RuntimeMachin
 
 func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error) {
 	return runtime.usage, runtime.usageError
+}
+
+func (runtime *fakeRuntime) GetGuestUsage(context.Context, RuntimeMachine) *guestagent.Usage {
+	return nil
 }
 
 func (runtime *fakeRuntime) CPULimit(context.Context, RuntimeMachine) (int, error) {

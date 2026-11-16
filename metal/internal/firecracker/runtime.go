@@ -204,8 +204,10 @@ func (runtime *Runtime) Remove(ctx context.Context, input vm.RuntimeMachine) err
 		return err
 	}
 
-	if err := os.Remove(runtime.configuration.socketPath(input.ID)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove Firecracker socket: %w", err)
+	for _, link := range []string{runtime.configuration.socketPath(input.ID), runtime.configuration.vsockSocketPath(input.ID)} {
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove Firecracker socket: %w", err)
+		}
 	}
 	if err := os.Remove(runtime.configuration.jailerEnvironmentPath(input.ID)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove jailer environment: %w", err)

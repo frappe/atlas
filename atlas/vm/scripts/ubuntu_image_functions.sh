@@ -181,6 +181,37 @@ AuthorizedKeysCommandUser nobody
 EOF
 }
 
+# metald asks the guest agent over vsock. systemd starts one agent process for each
+# connection, so nothing runs between requests. The ports match metal/internal/guestagent.
+install_guest_agent_sockets() {
+	local system_directory="$rootfs_directory/etc/systemd/system"
+	install -d -m 0755 "$system_directory/sockets.target.wants"
+	local job port command
+	while read -r job port command; do
+		cat > "$system_directory/atlas-guest-agent-$job.socket" <<EOF
+[Socket]
+ListenStream=vsock::$port
+Accept=yes
+
+[Install]
+WantedBy=sockets.target
+EOF
+		cat > "$system_directory/atlas-guest-agent-$job@.service" <<EOF
+[Unit]
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/local/lib/atlas/atlas-guest-agent $command
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+EOF
+		ln -sf "/etc/systemd/system/atlas-guest-agent-$job.socket" "$system_directory/sockets.target.wants/"
+	done <<'JOBS'
+usage 100000 report-usage
+JOBS
+}
+
 install_kernel() {
 	packages_path="$work_path/Packages"
 	curl -fsSL "$archive_url/dists/$series-updates/main/binary-amd64/Packages.gz" | zcat > "$packages_path"
@@ -217,6 +248,7 @@ build_rootfs() {
 	install_metadata_service
 	install_serial_console
 	install_ssh_metadata
+	install_guest_agent_sockets
 }
 
 package_rootfs() {

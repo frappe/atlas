@@ -1,6 +1,10 @@
 package vm
 
-import "context"
+import (
+	"context"
+
+	"github.com/frappe/atlas/metal/internal/guestagent"
+)
 
 // HostCompatibility contains runtime facts reported during controller sync.
 type HostCompatibility struct {
@@ -45,6 +49,8 @@ type Runtime interface {
 	// CheckMigratedGuestSSH verifies guest responsiveness when configured on the host.
 	CheckMigratedGuestSSH(context.Context, RuntimeMachine) error
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
+	// GetGuestUsage returns nil when the guest has no agent or does not answer.
+	GetGuestUsage(context.Context, RuntimeMachine) *guestagent.Usage
 	// CPULimit returns the CPU quota of the running VM in millicores.
 	CPULimit(context.Context, RuntimeMachine) (int, error)
 	// SetCPULimit changes the CPU quota of the running VM. The next start applies

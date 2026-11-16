@@ -1,9 +1,10 @@
-// Command atlas-guest-agent runs inside each Atlas VM. It applies the per-VM metadata
-// and answers the sshd authorized keys lookup.
+// Command atlas-guest-agent runs inside each Atlas VM. It applies the per-VM metadata,
+// answers the sshd authorized keys lookup, and reports resource use to metald over vsock.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,7 +13,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/guestagent"
 )
 
-const usage = "usage: atlas-guest-agent apply-metadata | authorized-keys"
+const usage = "usage: atlas-guest-agent apply-metadata | authorized-keys | report-usage"
 
 func main() {
 	if len(os.Args) != 2 {
@@ -35,6 +36,13 @@ func run(ctx context.Context, command string) error {
 		return nil
 	case "authorized-keys":
 		return guestagent.WriteAuthorizedKeys(ctx, os.Stdout)
+	// systemd passes each accepted vsock connection as standard input and output.
+	case "report-usage":
+		report, err := guestagent.ReadUsage("/proc")
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(report)
 	default:
 		return fmt.Errorf("unknown command %q; %s", command, usage)
 	}
