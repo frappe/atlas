@@ -4,6 +4,7 @@ set -euo pipefail
 
 output=""
 kernel_output=""
+guest_agent=""
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$script_directory/ubuntu_image_functions.sh"
 
@@ -11,11 +12,12 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--output) output=$2; shift 2 ;;
 		--kernel-output) kernel_output=$2; shift 2 ;;
+		--guest-agent) guest_agent=$2; shift 2 ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
 
-[[ -n $output && -n $kernel_output ]] || { echo "--output and --kernel-output are required" >&2; exit 2; }
+[[ -n $output && -n $kernel_output && -n $guest_agent ]] || { echo "--output, --kernel-output, and --guest-agent are required" >&2; exit 2; }
 [[ $EUID -eq 0 ]] || { echo "run this builder with root permissions" >&2; exit 1; }
 [[ $(uname -m) == x86_64 ]] || { echo "rescue builds require an amd64 build host" >&2; exit 2; }
 command -v chroot >/dev/null || { echo "missing command: chroot" >&2; exit 1; }

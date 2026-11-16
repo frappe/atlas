@@ -11,7 +11,7 @@ import click
 import frappe
 
 from atlas.atlas.core.artifacts import publish_public_file_path
-from atlas.atlas.core.host_binaries import BUILDER_IMAGE, IS_MACOS
+from atlas.atlas.core.host_binaries import BUILDER_IMAGE, IS_MACOS, build_guest_agent
 from atlas.vm.core.multipart_upload import bytes_to_mib
 from atlas.vm.core.vm_image_deletion import VirtualMachineImageDeletionService
 
@@ -56,6 +56,7 @@ def _build_image(
 	image_path = output_directory / image_name
 	kernel_path = output_directory / kernel_name
 	builder_path = Path(__file__).parents[1] / "scripts" / script
+	guest_agent_path = build_guest_agent()
 	command = [builder_path]
 	if IS_MACOS:
 		command = [
@@ -64,12 +65,16 @@ def _build_image(
 			"--rm",
 			f"--volume={builder_path.parent}:{builder_path.parent}",
 			f"--volume={output_directory}:{output_directory}",
+			f"--volume={guest_agent_path.parent}:{guest_agent_path.parent}",
 			BUILDER_IMAGE,
 			builder_path,
 		]
 	elif os.geteuid() != 0:
 		command.insert(0, "sudo")
-	command.extend(["--output", image_path, "--kernel-output", kernel_path, *arguments])
+	command.extend(
+		["--output", image_path, "--kernel-output", kernel_path, "--guest-agent", guest_agent_path]
+	)
+	command.extend(arguments)
 	subprocess.run(command, check=True)
 	return image_path, kernel_path
 

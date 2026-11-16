@@ -66,7 +66,7 @@ The runtime returns restore errors to the VM manager. The manager owns [wake rec
 - [Firecracker runtime](../../metal/internal/firecracker/runtime.go) owns guest launch and inspection.
 - [Machine operations](../../metal/internal/firecracker/machine.go) distinguish first boot, cold boot, stop, and saved-state restore.
 - [Memory snapshot launch](../../metal/internal/firecracker/launch.go) writes the restore metadata, including the host time.
-- [Guest metadata agent](../../atlas/vm/scripts/guest/apply-metadata) steps the guest clock forward.
+- [Guest metadata agent](../../metal/internal/guestagent/metadata.go) steps the guest clock forward.
 - [Console broker](../../metal/internal/console/serial_broker.go) manages serial PTYs.
 - [Console adoption](../../metal/cmd/metald/main.go) checks the systemd descriptor store at startup.
 - [Idle watcher](../../metal/internal/vm/idle_watcher.go) decides when to save or restore a guest.
