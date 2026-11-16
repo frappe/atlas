@@ -1,6 +1,7 @@
 # Shared steps of the Ubuntu image recipes. A recipe sets these variables before it calls build_rootfs:
 #   output, kernel_output  where to write the root file system and the kernel
 #   script_directory       the folder that holds this file and guest/
+#   guest_agent            the atlas-guest-agent binary
 #   series, series_url     the Ubuntu release and its cloud image folder
 #   rootfs_name            the cloud image file name, without its extension
 #   kernel_package         the metapackage that selects the boot kernel
@@ -141,8 +142,7 @@ install_metadata_service() {
 preserve_hostname: true
 EOF
 
-	install -D -m 0755 "$script_directory/guest/apply-metadata" \
-		"$rootfs_directory/usr/local/lib/atlas/apply-metadata"
+	install -D -m 0755 "$guest_agent" "$rootfs_directory/usr/local/lib/atlas/atlas-guest-agent"
 	cat > "$rootfs_directory/etc/systemd/system/atlas-metadata.service" <<'EOF'
 [Unit]
 Description=Apply the per-VM Atlas metadata
@@ -154,7 +154,7 @@ Before=shutdown.target
 
 [Service]
 Type=exec
-ExecStart=/usr/local/lib/atlas/apply-metadata
+ExecStart=/usr/local/lib/atlas/atlas-guest-agent apply-metadata
 Restart=always
 RestartSec=1s
 
@@ -174,11 +174,9 @@ install_serial_console() {
 }
 
 install_ssh_metadata() {
-	install -D -m 0755 "$script_directory/guest/authorized-keys-command" \
-		"$rootfs_directory/usr/local/lib/atlas/authorized-keys-command"
 	install -d -m 0755 "$rootfs_directory/etc/ssh/sshd_config.d"
 	cat > "$rootfs_directory/etc/ssh/sshd_config.d/90-atlas-mmds.conf" <<'EOF'
-AuthorizedKeysCommand /usr/local/lib/atlas/authorized-keys-command
+AuthorizedKeysCommand /usr/local/lib/atlas/atlas-guest-agent authorized-keys
 AuthorizedKeysCommandUser nobody
 EOF
 }

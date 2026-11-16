@@ -282,8 +282,24 @@ def build_host_binary(binary: HostBinary, version: str) -> Path:
 		raise FileNotFoundError(_("{0} cannot build without {1}.").format(binary.label, ", ".join(missing)))
 
 	module_path = repository_path() / binary.module_directory
+	run_make(module_path, ["build", f"VERSION={version}"])
+	artifact = module_path / binary.artifact
+	if not artifact.exists():
+		raise FileNotFoundError(_("The build did not produce {0}.").format(artifact))
+	return artifact
+
+
+def build_guest_agent() -> Path:
+	"""Build the atlas-guest-agent binary that VM images install, and return its path."""
+	module_path = repository_path() / "metal"
+	run_make(module_path, ["guest-agent"])
+	return module_path / "dist" / "atlas-guest-agent-linux-amd64"
+
+
+def run_make(module_path: Path, arguments: list[str]) -> None:
+	"""Run make in a Go module, inside BUILDER_IMAGE on macOS."""
 	search_path = os.environ.get("PATH", "")
-	command = ["make", "build", f"VERSION={version}"]
+	command = ["make", *arguments]
 	if IS_MACOS:
 		repository = repository_path()
 		volume = f"--volume={repository}:{repository}"
@@ -301,9 +317,4 @@ def build_host_binary(binary: HostBinary, version: str) -> Path:
 		env=environment,
 	)
 	if result.returncode != 0:
-		raise RuntimeError(f"make build failed in {module_path}: {result.stderr.strip()}")
-
-	artifact = module_path / binary.artifact
-	if not artifact.exists():
-		raise FileNotFoundError(_("The build did not produce {0}.").format(artifact))
-	return artifact
+		raise RuntimeError(f"make {' '.join(arguments)} failed in {module_path}: {result.stderr.strip()}")
