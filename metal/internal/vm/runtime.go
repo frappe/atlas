@@ -51,6 +51,10 @@ type Runtime interface {
 	GetUsage(context.Context, RuntimeMachine) (RuntimeUsage, error)
 	// GetGuestUsage returns nil when the guest has no agent or does not answer.
 	GetGuestUsage(context.Context, RuntimeMachine) *guestagent.Usage
+	// FreezeGuestFilesystems returns a thaw that does nothing when the guest has no agent.
+	FreezeGuestFilesystems(context.Context, RuntimeMachine) (thaw func())
+	// GrowGuestRootFilesystem returns nil when the guest has no agent.
+	GrowGuestRootFilesystem(context.Context, RuntimeMachine) error
 	// CPULimit returns the CPU quota of the running VM in millicores.
 	CPULimit(context.Context, RuntimeMachine) (int, error)
 	// SetCPULimit changes the CPU quota of the running VM. The next start applies

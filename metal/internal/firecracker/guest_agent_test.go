@@ -34,6 +34,16 @@ func TestGetGuestUsage(t *testing.T) {
 	}
 }
 
+func TestGrowGuestRootFilesystemReturnsAgentError(t *testing.T) {
+	runtime := &Runtime{configuration: testConfig(t.TempDir())}
+	serveGuestAgent(t, runtime.configuration.vsockSocketPath("vm"), "CONNECT 100002\n", "OK 1\nerror cannot grow a btrfs root file system\n")
+
+	err := runtime.GrowGuestRootFilesystem(context.Background(), vm.RuntimeMachine{ID: "vm"})
+	if err == nil || err.Error() != "cannot grow a btrfs root file system" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 // serveGuestAgent answers one connection like Firecracker and the guest agent.
 func serveGuestAgent(t *testing.T, socketPath, wantRequest, reply string) {
 	t.Helper()

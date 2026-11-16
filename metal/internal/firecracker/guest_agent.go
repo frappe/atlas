@@ -16,7 +16,11 @@ import (
 )
 
 const (
-	guestUsageTimeout = time.Second
+	guestUsageTimeout  = time.Second
+	guestFreezeTimeout = 10 * time.Second
+	// guestGrowTimeout keeps the reconcile pass short, because it holds the VM operation lock.
+	guestGrowTimeout   = 30 * time.Second
+	guestRebootTimeout = 2 * time.Second
 	// guestReplyMaximumBytes bounds each reply, because the guest controls it.
 	guestReplyMaximumBytes = 64 << 10
 )
@@ -35,6 +39,48 @@ func (runtime *Runtime) GetGuestUsage(ctx context.Context, input vm.RuntimeMachi
 		return nil
 	}
 	return &usage
+}
+
+// FreezeGuestFilesystems asks the guest agent to freeze the guest file systems.
+// thaw closes the connection, and the agent then thaws. Without an agent, thaw
+// does nothing and a snapshot is crash-consistent, as without a freeze.
+func (runtime *Runtime) FreezeGuestFilesystems(ctx context.Context, input vm.RuntimeMachine) (thaw func()) {
+	connection, reader, err := runtime.dialGuestAgent(ctx, input.ID, guestagent.FreezePort, guestFreezeTimeout)
+	if err != nil {
+		return func() {}
+	}
+	if err := readReply(reader, "frozen"); err != nil {
+		connection.Close()
+		runtime.logger.Warn("guest file system freeze failed", "virtual_machine_id", input.ID, "error", err)
+		return func() {}
+	}
+
+	// The guest stays frozen while the connection is open, so it has no deadline.
+	_ = connection.SetDeadline(time.Time{})
+	return func() { _ = connection.Close() }
+}
+
+// GrowGuestRootFilesystem asks the guest agent to grow the root file system to
+// fill a resized disk. Without an agent it does nothing, and the guest grows the
+// file system at its next boot.
+func (runtime *Runtime) GrowGuestRootFilesystem(ctx context.Context, input vm.RuntimeMachine) error {
+	connection, reader, err := runtime.dialGuestAgent(ctx, input.ID, guestagent.GrowRootFilesystemPort, guestGrowTimeout)
+	if err != nil {
+		return nil
+	}
+	defer connection.Close()
+	return readReply(reader, "ok")
+}
+
+// requestGuestReboot asks the guest agent for a clean reboot, which makes
+// Firecracker exit. It still works when the guest ignores Ctrl-Alt-Del.
+func (runtime *Runtime) requestGuestReboot(ctx context.Context, identifier string) error {
+	connection, reader, err := runtime.dialGuestAgent(ctx, identifier, guestagent.RebootPort, guestRebootTimeout)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	return readReply(reader, "ok")
 }
 
 // dialGuestAgent connects to a guest agent port with the Firecracker

@@ -1,11 +1,12 @@
 // Command atlas-guest-agent runs inside each Atlas VM. It applies the per-VM metadata,
-// answers the sshd authorized keys lookup, and reports resource use to metald over vsock.
+// answers the sshd authorized keys lookup, and answers metald jobs over vsock.
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,7 +14,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/guestagent"
 )
 
-const usage = "usage: atlas-guest-agent apply-metadata | authorized-keys | report-usage"
+const usage = "usage: atlas-guest-agent apply-metadata | authorized-keys | report-usage | freeze-filesystems | grow-root-filesystem | reboot"
 
 func main() {
 	if len(os.Args) != 2 {
@@ -43,6 +44,15 @@ func run(ctx context.Context, command string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(report)
+	case "freeze-filesystems":
+		return guestagent.FreezeFilesystems(ctx, struct {
+			io.Reader
+			io.Writer
+		}{os.Stdin, os.Stdout})
+	case "grow-root-filesystem":
+		return guestagent.WriteReply(os.Stdout, guestagent.GrowRootFilesystem(ctx))
+	case "reboot":
+		return guestagent.RequestReboot(ctx, os.Stdout)
 	default:
 		return fmt.Errorf("unknown command %q; %s", command, usage)
 	}
