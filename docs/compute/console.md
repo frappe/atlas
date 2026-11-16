@@ -37,6 +37,8 @@ The SSH client runs in a separate systemd unit, and systemd keeps its console op
 
 SSH needs a reachable guest and its SSH service. Metal creates a temporary key for that session, adds it through the guest metadata service, and removes it when the session ends. [SSH key changes](ssh-keys.md) explains the guest's key lookup.
 
+A VM can have 4 open SSH sessions, and a host can have 32. Metal refuses a new session above either limit, so one VM cannot use all the sessions of its host.
+
 ::: warning The console is access to the guest
 The VM read permission allows a user to request a console token. Treat this permission as guest access, especially for SSH mode. A console token is a bearer credential until the bridge consumes it.
 :::
