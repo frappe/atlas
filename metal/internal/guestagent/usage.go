@@ -23,7 +23,7 @@ type Usage struct {
 	Memory         Memory     `json:"memory"`
 	RootFilesystem Filesystem `json:"root_filesystem"`
 	// SystemState is the output of systemctl is-system-running, such as running or degraded.
-	SystemState string `json:"system_state,omitempty"`
+	SystemState string `json:"system_state"`
 }
 
 // Memory is the guest memory use from /proc/meminfo.
@@ -75,7 +75,10 @@ func readSystemState() string {
 	defer cancel()
 	// The command exits non-zero for every state except running, and still prints the state.
 	output, _ := exec.CommandContext(ctx, "systemctl", "is-system-running").Output()
-	return strings.TrimSpace(string(output))
+	if state := strings.TrimSpace(string(output)); state != "" {
+		return state
+	}
+	return "unknown"
 }
 
 func readLoadAverage(path string) ([3]float64, error) {

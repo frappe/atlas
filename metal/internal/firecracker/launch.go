@@ -68,6 +68,7 @@ func (runtime *Runtime) prepareLaunch(ctx context.Context, configuration vm.Runt
 	if err := runtime.configuration.linkSockets(configuration.ID); err != nil {
 		return err
 	}
+	runtime.silentGuests.forget(configuration.ID)
 	// Open the PTY before systemd starts the unit.
 	if err := runtime.serialBroker.Open(configuration.ID); err != nil {
 		return err
