@@ -49,14 +49,17 @@ type fakeRuntime struct {
 	usage              RuntimeUsage
 	usageError         error
 
-	migrationRestores  int
-	migrationDirectory string
-	metadataError      error
-	diskError          error
-	guestCheckError    error
-	guestChecks        int
-	savedDirectory     string
-	savedIdentity      string
+	migrationRestores   int
+	migrationDirectory  string
+	metadataError       error
+	diskError           error
+	guestCheckError     error
+	guestChecks         int
+	savedDirectory      string
+	savedIdentity       string
+	freezes             int
+	thawsAfterResume    []int
+	rootFilesystemGrows int
 }
 
 func (runtime *fakeRuntime) SavedState(context.Context, RuntimeMachine) (SavedState, error) {
@@ -220,6 +223,16 @@ func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUs
 }
 
 func (runtime *fakeRuntime) GetGuestUsage(context.Context, RuntimeMachine) *guestagent.Usage {
+	return nil
+}
+
+func (runtime *fakeRuntime) FreezeGuestFilesystems(context.Context, RuntimeMachine) func() {
+	runtime.freezes++
+	return func() { runtime.thawsAfterResume = append(runtime.thawsAfterResume, runtime.resumes) }
+}
+
+func (runtime *fakeRuntime) GrowGuestRootFilesystem(context.Context, RuntimeMachine) error {
+	runtime.rootFilesystemGrows++
 	return nil
 }
 
@@ -802,6 +815,20 @@ func TestInspectFailureStoresSafeAndLocalErrors(t *testing.T) {
 	}
 	if information.Error == nil || information.Error.Message != observed.Error.Message {
 		t.Fatalf("public error = %+v", information.Error)
+	}
+}
+
+func TestCreateSnapshotThawsTheGuestAfterResume(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateRunning
+	if _, err := manager.CreateSnapshot(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.freezes != 1 || len(runtime.thawsAfterResume) != 1 || runtime.thawsAfterResume[0] != runtime.resumes {
+		t.Fatalf("freezes = %d, thaws after resume = %v, resumes = %d", runtime.freezes, runtime.thawsAfterResume, runtime.resumes)
 	}
 }
 

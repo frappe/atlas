@@ -321,6 +321,9 @@ func (manager *Manager) CreateSnapshot(ctx context.Context, identifier string) (
 	err = manager.runOperation(ctx, identifier, &observed, operationID, phaseSnapshot, func() (operationError error) {
 		resume := status.State == StateRunning
 		if resume {
+			// Deferred first, so the guest thaws after it resumes.
+			thaw := manager.runtime.FreezeGuestFilesystems(ctx, machine)
+			defer thaw()
 			if err := manager.runtime.Pause(ctx, machine); err != nil {
 				return err
 			}

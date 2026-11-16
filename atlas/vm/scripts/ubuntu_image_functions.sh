@@ -209,6 +209,9 @@ EOF
 		ln -sf "/etc/systemd/system/atlas-guest-agent-$job.socket" "$system_directory/sockets.target.wants/"
 	done <<'JOBS'
 usage 100000 report-usage
+freeze 100001 freeze-filesystems
+grow 100002 grow-root-filesystem
+reboot 100003 reboot
 JOBS
 }
 

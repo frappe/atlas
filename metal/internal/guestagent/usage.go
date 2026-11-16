@@ -2,20 +2,28 @@ package guestagent
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// systemStateTimeout stays under the 1 second that metald waits for the whole report.
+const systemStateTimeout = 500 * time.Millisecond
 
 // Usage is the resource use that the guest reports about itself.
 type Usage struct {
 	LoadAverage    [3]float64 `json:"load_average"`
 	Memory         Memory     `json:"memory"`
 	RootFilesystem Filesystem `json:"root_filesystem"`
+	// SystemState is the output of systemctl is-system-running, such as running or degraded.
+	SystemState string `json:"system_state,omitempty"`
 }
 
 // Memory is the guest memory use from /proc/meminfo.
@@ -58,7 +66,16 @@ func ReadUsage(procRoot string) (Usage, error) {
 		InodesTotal: stat.Files,
 		InodesUsed:  stat.Files - stat.Ffree,
 	}
+	usage.SystemState = readSystemState()
 	return usage, nil
+}
+
+func readSystemState() string {
+	ctx, cancel := context.WithTimeout(context.Background(), systemStateTimeout)
+	defer cancel()
+	// The command exits non-zero for every state except running, and still prints the state.
+	output, _ := exec.CommandContext(ctx, "systemctl", "is-system-running").Output()
+	return strings.TrimSpace(string(output))
 }
 
 func readLoadAverage(path string) ([3]float64, error) {

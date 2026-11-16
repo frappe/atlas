@@ -517,6 +517,12 @@ func (manager *Manager) applyDesiredSpecification(
 			return err
 		}
 	}
+	// A failed grow keeps the disk change, and the guest grows the file system at its next boot.
+	if status.State == StateRunning {
+		if err := manager.runtime.GrowGuestRootFilesystem(ctx, machine); err != nil {
+			manager.logger.WarnContext(ctx, "guest root file system grow failed", "virtual_machine_id", desired.ID, "error", err)
+		}
+	}
 	return nil
 }
 
