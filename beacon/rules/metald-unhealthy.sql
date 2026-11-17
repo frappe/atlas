@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/metald-unhealthy.md
+-- charts: host-metald-loops, host-vm-health
 -- interval: 60
 -- pending_for: 120
 -- resolve_after: 300

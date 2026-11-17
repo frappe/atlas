@@ -2,6 +2,7 @@
 -- description: A VM migration failed on the host. The VM may stay on the wrong host or stop.
 -- severity: Medium
 -- resource_type: Metal Host
+-- charts: host-vm-operations
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

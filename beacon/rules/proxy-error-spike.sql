@@ -2,6 +2,7 @@
 -- description: The proxy returns too many 5xx errors of its own. Sites behind it fail for customers.
 -- severity: Medium
 -- resource_type: Proxy Server
+-- charts: proxy-requests, proxy-response-time
 -- interval: 60
 -- pending_for: 120
 -- resolve_after: 300

@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/bmc-problems.md
+-- charts: host-bmc-temperature, host-bmc-fans, host-bmc-power
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 900

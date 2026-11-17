@@ -2,6 +2,7 @@
 -- description: Unhandled exceptions in Atlas repeat. Some requests fail with a server error.
 -- severity: Medium
 -- resource_type: Atlas
+-- charts: atlas-error-logs
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 900
