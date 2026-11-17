@@ -8,11 +8,13 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
   from ..models.virtual_machine_compute_usage import VirtualMachineComputeUsage
   from ..models.virtual_machine_disk_usage import VirtualMachineDiskUsage
+  from ..models.virtual_machine_guest_usage import VirtualMachineGuestUsage
   from ..models.virtual_machine_network_usage import VirtualMachineNetworkUsage
 
 
@@ -35,6 +37,8 @@ class VirtualMachineMetricsSample:
                 attachment or restarting Metal resets the counters.
             timestamp (int): UTC Unix timestamp in seconds.
             up (bool):
+            guest (VirtualMachineGuestUsage | Unset): Resource use that the guest agent reports from inside the VM. The
+                defaults describe a guest that did not answer.
      """
 
     compute: VirtualMachineComputeUsage
@@ -42,6 +46,7 @@ class VirtualMachineMetricsSample:
     network: VirtualMachineNetworkUsage
     timestamp: int
     up: bool
+    guest: VirtualMachineGuestUsage | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -51,6 +56,7 @@ class VirtualMachineMetricsSample:
     def to_dict(self) -> dict[str, Any]:
         from ..models.virtual_machine_compute_usage import VirtualMachineComputeUsage # noqa: PLC0415
         from ..models.virtual_machine_disk_usage import VirtualMachineDiskUsage # noqa: PLC0415
+        from ..models.virtual_machine_guest_usage import VirtualMachineGuestUsage # noqa: PLC0415
         from ..models.virtual_machine_network_usage import VirtualMachineNetworkUsage # noqa: PLC0415
         compute = self.compute.to_dict()
 
@@ -62,6 +68,10 @@ class VirtualMachineMetricsSample:
 
         up = self.up
 
+        guest: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.guest, Unset):
+            guest = self.guest.to_dict()
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -72,6 +82,8 @@ class VirtualMachineMetricsSample:
             "timestamp": timestamp,
             "up": up,
         })
+        if guest is not UNSET:
+            field_dict["guest"] = guest
 
         return field_dict
 
@@ -81,6 +93,7 @@ class VirtualMachineMetricsSample:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.virtual_machine_compute_usage import VirtualMachineComputeUsage # noqa: PLC0415
         from ..models.virtual_machine_disk_usage import VirtualMachineDiskUsage # noqa: PLC0415
+        from ..models.virtual_machine_guest_usage import VirtualMachineGuestUsage # noqa: PLC0415
         from ..models.virtual_machine_network_usage import VirtualMachineNetworkUsage # noqa: PLC0415
         d = dict(src_dict)
         compute = VirtualMachineComputeUsage.from_dict(d.pop("compute"))
@@ -102,12 +115,23 @@ class VirtualMachineMetricsSample:
 
         up = d.pop("up")
 
+        _guest = d.pop("guest", UNSET)
+        guest: VirtualMachineGuestUsage | Unset
+        if isinstance(_guest,  Unset):
+            guest = UNSET
+        else:
+            guest = VirtualMachineGuestUsage.from_dict(_guest)
+
+
+
+
         virtual_machine_metrics_sample = cls(
             compute=compute,
             disk=disk,
             network=network,
             timestamp=timestamp,
             up=up,
+            guest=guest,
         )
 
 

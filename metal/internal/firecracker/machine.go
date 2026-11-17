@@ -259,6 +259,10 @@ func (m *machine) saveAndStop(ctx context.Context) (saveError error) {
 	pausedByThisCall := false
 	switch state {
 	case vm.StateRunning:
+		// A cold boot from this disk, after a failed restore, then finds clean file systems.
+		// The restore resets every vsock connection, so the guest thaws when it resumes.
+		thaw := m.runtime.FreezeGuestFilesystems(ctx, m.input)
+		defer thaw()
 		if err := m.api.Pause(ctx); err != nil {
 			return fmt.Errorf("pause before save: %w", err)
 		}
@@ -339,9 +343,10 @@ func (m *machine) kill(ctx context.Context) error {
 	return m.runtime.units.ResetFailed(ctx, m.input.ID)
 }
 
-// shutdownGuest asks the guest to power off, then kills it after a timeout.
+// shutdownGuest asks the guest agent for a clean reboot, or sends Ctrl-Alt-Del
+// without an agent. Both make Firecracker exit. It kills the guest after a timeout.
 func (m *machine) shutdownGuest(ctx context.Context) error {
-	if m.api.SendCtrlAltDel(ctx) == nil {
+	if m.runtime.requestGuestReboot(ctx, m.input.ID) == nil || m.api.SendCtrlAltDel(ctx) == nil {
 		wait, cancel := context.WithTimeout(ctx, m.stopTimeout)
 		defer cancel()
 

@@ -80,6 +80,13 @@ type BalloonConfig struct {
 	FreePageReporting                bool `json:"free_page_reporting"`
 }
 
+// VsockConfig adds the vsock device. Firecracker serves host connections on
+// UDSPath, relative to the jail chroot.
+type VsockConfig struct {
+	GuestCID uint32 `json:"guest_cid"`
+	UDSPath  string `json:"uds_path"`
+}
+
 // BalloonStatistics is the guest's memory report. Each field is optional.
 type BalloonStatistics struct {
 	TotalMemory     *uint64 `json:"total_memory"`

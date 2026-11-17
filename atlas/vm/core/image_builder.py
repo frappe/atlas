@@ -11,7 +11,7 @@ import click
 import frappe
 
 from atlas.atlas.core.artifacts import publish_public_file_path
-from atlas.atlas.core.host_binaries import BUILDER_IMAGE, IS_MACOS
+from atlas.atlas.core.host_binaries import BUILDER_IMAGE, IS_MACOS, build_guest_agent
 from atlas.vm.core.multipart_upload import bytes_to_mib
 from atlas.vm.core.vm_image_deletion import VirtualMachineImageDeletionService
 
@@ -30,6 +30,7 @@ def build_ubuntu_image(
 	image_type = "minimal-" if minimal else ""
 	return _build_image(
 		"build_ubuntu_server_image.sh",
+		architecture,
 		output_directory,
 		f"ubuntu-{version}-{image_type}{architecture}.ext4",
 		f"vmlinux-ubuntu-{version}-{image_type}server",
@@ -41,6 +42,7 @@ def build_ubuntu_rescue_image(output_directory: Path) -> tuple[Path, Path]:
 	"""Build the Ubuntu 24.04 amd64 rescue root file system and matching kernel."""
 	return _build_image(
 		"build_ubuntu_rescue_image.sh",
+		"amd64",
 		output_directory,
 		"ubuntu-24.04-rescue-amd64.ext4",
 		"vmlinux-ubuntu-24.04-rescue-server",
@@ -49,13 +51,19 @@ def build_ubuntu_rescue_image(output_directory: Path) -> tuple[Path, Path]:
 
 
 def _build_image(
-	script: str, output_directory: Path, image_name: str, kernel_name: str, arguments: list[str]
+	script: str,
+	architecture: str,
+	output_directory: Path,
+	image_name: str,
+	kernel_name: str,
+	arguments: list[str],
 ) -> tuple[Path, Path]:
 	output_directory = output_directory.resolve()
 	output_directory.mkdir(parents=True, exist_ok=True)
 	image_path = output_directory / image_name
 	kernel_path = output_directory / kernel_name
 	builder_path = Path(__file__).parents[1] / "scripts" / script
+	guest_agent_path = build_guest_agent(architecture)
 	command = [builder_path]
 	if IS_MACOS:
 		command = [
@@ -64,12 +72,16 @@ def _build_image(
 			"--rm",
 			f"--volume={builder_path.parent}:{builder_path.parent}",
 			f"--volume={output_directory}:{output_directory}",
+			f"--volume={guest_agent_path.parent}:{guest_agent_path.parent}",
 			BUILDER_IMAGE,
 			builder_path,
 		]
 	elif os.geteuid() != 0:
 		command.insert(0, "sudo")
-	command.extend(["--output", image_path, "--kernel-output", kernel_path, *arguments])
+	command.extend(
+		["--output", image_path, "--kernel-output", kernel_path, "--guest-agent", guest_agent_path]
+	)
+	command.extend(arguments)
 	subprocess.run(command, check=True)
 	return image_path, kernel_path
 

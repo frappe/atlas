@@ -2655,6 +2655,102 @@
         "title": "VirtualMachineGuest",
         "type": "object"
       },
+      "VirtualMachineGuestFilesystem": {
+        "description": "Size and use of the guest root file system.",
+        "properties": {
+          "inodes_total": {
+            "default": 0,
+            "title": "Inodes Total",
+            "type": "integer"
+          },
+          "inodes_used": {
+            "default": 0,
+            "title": "Inodes Used",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "default": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "used_bytes": {
+            "default": 0,
+            "title": "Used Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "VirtualMachineGuestFilesystem",
+        "type": "object"
+      },
+      "VirtualMachineGuestMemory": {
+        "description": "Memory use that the guest kernel reports in `/proc/meminfo`.",
+        "properties": {
+          "available_bytes": {
+            "default": 0,
+            "description": "Memory that new work can use without swap, including reclaimable cache.",
+            "title": "Available Bytes",
+            "type": "integer"
+          },
+          "cached_bytes": {
+            "default": 0,
+            "description": "Memory that the page cache uses.",
+            "title": "Cached Bytes",
+            "type": "integer"
+          },
+          "free_bytes": {
+            "default": 0,
+            "description": "Memory that nothing uses, not even the page cache.",
+            "title": "Free Bytes",
+            "type": "integer"
+          },
+          "swap_free_bytes": {
+            "default": 0,
+            "title": "Swap Free Bytes",
+            "type": "integer"
+          },
+          "swap_total_bytes": {
+            "default": 0,
+            "title": "Swap Total Bytes",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "default": 0,
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "VirtualMachineGuestMemory",
+        "type": "object"
+      },
+      "VirtualMachineGuestUsage": {
+        "description": "Resource use that the guest agent reports from inside the VM. The defaults describe a guest that did not answer.",
+        "properties": {
+          "load_average": {
+            "description": "Load average over 1, 5 and 15 minutes.",
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Load Average",
+            "type": "array"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/VirtualMachineGuestMemory"
+          },
+          "root_filesystem": {
+            "$ref": "#/components/schemas/VirtualMachineGuestFilesystem"
+          },
+          "system_state": {
+            "default": "unreachable",
+            "description": "Output of `systemctl is-system-running`, such as `running` or `degraded`. `unreachable` when the guest agent did not answer.",
+            "title": "System State",
+            "type": "string"
+          }
+        },
+        "title": "VirtualMachineGuestUsage",
+        "type": "object"
+      },
       "VirtualMachineListResponse": {
         "description": "A stored virtual machine with its last known host state.",
         "examples": [
@@ -2833,6 +2929,64 @@
         "type": "object"
       },
       "VirtualMachineMetricsResponse": {
+        "examples": [
+          {
+            "id": "vm-00001",
+            "sample_interval_seconds": 10,
+            "samples": [
+              {
+                "compute": {
+                  "cpu_microseconds": 45968891,
+                  "memory_bytes": 258686976
+                },
+                "disk": {
+                  "iops_limit": 0,
+                  "read_bytes_per_second": 1045943,
+                  "read_milli_iops": 2672,
+                  "size_mib": 12288,
+                  "throughput_limit_mibps": 0,
+                  "used_mib": 390,
+                  "write_bytes_per_second": 502709,
+                  "write_milli_iops": 123933
+                },
+                "guest": {
+                  "load_average": [
+                    0.03,
+                    0.05,
+                    0.01
+                  ],
+                  "memory": {
+                    "available_bytes": 749666304,
+                    "cached_bytes": 215384064,
+                    "free_bytes": 655757312,
+                    "swap_free_bytes": 0,
+                    "swap_total_bytes": 0,
+                    "total_bytes": 1008353280
+                  },
+                  "root_filesystem": {
+                    "inodes_total": 786432,
+                    "inodes_used": 48938,
+                    "size_bytes": 12594667520,
+                    "used_bytes": 1521377280
+                  },
+                  "system_state": "running"
+                },
+                "network": {
+                  "received_bytes": 81974642,
+                  "received_packets": 14273,
+                  "sent_bytes": 288502,
+                  "sent_icmp_packets": 32,
+                  "sent_packets": 2932,
+                  "sent_tcp_rst_packets": 7,
+                  "sent_tcp_syn_packets": 32,
+                  "sent_udp_packets": 48
+                },
+                "timestamp": 1794837563,
+                "up": true
+              }
+            ]
+          }
+        ],
         "properties": {
           "id": {
             "title": "Id",
@@ -2866,6 +3020,10 @@
           },
           "disk": {
             "$ref": "#/components/schemas/VirtualMachineDiskUsage"
+          },
+          "guest": {
+            "$ref": "#/components/schemas/VirtualMachineGuestUsage",
+            "description": "When the image has no guest agent, the VM is not running, or the guest does not answer in time, `system_state` is `unreachable` and the other values are zero."
           },
           "network": {
             "$ref": "#/components/schemas/VirtualMachineNetworkUsage"

@@ -11,7 +11,7 @@ Tests sit beside the code as `test_*.py`.
 | Tenant API and auth | [Signing keys](../interfaces/signing-keys.md), [Tenant API](../interfaces/tenant-api.md) | [Atlas app](../../atlas/SPEC.md) | [Router](../../atlas/api/router.py), [authentication](../../atlas/auth/) |
 | Placement | [Placement](../compute/placement.md) | [VM module](../../atlas/vm/SPEC.md) | [Placement package](../../atlas/vm/core/placement/) |
 | VM create, change, delete | [VM records](../compute/vm-records.md) | [VM module](../../atlas/vm/SPEC.md) | [VM service](../../atlas/vm/core/vm_service.py) |
-| Guest SSH keys | [Change SSH keys](../compute/ssh-keys.md) | [VM module](../../atlas/vm/SPEC.md) | [Metal key API](../../metal/internal/api/vm_ssh_keys.go), [guest key command](../../atlas/vm/scripts/guest/authorized-keys-command) |
+| Guest SSH keys | [Change SSH keys](../compute/ssh-keys.md) | [VM module](../../atlas/vm/SPEC.md) | [Metal key API](../../metal/internal/api/vm_ssh_keys.go), [guest key command](../../metal/internal/guestagent/metadata.go) |
 | Calls to Metal | [How a VM request works](../start/how-a-vm-request-works.md) | [VM module](../../atlas/vm/SPEC.md) | [Metal client](../../atlas/vm/core/metal_client.py) |
 | Migration and resize | [VM migration](../compute/migration.md) | [VM module](../../atlas/vm/SPEC.md) | [Migration](../../atlas/vm/core/vm_migration.py), [resize](../../atlas/vm/core/vm_resize.py) |
 | Images | [Images](../storage/image-records.md) | [VM module](../../atlas/vm/SPEC.md) | [Image transfer](../../atlas/vm/core/vm_image_transfer.py) |
