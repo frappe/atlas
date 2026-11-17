@@ -1,6 +1,7 @@
 import os
 from collections import namedtuple
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -131,3 +132,59 @@ class TestMachines(UnitTestCase):
 
 	def test_each_running_machine_that_does_not_sleep_must_send(self) -> None:
 		self.assertEqual(self.collect(), {"host-1": "host", "vm-service": "service", "vm-tenant": "tenant"})
+
+
+def failed(method: str, minutes: int) -> SimpleNamespace:
+	ended_at = datetime.now(UTC) - timedelta(minutes=minutes)
+	return SimpleNamespace(kwargs={"job_name": method}, func_name="execute_job", ended_at=ended_at)
+
+
+class TestJobs(UnitTestCase):
+	def collect(self, jobs: list) -> list[dict]:
+		registry = SimpleNamespace(count=len(jobs), get_job_ids=lambda *args, **kwargs: [])
+		queue = SimpleNamespace(
+			count=0,
+			failed_job_registry=registry,
+			started_job_registry=SimpleNamespace(count=0),
+			connection=None,
+			serializer=None,
+		)
+		gauges = AtlasGauges("2026-10-27T12:00:00")
+		with (
+			patch("atlas.atlas.core.telemetry.collectors.get_queue_list", return_value=["long"]),
+			patch("atlas.atlas.core.telemetry.collectors.get_queue", return_value=queue),
+			patch("atlas.atlas.core.telemetry.collectors.Job.fetch_many", return_value=jobs),
+		):
+			gauges.add_jobs()
+		return [sample for sample in gauges.samples if sample["metric"] == "atlas_jobs_failed_last_hour"]
+
+	def test_methods_that_failed_in_the_last_hour_are_named(self) -> None:
+		samples = self.collect(
+			[failed("atlas.vm.sync", 5), failed("atlas.vm.sync", 10), failed("atlas.host.poll", 90), None]
+		)
+
+		self.assertEqual(
+			[(sample["labels"]["method"], sample["value"]) for sample in samples], [("atlas.vm.sync", 2)]
+		)
+
+
+class TestServices(UnitTestCase):
+	def test_each_failed_node_is_named(self) -> None:
+		nodes = [
+			frappe._dict(name="proxy-1", status="Active", virtual_machine="vm-1"),
+			frappe._dict(name="proxy-2", status="Failed", virtual_machine="vm-2"),
+		]
+		gauges = AtlasGauges("2026-10-27T12:00:00")
+		with (
+			patch(
+				"frappe.get_all",
+				side_effect=lambda doctype, **kwargs: nodes if doctype == "Proxy Server" else [],
+			),
+			patch("frappe.db.get_single_value", return_value="Active"),
+		):
+			gauges.add_services()
+
+		failed = [
+			sample["labels"] for sample in gauges.samples if sample["metric"] == "atlas_service_node_failed"
+		]
+		self.assertEqual(failed, [{"service": "proxy", "node": "proxy-2", "virtual_machine": "vm-2"}])

@@ -4,7 +4,7 @@ import os
 import shutil
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_network
 
 import frappe
@@ -12,6 +12,7 @@ import requests
 from frappe.model.base_document import get_controller
 from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
+from rq.job import Job
 
 from atlas.service.core.warpgate.sync import SYNCED_AT_CACHE_KEY
 from atlas.vm.core.vm_state import SLEEP_STATES
@@ -20,6 +21,8 @@ MEBIBYTE = 1 << 20
 WARPGATE_WAITING_SINCE_CACHE_KEY = "atlas:warpgate-sync-waiting-since"
 # Probes run in parallel, so a slow node delays the minute's push by this much at most.
 READINESS_TIMEOUT_SECONDS = 3
+# The newest failed jobs of each queue that name the failing methods. Older ones are outside the hour.
+FAILED_JOBS_READ = 200
 
 # Terminal records are history, not state, so they are not counted.
 TERMINAL_MIGRATION_STATUSES = ("completed", "aborted", "failed")
@@ -222,9 +225,18 @@ class AtlasGauges:
 	def add_services(self) -> None:
 		"""Count the nodes of each service by status."""
 		for doctype, service in SERVICE_DOCTYPES.items():
-			statuses = Counter(frappe.get_all(doctype, fields=["status"], pluck="status"))
-			for status, count in statuses.items():
+			nodes = frappe.get_all(doctype, fields=["name", "status", "virtual_machine"])
+			for status, count in Counter(node.status for node in nodes).items():
 				self.add("atlas_service_servers", count, service=service, status=status)
+			for node in nodes:
+				if node.status == "Failed":
+					self.add(
+						"atlas_service_node_failed",
+						1,
+						service=service,
+						node=node.name,
+						virtual_machine=node.virtual_machine or "",
+					)
 
 		# A region has one Cargo cluster, so Cargo Server is a Single.
 		cargo_status = frappe.db.get_single_value("Cargo Server", "status")
@@ -272,12 +284,23 @@ class AtlasGauges:
 				self.add("atlas_service_healthy", int(health[name]), **labels)
 
 	def add_jobs(self) -> None:
-		"""Report queue backlogs. A rising failed count means jobs keep failing."""
+		"""Report queue backlogs. A rising failed count means jobs keep failing, and
+		`atlas_jobs_failed_last_hour` names the methods that fail."""
+		hour_ago = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
 		for queue_name in get_queue_list():
 			queue = get_queue(queue_name)
 			self.add("atlas_job_queue_length", queue.count, queue=queue_name)
 			self.add("atlas_job_failed", queue.failed_job_registry.count, queue=queue_name)
 			self.add("atlas_job_started", queue.started_job_registry.count, queue=queue_name)
+
+			job_ids = queue.failed_job_registry.get_job_ids(0, FAILED_JOBS_READ - 1, desc=True)
+			methods = Counter(
+				(job.kwargs.get("job_name") or job.func_name)
+				for job in Job.fetch_many(job_ids, connection=queue.connection, serializer=queue.serializer)
+				if job and job.ended_at and job.ended_at.replace(tzinfo=None) > hour_ago
+			)
+			for method, count in methods.items():
+				self.add("atlas_jobs_failed_last_hour", count, queue=queue_name, method=method)
 
 	def add_file_systems(self) -> None:
 		"""Report the size and free space of the root, bench, and local MariaDB file systems, once each."""
