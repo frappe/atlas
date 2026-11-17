@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"syscall"
 	"time"
@@ -206,6 +207,22 @@ func (d *DBus) SetLimits(ctx context.Context, id string, limits Limits) error {
 	}
 
 	return d.connection.SetUnitPropertiesContext(ctx, unitName(id), true, properties...)
+}
+
+// CPUQuota reads the unit's CPUQuotaPerSecUSec. systemd reports no quota as the largest uint64.
+func (d *DBus) CPUQuota(ctx context.Context, id string) (int, error) {
+	property, err := d.connection.GetUnitTypePropertyContext(ctx, unitName(id), "Service", "CPUQuotaPerSecUSec")
+	if err != nil {
+		return 0, err
+	}
+	quota, isQuota := property.Value.Value().(uint64)
+	if !isQuota {
+		return 0, fmt.Errorf("unit %s CPUQuotaPerSecUSec is %T, want uint64", unitName(id), property.Value.Value())
+	}
+	if quota == math.MaxUint64 {
+		return math.MaxInt, nil
+	}
+	return int(quota / microsecondsPerCPUMillicore), nil
 }
 
 // GetUsage reads the unit's current cgroup CPU, memory, and root disk use. An absent

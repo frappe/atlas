@@ -5,19 +5,25 @@ from uuid import uuid7
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
+from atlas.atlas.core.exceptions import AtlasConflictError
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.models import VirtualMachineShape
+from atlas.vm.core.models import CPUBurst, VirtualMachineShape
 from atlas.vm.core.placement import CurrentPlacement
 from atlas.vm.core.vm_resize import VirtualMachineResize
 from atlas.vm.core.vm_service import MetalOperationError, VirtualMachineService
 from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
+NO_BURST = CPUBurst()
+NOT_BURSTABLE = NO_BURST.values
 
-def build_information(state: str = "stopped") -> SimpleNamespace:
+
+def build_information(state: str = "stopped", burst: CPUBurst = NO_BURST) -> SimpleNamespace:
 	"""Return one Metal record with a 2 CPU, 2 GiB, 20 GiB shape."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
-			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
+			compute=SimpleNamespace(
+				cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0, **burst.values
+			),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),
 		observed=SimpleNamespace(state=state),
@@ -37,6 +43,9 @@ class TestVirtualMachineResize(UnitTestCase):
 			sleep_after_idle_seconds=0,
 			deep_sleep_after_idle_seconds=0,
 			coma_after_idle_seconds=0,
+			is_burstable=0,
+			baseline_cpu_millicores=0,
+			sliding_window_minutes=0,
 			placement_rules=None,
 		)
 		self.virtual_machine.db_set = Mock(side_effect=self.db_set)
@@ -60,17 +69,34 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.addCleanup(active_patch.stop)
 		return mock
 
-	def apply(self, changes: dict[str, int], state: str = "stopped") -> str | None:
-		with patch.object(self.resize.service, "require_information", return_value=build_information(state)):
+	def apply(
+		self, changes: dict[str, int], state: str = "stopped", burst: CPUBurst = NO_BURST
+	) -> str | None:
+		information = build_information(state, burst)
+		with patch.object(self.resize.service, "require_information", return_value=information):
 			return self.resize.apply(changes)
+
+	def test_a_concurrent_compute_change_gets_a_conflict(self) -> None:
+		"""A resize while another resize of the VM runs gets a conflict, so neither overwrites the other's compute values."""
+		with (
+			patch("atlas.vm.core.vm_service.CHANGE_LOCK_TIMEOUT_SECONDS", 0),
+			VirtualMachineService(self.virtual_machine).change_lock("compute"),
+			self.assertRaises(AtlasConflictError),
+		):
+			self.apply({"sleep_after_idle_seconds": 1800}, state="running")
+
+		self.metal_client.set_virtual_machine_compute.assert_not_called()
 
 	def test_an_idle_change_alone_stays_in_place_on_a_running_virtual_machine(self) -> None:
 		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
+			"VM-00001",
+			{"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800, **NOT_BURSTABLE},
 		)
-		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
+		self.virtual_machine.db_set.assert_called_once_with(
+			{"sleep_after_idle_seconds": 1800, **NOT_BURSTABLE}
+		)
 		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 		self.find_server.assert_not_called()
 
@@ -88,6 +114,7 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 4096,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 0,
+				**NOT_BURSTABLE,
 			}
 		)
 
@@ -104,6 +131,7 @@ class TestVirtualMachineResize(UnitTestCase):
 				"memory_mib": 2048,
 				"disk_mib": 20480,
 				"sleep_after_idle_seconds": 600,
+				**NOT_BURSTABLE,
 			}
 		)
 
@@ -130,13 +158,15 @@ class TestVirtualMachineResize(UnitTestCase):
 	def test_a_fitting_host_sets_the_complete_shape(self) -> None:
 		self.assertIsNone(self.apply({"cpu_millicores": 4000, "disk_mib": 40960}))
 
-		self.metal_client.resize_virtual_machine.assert_called_once_with(
-			"VM-00001",
-			{"cpu_millicores": 4000, "memory_mib": 2048, "disk_mib": 40960, "sleep_after_idle_seconds": 0},
-		)
-		self.virtual_machine.db_set.assert_called_once_with(
-			{"cpu_millicores": 4000, "memory_mib": 2048, "disk_mib": 40960, "sleep_after_idle_seconds": 0}
-		)
+		resized = {
+			"cpu_millicores": 4000,
+			"memory_mib": 2048,
+			"disk_mib": 40960,
+			"sleep_after_idle_seconds": 0,
+			**NOT_BURSTABLE,
+		}
+		self.metal_client.resize_virtual_machine.assert_called_once_with("VM-00001", resized)
+		self.virtual_machine.db_set.assert_called_once_with(resized)
 		self.create_migration.assert_not_called()
 
 	def test_another_host_starts_a_resize_migration(self) -> None:
@@ -157,9 +187,46 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.apply({"memory_mib": 8192, "sleep_after_idle_seconds": 600})
 
 		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
-			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 600}
+			"VM-00001",
+			{"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 600, **NOT_BURSTABLE},
 		)
 		self.create_migration.assert_called_once()
+
+	def test_a_burst_change_alone_fills_defaults_in_place(self) -> None:
+		"""A 2000 millicore VM gets a 400 millicore baseline (20%) and a 60 minute window."""
+		self.assertIsNone(self.apply({"is_burstable": 1}, state="running"))
+
+		burst = {"is_burstable": True, "baseline_cpu_millicores": 400, "sliding_window_minutes": 60}
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0, **burst}
+		)
+		self.virtual_machine.db_set.assert_called_once_with({"sleep_after_idle_seconds": 0, **burst})
+		self.find_server.assert_not_called()
+		self.create_migration.assert_not_called()
+
+	def test_unticking_burstable_clears_the_baseline_and_window(self) -> None:
+		"""A VM that is not burstable keeps no baseline or window, so Metal accepts it."""
+		burst = CPUBurst(True, 800, 30)
+		for field, value in burst.values.items():
+			setattr(self.virtual_machine, field, value)
+
+		self.apply({"is_burstable": 0}, state="running", burst=burst)
+
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001",
+			{"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0, **NOT_BURSTABLE},
+		)
+		self.virtual_machine.db_set.assert_called_once_with({"sleep_after_idle_seconds": 0, **NOT_BURSTABLE})
+
+	def test_a_cpu_below_the_baseline_is_rejected(self) -> None:
+		"""Lowering CPU under a fixed baseline fails before any placement or host write."""
+		with self.assertRaisesRegex(frappe.ValidationError, "Baseline CPU"):
+			self.apply({"cpu_millicores": 1000}, burst=CPUBurst(True, 1500, 60))
+
+		self.find_server.assert_not_called()
+		self.metal_client.set_virtual_machine_compute.assert_not_called()
+		self.metal_client.resize_virtual_machine.assert_not_called()
+		self.virtual_machine.db_set.assert_not_called()
 
 	def test_a_full_current_host_falls_back_to_a_migration(self) -> None:
 		self.metal_client.resize_virtual_machine.side_effect = MetalClientError(

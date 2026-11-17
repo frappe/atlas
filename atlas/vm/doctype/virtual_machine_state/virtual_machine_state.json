@@ -15,7 +15,17 @@
   "last_request_at",
   "column_break_sleep",
   "sleep_checkpoint_id",
-  "download_urls_expire_at"
+  "download_urls_expire_at",
+  "section_break_cpu_burst",
+  "baseline_cpu_millicores",
+  "sliding_window_minutes",
+  "reset_at",
+  "up_seconds",
+  "column_break_cpu_burst",
+  "average_cpu_millicores",
+  "cpu_limit_millicores",
+  "is_limited",
+  "idle_seconds"
  ],
  "fields": [
   {
@@ -94,10 +104,76 @@
    "fieldtype": "Datetime",
    "label": "Download URLs Expire At",
    "read_only": 1
+  },
+  {
+   "depends_on": "eval: doc.baseline_cpu_millicores",
+   "fieldname": "section_break_cpu_burst",
+   "fieldtype": "Section Break",
+   "label": "CPU Burst"
+  },
+  {
+   "fieldname": "baseline_cpu_millicores",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Baseline CPU (millicores)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sliding_window_minutes",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Sliding Window (minutes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reset_at",
+   "fieldtype": "Datetime",
+   "is_virtual": 1,
+   "label": "Reset At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "up_seconds",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Up Seconds",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_cpu_burst",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "average_cpu_millicores",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Average CPU (millicores)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cpu_limit_millicores",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "CPU Limit (millicores)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_limited",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Is Limited",
+   "read_only": 1
+  },
+  {
+   "fieldname": "idle_seconds",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Idle Seconds",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-10-23 16:00:00.000000",
+ "modified": "2026-11-16 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine State",

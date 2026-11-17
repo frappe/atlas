@@ -48,9 +48,12 @@ type observedVirtualMachineResponse struct {
 
 // computeResponse is the requested compute configuration.
 type computeResponse struct {
-	CPUMillicores         int `json:"cpu_millicores"`
-	MemoryMiB             int `json:"memory_mib"`
-	SleepAfterIdleSeconds int `json:"sleep_after_idle_seconds"`
+	CPUMillicores         int  `json:"cpu_millicores"`
+	MemoryMiB             int  `json:"memory_mib"`
+	SleepAfterIdleSeconds int  `json:"sleep_after_idle_seconds"`
+	IsBurstable           bool `json:"is_burstable"`
+	BaselineCPUMillicores int  `json:"baseline_cpu_millicores"`
+	SlidingWindowMinutes  int  `json:"sliding_window_minutes"`
 }
 
 // guestResponse is the guest-facing configuration. User data is not returned.
@@ -162,6 +165,9 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 				CPUMillicores:         information.CPUMillicores,
 				MemoryMiB:             information.MemoryMiB,
 				SleepAfterIdleSeconds: information.SleepAfterIdleSeconds,
+				IsBurstable:           information.CPUBurst.IsBurstable,
+				BaselineCPUMillicores: information.CPUBurst.BaselineCPUMillicores,
+				SlidingWindowMinutes:  information.CPUBurst.SlidingWindowMinutes,
 			},
 			Disk: diskResponse{
 				ThroughputMiBps: information.DiskThroughputMiBps,

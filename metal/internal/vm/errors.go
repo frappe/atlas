@@ -20,6 +20,12 @@ var ErrInUse = errors.New("vm: in use")
 // ErrMetadataServiceTooLarge indicates that the guest values do not fit in MMDS.
 var ErrMetadataServiceTooLarge = errors.New("vm: metadata service document is too large")
 
+// ErrNotEnoughSamples indicates that metald has no CPU samples of a VM in memory yet.
+var ErrNotEnoughSamples = errors.New("vm: not enough samples")
+
+// ErrNotBurstable indicates that a VM has no CPU burst settings to measure against.
+var ErrNotBurstable = errors.New("vm: not burstable")
+
 // TransitionError reports a missing state transition.
 type TransitionError struct {
 	DesiredState  State

@@ -14,7 +14,7 @@ from frappe.monitor import get_trace_id
 
 from atlas.atlas.core.telemetry.events import count, observe
 from atlas.atlas.core.tls.metal import ca_file, client_certificate_files
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
+from atlas.vm.core.metal_models import MetalCPUBurstStatus, MetalVirtualMachine, MetalVirtualMachineMetrics
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -189,12 +189,36 @@ class MetalClient:
 		)
 		return self._virtual_machine_metrics(response)
 
+	def get_virtual_machine_cpu_burst(self, virtual_machine_id: str) -> MetalCPUBurstStatus:
+		"""Return the sliding window average and current CPU limit of one burstable VM."""
+		response = self._request(
+			"GET",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/cpu-burst",
+			timeout=self.status_timeout_seconds,
+			attempts=self.status_attempts,
+			budget_seconds=self.status_budget_seconds,
+		)
+		try:
+			return MetalCPUBurstStatus.from_dict(response)
+		except ValueError as error:
+			raise MetalClientError("Metal returned an invalid CPU burst status response") from error
+
 	def request_virtual_machine_restart(self, virtual_machine_id: str) -> MetalVirtualMachine:
 		"""Store a restart request for one VM."""
 		response = self._request(
 			"POST",
 			f"/v1/vms/{quote(virtual_machine_id, safe='')}/restart",
 			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
+	def reset_virtual_machine_cpu_burst(self, virtual_machine_id: str) -> MetalVirtualMachine:
+		"""Make one VM's sliding window ignore its CPU samples before now."""
+		response = self._request(
+			"POST",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/cpu-burst/reset",
+			expected_status=200,
 			uncertain_on_failure=True,
 		)
 		return self._virtual_machine(response)

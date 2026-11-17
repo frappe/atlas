@@ -154,6 +154,9 @@ def list_virtual_machines(query: ListQuery) -> Page[VirtualMachineListResponse]:
 			"sleep_after_idle_seconds",
 			"deep_sleep_after_idle_seconds",
 			"coma_after_idle_seconds",
+			"is_burstable",
+			"baseline_cpu_millicores",
+			"sliding_window_minutes",
 			"is_draft",
 			"is_terminating",
 			"is_termination_protected",
@@ -326,9 +329,9 @@ def resize_virtual_machine(
 ) -> ApiResult[VirtualMachineResponse]:
 	"""Resize VM.
 
-	Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only grows.
+	Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The disk only grows.
 
-	Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only changes work in any VM state. `0` disables idle shutdown.
+	Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline is rejected.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	virtual_machine.resize(**payload.model_dump(exclude_none=True))

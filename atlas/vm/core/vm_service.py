@@ -13,7 +13,7 @@ from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
 from atlas.metal_server.core.public_ip_service import PublicIPService
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
-from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
+from atlas.vm.core.metal_models import MetalCPUBurstStatus, MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
 	IPV4_INTERNET_DESTINATION,
 	IPV6_INTERNET_DESTINATION,
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
-NETWORK_LOCK_TIMEOUT_SECONDS = 10
+CHANGE_LOCK_TIMEOUT_SECONDS = 10
 
 
 class MetalOperationError(frappe.ValidationError):
@@ -153,6 +153,7 @@ class VirtualMachineService:
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 				"deep_sleep_after_idle_seconds": request.deep_sleep_after_idle_seconds,
 				"coma_after_idle_seconds": request.coma_after_idle_seconds,
+				**request.burst.values,
 				"tags": [{"key": key, "value": value} for key, value in request.tags.items()],
 				"placement_rules": frappe.as_json(request.placement_rules.as_list())
 				if request.placement_rules.nodes
@@ -173,6 +174,7 @@ class VirtualMachineService:
 				"cpu_millicores": request.cpu_millicores,
 				"memory_mib": request.memory_mib,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
+				**request.burst.values,
 			},
 			"disk": {
 				"size_mib": request.disk_mib,
@@ -306,10 +308,27 @@ class VirtualMachineService:
 				return None
 			self.raise_metal_error(error)
 
+	def get_cpu_burst_status(self) -> MetalCPUBurstStatus | None:
+		"""Return Metal's CPU burst status, or no value when the virtual machine is absent."""
+		try:
+			return self.metal_client.get_virtual_machine_cpu_burst(cast(str, self.virtual_machine.name))
+		except MetalClientError as error:
+			if error.is_not_found:
+				return None
+			self.raise_metal_error(error)
+
 	def request_restart(self) -> None:
 		"""Request one restart in Metal."""
 		self.perform_metal_operation(
 			lambda metal_client: metal_client.request_virtual_machine_restart(
+				cast(str, self.virtual_machine.name)
+			)
+		)
+
+	def reset_cpu_burst(self) -> None:
+		"""Make Metal ignore CPU samples before now in the sliding window."""
+		self.perform_metal_operation(
+			lambda metal_client: metal_client.reset_virtual_machine_cpu_burst(
 				cast(str, self.virtual_machine.name)
 			)
 		)
@@ -398,7 +417,7 @@ class VirtualMachineService:
 	def apply_network_changes(self, changes: dict[str, Any]) -> dict[str, Any]:
 		"""Validate and apply selected network changes."""
 		self.virtual_machine.validate_network_change()
-		with self.network_lock():
+		with self.change_lock("network"):
 			return self._apply_network_changes(changes)
 
 	def _apply_network_changes(self, changes: dict[str, Any]) -> dict[str, Any]:
@@ -436,25 +455,25 @@ class VirtualMachineService:
 		return self.get_routes_without(IPV4_INTERNET_DESTINATION)
 
 	@contextmanager
-	def network_lock(self) -> Iterator[None]:
-		"""Serialize network changes. Each one reads and replaces the complete Metal network.
+	def change_lock(self, kind: str) -> Iterator[None]:
+		"""Serialize one kind of change, such as "network" or "compute", that reads and replaces a complete Metal value.
 
 		A file lock, not a row lock, so no database lock waits on the Metal calls.
 		"""
 		try:
 			with filelock(
-				f"atlas:vm-network:{self.virtual_machine.name}", timeout=NETWORK_LOCK_TIMEOUT_SECONDS
+				f"atlas:vm-{kind}:{self.virtual_machine.name}", timeout=CHANGE_LOCK_TIMEOUT_SECONDS
 			):
 				yield
 		except LockTimeoutError:
 			frappe.throw(
-				_("Another network change of this Virtual Machine is in progress. Retry later."),
+				_("Another {0} change of this Virtual Machine is in progress. Retry later.").format(kind),
 				exc=AtlasConflictError,
 			)
 
 	def set_routes(self, value: Any) -> dict[str, Any]:
 		"""Replace the complete route list. Metal owns the routes."""
-		with self.network_lock():
+		with self.change_lock("network"):
 			return self.update_network({"routes": [route.as_dict() for route in self.validate_routes(value)]})
 
 	def validate_routes(self, value: Any) -> tuple[Route, ...]:

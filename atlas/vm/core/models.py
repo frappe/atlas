@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import frappe
@@ -19,6 +19,10 @@ MINIMUM_CPU_MILLICORES = 100
 MAXIMUM_CPU_MILLICORES = 32_000
 MAXIMUM_SLEEP_AFTER_IDLE_SECONDS = 9_223_372_036
 MAXIMUM_SLEEP_OFFLOAD_SECONDS = 2_147_483_647
+DEFAULT_SLIDING_WINDOW_MINUTES = 60
+MAXIMUM_SLIDING_WINDOW_MINUTES = 24 * 60
+# A burstable VM without a baseline gets this share of its CPU.
+DEFAULT_BASELINE_CPU_PERCENT = 20
 # Deep sleep and coma move a VM to object storage. A larger VM takes too long to upload and wake.
 MAXIMUM_OFFLOAD_MEMORY_MIB = 4096
 MAXIMUM_OFFLOAD_DISK_MIB = 51200
@@ -46,6 +50,43 @@ def validate_sleep_times(
 		memory_mib > MAXIMUM_OFFLOAD_MEMORY_MIB or disk_mib > MAXIMUM_OFFLOAD_DISK_MIB
 	):
 		raise ValueError("Deep sleep and coma need at most 4 GiB of memory and 50 GiB of disk.")
+
+
+@dataclass(frozen=True, slots=True)
+class CPUBurst:
+	"""Let a VM use CPU above its baseline. Metal measures its use over the sliding window."""
+
+	is_burstable: bool = False
+	baseline_cpu_millicores: int = 0
+	sliding_window_minutes: int = 0
+
+	@classmethod
+	def for_cpu(
+		cls,
+		is_burstable: bool,
+		baseline_cpu_millicores: int,
+		sliding_window_minutes: int,
+		cpu_millicores: int,
+	) -> CPUBurst:
+		"""Fill the unset values of a burstable VM and check them. A VM that is not burstable keeps none."""
+		if not is_burstable:
+			return cls()
+
+		burst = cls(
+			True,
+			baseline_cpu_millicores or cpu_millicores * DEFAULT_BASELINE_CPU_PERCENT // 100,
+			sliding_window_minutes or DEFAULT_SLIDING_WINDOW_MINUTES,
+		)
+		if not 0 < burst.baseline_cpu_millicores <= cpu_millicores:
+			raise ValueError("Baseline CPU must be from 1 millicore to the CPU of the Virtual Machine.")
+		if not 0 < burst.sliding_window_minutes <= MAXIMUM_SLIDING_WINDOW_MINUTES:
+			raise ValueError(f"Sliding window must be from 1 to {MAXIMUM_SLIDING_WINDOW_MINUTES} minutes.")
+		return burst
+
+	@property
+	def values(self) -> dict[str, bool | int]:
+		"""Return the fields that Metal and the Virtual Machine document store."""
+		return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,12 +150,13 @@ def parse_routes(value: Any) -> tuple[Route, ...]:
 
 @dataclass(frozen=True, slots=True)
 class VirtualMachineShape:
-	"""The CPU, memory, disk, and idle shutdown values of one VM."""
+	"""The CPU, memory, disk, idle shutdown, and CPU burst values of one VM."""
 
 	cpu_millicores: int
 	memory_mib: int
 	disk_mib: int
 	sleep_after_idle_seconds: int
+	burst: CPUBurst = CPUBurst()
 
 	def has_same_resources(self, other: VirtualMachineShape) -> bool:
 		"""Report whether CPU, memory, and disk size match."""
@@ -125,12 +167,13 @@ class VirtualMachineShape:
 		)
 
 	@property
-	def compute(self) -> dict[str, int]:
+	def compute(self) -> dict[str, bool | int]:
 		"""Return the complete Metal compute object."""
 		return {
 			"cpu_millicores": self.cpu_millicores,
 			"memory_mib": self.memory_mib,
 			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+			**self.burst.values,
 		}
 
 	@property
@@ -143,8 +186,8 @@ class VirtualMachineShape:
 		}
 
 	@property
-	def resize(self) -> dict[str, int]:
-		"""Return the complete Metal in-place resize object."""
+	def resize(self) -> dict[str, bool | int]:
+		"""Return the complete Metal in-place resize object. Its keys are also Virtual Machine fields."""
 		return {**self.compute, "disk_mib": self.disk_mib}
 
 
@@ -276,6 +319,7 @@ class VirtualMachineCreateRequest:
 	sleep_after_idle_seconds: int = 0
 	deep_sleep_after_idle_seconds: int = 0
 	coma_after_idle_seconds: int = 0
+	burst: CPUBurst = CPUBurst()
 	disk_throughput_mibps: int = 0
 	disk_iops: int = 0
 	private_network_throughput_mibps: int = 0
@@ -338,6 +382,12 @@ class VirtualMachineCreateRequest:
 			sleep_after_idle_seconds=sleep_after_idle_seconds,
 			deep_sleep_after_idle_seconds=deep_sleep_after_idle_seconds,
 			coma_after_idle_seconds=coma_after_idle_seconds,
+			burst=CPUBurst.for_cpu(
+				strict_bool(payload.get("is_burstable"), "is_burstable"),
+				cls.non_negative_integer(payload, "baseline_cpu_millicores"),
+				cls.non_negative_integer(payload, "sliding_window_minutes"),
+				cpu_millicores,
+			),
 			disk_throughput_mibps=cls.non_negative_integer(payload, "disk_throughput_mibps"),
 			disk_iops=cls.non_negative_integer(payload, "disk_iops"),
 			private_network_throughput_mibps=cls.non_negative_integer(

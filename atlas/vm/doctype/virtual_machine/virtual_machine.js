@@ -68,6 +68,13 @@ frappe.ui.form.on("Virtual Machine", {
 			ACTIONS_DIVIDER,
 			[__("Resize VM"), () => showResizeDialog(frm), true, ACTIONS],
 			[
+				__("Reset CPU Burst"),
+				"reset_cpu_burst",
+				Boolean(frm.doc.is_burstable),
+				ACTIONS,
+				__("Resetting..."),
+			],
+			[
 				__("Edit Sleep Configuration"),
 				() => showEditSleepConfigurationDialog(frm),
 				true,
@@ -536,6 +543,31 @@ function showResizeDialog(frm) {
 				reqd: 1,
 				default: frm.doc.disk_mib,
 				description: __("The disk can only grow."),
+			},
+			{ fieldtype: "Section Break", label: __("CPU Burst") },
+			{
+				fieldname: "is_burstable",
+				fieldtype: "Check",
+				label: __("Burstable"),
+				default: frm.doc.is_burstable,
+			},
+			{
+				fieldname: "baseline_cpu_millicores",
+				fieldtype: "Int",
+				label: __("Baseline CPU (millicores)"),
+				default: frm.doc.baseline_cpu_millicores,
+				depends_on: "is_burstable",
+				description: __(
+					"The CPU the VM can always use. Must not exceed CPU. 0 uses 20% of CPU."
+				),
+			},
+			{
+				fieldname: "sliding_window_minutes",
+				fieldtype: "Int",
+				label: __("Sliding Window (Minutes)"),
+				default: frm.doc.sliding_window_minutes,
+				depends_on: "is_burstable",
+				description: __("How far back average CPU use is measured. 1 to 1440. 0 uses 60."),
 			},
 		],
 		(values) =>
