@@ -2,6 +2,7 @@
 -- description: A VM migration or a new VM has waited for over an hour. The work did not finish.
 -- severity: Medium
 -- resource_type: Atlas
+-- charts: atlas-stuck-work
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 600

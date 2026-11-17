@@ -3,6 +3,7 @@
 -- severity: Medium
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/warpgate-sync-failing.md
+-- charts: atlas-host-sync-age
 -- interval: 60
 -- pending_for: 300
 -- resolve_after: 120

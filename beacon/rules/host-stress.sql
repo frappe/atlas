@@ -2,6 +2,7 @@
 -- description: Tasks on the host wait for CPU, memory or I/O. The host is overloaded.
 -- severity: Medium
 -- resource_type: Metal Host
+-- charts: host-memory, host-pressure
 -- interval: 300
 -- pending_for: 900
 -- resolve_after: 900

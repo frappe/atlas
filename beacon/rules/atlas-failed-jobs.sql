@@ -2,6 +2,7 @@
 -- description: Background jobs in Atlas keep failing. Provisioning, VM actions and syncs are late.
 -- severity: Medium
 -- resource_type: Atlas
+-- charts: atlas-jobs
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 900

@@ -3,6 +3,7 @@
 -- severity: Medium
 -- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-stress.md
+-- charts: machine-cpu, machine-load, vm-memory, host-memory
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 900
