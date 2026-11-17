@@ -1,5 +1,6 @@
 -- title: Disk Space Used
 -- resource_type: Metal Host, Virtual Machine
+-- requires_metric: system_filesystem_size_bytes
 -- section: Disk
 -- unit: %
 -- style: Line
