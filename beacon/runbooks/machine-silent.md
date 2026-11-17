@@ -1,4 +1,4 @@
-# Machine silent
+# Machine stopped reporting
 
 A host, an Atlas service VM or a Cargo machine that runs, and that sent telemetry in the last 14 days, sent no machine metrics for 3 minutes. The machine can be down, or only its sender stopped: metald on a host, the Datum agent (Vector) on a VM. A tenant VM is not checked. Pilot silent covers a Pilot VM.
 

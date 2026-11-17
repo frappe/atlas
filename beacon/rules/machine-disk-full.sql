@@ -1,4 +1,5 @@
 -- title: Machine disk almost full
+-- description: A file system on the machine is nearly full. Services on it can stop when it fills.
 -- severity: High
 -- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-disk-full.md
@@ -9,7 +10,7 @@
 -- The disk of a tenant VM is the customer's: Pilot tells the customer, so a tenant VM does not alert.
 -- A ZFS file system shares the space of its pool, so host-pool-capacity covers it.
 SELECT resource_id, mountpoint AS alert_key, free AS value,
-       concat(mountpoint, ' has ', toString(round(free, 1)), '% free') AS detail,
+       concat(mountpoint, ' has ', toString(round(free, 1)), '% free (limit 10%)') AS detail,
        if(free < 10, 'High', 'Low') AS severity
 FROM (
     SELECT resource_id, labels['mountpoint'] AS mountpoint,

@@ -1,5 +1,5 @@
 -- title: Proxy
--- description: The proxies pass requests to sites without errors of their own.
+-- description: The proxies pass requests to sites and return few errors of their own.
 -- scope: Region
 -- slo_target: 99.9
 -- sort_order: 3

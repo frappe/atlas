@@ -1,4 +1,4 @@
-# Atlas silent
+# Atlas stopped reporting
 
 Datum has no Atlas sample for 5 minutes. Atlas, its scheduler or the push to Datum is down. Other alerts of the region are blind.
 

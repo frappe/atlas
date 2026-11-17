@@ -1,4 +1,5 @@
--- title: Machine under stress
+-- title: Machine memory or load too high
+-- description: The machine uses too much memory or has a high load. Its services slow down.
 -- severity: Medium
 -- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-stress.md
@@ -6,7 +7,7 @@
 -- pending_for: 600
 -- resolve_after: 900
 -- Over 90% of the memory in use, or a 5-minute load over 1.5 for each core, for 15 minutes.
-SELECT resource_id, 'memory' AS alert_key, used AS value, concat('memory ', toString(round(used)), '% used') AS detail
+SELECT resource_id, 'memory' AS alert_key, used AS value, concat('memory ', toString(round(used)), '% used (limit 90%)') AS detail
 FROM (
     SELECT resource_id,
            (1 - avgIf(value, metric = 'system_memory_available_bytes') / nullIf(avgIf(value, metric = 'system_memory_total_bytes'), 0)) * 100 AS used
@@ -17,7 +18,7 @@ FROM (
 )
 WHERE used > 90
 UNION ALL
-SELECT resource_id, 'load', load_per_core, concat('load ', toString(round(load_per_core, 1)), ' per core')
+SELECT resource_id, 'load', load_per_core, concat('load ', toString(round(load_per_core, 1)), ' per core (limit 1.5)')
 FROM (
     SELECT resource_id,
            avgIf(value, metric = 'system_load_average' AND labels['window'] = '5m')

@@ -1,4 +1,5 @@
--- title: Host network errors
+-- title: Network link down or NIC faults
+-- description: A network link is down or a NIC reports errors. Traffic to the host can fail.
 -- severity: Medium
 -- resource_type: Metal Host
 -- interval: 300
@@ -18,7 +19,7 @@ FROM (
 )
 WHERE up = 1 AND carrier = 0
 UNION ALL
-SELECT resource_id, concat('nic-errors:', interface), errors, concat(toString(errors), ' errors on ', interface, ' in 1 h'), 'Low'
+SELECT resource_id, concat('nic-errors:', interface), errors, concat(toString(errors), ' errors on ', interface, ' in 1 h (limit 10)'), 'Low'
 FROM (
     SELECT resource_id, interface, sum(increase) AS errors
     FROM (

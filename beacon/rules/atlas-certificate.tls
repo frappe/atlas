@@ -1,4 +1,5 @@
 -- title: Atlas certificate expiring
+-- description: The certificate that the Atlas API serves expires soon. Central cannot manage servers without it.
 -- severity: Medium
 -- host: {atlas_url}
 -- region: all

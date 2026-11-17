@@ -1,4 +1,5 @@
--- title: Host under stress
+-- title: Host is overloaded
+-- description: Tasks on the host wait for CPU, memory or I/O. The host is overloaded.
 -- severity: Medium
 -- resource_type: Metal Host
 -- interval: 300
@@ -9,12 +10,12 @@
 SELECT resource_id, alert_key, max(value) AS value, any(detail) AS detail, any(severity) AS severity
 FROM (
     SELECT resource_id, concat(labels['resource'], '-pressure') AS alert_key, increase / 9 AS value,
-           concat(labels['resource'], ' pressure ', toString(round(value)), '%') AS detail, 'Medium' AS severity
+           concat(labels['resource'], ' pressure ', toString(round(value)), '% (limit ', if(labels['resource'] = 'memory', '5%', '10%'), ')') AS detail, 'Medium' AS severity
     FROM datum.counter_increase(metric = 'system_pressure_stall_seconds_total', window = 900)
     WHERE labels['kind'] = 'some'
       AND increase / 9 > multiIf(labels['resource'] = 'memory', 5, 10)
     UNION ALL
-    SELECT server, 'memory-allocated', allocated, concat('memory ', toString(round(allocated)), '% allocated'), 'Low'
+    SELECT server, 'memory-allocated', allocated, concat('memory ', toString(round(allocated)), '% allocated (limit 90%)'), 'Low'
     FROM (
         SELECT labels['server'] AS server,
                (1 - argMaxIf(value, ts, labels['kind'] = 'available') / nullIf(argMaxIf(value, ts, labels['kind'] = 'total'), 0)) * 100 AS allocated

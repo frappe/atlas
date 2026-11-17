@@ -1,4 +1,5 @@
--- title: Public IPv4 addresses almost used up
+-- title: Few public IPv4 addresses left
+-- description: The region has too few free public IPv4 addresses. New VMs cannot get one.
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-public-ips-exhausted.md
@@ -10,7 +11,7 @@
 -- It counts all IPv4 pools together, because a pool with one address for one service is full by design.
 -- No free address pages, because new VMs cannot get one. Fewer than 5, or under 10% free, is Medium.
 SELECT 'atlas' AS resource_id, '' AS alert_key, sum(capacity) - sum(used) AS value,
-       concat(toString(value), ' of ', toString(sum(capacity)), ' public IPv4 addresses free') AS detail,
+       concat(toString(value), ' of ', toString(sum(capacity)), ' public IPv4 addresses free (limit 5 or 10%)') AS detail,
        if(value <= 0, 'High', 'Medium') AS severity
 FROM (
     SELECT labels['pool'] AS pool,

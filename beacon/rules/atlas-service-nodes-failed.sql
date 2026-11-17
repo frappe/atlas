@@ -1,4 +1,5 @@
--- title: Service nodes failed
+-- title: Atlas service nodes have failed
+-- description: Nodes of an Atlas service have failed. Traffic can be down without a readiness alert.
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-service-nodes-failed.md
@@ -8,7 +9,7 @@
 -- A Failed node has no readiness sample, so Service node not ready cannot see it. Only the latest Atlas collection counts,
 -- because Atlas sends no sample for a status that no node has.
 SELECT 'atlas' AS resource_id, service AS alert_key, failed AS value,
-       concat(toString(failed), ' ', service, ' nodes are Failed') AS detail
+       concat(toString(failed), ' ', service, ' nodes have failed') AS detail
 FROM (
     SELECT labels['service'] AS service, sum(value) AS failed
     FROM datum.samples_recent

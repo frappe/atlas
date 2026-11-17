@@ -1,4 +1,5 @@
--- title: BMC problems
+-- title: Host BMC reports a fault
+-- description: The BMC of the host reports a problem. A failing part or a lost BMC needs action.
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/bmc-problems.md

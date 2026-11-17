@@ -1,4 +1,5 @@
--- title: Host systemd units failing
+-- title: systemd unit failed or keeps restarting
+-- description: A systemd unit on the host failed or keeps restarting. A service may be down.
 -- severity: Medium
 -- resource_type: Metal Host
 -- interval: 300
@@ -16,7 +17,7 @@ FROM (
 WHERE state = 'failed'
 UNION ALL
 SELECT resource_id, concat('restarts:', labels['unit']), sum(increase),
-       concat(labels['unit'], ' restarted ', toString(sum(increase)), ' times in 1 h'), 'Low'
+       concat(labels['unit'], ' restarted ', toString(sum(increase)), ' times in 1 h (limit 3)'), 'Low'
 FROM datum.counter_increase(metric = 'system_systemd_unit_restarts_total', window = 3600)
 GROUP BY resource_id, labels['unit']
 HAVING sum(increase) >= 3

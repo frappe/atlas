@@ -1,4 +1,5 @@
--- title: Atlas silent
+-- title: Atlas stopped reporting
+-- description: Atlas sends no metrics. Other alerts in the region cannot fire.
 -- severity: Critical
 -- resource_type: Region
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-silent.md
@@ -7,7 +8,7 @@
 -- resolve_after: 120
 -- Atlas sends atlas_virtual_machine_drafts every minute, even when it has no host or draft.
 SELECT {region:String} AS resource_id, '' AS alert_key, toFloat64(dateDiff('second', last_ts, now())) AS value,
-       concat('no Atlas sample for ', toString(value), ' s') AS detail
+       concat('no Atlas sample for ', toString(value), ' s (limit 180 s)') AS detail
 FROM (
     SELECT max(ts) AS last_ts
     FROM datum.samples_recent

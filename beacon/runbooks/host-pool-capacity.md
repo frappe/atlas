@@ -1,4 +1,4 @@
-# Host pool almost full
+# Storage pool almost full
 
 A ZFS pool of the host is more than 90% used (High) or 80% used (Low). ZFS slows down when a pool is full, and VM disks stop writing at 100%.
 
