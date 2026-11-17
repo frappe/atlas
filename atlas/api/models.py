@@ -1382,6 +1382,7 @@ class BeaconResource(BaseModel):
 					"parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
 					"title": "vm-00010",
 					"status": "Active",
+					"url": "https://atlas.example.com/desk/virtual-machine/vm-00010",
 				}
 			]
 		}
@@ -1394,6 +1395,9 @@ class BeaconResource(BaseModel):
 	parent_id: str = Field(description="Resource ID of the parent, or empty for a root resource.")
 	title: str = Field(description="Name that people see.")
 	status: str = Field(description="`Pending`, `Active`, `Suspended` or `Terminated`.")
+	url: str = Field(
+		default="", description="Desk URL of the Atlas record, so a responder opens it from Beacon."
+	)
 
 
 class BeaconResourceListResponse(BaseModel):
