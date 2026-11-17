@@ -1,4 +1,4 @@
-# Atlas API unreachable
+# Atlas API is not responding
 
 Beacon cannot read `/api/atlas/jwks.json` of this region from outside for 3 minutes. Central cannot create, start, stop or resize servers in the region. The alert detail shows the error or the status.
 

@@ -1,11 +1,12 @@
--- title: Host near a kernel limit
+-- title: Kernel table almost full or clock unsynced
+-- description: A kernel table is nearly full or the clock is not synced. Connections, files or TLS may fail.
 -- severity: Medium
 -- resource_type: Metal Host
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 900
 -- A full conntrack table drops new connections. A full open file table stops new files and sockets. An unsynced clock breaks TLS and log order.
-SELECT resource_id, alert_key, share AS value, concat(name, ' ', toString(round(share)), '% used') AS detail
+SELECT resource_id, alert_key, share AS value, concat(name, ' ', toString(round(share)), '% used (limit 80%)') AS detail
 FROM (
     SELECT resource_id, 'conntrack' AS alert_key, 'conntrack table' AS name,
            argMaxIf(value, ts, metric = 'system_network_conntrack_entries')

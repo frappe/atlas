@@ -1,4 +1,5 @@
 -- title: TLS certificate expiring
+-- description: A certificate that Atlas renews expires soon. Sites or host access fail when it expires.
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/tls-certificate-expiring.md
@@ -7,7 +8,7 @@
 -- resolve_after: 1800
 -- Atlas renews the wildcard certificate and each metald certificate daily from 30 days before expiry. Under 21 days left means renewal fails: Medium. Under 3 days pages, because there is no time left to fix renewal calmly. An expired wildcard certificate breaks every site, and an expired metald certificate cuts Atlas off from the host.
 SELECT resource_id, alert_key, days AS value,
-       concat('the ', alert_key, ' certificate expires in ', toString(round(days, 1)), ' days') AS detail,
+       concat('the ', alert_key, ' certificate expires in ', toString(round(days, 1)), ' days (limit 21 days)') AS detail,
        if(days < 3, 'High', 'Medium') AS severity
 FROM (
     SELECT if(labels['certificate'] = 'metald', labels['server'], 'atlas') AS resource_id, labels['certificate'] AS alert_key,

@@ -1,4 +1,4 @@
-# Atlas cannot sync host
+# Atlas cannot sync the host
 
 metald on the host still reports, but Atlas did not sync the host for 5 minutes.
 

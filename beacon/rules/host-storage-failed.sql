@@ -1,4 +1,5 @@
 -- title: Host storage failed
+-- description: A pool, RAID array or mount on the host failed. It can lose data or stop writes.
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-storage-failed.md

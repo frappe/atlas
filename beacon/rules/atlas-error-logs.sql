@@ -1,4 +1,5 @@
--- title: Atlas unhandled errors
+-- title: Atlas logs unhandled errors
+-- description: Unhandled exceptions in Atlas repeat. Some requests fail with a server error.
 -- severity: Medium
 -- resource_type: Atlas
 -- interval: 60
@@ -7,7 +8,7 @@
 -- One alert for each error fingerprint that is new in the last hour (not seen in the day before) and repeats 3 times, that repeats 5 times in 15 min, or 20 times in 1 h. One new error alone is not a problem that a person must look at.
 -- Errors that Atlas logs on purpose are handled and not counted. A PermissionError is a caller without access, such as a guest, not an Atlas failure.
 SELECT 'atlas' AS resource_id, alert_key, toFloat64(hour_count) AS value,
-       concat(if(is_new, 'new: ', ''), toString(hour_count), ' x ', first_message, ' in 1 h') AS detail
+       concat(if(is_new, 'new: ', ''), toString(hour_count), ' errors in 1 h: ', first_message) AS detail
 FROM (
     SELECT if(attributes['fingerprint'] = '', message, attributes['fingerprint']) AS alert_key, any(message) AS first_message,
            countIf(ts > now() - INTERVAL 15 MINUTE) AS recent_count, countIf(ts > now() - INTERVAL 1 HOUR) AS hour_count,

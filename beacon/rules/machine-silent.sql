@@ -1,4 +1,5 @@
--- title: Machine silent
+-- title: Machine stopped reporting
+-- description: The machine sends no metrics. It may be down, or only its agent stopped.
 -- severity: Medium
 -- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-silent.md
@@ -10,7 +11,7 @@
 -- host-down covers a host that Atlas cannot reach, and vms-unavailable-on-host a VM that stopped, so silence alone is Medium.
 WITH (SELECT max(ts) FROM datum.samples_recent WHERE metric = 'atlas_machine' AND resource_id = 'atlas' AND ts > now() - INTERVAL 10 MINUTE) AS snapshot
 SELECT e.machine AS resource_id, '' AS alert_key, toFloat64(if(l.last_ts IS NULL, 3600, dateDiff('second', l.last_ts, now()))) AS value,
-       if(l.last_ts IS NULL, 'no machine metrics for over 1 h', concat('no machine metrics for ', toString(round(value / 60)), ' min')) AS detail
+       if(l.last_ts IS NULL, 'no machine metrics for over 1 h', concat('no machine metrics for ', toString(round(value / 60)), ' min (limit 3 min)')) AS detail
 FROM (
     SELECT labels['machine'] AS machine
     FROM datum.samples_recent

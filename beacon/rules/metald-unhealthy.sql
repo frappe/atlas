@@ -1,4 +1,5 @@
--- title: metald unhealthy
+-- title: metald cannot apply VM changes
+-- description: metald cannot apply VM changes on the host. VM actions on it fail.
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/metald-unhealthy.md
@@ -7,7 +8,7 @@
 -- resolve_after: 300
 -- A stalled loop, an old pending change or failing VMs mean metald does not apply VM changes. The image loop runs each hour. Dropped telemetry is Low.
 SELECT resource_id, concat('stalled:', loop) AS alert_key, age AS value,
-       concat('the ', loop, ' loop did not run for ', toString(round(age / 60)), ' min') AS detail,
+       concat('the ', loop, ' loop did not run for ', toString(round(age / 60)), ' min (limit ', if(loop = 'image', '120 min', '5 min'), ')') AS detail,
        'High' AS severity
 FROM (
     SELECT resource_id, labels['loop'] AS loop, toUnixTimestamp(now()) - value AS age
@@ -16,7 +17,7 @@ FROM (
 WHERE age > if(loop = 'image', 7200, 300)
 UNION ALL
 SELECT resource_id, 'pending-change', value,
-       concat('a VM change is waiting for ', toString(round(value / 60)), ' min'), 'High'
+       concat('a VM change is waiting for ', toString(round(value / 60)), ' min (limit 10 min)'), 'High'
 FROM datum.latest_value(metric = 'metal_vm_oldest_pending_seconds', window = 300)
 WHERE value > 600
 UNION ALL
@@ -25,7 +26,7 @@ FROM datum.latest_value(metric = 'metal_vm_failing', window = 300)
 WHERE value > 0
 UNION ALL
 SELECT resource_id, 'dropped-telemetry', sum(increase),
-       concat(toString(sum(increase)), ' telemetry observations or collector errors in 1 h'), 'Low'
+       concat(toString(sum(increase)), ' dropped telemetry observations or collector errors in 1 h'), 'Low'
 FROM (
     SELECT resource_id, increase FROM datum.counter_increase(metric = 'metal_telemetry_observations_dropped_total', window = 3600)
     UNION ALL

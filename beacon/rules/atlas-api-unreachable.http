@@ -1,4 +1,5 @@
--- title: Atlas API unreachable
+-- title: Atlas API is not responding
+-- description: The public key endpoint of the Atlas API does not answer. Central cannot manage servers.
 -- severity: High
 -- url: {atlas_url}/api/atlas/jwks.json
 -- region: all

@@ -1,4 +1,4 @@
-# Host hardware degraded
+# Host hardware is failing
 
 A part of the host is failing. The alert key tells which:
 

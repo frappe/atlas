@@ -1,4 +1,5 @@
--- title: Host hardware degraded
+-- title: Host hardware is failing
+-- description: A part of the host is failing. A VM or the host can crash or lose data.
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-hardware-degraded.md
@@ -13,16 +14,16 @@ FROM (
     FROM datum.counter_increase(metric = 'system_edac_uncorrectable_errors_total', window = 900)
     WHERE labels['csrow'] = '' AND increase > 0
     UNION ALL
-    SELECT resource_id, 'ecc-corrected', increase, concat(toString(increase), ' corrected memory errors in 1 h'), 'Low'
+    SELECT resource_id, 'ecc-corrected', increase, concat(toString(increase), ' corrected memory errors in 1 h (limit 10)'), 'Low'
     FROM datum.counter_increase(metric = 'system_edac_correctable_errors_total', window = 3600)
     WHERE labels['csrow'] = '' AND increase >= 10
     UNION ALL
-    SELECT resource_id, 'cpu-throttle', sum(increase), concat(toString(sum(increase)), ' CPU throttles in 1 h'), 'Low'
+    SELECT resource_id, 'cpu-throttle', sum(increase), concat(toString(sum(increase)), ' CPU throttles in 1 h (limit 100)'), 'Low'
     FROM datum.counter_increase(metric = 'system_cpu_core_throttles_total', window = 3600)
     GROUP BY resource_id
     HAVING sum(increase) >= 100
     UNION ALL
-    SELECT resource_id, 'cpu-temperature', max(coolest), concat('CPU at ', toString(round(max(coolest))), ' °C or more for 15 min'), 'Medium'
+    SELECT resource_id, 'cpu-temperature', max(coolest), concat('CPU at ', toString(round(max(coolest))), ' °C or more for 15 min (limit 85 °C)'), 'Medium'
     FROM (
         SELECT resource_id, labels, min(value) AS coolest FROM datum.samples_recent
         WHERE metric = 'system_hwmon_temperature_celsius' AND labels['chip'] = 'coretemp' AND labels['attribute'] = 'input'
@@ -33,7 +34,7 @@ FROM (
     HAVING max(coolest) > 85
     UNION ALL
     SELECT resource_id, concat('zfs-slow-io:', labels['device']), increase,
-           concat(toString(increase), ' slow ZFS I/Os on ', labels['device'], ' in 1 h'), 'Low'
+           concat(toString(increase), ' slow ZFS I/Os on ', labels['device'], ' in 1 h (limit 10)'), 'Low'
     FROM datum.counter_increase(metric = 'system_zfs_device_slow_ios', window = 3600)
     WHERE increase >= 10
     UNION ALL
