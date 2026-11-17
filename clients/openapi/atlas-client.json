@@ -225,7 +225,8 @@
             "resource_id": "vm-00010",
             "resource_type": "Virtual Machine",
             "status": "Active",
-            "title": "vm-00010"
+            "title": "vm-00010",
+            "url": "https://atlas.example.com/desk/virtual-machine/vm-00010"
           }
         ],
         "properties": {
@@ -252,6 +253,12 @@
           "title": {
             "description": "Name that people see.",
             "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "Desk URL of the Atlas record, so a responder opens it from Beacon.",
+            "title": "Url",
             "type": "string"
           }
         },
