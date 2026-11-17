@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-hardware-degraded.md
+-- charts: host-memory-errors, host-cpu-temperature, host-nvme-wear, host-storage-faults
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

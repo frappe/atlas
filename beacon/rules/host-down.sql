@@ -3,6 +3,7 @@
 -- severity: Critical
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-down.md
+-- charts: host-sync-age, host-vm-health
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 120

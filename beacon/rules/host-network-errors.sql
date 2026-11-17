@@ -2,6 +2,7 @@
 -- description: A network link is down or a NIC reports errors. Traffic to the host can fail.
 -- severity: Medium
 -- resource_type: Metal Host
+-- charts: machine-network-errors, host-mesh-peers
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

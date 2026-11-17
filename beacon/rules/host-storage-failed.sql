@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-storage-failed.md
+-- charts: host-storage-faults, host-zfs-pool
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 600

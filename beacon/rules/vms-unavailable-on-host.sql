@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/vms-unavailable-on-host.md
+-- charts: host-vm-health, host-vm-operations
 -- interval: 60
 -- pending_for: 300
 -- resolve_after: 120

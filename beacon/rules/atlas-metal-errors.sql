@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-metal-errors.md
+-- charts: atlas-metal-requests
 -- interval: 60
 -- pending_for: 180
 -- resolve_after: 300

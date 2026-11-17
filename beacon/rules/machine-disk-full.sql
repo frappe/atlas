@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/machine-disk-full.md
+-- charts: machine-disk-space
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 900

@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-pool-capacity.md
+-- charts: host-zfs-pool
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 600

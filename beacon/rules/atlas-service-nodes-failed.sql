@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-service-nodes-failed.md
+-- charts: atlas-service-nodes
 -- interval: 60
 -- pending_for: 120
 -- resolve_after: 300
