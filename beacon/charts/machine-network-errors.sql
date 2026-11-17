@@ -1,11 +1,12 @@
 -- title: Network Errors
--- resource_type: Metal Host
+-- resource_type: Metal Host, Virtual Machine
+-- requires_metric: system_network_receive_errors_total
 -- section: Network
 -- unit: errors/s
 -- style: Line
 -- is_key_chart: 0
 -- sort_order: 20
--- The receive and transmit errors of all interfaces, as the host-network-errors rule counts them.
+-- The receive and transmit errors of all interfaces. The host-network-errors rule counts them on the Ethernet NICs of a host.
 SELECT ts, series, sum(rate) AS value
 FROM (
     SELECT toStartOfInterval(sample_ts, toIntervalSecond({step:UInt32})) AS ts, series, labels, sum(increase) / nullIf(sum(seconds), 0) AS rate
