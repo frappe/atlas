@@ -1,4 +1,4 @@
-# BMC problems
+# Host BMC reports a fault
 
 The BMC of the host reports a problem. The alert key tells which:
 

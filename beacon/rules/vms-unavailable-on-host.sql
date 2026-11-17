@@ -1,4 +1,5 @@
--- title: VMs unavailable on host
+-- title: VMs unavailable
+-- description: VMs that should run on the host are unavailable. Customer sites on them are down.
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/vms-unavailable-on-host.md

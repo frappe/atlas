@@ -1,4 +1,5 @@
 -- title: Service node not ready
+-- description: A service node fails its readiness probe. Traffic fails over to other nodes.
 -- severity: High
 -- resource_type: Proxy Server, Wireguard Gateway Server, IPv6 Router Server
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/service-node-not-ready.md
@@ -7,7 +8,8 @@
 -- resolve_after: 120
 -- Atlas sends the readiness of each node, so only its rows count: a node label from another sender would name any node.
 -- Atlas probes each node once a minute. The last 2 probes must fail, and a third run must confirm, so the alert fires about 3 minutes after the node stops.
-SELECT node AS resource_id, service AS alert_key, ready AS value, concat(service, ' on ', node, ' is not ready') AS detail
+SELECT node AS resource_id, service AS alert_key, ready AS value,
+       concat(service, ' is not ready on ', node, ' (', toString(samples), ' probes failed)') AS detail
 FROM (
     SELECT labels['node'] AS node, labels['service'] AS service, max(value) AS ready, count() AS samples
     FROM datum.samples_recent

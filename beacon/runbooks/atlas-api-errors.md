@@ -1,4 +1,4 @@
-# Atlas API errors
+# Atlas API calls failing
 
 More than 5% of calls to one Atlas API operation failed with a 5xx status in 10 minutes. Central and customers see failures.
 

@@ -1,4 +1,5 @@
--- title: Proxy errors
+-- title: Proxy returns too many 5xx errors
+-- description: The proxy returns too many 5xx errors of its own. Sites behind it fail for customers.
 -- severity: Medium
 -- resource_type: Proxy Server
 -- interval: 60
@@ -8,7 +9,7 @@
 -- The rule fires on a spike, 5 times the error share of the last 70 minutes, or on more than 5% errors for 70 minutes, so a steady failure does not hide in its own baseline.
 -- The VM sends the counts. atlas_service_node names the proxy node of the VM, so the alert is on the node.
 SELECT n.node AS resource_id, '' AS alert_key, recent_share AS value,
-       concat('proxy 5xx share ', toString(round(100 * recent_share, 2)), '% in the last 10 min, ',
+       concat('proxy 5xx share ', toString(round(100 * recent_share, 2)), '% in the last 10 min (limit 1%), ',
               toString(round(100 * baseline_share, 2)), '% in the last 70 min') AS detail
 FROM (
     SELECT resource_id,

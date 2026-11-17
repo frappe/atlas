@@ -1,4 +1,5 @@
 -- title: Atlas cannot reach metald
+-- description: Atlas cannot reach metald on the hosts, or metald returns errors. Hosts do not get VM changes.
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-metal-errors.md
@@ -10,7 +11,8 @@
 SELECT 'atlas' AS resource_id, alert_key, value, detail, severity
 FROM (
     SELECT route AS alert_key, recent_errors AS value,
-           concat(toString(recent_errors), ' of ', toString(recent_requests), ' calls to metald ', route, ' failed in 10 min') AS detail,
+           concat(toString(recent_errors), ' of ', toString(recent_requests), ' calls to metald ', route, ' failed in 10 min (',
+                  toString(round(100 * recent_errors / recent_requests, 1)), '%, limit 20%)') AS detail,
            'High' AS severity
     FROM (
         SELECT labels['route'] AS route,
@@ -22,7 +24,7 @@ FROM (
     )
     WHERE recent_errors >= 5 AND recent_errors > 0.2 * recent_requests
     UNION ALL
-    SELECT concat('hourly:', route), errors, concat(toString(errors), ' calls to metald ', route, ' failed in 1 h'), 'Medium'
+    SELECT concat('hourly:', route), errors, concat(toString(errors), ' calls to metald ', route, ' failed in 1 h (limit 5)'), 'Medium'
     FROM (
         SELECT labels['route'] AS route,
                sumIf(increase, labels['status'] = 'unreachable' OR startsWith(labels['status'], '5')) AS errors

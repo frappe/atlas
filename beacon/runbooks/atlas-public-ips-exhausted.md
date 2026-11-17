@@ -1,4 +1,4 @@
-# Public IPv4 addresses almost used up
+# Few public IPv4 addresses left
 
 All public IPv4 pools together have fewer than 5, or less than 10%, free addresses. New VMs that need a public IPv4 fail.
 

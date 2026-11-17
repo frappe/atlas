@@ -1,4 +1,4 @@
-# Atlas disk almost full
+# Disk almost full
 
 A file system of the Atlas server has less than 10% free space. MariaDB and the bench stop when it is full.
 
