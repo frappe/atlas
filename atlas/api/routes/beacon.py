@@ -4,6 +4,7 @@ import hashlib
 import json
 
 import frappe
+from frappe.utils import get_url, get_url_to_form
 
 from atlas.api.core.base import ApiResult
 from atlas.api.core.docs import api_docs
@@ -56,14 +57,22 @@ class BeaconResourceList:
 
 	def collect(self) -> list[dict[str, str]]:
 		# Atlas itself is a resource, so alerts about the control plane do not join every region incident.
-		self.add("atlas", "Atlas", "Atlas", "Active")
+		self.add("atlas", "Atlas", "Atlas", "Active", url=get_url("/desk"))
 		self.add_hosts()
 		self.add_virtual_machines()
 		self.add_service_nodes()
 		self.add_cargo()
 		return self.rows
 
-	def add(self, resource_id: str, resource_type: str, title: str, status: str, parent_id: str = "") -> None:
+	def add(
+		self,
+		resource_id: str,
+		resource_type: str,
+		title: str,
+		status: str,
+		parent_id: str = "",
+		url: str = "",
+	) -> None:
 		self.rows.append(
 			{
 				"resource_id": resource_id,
@@ -71,12 +80,19 @@ class BeaconResourceList:
 				"parent_id": parent_id or "",
 				"title": title or resource_id,
 				"status": status,
+				"url": url,
 			}
 		)
 
 	def add_hosts(self) -> None:
 		for host in frappe.get_all("Metal Server", fields=["name", "title", "status"], order_by="name"):
-			self.add(host.name, "Metal Host", host.title, HOST_STATUSES.get(host.status, "Pending"))
+			self.add(
+				host.name,
+				"Metal Host",
+				host.title,
+				HOST_STATUSES.get(host.status, "Pending"),
+				url=get_url_to_form("Metal Server", host.name),
+			)
 
 	def add_virtual_machines(self) -> None:
 		"""A draft is not placed yet, so it has no host. The hostname is virtual, so the title is the name.
@@ -100,6 +116,7 @@ class BeaconResourceList:
 				machine.name,
 				get_machine_status(machine, stopped),
 				machine.server,
+				get_url_to_form("Virtual Machine", machine.name),
 			)
 
 	def add_service_nodes(self) -> None:
@@ -113,6 +130,7 @@ class BeaconResourceList:
 					node.name,
 					SERVICE_STATUSES.get(node.status, "Pending"),
 					node.virtual_machine,
+					get_url_to_form(doctype, node.name),
 				)
 
 	def add_cargo(self) -> None:
@@ -125,6 +143,7 @@ class BeaconResourceList:
 				"Cargo",
 				SERVICE_STATUSES.get(cargo.status, "Pending"),
 				cargo.virtual_machine,
+				get_url_to_form("Cargo Server"),
 			)
 
 

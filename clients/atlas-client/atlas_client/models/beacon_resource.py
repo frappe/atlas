@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 
 
 
@@ -28,6 +29,7 @@ class BeaconResource:
             resource_type (str): `Atlas`, `Metal Host`, `Virtual Machine`, a service node DocType, or `Cargo Server`.
             status (str): `Pending`, `Active`, `Suspended` or `Terminated`.
             title (str): Name that people see.
+            url (str | Unset): Desk URL of the Atlas record, so a responder opens it from Beacon. Default: ''.
      """
 
     parent_id: str
@@ -35,6 +37,7 @@ class BeaconResource:
     resource_type: str
     status: str
     title: str
+    url: str | Unset = ''
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -52,6 +55,8 @@ class BeaconResource:
 
         title = self.title
 
+        url = self.url
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -62,6 +67,8 @@ class BeaconResource:
             "status": status,
             "title": title,
         })
+        if url is not UNSET:
+            field_dict["url"] = url
 
         return field_dict
 
@@ -80,12 +87,15 @@ class BeaconResource:
 
         title = d.pop("title")
 
+        url = d.pop("url", UNSET)
+
         beacon_resource = cls(
             parent_id=parent_id,
             resource_id=resource_id,
             resource_type=resource_type,
             status=status,
             title=title,
+            url=url,
         )
 
 
