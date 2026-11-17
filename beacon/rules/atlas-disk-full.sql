@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-disk-full.md
+-- charts: atlas-disk-space
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 600

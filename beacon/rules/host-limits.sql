@@ -2,6 +2,7 @@
 -- description: A kernel table is nearly full or the clock is not synced. Connections, files or TLS may fail.
 -- severity: Medium
 -- resource_type: Metal Host
+-- charts: host-conntrack, host-clock-offset
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 900

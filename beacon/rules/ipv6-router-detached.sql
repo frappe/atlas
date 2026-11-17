@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: IPv6 Router Server
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/ipv6-router-detached.md
+-- charts: ipv6-router-program
 -- interval: 60
 -- pending_for: 120
 -- resolve_after: 120

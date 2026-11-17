@@ -2,6 +2,7 @@
 -- description: A systemd unit on the host failed or keeps restarting. A service may be down.
 -- severity: Medium
 -- resource_type: Metal Host
+-- charts: host-failed-units, host-unit-restarts
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

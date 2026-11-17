@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/host-mesh-peers-down.md
+-- charts: host-mesh-peers
 -- interval: 60
 -- pending_for: 300
 -- resolve_after: 300
