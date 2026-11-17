@@ -27,7 +27,7 @@ FROM (
     SELECT resource_id, 'cpu-temperature', max(coolest), concat('CPU at ', toString(round(max(coolest))), ' °C or more for 15 min (limit 85 °C)'), 'Medium'
     FROM (
         SELECT resource_id, labels, min(value) AS coolest FROM datum.samples_recent
-        WHERE metric = 'system_hwmon_temperature_celsius' AND labels['chip'] = 'coretemp' AND labels['attribute'] = 'input'
+        WHERE metric = 'system_hwmon_temperature_celsius' AND labels['chip'] IN ('coretemp', 'k10temp') AND labels['attribute'] = 'input'
           AND ts > now() - INTERVAL 15 MINUTE
         GROUP BY resource_id, labels
     )

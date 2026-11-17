@@ -6,9 +6,9 @@
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600
--- A link is down when the interface is up and has no carrier: Medium. More than 10 NIC errors in 1 h are Low. Only Ethernet NICs
--- (en*, eth*) count errors: WireGuard counts unauthenticated packets and packets for a peer without a session as errors, and a
--- bond or VLAN repeats the errors of its NICs.
+-- A link is down when the interface is up and has no carrier: Medium. A down device of the IPv4 default route, or no default
+-- route, is Medium. More than 10 NIC errors in 1 h are Low. Only Ethernet NICs (en*, eth*) count errors: WireGuard counts
+-- unauthenticated packets and packets for a peer without a session as errors, and a bond or VLAN repeats the errors of its NICs.
 SELECT resource_id, concat('link-down:', interface) AS alert_key, 1 AS value, concat(interface, ' has no carrier') AS detail, 'Medium' AS severity
 FROM (
     SELECT resource_id, labels['interface'] AS interface,
@@ -19,6 +19,10 @@ FROM (
     HAVING countIf(metric = 'system_network_carrier') > 0
 )
 WHERE up = 1 AND carrier = 0
+UNION ALL
+SELECT resource_id, 'default-route-down', 0, 'the device of the IPv4 default route is down, or there is no default route', 'Medium'
+FROM datum.latest_value(metric = 'metal_network_public_up', window = 300)
+WHERE value = 0
 UNION ALL
 SELECT resource_id, concat('nic-errors:', interface), errors, concat(toString(errors), ' errors on ', interface, ' in 1 h (limit 10)'), 'Low'
 FROM (
