@@ -2,6 +2,7 @@
 -- description: The kernel killed processes because the machine ran out of memory. A service or a VM can be down.
 -- severity: Medium
 -- resource_type: Metal Host, Virtual Machine
+-- charts: host-oom-kills, vm-memory, host-memory
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 1800

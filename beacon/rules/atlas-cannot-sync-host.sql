@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-cannot-sync-host.md
+-- charts: host-sync-age, atlas-host-sync-age
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 120

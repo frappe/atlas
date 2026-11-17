@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/tls-certificate-expiring.md
+-- charts: atlas-certificates
 -- interval: 900
 -- pending_for: 900
 -- resolve_after: 1800

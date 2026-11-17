@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Atlas
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-queue-backlog.md
+-- charts: atlas-queue-length, atlas-jobs
 -- interval: 60
 -- pending_for: 600
 -- resolve_after: 300
