@@ -1,4 +1,4 @@
-# Atlas queue backlog
+# Atlas job queue is backed up
 
 100 or more jobs stayed in one Atlas queue for 10 minutes. Provisioning, VM actions and syncs are late.
 

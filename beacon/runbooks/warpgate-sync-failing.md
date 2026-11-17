@@ -1,4 +1,4 @@
-# Warpgate sync failing
+# Atlas cannot sync Warpgate
 
 Each minute, Atlas makes the Warpgate targets and roles match the Metal Servers, and lets Warpgate log in to each new host. For 15 minutes or more, at least one host did not sync. People cannot reach a new or renamed host through Warpgate. Access to the other hosts continues.
 

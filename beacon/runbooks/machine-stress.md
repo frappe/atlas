@@ -1,4 +1,4 @@
-# Machine under stress
+# Machine memory or load too high
 
 A host or a VM used more than 90% of its memory, or had a 5-minute load over 1.5 for each core, for 15 minutes. The alert key is `memory` or `load`.
 

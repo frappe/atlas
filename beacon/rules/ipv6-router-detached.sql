@@ -1,4 +1,5 @@
 -- title: IPv6 router not forwarding
+-- description: The IPv6 router does not attach its forwarding program. Public IPv6 stops in the region.
 -- severity: High
 -- resource_type: IPv6 Router Server
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/ipv6-router-detached.md
@@ -7,7 +8,7 @@
 -- resolve_after: 120
 -- The router translates in a tc eBPF program on eth0. Without it the VM runs, but forwards nothing, so the public IPv6 addresses of the region stop.
 -- The Datum agent of the router VM sends ipv6_router_program_attached each 30 seconds. atlas_service_node names the router node of the VM.
-SELECT n.node AS resource_id, '' AS alert_key, a.attached AS value, 'the eBPF program is not attached to eth0' AS detail
+SELECT n.node AS resource_id, '' AS alert_key, a.attached AS value, 'the forwarding program is not attached to eth0' AS detail
 FROM (
     SELECT resource_id, argMax(value, ts) AS attached
     FROM datum.samples_recent

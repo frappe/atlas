@@ -1,4 +1,4 @@
-# metald unhealthy
+# metald cannot apply VM changes
 
 metald on the host does not apply VM changes. The alert key tells why:
 

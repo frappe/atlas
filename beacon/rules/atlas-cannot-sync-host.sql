@@ -1,4 +1,5 @@
--- title: Atlas cannot sync host
+-- title: Atlas cannot sync the host
+-- description: Atlas cannot sync the host, so VM changes do not reach it. metald still reports.
 -- severity: High
 -- resource_type: Metal Host
 -- runbook_url: https://github.com/frappe/atlas/blob/develop/beacon/runbooks/atlas-cannot-sync-host.md
@@ -7,7 +8,7 @@
 -- resolve_after: 120
 -- Start from the Running hosts that Atlas lists, so a host whose sync series stops stays in alert.
 SELECT h.server AS resource_id, '' AS alert_key, ifNull(s.age, -1) AS value,
-       concat(if(value < 0, 'no host sync reported', concat('no host sync for ', toString(round(value)), ' s')),
+       concat(if(value < 0, 'no host sync reported', concat('no host sync for ', toString(round(value)), ' s (limit 120 s)')),
               ', metald still reports') AS detail
 FROM (
     SELECT labels['server'] AS server, argMax(labels['status'], ts) AS status

@@ -1,4 +1,4 @@
-# VMs unavailable on host
+# VMs unavailable
 
 Three or more VMs, and 20% or more of the VMs that should run on a host, are not available, or every VM that should run is unavailable (High). Fewer unavailable VMs are Medium.
 
