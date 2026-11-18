@@ -10,7 +10,7 @@
 -- scope_includes_descendants: 1
 -- Start from the Running hosts that Atlas lists, so a host whose sync series stops stays in alert.
 SELECT h.server AS resource_id, '' AS alert_key, ifNull(s.age, -1) AS value,
-       concat(if(value < 0, 'no host sync reported', concat('no host sync for ', toString(round(value)), ' s (limit 300 s)')),
+       concat(if(value < 0, 'no host sync reported', concat('no host sync for ', toString(round(value)), ' s (limit 180 s)')),
               ', metald silent') AS detail
 FROM (
     SELECT labels['server'] AS server, argMax(labels['status'], ts) AS status
@@ -30,5 +30,5 @@ LEFT JOIN (
     WHERE metric = 'metal_build_info' AND ts > now() - INTERVAL 15 MINUTE
     GROUP BY resource_id
 ) AS m ON m.resource_id = h.server
-WHERE h.status = 'Running' AND (s.age IS NULL OR s.age > 300) AND ifNull(m.last_ts, toDateTime64(0, 3)) < now() - INTERVAL 5 MINUTE
+WHERE h.status = 'Running' AND (s.age IS NULL OR s.age > 180) AND ifNull(m.last_ts, toDateTime64(0, 3)) < now() - INTERVAL 3 MINUTE
 SETTINGS join_use_nulls = 1

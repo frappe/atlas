@@ -1,6 +1,6 @@
 # Atlas stopped reporting
 
-Datum has no Atlas sample for 5 minutes. Atlas, its scheduler or the push to Datum is down. Other alerts of the region are blind.
+Datum has no Atlas sample for 2 minutes. Atlas, its scheduler or the push to Datum is down. Other alerts of the region are blind.
 
 1. Open the Atlas site. If it does not load, restart the bench processes.
 2. Run `bench doctor`. If the scheduler is off, run `bench enable-scheduler`.
