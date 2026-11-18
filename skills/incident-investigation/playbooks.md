@@ -62,7 +62,7 @@ Known cause: the Firecracker API stops, but the process stays alive. metald then
 1. `atlas_error_logs_last_minute`, `atlas_job_failed{queue}`, and `atlas_job_queue_length{queue}`.
 2. `list_recent_errors`, then `read_error_log` for the first error, not the most frequent one.
 3. `atlas_host_sync_age_seconds{server}` shows a host that Atlas cannot reach.
-4. `atlas_metal_requests_total{status}` shows failed calls from Atlas to metald.
+4. `atlas_metal_requests_total{server,status}` shows failed calls from Atlas to metald on each host.
 
 ## Site is down or slow through the HTTP proxy
 
