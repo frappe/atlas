@@ -44,7 +44,7 @@ Use utilization, saturation, and errors for each host resource. Use rate, errors
 | metald | `metal_api_requests_total{status}`, `metal_api_request_duration_seconds_total`, `metal_reconciler_failures_total{loop}`, `metal_reconciler_last_pass_timestamp_seconds{loop}`, `metal_telemetry_pushes_total{result}` |
 | VMs on a host | `metal_vm_count{state}`, `metal_vm_unavailable{reason}`, `metal_vm_failing`, `metal_vm_boot_unreachable_total{kind}`, `metal_vm_operations_total{phase,result}`, `metal_vm_operations_in_progress{phase}` |
 | Migration | `metal_migration_sources`, `metal_migration_destinations{state}`, `atlas_migration_oldest_active_seconds` |
-| Atlas app | `atlas_error_logs_last_minute`, `atlas_job_failed{queue}`, `atlas_job_queue_length{queue}`, `atlas_host_sync_age_seconds{server}`, `atlas_metal_requests_total{status}` |
+| Atlas app | `atlas_error_logs_last_minute`, `atlas_job_failed{queue}`, `atlas_job_queue_length{queue}`, `atlas_host_sync_age_seconds{server}`, `atlas_metal_requests_total{server,status}` |
 | HTTP proxy | `proxy_requests_total{status_class,origin}`, `proxy_slow_requests_total`, `proxy_upstream_seconds_total` |
 | IPv6 router | `ipv6_router_program_attached` |
 | WireGuard gateway | `wireguard_peers`, `wireguard_peers_active` |

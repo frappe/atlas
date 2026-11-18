@@ -71,6 +71,7 @@ class MetalClient:
 	snapshot_timeout_seconds = (5, 3600)
 
 	def __init__(self, server: "MetalServer") -> None:
+		self.server_name = server.name
 		self.base_url = self.get_api_url(server)
 		self.ca_file = ca_file()
 		self.client_certificate = client_certificate_files()
@@ -551,9 +552,9 @@ class MetalClient:
 				**kwargs,
 			)
 		except requests.RequestException as error:
-			record_metal_request(method, path, "unreachable", started_at)
+			record_metal_request(self.server_name, method, path, "unreachable", started_at)
 			raise MetalClientError(str(error), retryable=True, uncertain=uncertain_on_failure) from error
-		record_metal_request(method, path, str(response.status_code), started_at)
+		record_metal_request(self.server_name, method, path, str(response.status_code), started_at)
 
 		if response.status_code >= 400:
 			message, code, response_retryable = self._error_data(response)
@@ -638,11 +639,11 @@ def get_metal_route(path: str) -> str:
 	return METAL_ROUTE_IDENTIFIER.sub(r"\1:id", path.partition("?")[0])
 
 
-def record_metal_request(method: str, path: str, status: str, started_at: float) -> None:
+def record_metal_request(server_name: str, method: str, path: str, status: str, started_at: float) -> None:
 	"""Count Metal calls and observe mutation latency, except frequent host syncs."""
 	route = get_metal_route(path)
 	duration = time.perf_counter() - started_at
-	count("atlas_metal_requests_total", method=method, route=route, status=status)
+	count("atlas_metal_requests_total", method=method, route=route, status=status, server=server_name)
 	count("atlas_metal_request_duration_seconds_total", duration, method=method, route=route)
 	if method != "GET" and route != "/v1/sync":
 		observe("atlas_metal_request_duration_seconds", duration, method=method, route=route, status=status)
