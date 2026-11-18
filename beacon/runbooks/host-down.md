@@ -1,6 +1,6 @@
 # Host down
 
-Atlas did not sync the host for 5 minutes and metald on the host sends no metrics. The host and its VMs are probably down.
+Atlas did not sync the host for 3 minutes and metald on the host sends no metrics. The host and its VMs are probably down.
 
 1. Ping the host and open its console in the provider panel.
 2. If the host does not answer, power cycle it through the BMC.
