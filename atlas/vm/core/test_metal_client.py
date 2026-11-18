@@ -12,6 +12,7 @@ from atlas.vm.core.metal_client import MetalClient, MetalClientError, get_metal_
 
 def build_client() -> MetalClient:
 	client = MetalClient.__new__(MetalClient)
+	client.server_name = "metal-1"
 	client.base_url = "https://10.0.0.2:9000"
 	client.ca_file = "/private/atlas-metal-tls/ca.crt"
 	client.client_certificate = ("/private/atlas-metal-tls/atlas.crt", "/private/atlas-metal-tls/atlas.key")
@@ -646,6 +647,28 @@ class TestMetalClientMigrations(UnitTestCase):
 
 			with self.subTest(address=address), self.assertRaises(MetalClientError):
 				MetalClient.get_coordination_url(server)
+
+
+class TestMetalRequestMetric(UnitTestCase):
+	def test_an_unreachable_call_is_counted_for_its_host(self) -> None:
+		client = build_client()
+
+		with (
+			patch(
+				"atlas.vm.core.metal_client.requests.Session.request", side_effect=requests.ConnectTimeout()
+			),
+			patch("atlas.vm.core.metal_client.count") as count,
+			self.assertRaises(MetalClientError),
+		):
+			client._send("GET", "/v1/sync")
+
+		count.assert_any_call(
+			"atlas_metal_requests_total",
+			method="GET",
+			route="/v1/sync",
+			status="unreachable",
+			server="metal-1",
+		)
 
 
 class TestMetalRoute(UnitTestCase):
