@@ -5,65 +5,34 @@ from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.core.ssh import SSHRunner
+from atlas.atlas.core.telemetry.agent import INSTALL_TIMEOUT_SECONDS, DatumAgent
 from atlas.atlas.core.telemetry.collectors import SERVICE_DOCTYPES
-from atlas.atlas.core.telemetry.datum import HOST_TOKEN_LIFETIME, get_datum_url, issue_datum_token
-from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
+from atlas.atlas.core.telemetry.datum import get_datum_url
 from atlas.metal_server.core.host_installation import throw_script_failure
-
-TELEMETRY_INSTALL_TIMEOUT_SECONDS = 600
-RUNWAY_CACHE_DOCTYPE = "Runway Cache Server"
-RUNWAY_CACHE_RESOURCE = "runway-cache"
-RUNWAY_CACHE_METRICS = {
-	"metrics_listen": "127.0.0.1:18446",
-	"data_metrics_listen": "127.0.0.1:18447",
-}
 
 
 class ServiceTelemetry:
-	"""Send a service node's system metrics and logs to Datum through Vector, under the node's own name."""
+	"""Install the Datum agent on the VM of a service node or of the Cargo Server. The VM sends under its own name.
+
+	Pilot runs the Cargo site on the Cargo VM and sends only its own metrics, so the agent sends the machine
+	metrics and the journal of the VM, with no role file."""
 
 	def __init__(self, node: Document) -> None:
 		self.node = node
-		if node.doctype == RUNWAY_CACHE_DOCTYPE:
-			self.service = self.resource = RUNWAY_CACHE_RESOURCE
-		else:
-			self.service = SERVICE_DOCTYPES[node.doctype]
-			self.resource = node.name
+		is_cargo = node.doctype == "Cargo Server"
+		self.product = "cargo" if is_cargo else "atlas"
+		self.role = None if is_cargo else SERVICE_DOCTYPES[node.doctype]
 		self.virtual_machine = frappe.get_doc("Virtual Machine", node.virtual_machine)
 
 	def configure(self) -> None:
-		"""Install Vector, then a fresh Datum token. The token goes over direct SSH, so no SSH Task stores it."""
-		packages = SSHTask.create_for_script_file(
-			target_type="Virtual Machine",
-			target=self.virtual_machine.name,
-			script_path="install-vector.sh",
-			timeout_seconds=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
-			run_in_background=False,
-		).result
-		if not packages or not packages.is_success:
-			throw_script_failure(_("Could not install Vector on {0}.").format(self.node.name), packages)
-
-		result = SSHRunner(
+		runner = SSHRunner(
 			self.virtual_machine.ssh_host, proxy_command=self.virtual_machine.get_ssh_proxy_command()
-		).run_script(
-			"install-service-telemetry.sh",
-			data={
-				"DATUM_URL": get_datum_url(),
-				"DATUM_TOKEN": issue_datum_token(self.resource, HOST_TOKEN_LIFETIME),
-				"SERVICE": self.service,
-				**(
-					{
-						"RUNWAY_CACHE_METRICS": RUNWAY_CACHE_METRICS["metrics_listen"],
-						"RUNWAY_CACHE_DATA_METRICS": RUNWAY_CACHE_METRICS["data_metrics_listen"],
-					}
-					if self.service == RUNWAY_CACHE_RESOURCE
-					else {}
-				),
-			},
-			timeout_seconds=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
 		)
+		result = DatumAgent(runner, self.virtual_machine.name, self.product).install(role=self.role)
 		if not result.is_success:
-			throw_script_failure(_("Could not configure telemetry on {0}.").format(self.node.name), result)
+			throw_script_failure(
+				_("Could not install the Datum agent on {0}.").format(self.node.name), result
+			)
 
 
 def enqueue_service_telemetry(node: Document) -> None:
@@ -74,7 +43,7 @@ def enqueue_service_telemetry(node: Document) -> None:
 	frappe.enqueue(
 		configure_service_telemetry,
 		queue="long",
-		timeout=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
+		timeout=INSTALL_TIMEOUT_SECONDS,
 		doctype=node.doctype,
 		name=node.name,
 		job_id=f"atlas||service-telemetry||{node.doctype}||{node.name}",
@@ -94,20 +63,18 @@ def request_service_telemetry(node: Document) -> None:
 
 
 def configure_service_telemetry(doctype: str, name: str) -> None:
-	node = frappe.get_single(doctype) if doctype == RUNWAY_CACHE_DOCTYPE else frappe.get_doc(doctype, name)
-	if node.status == "Active" and get_datum_url():
+	node = frappe.get_doc(doctype, name)
+	if node.status == "Active":
 		ServiceTelemetry(node).configure()
 
 
 def renew_service_telemetry_credentials() -> None:
-	"""Queue a telemetry setup with a fresh Datum token for every active service node. Runs daily."""
-	if not get_datum_url():
-		return
-
+	"""Queue a telemetry setup with a fresh Datum token for every active service node and the Cargo Server.
+	Runs daily."""
 	for doctype in SERVICE_DOCTYPES:
 		for name in frappe.get_all(doctype, filters={"status": "Active"}, pluck="name"):
 			enqueue_service_telemetry(frappe.get_doc(doctype, name))
 
-	cache = frappe.get_single(RUNWAY_CACHE_DOCTYPE)
-	if cache.status == "Active":
-		enqueue_service_telemetry(cache)
+	cargo_server = frappe.get_single("Cargo Server")
+	if cargo_server.status == "Active":
+		enqueue_service_telemetry(cargo_server)

@@ -14,8 +14,6 @@ from frappe import _
 
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
 from atlas.atlas.core.ssh import SSHRunner, wait_for_server
-from atlas.atlas.core.telemetry.datum import get_datum_url
-from atlas.service.core.telemetry import RUNWAY_CACHE_METRICS, enqueue_service_telemetry
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.doctype.runway_cache_server.runway_cache_server import cache_lifecycle_lock
 
@@ -68,7 +66,6 @@ class RunwayCacheServerProvisioner:
 					operation()
 				self.cache.status = "Active"
 				self.cache.save(ignore_permissions=True)
-				enqueue_service_telemetry(self.cache)
 			except Exception as error:
 				self.cache.status = "Failed"
 				self.cache.failure_message = f"{phase}: {error}"
@@ -107,7 +104,6 @@ class RunwayCacheServerProvisioner:
 			"signing_key_file": "/etc/runway/signing-key.pem",
 			"cache_data_ca_file": "/etc/runway/tls/ca.pem",
 			"archive_bytes": 1 << 30,
-			**(RUNWAY_CACHE_METRICS if get_datum_url() else {}),
 		}
 
 	def write_configuration(self) -> None:

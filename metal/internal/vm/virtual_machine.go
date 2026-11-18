@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"time"
 )
 
@@ -51,6 +53,16 @@ func (virtualMachine virtualMachine) records() (DesiredRecord, ObservedRecord, e
 	}
 
 	return DesiredRecord{}, ObservedRecord{}, lastError
+}
+
+// isRemoved reports whether a records error means deletion removed this VM.
+// An observed record that is missing beside its desired record is still an error.
+func (virtualMachine virtualMachine) isRemoved(err error) bool {
+	if !errors.Is(err, ErrNotFound) {
+		return false
+	}
+	_, statError := os.Stat(virtualMachine.manager.store.desiredPath(virtualMachine.identifier))
+	return errors.Is(statError, fs.ErrNotExist)
 }
 
 // runtimeMachine builds runtime input with a copied specification.

@@ -57,9 +57,3 @@ Create the proxy through its normal Python creation API without `public_ipv4`. A
 Central keeps the normal `https://runway-cache-svc.<wildcard-domain>/configure` route. Give its process private mesh connectivity, Static DNS resolution, and development CA trust. Deliver Static DNS and CA trust explicitly to each owned VM. Static DNS delivery selects the systemd-resolved stub for applications that read `/etc/resolv.conf`. Guest traffic still uses TLS directly to the cache VM's `internal-` name.
 
 This mode does not qualify the public proxy front. Qualify that front separately on a host with a public IP. Archive all development proxies before restoring site settings.
-
-## Metrics and alerts
-
-When `datum_url` is set, pin a Runway release that supports `metrics_listen` and `data_metrics_listen` before provisioning. Atlas configures both endpoints on loopback and queues the standard Vector setup. Vector scrapes both endpoints every 30 seconds and reports as `runway-cache`. The daily service telemetry job renews its Datum token.
-
-Use the Atlas Insights workbook to configure the Runway P1 and P2 checks with the existing Raven webhook. The controller host sends its metrics to regional Datum through its own Vector instance. During the first production trial, confirm both resources are reporting and a failing Insights check reaches Raven.

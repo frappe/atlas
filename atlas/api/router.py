@@ -81,6 +81,12 @@ investigations = atlas_router.subrouter(
 	description="Hand a problem to the read-only investigator of the region and read its report. Tenant 0 only.",
 )
 
+beacon = atlas_router.subrouter(
+	"beacon",
+	name="Beacon",
+	description="Serve the resource list that Beacon, the incident manager, monitors. Central only.",
+)
+
 
 def get_resource_location(collection: str, resource_id: str) -> str:
 	"""Return the Location header value for one created resource."""
@@ -89,6 +95,7 @@ def get_resource_location(collection: str, resource_id: str) -> str:
 
 def register_atlas_api() -> None:
 	"""Import each module that registers Atlas API routes."""
+	import atlas.api.routes.beacon
 	import atlas.api.routes.dns_records
 	import atlas.api.routes.hosts
 	import atlas.api.routes.images

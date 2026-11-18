@@ -10,6 +10,8 @@ from .affinity_unsatisfied_error import AffinityUnsatisfiedError
 from .api_error_detail import ApiErrorDetail
 from .api_error_field import ApiErrorField
 from .api_error_response import ApiErrorResponse
+from .beacon_resource import BeaconResource
+from .beacon_resource_list_response import BeaconResourceListResponse
 from .capacity_unavailable_response import CapacityUnavailableResponse
 from .configure_webhooks_payload import ConfigureWebhooksPayload
 from .console_token_payload import ConsoleTokenPayload
@@ -82,7 +84,10 @@ from .virtual_machine_detail_response_tags import VirtualMachineDetailResponseTa
 from .virtual_machine_disk import VirtualMachineDisk
 from .virtual_machine_disk_usage import VirtualMachineDiskUsage
 from .virtual_machine_guest import VirtualMachineGuest
+from .virtual_machine_guest_filesystem import VirtualMachineGuestFilesystem
+from .virtual_machine_guest_memory import VirtualMachineGuestMemory
 from .virtual_machine_guest_metadata import VirtualMachineGuestMetadata
+from .virtual_machine_guest_usage import VirtualMachineGuestUsage
 from .virtual_machine_list_response import VirtualMachineListResponse
 from .virtual_machine_list_response_architecture import VirtualMachineListResponseArchitecture
 from .virtual_machine_list_response_tags import VirtualMachineListResponseTags
@@ -107,6 +112,8 @@ __all__ = (
     "ApiErrorDetail",
     "ApiErrorField",
     "ApiErrorResponse",
+    "BeaconResource",
+    "BeaconResourceListResponse",
     "CapacityUnavailableResponse",
     "ConfigureWebhooksPayload",
     "ConsoleTokenPayload",
@@ -179,7 +186,10 @@ __all__ = (
     "VirtualMachineDisk",
     "VirtualMachineDiskUsage",
     "VirtualMachineGuest",
+    "VirtualMachineGuestFilesystem",
+    "VirtualMachineGuestMemory",
     "VirtualMachineGuestMetadata",
+    "VirtualMachineGuestUsage",
     "VirtualMachineListResponse",
     "VirtualMachineListResponseArchitecture",
     "VirtualMachineListResponseTags",

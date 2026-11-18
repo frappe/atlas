@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frappe/atlas/metal/internal/guestagent"
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
@@ -32,6 +34,8 @@ type fakeRuntime struct {
 	metadata       int
 	diskRefresh    int
 	diskLimitMiBps int
+	cpuLimit       int
+	cpuLimitSets   int
 	inspectError   error
 	onInspect      func()
 	restoreError   error
@@ -48,14 +52,17 @@ type fakeRuntime struct {
 	usage              RuntimeUsage
 	usageError         error
 
-	migrationRestores  int
-	migrationDirectory string
-	metadataError      error
-	diskError          error
-	guestCheckError    error
-	guestChecks        int
-	savedDirectory     string
-	savedIdentity      string
+	migrationRestores   int
+	migrationDirectory  string
+	metadataError       error
+	diskError           error
+	guestCheckError     error
+	guestChecks         int
+	savedDirectory      string
+	savedIdentity       string
+	freezes             int
+	thawsAfterResume    []int
+	rootFilesystemGrows int
 }
 
 func (runtime *fakeRuntime) SavedState(context.Context, RuntimeMachine) (SavedState, error) {
@@ -218,6 +225,30 @@ func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (RuntimeUs
 	return runtime.usage, runtime.usageError
 }
 
+func (runtime *fakeRuntime) GetGuestUsage(context.Context, RuntimeMachine) *guestagent.Usage {
+	return nil
+}
+
+func (runtime *fakeRuntime) FreezeGuestFilesystems(context.Context, RuntimeMachine) func() {
+	runtime.freezes++
+	return func() { runtime.thawsAfterResume = append(runtime.thawsAfterResume, runtime.resumes) }
+}
+
+func (runtime *fakeRuntime) GrowGuestRootFilesystem(context.Context, RuntimeMachine) error {
+	runtime.rootFilesystemGrows++
+	return nil
+}
+
+func (runtime *fakeRuntime) CPULimit(context.Context, RuntimeMachine) (int, error) {
+	return runtime.cpuLimit, nil
+}
+
+func (runtime *fakeRuntime) SetCPULimit(_ context.Context, _ RuntimeMachine, millicores int) error {
+	runtime.cpuLimit = millicores
+	runtime.cpuLimitSets++
+	return nil
+}
+
 type fakeNetwork struct {
 	ensures  int
 	releases int
@@ -290,14 +321,20 @@ func newTestManager(t *testing.T) (*Manager, *fakeRuntime, *fakeNetwork, *fakeSt
 	runtime := &fakeRuntime{state: StateStopped}
 	network := &fakeNetwork{}
 	storage := &fakeStorage{hasDisk: true}
+	directory := t.TempDir()
+	metricsStore, err := metrics.NewStore(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager, err := NewManager(
-		ManagerConfig{MachinesDirectory: t.TempDir(), UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
+		ManagerConfig{MachinesDirectory: directory, UserIDRange: UserIDRange{Min: 1000, Max: 1010}},
 		ManagerDependencies{
 			Runtime:   runtime,
 			Network:   network,
 			Storage:   storage,
 			Snapshots: fakeSnapshots{},
 			Traffic:   &traffic.Monitor{},
+			Metrics:   metricsStore,
 			Telemetry: telemetry.NewRegistry(nil),
 		},
 	)
@@ -494,6 +531,57 @@ func TestIdleTimeoutDoesNotChangeSpecificationGeneration(t *testing.T) {
 	}
 	if after.SpecificationGeneration != before.SpecificationGeneration || after.Generation <= before.Generation {
 		t.Fatalf("before = %+v, after = %+v", before, after)
+	}
+}
+
+// TestBurstSettingsChangeOnARunningVM checks that enabling, changing, and disabling
+// CPU burst through SetCompute and Resize needs no stop and does not raise
+// SpecificationGeneration, so memory snapshots stay valid.
+func TestBurstSettingsChangeOnARunningVM(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.State = StateRunning
+	if err := manager.store.writeObserved("machine-1", observed); err != nil {
+		t.Fatal(err)
+	}
+	setCompute := func(compute Compute) error { return manager.SetCompute(context.Background(), "machine-1", compute) }
+	resize := func(compute Compute) error { return manager.Resize(context.Background(), "machine-1", compute, 4096) }
+
+	for _, step := range []struct {
+		name    string
+		apply   func(Compute) error
+		compute Compute
+	}{
+		{"set compute enables burst", setCompute, Compute{CPUMillicores: 2000, MemoryMiB: 2048, CPUBurst: CPUBurst{IsBurstable: true, BaselineCPUMillicores: 400, SlidingWindowMinutes: 60}}},
+		{"resize changes burst", resize, Compute{CPUMillicores: 2000, MemoryMiB: 2048, CPUBurst: CPUBurst{IsBurstable: true, BaselineCPUMillicores: 800, SlidingWindowMinutes: 30}}},
+		{"set compute disables burst with an idle timeout", setCompute, Compute{CPUMillicores: 2000, MemoryMiB: 2048, SleepAfterIdleSeconds: 60}},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			before, err := manager.store.readDesired("machine-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := step.apply(step.compute); err != nil {
+				t.Fatal(err)
+			}
+			after, err := manager.store.readDesired("machine-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if after.Specification.CPUBurst != step.compute.CPUBurst || after.Specification.SleepAfterIdleSeconds != step.compute.SleepAfterIdleSeconds {
+				t.Fatalf("specification = %+v, want %+v", after.Specification, step.compute)
+			}
+			if after.SpecificationGeneration != before.SpecificationGeneration || after.Generation <= before.Generation {
+				t.Fatalf("generations before = %d/%d, after = %d/%d", before.SpecificationGeneration, before.Generation, after.SpecificationGeneration, after.Generation)
+			}
+		})
 	}
 }
 
@@ -800,6 +888,20 @@ func TestInspectFailureStoresSafeAndLocalErrors(t *testing.T) {
 	}
 }
 
+func TestCreateSnapshotThawsTheGuestAfterResume(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateRunning
+	if _, err := manager.CreateSnapshot(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.freezes != 1 || len(runtime.thawsAfterResume) != 1 || runtime.thawsAfterResume[0] != runtime.resumes {
+		t.Fatalf("freezes = %d, thaws after resume = %v, resumes = %d", runtime.freezes, runtime.thawsAfterResume, runtime.resumes)
+	}
+}
+
 func TestCreateSnapshotRejectsUnknownRuntimeState(t *testing.T) {
 	manager, runtime, _, _ := newTestManager(t)
 	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
@@ -974,5 +1076,48 @@ func TestInformationReportsRequestedDiskSize(t *testing.T) {
 	information := informationFromRecords(desired, ObservedRecord{}, DiskUsage{SizeMiB: 30720, UsedMiB: 512})
 	if information.DiskMiB != 25600 || information.DiskUsedMiB != 512 {
 		t.Fatalf("disk = %d MiB, used = %d MiB", information.DiskMiB, information.DiskUsedMiB)
+	}
+}
+
+func TestReconcileDoesNotStopAnAppliedStoppedVirtualMachineAgain(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetPowerState(context.Background(), "machine-1", StateStopped); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.stops != 1 {
+		t.Fatalf("stops = %d, want 1", runtime.stops)
+	}
+	observed, err := manager.store.readObserved("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.Phase != "" || observed.OperationID != "" {
+		t.Fatalf("operation = %q %q, want none in progress", observed.Phase, observed.OperationID)
+	}
+
+	// A process that runs against the desired state is stopped again.
+	runtime.state = StateRunning
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 2 {
+		t.Fatalf("stops = %d, want 2", runtime.stops)
+	}
+
+	// A process that cannot be inspected still gets the hard stop.
+	runtime.inspectError = errors.New("socket unavailable")
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stops != 3 {
+		t.Fatalf("stops = %d, want 3", runtime.stops)
 	}
 }

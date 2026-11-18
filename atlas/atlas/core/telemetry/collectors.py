@@ -4,17 +4,25 @@ import os
 import shutil
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_network
 
 import frappe
 import requests
+from frappe.model.base_document import get_controller
 from frappe.utils import add_to_date, get_bench_path, get_datetime, now_datetime
 from frappe.utils.background_jobs import get_queue, get_queue_list
+from rq.job import Job
+
+from atlas.service.core.warpgate.sync import SYNCED_AT_CACHE_KEY
+from atlas.vm.core.vm_state import SLEEP_STATES
 
 MEBIBYTE = 1 << 20
+WARPGATE_WAITING_SINCE_CACHE_KEY = "atlas:warpgate-sync-waiting-since"
 # Probes run in parallel, so a slow node delays the minute's push by this much at most.
 READINESS_TIMEOUT_SECONDS = 3
+# The newest failed jobs of each queue that name the failing methods. Older ones are outside the hour.
+FAILED_JOBS_READ = 200
 
 # Terminal records are history, not state, so they are not counted.
 TERMINAL_MIGRATION_STATUSES = ("completed", "aborted", "failed")
@@ -37,6 +45,7 @@ class AtlasGauges:
 	def collect(self) -> list[dict]:
 		"""Return one sample list for every area. Each query is a small aggregate."""
 		self.add_virtual_machines()
+		self.add_machines()
 		self.add_hosts()
 		self.add_migrations()
 		self.add_images()
@@ -46,6 +55,8 @@ class AtlasGauges:
 		self.add_service_readiness()
 		self.add_jobs()
 		self.add_file_systems()
+		self.add_certificates()
+		self.add_warpgate_sync()
 		return self.samples
 
 	def add(self, metric: str, value: float, **labels: str) -> None:
@@ -72,6 +83,33 @@ class AtlasGauges:
 			"atlas_virtual_machine_oldest_draft_seconds", self.oldest_age([row.creation for row in drafts])
 		)
 		self.add("atlas_virtual_machines_terminating", sum(1 for row in rows if row.is_terminating))
+
+	def add_machines(self) -> None:
+		"""Name each machine that must send its machine metrics now: each Running host, and each VM that runs
+		and does not sleep. The machine-silent rule compares this list with the machines that send."""
+		for host in frappe.get_all("Metal Server", filters={"status": "Running"}, pluck="name"):
+			self.add("atlas_machine", 1, machine=host, kind="host")
+
+		running = [
+			state.virtual_machine
+			for state in frappe.get_all(
+				"Virtual Machine State",
+				filters={"status": "running"},
+				fields=["virtual_machine", "sleep_state"],
+			)
+			if state.sleep_state not in SLEEP_STATES
+		]
+		for machine in frappe.get_all(
+			"Virtual Machine",
+			filters={"name": ("in", running), "is_draft": 0, "is_terminating": 0},
+			fields=["name", "tenant_id"],
+		):
+			self.add(
+				"atlas_machine",
+				1,
+				machine=machine.name,
+				kind="service" if machine.tenant_id == 0 else "tenant",
+			)
 
 	def add_hosts(self) -> None:
 		"""Count hosts by status, name each host, and report its latest capacity and use."""
@@ -180,29 +218,41 @@ class AtlasGauges:
 		self.add_counts("atlas_metald_updates_active", Counter(updates), "status")
 
 		minute_ago = add_to_date(self.now, minutes=-1)
-		self.add(
-			"atlas_error_logs_last_minute", frappe.db.count("Error Log", {"creation": [">=", minute_ago]})
-		)
+		# Error Log is a virtual DocType in its own log database, so frappe.db.count reads a stale table.
+		error_logs = get_controller("Error Log").get_count("Error Log", {"creation": [">=", minute_ago]})
+		self.add("atlas_error_logs_last_minute", error_logs)
 
 	def add_services(self) -> None:
 		"""Count the nodes of each service by status."""
 		for doctype, service in SERVICE_DOCTYPES.items():
-			statuses = Counter(frappe.get_all(doctype, fields=["status"], pluck="status"))
-			for status, count in statuses.items():
+			nodes = frappe.get_all(doctype, fields=["name", "status", "virtual_machine"])
+			for status, count in Counter(node.status for node in nodes).items():
 				self.add("atlas_service_servers", count, service=service, status=status)
+			for node in nodes:
+				if node.status == "Failed":
+					self.add(
+						"atlas_service_node_failed",
+						1,
+						service=service,
+						node=node.name,
+						virtual_machine=node.virtual_machine or "",
+					)
 
 		# A region has one Cargo cluster, so Cargo Server is a Single.
 		cargo_status = frappe.db.get_single_value("Cargo Server", "status")
 		self.add("atlas_service_servers", 1, service="cargo", status=cargo_status or "Not Provisioned")
 
 	def add_service_readiness(self) -> None:
-		"""Name the VM of each active service node, and probe its readiness URL. The IPv6 router has none."""
-		nodes = []
+		"""Name the VM of each active service node, and probe its readiness URL. The IPv6 router has none.
+		A WireGuard gateway node is also probed at /healthz, which passes while it serves its devices."""
+		nodes, health_urls = [], {}
 		for doctype, service in SERVICE_DOCTYPES.items():
 			for name in frappe.get_all(doctype, filters={"status": "Active"}, pluck="name"):
 				node = frappe.get_doc(doctype, name)
 				url = None if service == "ipv6_router" else f"https://{node.get_domain()}/readyz"
 				nodes.append((service, name, node.virtual_machine, url))
+				if service == "wireguard_gateway":
+					health_urls[name] = f"https://{node.get_domain()}/healthz"
 
 		cargo = frappe.get_single("Cargo Server")
 		if cargo.status == "Active":
@@ -210,6 +260,7 @@ class AtlasGauges:
 
 		with ThreadPoolExecutor(max_workers=8) as pool:
 			readiness = list(pool.map(is_ready, [url for *_, url in nodes]))
+			health = dict(zip(health_urls, pool.map(is_ready, health_urls.values()), strict=True))
 
 		servers = dict(
 			frappe.get_all(
@@ -229,14 +280,27 @@ class AtlasGauges:
 			self.add("atlas_service_node", 1, **labels)
 			if url:
 				self.add("atlas_service_ready", int(ready), **labels)
+			if service == "wireguard_gateway":
+				self.add("atlas_service_healthy", int(health[name]), **labels)
 
 	def add_jobs(self) -> None:
-		"""Report queue backlogs. A rising failed count means jobs keep failing."""
+		"""Report queue backlogs. A rising failed count means jobs keep failing, and
+		`atlas_jobs_failed_last_hour` names the methods that fail."""
+		hour_ago = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
 		for queue_name in get_queue_list():
 			queue = get_queue(queue_name)
 			self.add("atlas_job_queue_length", queue.count, queue=queue_name)
 			self.add("atlas_job_failed", queue.failed_job_registry.count, queue=queue_name)
 			self.add("atlas_job_started", queue.started_job_registry.count, queue=queue_name)
+
+			job_ids = queue.failed_job_registry.get_job_ids(0, FAILED_JOBS_READ - 1, desc=True)
+			methods = Counter(
+				(job.kwargs.get("job_name") or job.func_name)
+				for job in Job.fetch_many(job_ids, connection=queue.connection, serializer=queue.serializer)
+				if job and job.ended_at and job.ended_at.replace(tzinfo=None) > hour_ago
+			)
+			for method, count in methods.items():
+				self.add("atlas_jobs_failed_last_hour", count, queue=queue_name, method=method)
 
 	def add_file_systems(self) -> None:
 		"""Report the size and free space of the root, bench, and local MariaDB file systems, once each."""
@@ -250,6 +314,35 @@ class AtlasGauges:
 			usage = shutil.disk_usage(path)
 			self.add("atlas_filesystem_bytes", usage.total, path=path, kind="size")
 			self.add("atlas_filesystem_bytes", usage.free, path=path, kind="available")
+
+	def add_certificates(self) -> None:
+		"""Report how long the wildcard certificate and the metald certificate of each Running host stay valid,
+		so a renewal that stops working shows before the certificate expires."""
+		expires_on = frappe.db.get_single_value("Atlas Settings", "wildcard_tls_expires_on")
+		if expires_on:
+			seconds = (get_datetime(expires_on) - self.now).total_seconds()
+			self.add("atlas_tls_certificate_expiry_seconds", seconds, certificate="wildcard")
+
+		for server in frappe.get_all(
+			"Metal Server",
+			filters={"status": "Running", "metald_tls_expires_on": ("is", "set")},
+			fields=["name", "metald_tls_expires_on"],
+		):
+			seconds = (get_datetime(server.metald_tls_expires_on) - self.now).total_seconds()
+			self.add(
+				"atlas_tls_certificate_expiry_seconds", seconds, certificate="metald", server=server.name
+			)
+
+	def add_warpgate_sync(self) -> None:
+		"""Report how long ago the Warpgate sync last reached every host. Without a full sync since the cache
+		started, the age counts from the first report without one, so a sync that never works still alerts."""
+		if not frappe.db.get_single_value("Atlas Settings", "warpgate_url"):
+			return
+
+		synced_at = frappe.cache.get_value(SYNCED_AT_CACHE_KEY) or frappe.cache.get_value(
+			WARPGATE_WAITING_SINCE_CACHE_KEY, generator=lambda: self.now
+		)
+		self.add("atlas_warpgate_sync_age_seconds", (self.now - get_datetime(synced_at)).total_seconds())
 
 	def latest_usages(self) -> list:
 		"""Return the newest usage sample of each host from the last hour."""

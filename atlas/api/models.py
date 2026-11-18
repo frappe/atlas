@@ -36,7 +36,9 @@ from atlas.vm.core.models import (
 	MAXIMUM_CPU_MILLICORES,
 	MAXIMUM_FIREWALL_PREFIXES,
 	MAXIMUM_SLEEP_OFFLOAD_SECONDS,
+	MAXIMUM_SLIDING_WINDOW_MINUTES,
 	MINIMUM_CPU_MILLICORES,
+	CPUBurst,
 	FirewallConfiguration,
 	FirewallRule,
 	VirtualMachineCreateRequest,
@@ -529,6 +531,19 @@ class CreateVirtualMachinePayload(StrictModel):
 		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
 		description="Idle time before Atlas offloads the disk. Zero disables it.",
 	)
+	is_burstable: bool = Field(default=False, description="Whether the VM can use CPU above its baseline.")
+	baseline_cpu_millicores: int = Field(
+		default=0,
+		ge=0,
+		le=MAXIMUM_CPU_MILLICORES,
+		description="CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+	)
+	sliding_window_minutes: int = Field(
+		default=0,
+		ge=0,
+		le=MAXIMUM_SLIDING_WINDOW_MINUTES,
+		description="How far back the average CPU use of a burstable VM is measured. Zero uses 60.",
+	)
 	disk_throughput_mibps: int = Field(
 		default=0, ge=0, description="Disk throughput limit in MiB/s. Zero removes the limit."
 	)
@@ -568,6 +583,19 @@ class CreateVirtualMachinePayload(StrictModel):
 		)
 		return self
 
+	@model_validator(mode="after")
+	def validate_cpu_burst(self) -> CreateVirtualMachinePayload:
+		"""Require a baseline that fits the CPU."""
+		_ = self.cpu_burst
+		return self
+
+	@property
+	def cpu_burst(self) -> CPUBurst:
+		"""Return the CPU burst settings with defaults for unset values."""
+		return CPUBurst.for_cpu(
+			self.is_burstable, self.baseline_cpu_millicores, self.sliding_window_minutes, self.cpu_millicores
+		)
+
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
 		"""Build the domain request for this API payload."""
 		return VirtualMachineCreateRequest(
@@ -586,6 +614,7 @@ class CreateVirtualMachinePayload(StrictModel):
 			sleep_after_idle_seconds=self.sleep_after_idle_seconds,
 			deep_sleep_after_idle_seconds=self.deep_sleep_after_idle_seconds,
 			coma_after_idle_seconds=self.coma_after_idle_seconds,
+			burst=self.cpu_burst,
 			disk_throughput_mibps=self.disk_throughput_mibps,
 			disk_iops=self.disk_iops,
 			private_network_throughput_mibps=self.private_network_throughput_mibps,
@@ -599,7 +628,7 @@ class CreateVirtualMachinePayload(StrictModel):
 
 
 class ResizePayload(PatchPayload):
-	"""VM resource and idle shutdown changes."""
+	"""VM resource, idle shutdown, and CPU burst changes."""
 
 	cpu_millicores: int | None = Field(
 		default=None,
@@ -628,6 +657,22 @@ class ResizePayload(PatchPayload):
 		ge=0,
 		le=MAXIMUM_SLEEP_OFFLOAD_SECONDS,
 		description="New idle time before Atlas offloads the disk. Zero disables it.",
+	)
+	is_burstable: bool | None = Field(
+		default=None,
+		description="Whether the VM can use CPU above its baseline. False clears the baseline and window.",
+	)
+	baseline_cpu_millicores: int | None = Field(
+		default=None,
+		ge=0,
+		le=MAXIMUM_CPU_MILLICORES,
+		description="New CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+	)
+	sliding_window_minutes: int | None = Field(
+		default=None,
+		ge=0,
+		le=MAXIMUM_SLIDING_WINDOW_MINUTES,
+		description="New sliding window of a burstable VM in minutes. Zero uses 60.",
 	)
 
 
@@ -788,6 +833,13 @@ class VirtualMachineResponse(BaseModel):
 	coma_after_idle_seconds: int = Field(
 		default=0, description="Idle time before disk offload. Zero disables it."
 	)
+	is_burstable: bool = Field(default=False, description="Whether the VM can use CPU above its baseline.")
+	baseline_cpu_millicores: int = Field(
+		default=0, description="CPU a burstable VM can always use. Zero when not burstable."
+	)
+	sliding_window_minutes: int = Field(
+		default=0, description="How far back average CPU use is measured. Zero when not burstable."
+	)
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
@@ -811,6 +863,9 @@ class VirtualMachineResponse(BaseModel):
 			sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
 			deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
 			coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
+			is_burstable=bool(virtual_machine.is_burstable),
+			baseline_cpu_millicores=virtual_machine.baseline_cpu_millicores,
+			sliding_window_minutes=virtual_machine.sliding_window_minutes,
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
@@ -865,6 +920,13 @@ class VirtualMachineCompute(BaseModel):
 	)
 	coma_after_idle_seconds: int = Field(
 		default=0, description="Idle time before disk offload. Zero disables it."
+	)
+	is_burstable: bool = Field(default=False, description="Whether the VM can use CPU above its baseline.")
+	baseline_cpu_millicores: int = Field(
+		default=0, description="CPU a burstable VM can always use. Zero when not burstable."
+	)
+	sliding_window_minutes: int = Field(
+		default=0, description="How far back average CPU use is measured. Zero when not burstable."
 	)
 
 
@@ -1019,6 +1081,9 @@ class VirtualMachineDetailResponse(BaseModel):
 				sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
 				deep_sleep_after_idle_seconds=virtual_machine.deep_sleep_after_idle_seconds,
 				coma_after_idle_seconds=virtual_machine.coma_after_idle_seconds,
+				is_burstable=bool(virtual_machine.is_burstable),
+				baseline_cpu_millicores=virtual_machine.baseline_cpu_millicores,
+				sliding_window_minutes=virtual_machine.sliding_window_minutes,
 			),
 			disk=VirtualMachineDisk(
 				size_mib=virtual_machine.disk_mib,
@@ -1132,6 +1197,45 @@ class VirtualMachineNetworkUsage(BaseModel):
 	sent_tcp_rst_packets: int = Field(default=0, description="Cumulative TCP RST packets sent by the guest.")
 
 
+class VirtualMachineGuestMemory(BaseModel):
+	"""Memory use that the guest kernel reports in `/proc/meminfo`."""
+
+	total_bytes: int = 0
+	free_bytes: int = Field(default=0, description="Memory that nothing uses, not even the page cache.")
+	available_bytes: int = Field(
+		default=0, description="Memory that new work can use without swap, including reclaimable cache."
+	)
+	cached_bytes: int = Field(default=0, description="Memory that the page cache uses.")
+	swap_total_bytes: int = 0
+	swap_free_bytes: int = 0
+
+
+class VirtualMachineGuestFilesystem(BaseModel):
+	"""Size and use of the guest root file system."""
+
+	size_bytes: int = 0
+	used_bytes: int = 0
+	inodes_total: int = 0
+	inodes_used: int = 0
+
+
+class VirtualMachineGuestUsage(BaseModel):
+	"""Resource use that the guest agent reports from inside the VM. The defaults describe a guest that did not answer."""
+
+	load_average: list[float] = Field(
+		default_factory=lambda: [0.0, 0.0, 0.0],
+		min_length=3,
+		max_length=3,
+		description="Load average over 1, 5 and 15 minutes.",
+	)
+	memory: VirtualMachineGuestMemory = Field(default_factory=VirtualMachineGuestMemory)
+	root_filesystem: VirtualMachineGuestFilesystem = Field(default_factory=VirtualMachineGuestFilesystem)
+	system_state: str = Field(
+		default="unreachable",
+		description="Output of `systemctl is-system-running`, such as `running` or `degraded`. `unreachable` when the guest agent did not answer.",
+	)
+
+
 class VirtualMachineMetricsQuery(StrictModel):
 	start: AwareDatetime | None = None
 	end: AwareDatetime | None = None
@@ -1152,9 +1256,69 @@ class VirtualMachineMetricsSample(BaseModel):
 	compute: VirtualMachineComputeUsage
 	disk: VirtualMachineDiskUsage
 	network: VirtualMachineNetworkUsage
+	guest: VirtualMachineGuestUsage = Field(
+		default_factory=VirtualMachineGuestUsage,
+		description="When the image has no guest agent, the VM is not running, or the guest does not answer in time, `system_state` is `unreachable` and the other values are zero.",
+	)
 
 
 class VirtualMachineMetricsResponse(BaseModel):
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "vm-00001",
+					"samples": [
+						{
+							"timestamp": 1794837563,
+							"up": True,
+							"compute": {"cpu_microseconds": 45968891, "memory_bytes": 258686976},
+							"disk": {
+								"size_mib": 12288,
+								"used_mib": 390,
+								"throughput_limit_mibps": 0,
+								"iops_limit": 0,
+								"read_bytes_per_second": 1045943,
+								"write_bytes_per_second": 502709,
+								"read_milli_iops": 2672,
+								"write_milli_iops": 123933,
+							},
+							"network": {
+								"received_bytes": 81974642,
+								"received_packets": 14273,
+								"sent_bytes": 288502,
+								"sent_packets": 2932,
+								"sent_icmp_packets": 32,
+								"sent_udp_packets": 48,
+								"sent_tcp_syn_packets": 32,
+								"sent_tcp_rst_packets": 7,
+							},
+							"guest": {
+								"load_average": [0.03, 0.05, 0.01],
+								"memory": {
+									"total_bytes": 1008353280,
+									"free_bytes": 655757312,
+									"available_bytes": 749666304,
+									"cached_bytes": 215384064,
+									"swap_total_bytes": 0,
+									"swap_free_bytes": 0,
+								},
+								"root_filesystem": {
+									"size_bytes": 12594667520,
+									"used_bytes": 1521377280,
+									"inodes_total": 786432,
+									"inodes_used": 48938,
+								},
+								"system_state": "running",
+							},
+						}
+					],
+					"sample_interval_seconds": 10,
+				}
+			]
+		}
+	)
+
 	id: str
 	samples: list[VirtualMachineMetricsSample]
 	sample_interval_seconds: int = Field(default=0, description="Seconds covered by each sample.")
@@ -1204,6 +1368,42 @@ class HostResponse(BaseModel):
 	title: str = Field(description="Host name. People type it in `ssh <email>:<title>@warpgate.<domain>`.")
 	status: str = Field(description="Host lifecycle state.")
 	tags: dict[str, str] = Field(description="Host tags as key-value pairs.")
+
+
+class BeaconResource(BaseModel):
+	"""One regional resource that Beacon, the incident manager, monitors."""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"resource_id": "vm-00010",
+					"resource_type": "Virtual Machine",
+					"parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+					"title": "vm-00010",
+					"status": "Active",
+					"url": "https://atlas.example.com/desk/virtual-machine/vm-00010",
+				}
+			]
+		}
+	)
+
+	resource_id: str = Field(description="Atlas ID. Telemetry from this resource carries it.")
+	resource_type: str = Field(
+		description="`Atlas`, `Metal Host`, `Virtual Machine`, a service node DocType, or `Cargo Server`."
+	)
+	parent_id: str = Field(description="Resource ID of the parent, or empty for a root resource.")
+	title: str = Field(description="Name that people see.")
+	status: str = Field(description="`Pending`, `Active`, `Suspended` or `Terminated`.")
+	url: str = Field(
+		default="", description="Desk URL of the Atlas record, so a responder opens it from Beacon."
+	)
+
+
+class BeaconResourceListResponse(BaseModel):
+	"""Every resource that Beacon monitors in this region."""
+
+	resources: list[BeaconResource] = Field(description="Atlas, then hosts, VMs, service nodes and Cargo.")
 
 
 class HostAccessGrantPayload(StrictModel):

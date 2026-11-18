@@ -891,6 +891,7 @@ private_network_cidr="{cidr}"
 Description=Atlas Pilot VM ({VM_NAME})
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
@@ -903,7 +904,9 @@ ExecStopPost={self.paths.network_script} stop
 TimeoutStopSec=120
 StandardOutput=append:{self.paths.console_log}
 StandardError=append:{self.paths.console_log}
-Restart=no
+# A guest reboot or a Firecracker crash starts the VM again.
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

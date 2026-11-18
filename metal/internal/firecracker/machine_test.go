@@ -183,6 +183,7 @@ func (s *stubUnits) Wait(ctx context.Context, _ string) (platform.Result, error)
 
 func (s *stubUnits) List(context.Context) ([]string, error)                   { return nil, nil }
 func (s *stubUnits) SetLimits(context.Context, string, platform.Limits) error { return nil }
+func (s *stubUnits) CPUQuota(context.Context, string) (int, error)            { return 0, nil }
 func (s *stubUnits) GetUsage(context.Context, string, string) (platform.SystemdUnitUsage, error) {
 	return platform.SystemdUnitUsage{}, nil
 }

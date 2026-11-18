@@ -33,7 +33,7 @@ ALLOWED_ACTIONS: dict[Literal["normal", "dangerous"], dict[str, set[str]]] = {
 		"Proxy Server": {"provision", "update_dns_record", "update_package", "configure_telemetry"},
 		"IPv6 Router Server": {"update_package", "configure_telemetry"},
 		"Wireguard Gateway Server": {"update_package", "configure_telemetry"},
-		"Cargo Server": {"enable_pilot_release_tracker", "disable_pilot_release_tracker"},
+		"Cargo Server": {"enable_pilot_release_tracker", "disable_pilot_release_tracker", "configure_telemetry"},
 	},
 	"dangerous": {
 		"Metal Server": {"upgrade_metald", "toggle_cpu_template", "reboot_server", "drain"},

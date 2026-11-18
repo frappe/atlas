@@ -450,6 +450,16 @@ class TestVirtualMachineResize(UnitTestCase):
 			with self.assertRaises((AtlasUserError, FrappeTypeError)):
 				virtual_machine.resize(sleep_after_idle_seconds=value)
 
+	def test_reset_cpu_burst_rejects_a_virtual_machine_that_is_not_burstable(self) -> None:
+		"""Reset CPU Burst needs a burstable VM and does not call Metal without one."""
+		virtual_machine = self.build_virtual_machine()
+		virtual_machine.is_burstable = 0
+
+		with patch.object(virtual_machine_module, "VirtualMachineService") as service:
+			with self.assertRaisesRegex(AtlasUserError, "not burstable"):
+				virtual_machine.reset_cpu_burst()
+		service.assert_not_called()
+
 	def test_resize_disk_rejects_a_non_integer_value(self) -> None:
 		virtual_machine = self.build_virtual_machine()
 
@@ -479,7 +489,15 @@ class TestVirtualMachineService(UnitTestCase):
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
 		self.assertEqual(
-			set(metal_request["compute"]), {"cpu_millicores", "memory_mib", "sleep_after_idle_seconds"}
+			set(metal_request["compute"]),
+			{
+				"cpu_millicores",
+				"memory_mib",
+				"sleep_after_idle_seconds",
+				"is_burstable",
+				"baseline_cpu_millicores",
+				"sliding_window_minutes",
+			},
 		)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
@@ -525,6 +543,9 @@ class TestVirtualMachineService(UnitTestCase):
 				"cpu_millicores": 2000,
 				"memory_mib": 2048,
 				"sleep_after_idle_seconds": 0,
+				"is_burstable": False,
+				"baseline_cpu_millicores": 0,
+				"sliding_window_minutes": 0,
 			},
 		)
 		self.assertEqual(metal_request["disk"]["size_mib"], 10240)

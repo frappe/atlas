@@ -352,8 +352,8 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 
 	def test_a_concurrent_network_change_gets_a_conflict(self) -> None:
 		with (
-			patch("atlas.vm.core.vm_service.NETWORK_LOCK_TIMEOUT_SECONDS", 0),
-			self.build_service(None).network_lock(),
+			patch("atlas.vm.core.vm_service.CHANGE_LOCK_TIMEOUT_SECONDS", 0),
+			self.build_service(None).change_lock("network"),
 			self.assertRaises(AtlasConflictError),
 		):
 			self.build_service(None).set_routes([])

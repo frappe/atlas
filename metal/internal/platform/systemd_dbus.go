@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,9 @@ const (
 
 	// errorNoSuchUnit is the D-Bus error name systemd returns for an absent unit.
 	errorNoSuchUnit = "org.freedesktop.systemd1.NoSuchUnit"
+
+	// systemdRestartTimeout bounds how long Status retries while systemd re-executes.
+	systemdRestartTimeout = 10 * time.Second
 
 	// microsecondsPerCPUMillicore converts a millicore to the microseconds of CPU
 	// time per second that systemd expects in CPUQuotaPerSecUSec.
@@ -78,8 +82,25 @@ func (d *DBus) ResetFailed(ctx context.Context, id string) error {
 // Status reports the activation state of the unit for id. An absent unit reads
 // as inactive, because a virtual machine that never started is a stopped one.
 func (d *DBus) Status(ctx context.Context, id string) (Status, error) {
-	unit := unitName(id)
+	ticker := time.NewTicker(waitPollInterval)
+	defer ticker.Stop()
 
+	deadline := time.Now().Add(systemdRestartTimeout)
+	for {
+		status, err := d.readStatus(ctx, unitName(id))
+		if !isSystemdRestarting(err) || time.Now().After(deadline) {
+			return status, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return Status{}, err
+		case <-ticker.C:
+		}
+	}
+}
+
+func (d *DBus) readStatus(ctx context.Context, unit string) (Status, error) {
 	properties, err := d.connection.GetUnitPropertiesContext(ctx, unit)
 	if isUnitNotLoaded(err) {
 		return Status{ActiveState: "inactive", SubState: "dead"}, nil
@@ -173,6 +194,8 @@ func (d *DBus) SetLimits(ctx context.Context, id string, limits Limits) error {
 	if limits.MemoryMaxBytes > 0 {
 		value := dbus.MakeVariant(uint64(limits.MemoryMaxBytes))
 		properties = append(properties, systemd.Property{Name: "MemoryMax", Value: value})
+		// The host must not swap guest memory: a guest stalls on disk when it touches a swapped page.
+		properties = append(properties, systemd.Property{Name: "MemorySwapMax", Value: dbus.MakeVariant(uint64(0))})
 	}
 	if limits.CPUMillicores > 0 {
 		quota := cpuQuotaMicrosecondsPerSecond(limits.CPUMillicores)
@@ -184,6 +207,22 @@ func (d *DBus) SetLimits(ctx context.Context, id string, limits Limits) error {
 	}
 
 	return d.connection.SetUnitPropertiesContext(ctx, unitName(id), true, properties...)
+}
+
+// CPUQuota reads the unit's CPUQuotaPerSecUSec. systemd reports no quota as the largest uint64.
+func (d *DBus) CPUQuota(ctx context.Context, id string) (int, error) {
+	property, err := d.connection.GetUnitTypePropertyContext(ctx, unitName(id), "Service", "CPUQuotaPerSecUSec")
+	if err != nil {
+		return 0, err
+	}
+	quota, isQuota := property.Value.Value().(uint64)
+	if !isQuota {
+		return 0, fmt.Errorf("unit %s CPUQuotaPerSecUSec is %T, want uint64", unitName(id), property.Value.Value())
+	}
+	if quota == math.MaxUint64 {
+		return math.MaxInt, nil
+	}
+	return int(quota / microsecondsPerCPUMillicore), nil
 }
 
 // GetUsage reads the unit's current cgroup CPU, memory, and root disk use. An absent
@@ -270,6 +309,14 @@ func isUnitNotLoaded(err error) bool {
 	}
 
 	return strings.Contains(err.Error(), "not loaded")
+}
+
+// isSystemdRestarting reports whether PID 1 is off the bus while it re-executes,
+// for about a second after a glibc or systemd upgrade.
+func isSystemdRestarting(err error) bool {
+	var dbusError dbus.Error
+	return errors.As(err, &dbusError) &&
+		(dbusError.Name == "org.freedesktop.DBus.Error.NoReply" || dbusError.Name == "org.freedesktop.DBus.Error.ServiceUnknown")
 }
 
 // unitName builds the template instance name for a virtual machine ID.

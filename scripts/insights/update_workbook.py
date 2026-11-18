@@ -65,10 +65,6 @@ def main() -> None:
 		"--source", type=Path, help="use this scripts/insights folder instead of downloading one"
 	)
 	parser.add_argument(
-		"--alert-webhook-url",
-		help="send the alerts to this https URL, such as a Raven incoming webhook",
-	)
-	parser.add_argument(
 		"--skip-chart-check", action="store_true", help="do not load every chart after the update"
 	)
 	arguments = parser.parse_args()
@@ -90,7 +86,6 @@ def main() -> None:
 			"ATLAS_INSIGHTS_DEFAULT_HOST": arguments.default_host,
 			"ATLAS_INSIGHTS_SKIP_CHART_CHECK": "1" if arguments.skip_chart_check else "",
 			"ATLAS_INSIGHTS_DATA_SOURCE": arguments.data_source,
-			"ATLAS_INSIGHTS_ALERT_WEBHOOK_URL": arguments.alert_webhook_url or "",
 			"PYTHONDONTWRITEBYTECODE": "1",
 		}
 		with workbook.open("w") as output:

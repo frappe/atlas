@@ -34,6 +34,12 @@
   "deep_sleep_after_idle_seconds",
   "column_break_mhiq",
   "coma_after_idle_seconds",
+  "cpu_burst_section",
+  "is_burstable",
+  "column_break_burst",
+  "baseline_cpu_millicores",
+  "column_break_burst_window",
+  "sliding_window_minutes",
   "section_break_network",
   "mac",
   "public_ipv4",
@@ -184,6 +190,44 @@
    "fieldtype": "Int",
    "label": "Coma After Idle (Seconds)",
    "non_negative": 1,
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "cpu_burst_section",
+   "fieldtype": "Section Break",
+   "label": "CPU Burst"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_burstable",
+   "fieldtype": "Check",
+   "label": "Burstable",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_burst",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.is_burstable",
+   "fieldname": "baseline_cpu_millicores",
+   "fieldtype": "Int",
+   "label": "Baseline CPU (millicores)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_burst_window",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.is_burstable",
+   "description": "How far back average CPU use is measured.",
+   "fieldname": "sliding_window_minutes",
+   "fieldtype": "Int",
+   "label": "Sliding Window (Minutes)",
    "read_only": 1,
    "show_description_on_click": 1
   },
@@ -430,7 +474,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-31 02:30:00.000000",
+ "modified": "2026-11-15 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

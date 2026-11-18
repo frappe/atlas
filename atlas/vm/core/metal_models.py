@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from typing import Any
 
@@ -55,6 +55,9 @@ class MetalCompute:
 	cpu_millicores: int
 	memory_mib: int
 	sleep_after_idle_seconds: int
+	is_burstable: bool = False
+	baseline_cpu_millicores: int = 0
+	sliding_window_minutes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,18 +305,77 @@ class MetalNetworkUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalGuestMemory:
+	"""Store the memory use that the guest kernel reports."""
+
+	total_bytes: int = 0
+	free_bytes: int = 0
+	available_bytes: int = 0
+	cached_bytes: int = 0
+	swap_total_bytes: int = 0
+	swap_free_bytes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MetalGuestFilesystem:
+	"""Store the size and use of the guest root file system."""
+
+	size_bytes: int = 0
+	used_bytes: int = 0
+	inodes_total: int = 0
+	inodes_used: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MetalGuestUsage:
+	"""Store the usage report of the guest agent. The defaults describe a guest that did not answer."""
+
+	load_average: tuple[float, float, float] = (0.0, 0.0, 0.0)
+	memory: MetalGuestMemory = field(default_factory=MetalGuestMemory)
+	root_filesystem: MetalGuestFilesystem = field(default_factory=MetalGuestFilesystem)
+	system_state: str = "unreachable"
+
+	@classmethod
+	def from_dict(cls, value: dict[str, Any]) -> MetalGuestUsage:
+		load_average = value.get("load_average")
+		if (
+			not isinstance(load_average, list)
+			or len(load_average) != 3
+			or any(not isinstance(item, int | float) or isinstance(item, bool) for item in load_average)
+		):
+			raise ValueError("load_average must hold three numbers")
+		memory = object_field(value, "memory")
+		root_filesystem = object_field(value, "root_filesystem")
+		return cls(
+			load_average=(float(load_average[0]), float(load_average[1]), float(load_average[2])),
+			memory=MetalGuestMemory(
+				**{item.name: integer_field(memory, item.name) for item in fields(MetalGuestMemory)}
+			),
+			root_filesystem=MetalGuestFilesystem(
+				**{
+					item.name: integer_field(root_filesystem, item.name)
+					for item in fields(MetalGuestFilesystem)
+				}
+			),
+			system_state=string_field(value, "system_state", default="unknown"),
+		)
+
+
+@dataclass(frozen=True, slots=True)
 class MetalVirtualMachineMetricsSample:
 	timestamp: int
 	up: bool
 	compute: MetalComputeUsage
 	disk: MetalDiskUsage
 	network: MetalNetworkUsage
+	guest: MetalGuestUsage = field(default_factory=MetalGuestUsage)
 
 	@classmethod
 	def from_dict(cls, value: dict[str, Any]) -> MetalVirtualMachineMetricsSample:
 		compute = object_field(value, "compute")
 		disk = object_field(value, "disk")
 		network = object_field(value, "network")
+		guest = value.get("guest")
 		return cls(
 			timestamp=integer_field(value, "timestamp"),
 			up=boolean_field(value, "up"),
@@ -341,6 +403,9 @@ class MetalVirtualMachineMetricsSample:
 				sent_tcp_syn_packets=integer_field(network, "sent_tcp_syn_packets", default=0),
 				sent_tcp_rst_packets=integer_field(network, "sent_tcp_rst_packets", default=0),
 			),
+			guest=MetalGuestUsage.from_dict(object_value(guest, "guest"))
+			if guest is not None
+			else MetalGuestUsage(),
 		)
 
 
@@ -363,6 +428,43 @@ class MetalVirtualMachineMetrics:
 		)
 
 
+@dataclass(frozen=True, slots=True)
+class MetalCPUBurstStatus:
+	"""A burstable VM's sliding window average and current CPU limit."""
+
+	cpu_millicores: int
+	baseline_cpu_millicores: int
+	release_cpu_millicores: int
+	sliding_window_minutes: int
+	# None until metald has CPU samples of the VM in memory.
+	average_cpu_millicores: int | None
+	# None when the VM is not running.
+	cpu_limit_millicores: int | None
+	is_limited: bool
+	up_seconds: int
+	idle_seconds: int
+	reset_at: datetime | None
+
+	@classmethod
+	def from_dict(cls, value: dict[str, Any]) -> MetalCPUBurstStatus:
+		return cls(
+			cpu_millicores=integer_field(value, "cpu_millicores"),
+			baseline_cpu_millicores=integer_field(value, "baseline_cpu_millicores"),
+			release_cpu_millicores=integer_field(value, "release_cpu_millicores"),
+			sliding_window_minutes=integer_field(value, "sliding_window_minutes"),
+			average_cpu_millicores=(
+				integer_field(value, "average_cpu_millicores") if "average_cpu_millicores" in value else None
+			),
+			cpu_limit_millicores=(
+				integer_field(value, "cpu_limit_millicores") if "cpu_limit_millicores" in value else None
+			),
+			is_limited=boolean_field(value, "is_limited"),
+			up_seconds=integer_field(value, "up_seconds"),
+			idle_seconds=integer_field(value, "idle_seconds"),
+			reset_at=timestamp_field(value, "reset_at"),
+		)
+
+
 def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 	"""Parse the desired half of a Metal VM response."""
 	compute = object_field(value, "compute")
@@ -380,6 +482,10 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
 			memory_mib=integer_field(compute, "memory_mib"),
 			sleep_after_idle_seconds=integer_field(compute, "sleep_after_idle_seconds"),
+			# A host that is not upgraded yet omits the burst fields.
+			is_burstable=boolean_field(compute, "is_burstable", default=False),
+			baseline_cpu_millicores=integer_field(compute, "baseline_cpu_millicores", default=0),
+			sliding_window_minutes=integer_field(compute, "sliding_window_minutes", default=0),
 		),
 		disk=MetalDisk(
 			size_mib=integer_field(disk, "size_mib"),

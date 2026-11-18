@@ -119,7 +119,12 @@ func (manager *Manager) offloadSleepArtifact(ctx context.Context, identifier str
 		unlock()
 		return nil
 	}
-	desired, observed, err := manager.newVirtualMachine(identifier).records()
+	virtualMachine := manager.newVirtualMachine(identifier)
+	desired, observed, err := virtualMachine.records()
+	if virtualMachine.isRemoved(err) {
+		unlock()
+		return nil
+	}
 	if err != nil {
 		unlock()
 		return err

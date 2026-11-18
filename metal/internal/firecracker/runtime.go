@@ -24,8 +24,13 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// maxConcurrentSSHSessions limits host-wide SSH console sessions.
-const maxConcurrentSSHSessions = 32
+const (
+	// maxConcurrentSSHSessions limits host-wide SSH console sessions.
+	maxConcurrentSSHSessions = 2048
+
+	// maxConcurrentSSHSessionsPerVirtualMachine stops one VM from using every host slot.
+	maxConcurrentSSHSessionsPerVirtualMachine = 4
+)
 
 // virtualMachineStorage prepares and releases the disk of one VM.
 type virtualMachineStorage interface {
@@ -67,6 +72,7 @@ type Runtime struct {
 	serialBroker          serialBroker
 	sshMutex              sync.Mutex
 	sshSessions           map[string]*sshSession
+	silentGuests          silentGuests
 	logger                *slog.Logger
 	telemetry             *telemetry.Registry
 }
@@ -190,6 +196,7 @@ func (runtime *Runtime) Pause(ctx context.Context, input vm.RuntimeMachine) erro
 
 // Resume resumes a paused Firecracker virtual machine.
 func (runtime *Runtime) Resume(ctx context.Context, input vm.RuntimeMachine) error {
+	runtime.silentGuests.forget(input.ID)
 	return runtime.newMachine(input).Resume(ctx)
 }
 
@@ -199,8 +206,11 @@ func (runtime *Runtime) Remove(ctx context.Context, input vm.RuntimeMachine) err
 		return err
 	}
 
-	if err := os.Remove(runtime.configuration.socketPath(input.ID)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove Firecracker socket: %w", err)
+	runtime.silentGuests.forget(input.ID)
+	for _, link := range []string{runtime.configuration.socketPath(input.ID), runtime.configuration.vsockSocketPath(input.ID)} {
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove Firecracker socket: %w", err)
+		}
 	}
 	if err := os.Remove(runtime.configuration.jailerEnvironmentPath(input.ID)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove jailer environment: %w", err)
@@ -250,6 +260,20 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 func (runtime *Runtime) IsInRescueMode(identifier string) bool {
 	_, err := os.Stat(filepath.Join(runtime.configuration.chrootRoot(identifier), rescuedDrivePath))
 	return err == nil
+}
+
+// CPULimit returns the CPU quota of the running VM in millicores.
+func (runtime *Runtime) CPULimit(ctx context.Context, machine vm.RuntimeMachine) (int, error) {
+	return runtime.units.CPUQuota(ctx, machine.ID)
+}
+
+// SetCPULimit changes the CPU quota of the running VM until its next start.
+// SetLimits skips a zero limit, so a zero here would silently do nothing.
+func (runtime *Runtime) SetCPULimit(ctx context.Context, machine vm.RuntimeMachine, millicores int) error {
+	if millicores <= 0 {
+		return fmt.Errorf("CPU limit of VM %s must be positive, got %d", machine.ID, millicores)
+	}
+	return runtime.units.SetLimits(ctx, machine.ID, platform.Limits{CPUMillicores: millicores})
 }
 
 // GetUsage reads CPU and disk use from the unit cgroup and memory from the

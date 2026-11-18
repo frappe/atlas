@@ -25,6 +25,7 @@ const (
 	// guest size plus fixed overhead.
 	maximumMemoryMiB             = (math.MaxInt - 128) / 2
 	maximumSleepAfterIdleSeconds = int64(math.MaxInt64) / int64(time.Second)
+	maximumSlidingWindowMinutes  = 24 * 60
 	maximumFirewallPrefixes      = 50
 
 	maximumHostnameLength = 253
@@ -54,9 +55,12 @@ type createRequest struct {
 
 // computeRequest is the complete compute configuration.
 type computeRequest struct {
-	CPUMillicores         int `json:"cpu_millicores" minimum:"100" maximum:"32000"`
-	MemoryMiB             int `json:"memory_mib" minimum:"1"`
-	SleepAfterIdleSeconds int `json:"sleep_after_idle_seconds" minimum:"0"`
+	CPUMillicores         int  `json:"cpu_millicores" minimum:"100" maximum:"32000"`
+	MemoryMiB             int  `json:"memory_mib" minimum:"1"`
+	SleepAfterIdleSeconds int  `json:"sleep_after_idle_seconds" minimum:"0"`
+	IsBurstable           bool `json:"is_burstable"`
+	BaselineCPUMillicores int  `json:"baseline_cpu_millicores" minimum:"0"`
+	SlidingWindowMinutes  int  `json:"sliding_window_minutes" minimum:"0" maximum:"1440"`
 }
 
 // imageRequest identifies boot content and how the host should keep it.
@@ -216,6 +220,7 @@ func (request createRequest) specification() vm.Specification {
 		CPUMillicores:         request.Compute.CPUMillicores,
 		MemoryMiB:             request.Compute.MemoryMiB,
 		SleepAfterIdleSeconds: request.Compute.SleepAfterIdleSeconds,
+		CPUBurst:              request.Compute.cpuBurst(),
 		DiskMiB:               request.Disk.SizeMiB,
 		Disk:                  request.Disk.specification(),
 		Image:                 request.Image.specification(),
@@ -247,7 +252,33 @@ func (request computeRequest) validate() error {
 	if int64(request.SleepAfterIdleSeconds) > maximumSleepAfterIdleSeconds {
 		return fmt.Errorf("compute.sleep_after_idle_seconds is too large")
 	}
+	return request.validateCPUBurst()
+}
+
+// validateCPUBurst rejects burst settings without burst, so no hidden value stays stored.
+func (request computeRequest) validateCPUBurst() error {
+	if !request.IsBurstable {
+		if request.BaselineCPUMillicores != 0 || request.SlidingWindowMinutes != 0 {
+			return fmt.Errorf("compute.baseline_cpu_millicores and compute.sliding_window_minutes need compute.is_burstable")
+		}
+		return nil
+	}
+	if request.BaselineCPUMillicores < 1 || request.BaselineCPUMillicores > request.CPUMillicores {
+		return fmt.Errorf("compute.baseline_cpu_millicores must be from 1 to compute.cpu_millicores")
+	}
+	if request.SlidingWindowMinutes < 1 || request.SlidingWindowMinutes > maximumSlidingWindowMinutes {
+		return fmt.Errorf("compute.sliding_window_minutes must be from 1 to %d", maximumSlidingWindowMinutes)
+	}
 	return nil
+}
+
+// cpuBurst converts the request burst fields into the domain settings.
+func (request computeRequest) cpuBurst() vm.CPUBurst {
+	return vm.CPUBurst{
+		IsBurstable:           request.IsBurstable,
+		BaselineCPUMillicores: request.BaselineCPUMillicores,
+		SlidingWindowMinutes:  request.SlidingWindowMinutes,
+	}
 }
 
 // specification converts the request into the domain image.

@@ -217,6 +217,79 @@
         "title": "ApiErrorResponse",
         "type": "object"
       },
+      "BeaconResource": {
+        "description": "One regional resource that Beacon, the incident manager, monitors.",
+        "examples": [
+          {
+            "parent_id": "01a0f3e4-a305-77e1-9e93-18b07224f795",
+            "resource_id": "vm-00010",
+            "resource_type": "Virtual Machine",
+            "status": "Active",
+            "title": "vm-00010",
+            "url": "https://atlas.example.com/desk/virtual-machine/vm-00010"
+          }
+        ],
+        "properties": {
+          "parent_id": {
+            "description": "Resource ID of the parent, or empty for a root resource.",
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "resource_id": {
+            "description": "Atlas ID. Telemetry from this resource carries it.",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "description": "`Atlas`, `Metal Host`, `Virtual Machine`, a service node DocType, or `Cargo Server`.",
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "status": {
+            "description": "`Pending`, `Active`, `Suspended` or `Terminated`.",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "Name that people see.",
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "Desk URL of the Atlas record, so a responder opens it from Beacon.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "resource_type",
+          "parent_id",
+          "title",
+          "status"
+        ],
+        "title": "BeaconResource",
+        "type": "object"
+      },
+      "BeaconResourceListResponse": {
+        "description": "Every resource that Beacon monitors in this region.",
+        "properties": {
+          "resources": {
+            "description": "Atlas, then hosts, VMs, service nodes and Cargo.",
+            "items": {
+              "$ref": "#/components/schemas/BeaconResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resources"
+        ],
+        "title": "BeaconResourceListResponse",
+        "type": "object"
+      },
       "CapacityUnavailableResponse": {
         "description": "The JSON body of a 503 from virtual machine creation.\n\n`error.code` separates a fleet that is full from one that is only busy, so a\ncaller can retry a busy placement at once and escalate a full one.",
         "properties": {
@@ -349,6 +422,14 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+            "maximum": 32000,
+            "minimum": 0,
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before Atlas offloads the disk. Zero disables it.",
@@ -412,6 +493,12 @@
             "default": true,
             "description": "Reach the IPv4 internet through host NAT. A public IPv4 address needs it. Without it and without a public IPv6 address, the VM reaches only the mesh.",
             "title": "Ipv4 Internet Access",
+            "type": "boolean"
+          },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
             "type": "boolean"
           },
           "is_privileged": {
@@ -504,6 +591,14 @@
             "maximum": 9223372036,
             "minimum": 0,
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back the average CPU use of a burstable VM is measured. Zero uses 60.",
+            "maximum": 1440,
+            "minimum": 0,
+            "title": "Sliding Window Minutes",
             "type": "integer"
           },
           "ssh_keys": {
@@ -1895,8 +1990,23 @@
       },
       "ResizePayload": {
         "additionalProperties": false,
-        "description": "VM resource and idle shutdown changes.",
+        "description": "VM resource, idle shutdown, and CPU burst changes.",
         "properties": {
+          "baseline_cpu_millicores": {
+            "anyOf": [
+              {
+                "maximum": 32000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New CPU a burstable VM can always use, at most its CPU. Zero uses 20% of CPU.",
+            "title": "Baseline Cpu Millicores"
+          },
           "coma_after_idle_seconds": {
             "anyOf": [
               {
@@ -1956,6 +2066,19 @@
             "description": "New root disk capacity in MiB.",
             "title": "Disk Mib"
           },
+          "is_burstable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Whether the VM can use CPU above its baseline. False clears the baseline and window.",
+            "title": "Is Burstable"
+          },
           "memory_mib": {
             "anyOf": [
               {
@@ -1984,6 +2107,21 @@
             "default": null,
             "description": "New idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds"
+          },
+          "sliding_window_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New sliding window of a burstable VM in minutes. Zero uses 60.",
+            "title": "Sliding Window Minutes"
           }
         },
         "title": "ResizePayload",
@@ -2089,6 +2227,12 @@
       "VirtualMachineCompute": {
         "description": "The compute shape of one virtual machine.",
         "properties": {
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use. Zero when not burstable.",
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before disk offload. Zero disables it.",
@@ -2106,6 +2250,12 @@
             "title": "Deep Sleep After Idle Seconds",
             "type": "integer"
           },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
+            "type": "boolean"
+          },
           "memory_mib": {
             "description": "Memory capacity in MiB.",
             "title": "Memory Mib",
@@ -2114,6 +2264,12 @@
           "sleep_after_idle_seconds": {
             "description": "Idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back average CPU use is measured. Zero when not burstable.",
+            "title": "Sliding Window Minutes",
             "type": "integer"
           }
         },
@@ -2506,6 +2662,102 @@
         "title": "VirtualMachineGuest",
         "type": "object"
       },
+      "VirtualMachineGuestFilesystem": {
+        "description": "Size and use of the guest root file system.",
+        "properties": {
+          "inodes_total": {
+            "default": 0,
+            "title": "Inodes Total",
+            "type": "integer"
+          },
+          "inodes_used": {
+            "default": 0,
+            "title": "Inodes Used",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "default": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "used_bytes": {
+            "default": 0,
+            "title": "Used Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "VirtualMachineGuestFilesystem",
+        "type": "object"
+      },
+      "VirtualMachineGuestMemory": {
+        "description": "Memory use that the guest kernel reports in `/proc/meminfo`.",
+        "properties": {
+          "available_bytes": {
+            "default": 0,
+            "description": "Memory that new work can use without swap, including reclaimable cache.",
+            "title": "Available Bytes",
+            "type": "integer"
+          },
+          "cached_bytes": {
+            "default": 0,
+            "description": "Memory that the page cache uses.",
+            "title": "Cached Bytes",
+            "type": "integer"
+          },
+          "free_bytes": {
+            "default": 0,
+            "description": "Memory that nothing uses, not even the page cache.",
+            "title": "Free Bytes",
+            "type": "integer"
+          },
+          "swap_free_bytes": {
+            "default": 0,
+            "title": "Swap Free Bytes",
+            "type": "integer"
+          },
+          "swap_total_bytes": {
+            "default": 0,
+            "title": "Swap Total Bytes",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "default": 0,
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "VirtualMachineGuestMemory",
+        "type": "object"
+      },
+      "VirtualMachineGuestUsage": {
+        "description": "Resource use that the guest agent reports from inside the VM. The defaults describe a guest that did not answer.",
+        "properties": {
+          "load_average": {
+            "description": "Load average over 1, 5 and 15 minutes.",
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Load Average",
+            "type": "array"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/VirtualMachineGuestMemory"
+          },
+          "root_filesystem": {
+            "$ref": "#/components/schemas/VirtualMachineGuestFilesystem"
+          },
+          "system_state": {
+            "default": "unreachable",
+            "description": "Output of `systemctl is-system-running`, such as `running` or `degraded`. `unreachable` when the guest agent did not answer.",
+            "title": "System State",
+            "type": "string"
+          }
+        },
+        "title": "VirtualMachineGuestUsage",
+        "type": "object"
+      },
       "VirtualMachineListResponse": {
         "description": "A stored virtual machine with its last known host state.",
         "examples": [
@@ -2538,6 +2790,12 @@
             ],
             "title": "Architecture",
             "type": "string"
+          },
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use. Zero when not burstable.",
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
           },
           "coma_after_idle_seconds": {
             "default": 0,
@@ -2576,6 +2834,12 @@
             "description": "Image used to create the virtual machine.",
             "title": "Image Id",
             "type": "string"
+          },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
+            "type": "boolean"
           },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
@@ -2617,6 +2881,12 @@
           "sleep_after_idle_seconds": {
             "description": "Idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back average CPU use is measured. Zero when not burstable.",
+            "title": "Sliding Window Minutes",
             "type": "integer"
           },
           "state_synced_at": {
@@ -2666,6 +2936,64 @@
         "type": "object"
       },
       "VirtualMachineMetricsResponse": {
+        "examples": [
+          {
+            "id": "vm-00001",
+            "sample_interval_seconds": 10,
+            "samples": [
+              {
+                "compute": {
+                  "cpu_microseconds": 45968891,
+                  "memory_bytes": 258686976
+                },
+                "disk": {
+                  "iops_limit": 0,
+                  "read_bytes_per_second": 1045943,
+                  "read_milli_iops": 2672,
+                  "size_mib": 12288,
+                  "throughput_limit_mibps": 0,
+                  "used_mib": 390,
+                  "write_bytes_per_second": 502709,
+                  "write_milli_iops": 123933
+                },
+                "guest": {
+                  "load_average": [
+                    0.03,
+                    0.05,
+                    0.01
+                  ],
+                  "memory": {
+                    "available_bytes": 749666304,
+                    "cached_bytes": 215384064,
+                    "free_bytes": 655757312,
+                    "swap_free_bytes": 0,
+                    "swap_total_bytes": 0,
+                    "total_bytes": 1008353280
+                  },
+                  "root_filesystem": {
+                    "inodes_total": 786432,
+                    "inodes_used": 48938,
+                    "size_bytes": 12594667520,
+                    "used_bytes": 1521377280
+                  },
+                  "system_state": "running"
+                },
+                "network": {
+                  "received_bytes": 81974642,
+                  "received_packets": 14273,
+                  "sent_bytes": 288502,
+                  "sent_icmp_packets": 32,
+                  "sent_packets": 2932,
+                  "sent_tcp_rst_packets": 7,
+                  "sent_tcp_syn_packets": 32,
+                  "sent_udp_packets": 48
+                },
+                "timestamp": 1794837563,
+                "up": true
+              }
+            ]
+          }
+        ],
         "properties": {
           "id": {
             "title": "Id",
@@ -2699,6 +3027,10 @@
           },
           "disk": {
             "$ref": "#/components/schemas/VirtualMachineDiskUsage"
+          },
+          "guest": {
+            "$ref": "#/components/schemas/VirtualMachineGuestUsage",
+            "description": "When the image has no guest agent, the VM is not running, or the guest does not answer in time, `system_state` is `unreachable` and the other values are zero."
           },
           "network": {
             "$ref": "#/components/schemas/VirtualMachineNetworkUsage"
@@ -2901,6 +3233,12 @@
             "title": "Architecture",
             "type": "string"
           },
+          "baseline_cpu_millicores": {
+            "default": 0,
+            "description": "CPU a burstable VM can always use. Zero when not burstable.",
+            "title": "Baseline Cpu Millicores",
+            "type": "integer"
+          },
           "coma_after_idle_seconds": {
             "default": 0,
             "description": "Idle time before disk offload. Zero disables it.",
@@ -2939,6 +3277,12 @@
             "title": "Image Id",
             "type": "string"
           },
+          "is_burstable": {
+            "default": false,
+            "description": "Whether the VM can use CPU above its baseline.",
+            "title": "Is Burstable",
+            "type": "boolean"
+          },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
             "title": "Is Termination Protected",
@@ -2974,6 +3318,12 @@
           "sleep_after_idle_seconds": {
             "description": "Idle time before automatic stop. Zero disables it.",
             "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "sliding_window_minutes": {
+            "default": 0,
+            "description": "How far back average CPU use is measured. Zero when not burstable.",
+            "title": "Sliding Window Minutes",
             "type": "integer"
           },
           "tags": {
@@ -3093,6 +3443,61 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/atlas/beacon/resources": {
+      "get": {
+        "description": "Returns Atlas itself and every host, virtual machine, service node and the Cargo server of this region, with its parent, so Beacon can match telemetry to resources. The ETag changes only when the list changes.",
+        "operationId": "list_beacon_resources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeaconResourceListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "304": {
+            "description": "The list has not changed since the `If-None-Match` ETag."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The caller cannot use this resource."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request could not be completed."
+          }
+        },
+        "summary": "List resources for Beacon",
+        "tags": [
+          "Beacon"
+        ]
+      }
+    },
     "/api/atlas/dns-records/{name}": {
       "delete": {
         "description": "Removes the A and AAAA records of one regional service name.",
@@ -5664,7 +6069,7 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/actions/resize": {
       "post": {
-        "description": "Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only grows.\n\nStop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only changes work in any VM state. `0` disables idle shutdown.",
+        "description": "Changes CPU, memory, disk, idle shutdown, or CPU burst. Omitted fields keep their current value. The disk only grows.\n\nStop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle and CPU burst changes work in any VM state. `0` disables idle shutdown. A burstable VM without a baseline gets 20% of its CPU, and without a sliding window gets 60 minutes. A CPU below the baseline is rejected.",
         "operationId": "resize_virtual_machine",
         "parameters": [
           {
@@ -7573,6 +7978,10 @@
     {
       "description": "Hand a problem to the read-only investigator of the region and read its report. Tenant 0 only.",
       "name": "Investigations"
+    },
+    {
+      "description": "Serve the resource list that Beacon, the incident manager, monitors. Central only.",
+      "name": "Beacon"
     }
   ]
 }

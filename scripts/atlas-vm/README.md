@@ -17,6 +17,8 @@ curl -fsSLo atlas-vm.toml https://raw.githubusercontent.com/frappe/atlas/develop
 sudo atlas-vm create
 ```
 
+metald does not run the Atlas VM. When Atlas installs metald on this host, it reserves the memory and CPU of the Atlas VM. After you change `vcpu_count` or `memory_mib`, run **Re-configure Metald** on the host. See [host capacity](../../metal/internal/host/SPEC.md#capacity).
+
 The configuration must contain the Atlas region, Route53, and Let's Encrypt values. Set `atlas.server_provider` to `Generic`, `Scaleway` or `AWS`. Atlas reads the matching provider table. `Generic` has no provider table. Route53 must contain an existing public zone for `atlas.wildcard_domain`. Do not add `*.` to the domain.
 
 Set `atlas.unicast_network = true` when the provider network cannot carry IPv6 multicast between hosts. Atlas setup then enables **Use Unicast Networking**. AWS always uses unicast networking.
@@ -61,7 +63,7 @@ After you upgrade `atlas-vm`, run `sudo atlas-vm stop && sudo atlas-vm create` t
 
 AWS uses one subnet in one availability zone, so a public IPv6 block can move to any host. An AWS region always uses unicast networking, because a VPC does not carry link-local multicast.
 
-`atlas-vm stop` and a host shutdown send Ctrl+Alt+Del to the guest, so the guest shuts down cleanly before Firecracker exits.
+`atlas-vm stop` and a host shutdown send Ctrl+Alt+Del to the guest, so the guest shuts down cleanly before Firecracker exits. systemd starts the VM again 5 seconds after a guest reboot or a Firecracker crash. Only `atlas-vm stop` keeps it stopped.
 
 The VM answers on host port 2222. In Atlas mode, host ports 80 and 443 also reach it. Gateway mode forwards UDP port 51821 to its WireGuard interface.
 

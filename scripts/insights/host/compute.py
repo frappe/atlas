@@ -15,6 +15,7 @@ from host.queries import (
 	CPU_MODE,
 	FILESYSTEMS,
 	VM_STATE,
+	cpu_percent_sql,
 	derived_series_sql,
 	filesystem_used_sql,
 	label,
@@ -54,7 +55,7 @@ SECTIONS = [
 			Chart(
 				key="cpu-basic",
 				title="CPU Basic",
-				sql=gauge_sql("system_cpu_mode_percent", BASIC_CPU_MODE),
+				sql=cpu_percent_sql(BASIC_CPU_MODE),
 				measure=CPU_COLUMNS,
 				aggregation="avg",
 				number_format=PERCENT,
@@ -127,12 +128,7 @@ SECTIONS = [
 			Chart(
 				key="cpu",
 				title="CPU",
-				sql=rate_sql(
-					["system_cpu_seconds_total"],
-					CPU_MODE,
-					"AND labels['mode'] NOT IN ('guest', 'guest_nice') AND has(mapKeys(labels), 'cpu')",
-					scale="100",
-				),
+				sql=cpu_percent_sql(CPU_MODE),
 				measure=CPU_DETAIL_COLUMNS,
 				aggregation="avg",
 				number_format=PERCENT,

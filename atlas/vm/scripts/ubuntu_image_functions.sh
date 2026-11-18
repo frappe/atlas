@@ -1,6 +1,7 @@
 # Shared steps of the Ubuntu image recipes. A recipe sets these variables before it calls build_rootfs:
 #   output, kernel_output  where to write the root file system and the kernel
 #   script_directory       the folder that holds this file and guest/
+#   guest_agent            the atlas-guest-agent binary
 #   series, series_url     the Ubuntu release and its cloud image folder
 #   rootfs_name            the cloud image file name, without its extension
 #   kernel_package         the metapackage that selects the boot kernel
@@ -141,8 +142,7 @@ install_metadata_service() {
 preserve_hostname: true
 EOF
 
-	install -D -m 0755 "$script_directory/guest/apply-metadata" \
-		"$rootfs_directory/usr/local/lib/atlas/apply-metadata"
+	install -D -m 0755 "$guest_agent" "$rootfs_directory/usr/local/lib/atlas/atlas-guest-agent"
 	cat > "$rootfs_directory/etc/systemd/system/atlas-metadata.service" <<'EOF'
 [Unit]
 Description=Apply the per-VM Atlas metadata
@@ -154,7 +154,7 @@ Before=shutdown.target
 
 [Service]
 Type=exec
-ExecStart=/usr/local/lib/atlas/apply-metadata
+ExecStart=/usr/local/lib/atlas/atlas-guest-agent apply-metadata
 Restart=always
 RestartSec=1s
 
@@ -174,13 +174,45 @@ install_serial_console() {
 }
 
 install_ssh_metadata() {
-	install -D -m 0755 "$script_directory/guest/authorized-keys-command" \
-		"$rootfs_directory/usr/local/lib/atlas/authorized-keys-command"
 	install -d -m 0755 "$rootfs_directory/etc/ssh/sshd_config.d"
 	cat > "$rootfs_directory/etc/ssh/sshd_config.d/90-atlas-mmds.conf" <<'EOF'
-AuthorizedKeysCommand /usr/local/lib/atlas/authorized-keys-command
+AuthorizedKeysCommand /usr/local/lib/atlas/atlas-guest-agent authorized-keys
 AuthorizedKeysCommandUser nobody
 EOF
+}
+
+# metald asks the guest agent over vsock. systemd starts one agent process for each
+# connection, so nothing runs between requests. The ports match metal/internal/guestagent.
+install_guest_agent_sockets() {
+	local system_directory="$rootfs_directory/etc/systemd/system"
+	install -d -m 0755 "$system_directory/sockets.target.wants"
+	local job port command
+	while read -r job port command; do
+		cat > "$system_directory/atlas-guest-agent-$job.socket" <<EOF
+[Socket]
+ListenStream=vsock::$port
+Accept=yes
+
+[Install]
+WantedBy=sockets.target
+EOF
+		cat > "$system_directory/atlas-guest-agent-$job@.service" <<EOF
+[Unit]
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/local/lib/atlas/atlas-guest-agent $command
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+EOF
+		ln -sf "/etc/systemd/system/atlas-guest-agent-$job.socket" "$system_directory/sockets.target.wants/"
+	done <<'JOBS'
+usage 100000 report-usage
+freeze 100001 freeze-filesystems
+grow 100002 grow-root-filesystem
+reboot 100003 reboot
+JOBS
 }
 
 install_kernel() {
@@ -219,6 +251,7 @@ build_rootfs() {
 	install_metadata_service
 	install_serial_console
 	install_ssh_metadata
+	install_guest_agent_sockets
 }
 
 package_rootfs() {

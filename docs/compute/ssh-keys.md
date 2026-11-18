@@ -17,7 +17,7 @@ flowchart LR
 3. Metal tries to refresh MMDS on a running VM within a short request window. If it cannot finish then, reconciliation retries from the saved record.
 4. On the next SSH login, the guest runs `AuthorizedKeysCommand` and reads `meta-data/public-keys` from MMDS. It prints the current OpenSSH keys for `sshd`.
 
-The VM image installs `/usr/local/lib/atlas/authorized-keys-command` and sets `AuthorizedKeysCommandUser nobody`. The command gets an MMDS v2 session token, reads each key entry, and prints authorized-key lines. It does not need a guest reboot or a file rewrite when a running VM receives new keys.
+The VM image sets `AuthorizedKeysCommand /usr/local/lib/atlas/atlas-guest-agent authorized-keys` and `AuthorizedKeysCommandUser nobody`. The command gets an MMDS v2 session token, reads each key entry, and prints authorized-key lines. It does not need a guest reboot or a file rewrite when a running VM receives new keys.
 
 ::: info A stopped VM has no live metadata service
 Metal still saves the requested keys while the VM is stopped. It publishes them when Firecracker starts again. Read the desired record and the VM state together before you treat an API response as proof of a live login change.
@@ -40,7 +40,7 @@ For the underlying interfaces, read [Firecracker MMDS v2](https://github.com/fir
 - [Atlas VM key action](../../atlas/vm/doctype/virtual_machine/virtual_machine.py) sends the replacement list.
 - [Metal key API](../../metal/internal/api/vm_ssh_keys.go) validates the complete list.
 - [Metal metadata builder](../../metal/internal/vm/metadata_service.go) builds the MMDS document with `public-keys`.
-- [Guest key command](../../atlas/vm/scripts/guest/authorized-keys-command) reads MMDS on SSH login.
+- [Guest key command](../../metal/internal/guestagent/metadata.go) reads MMDS on SSH login.
 - [Image builder](../../atlas/vm/scripts/build_ubuntu_server_image.sh) installs the SSH configuration.
 - [SSH console key](../../metal/internal/firecracker/ssh.go) is temporary.
 
