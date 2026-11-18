@@ -38,3 +38,9 @@ class TestServiceTelemetry(UnitTestCase):
 
 		self.assertEqual(agent.call_args.args[1:], ("vm-00001", "cargo"))
 		agent.return_value.install.assert_called_once_with(role=None)
+
+	def test_the_runway_cache_vm_sends_as_atlas_with_its_role(self) -> None:
+		agent = self.install("Runway Cache Server")
+
+		self.assertEqual(agent.call_args.args[1:], ("vm-00001", "atlas"))
+		agent.return_value.install.assert_called_once_with(role="runway_cache")

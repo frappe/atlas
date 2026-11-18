@@ -1,0 +1,13 @@
+sources:
+  runway_cache_scrape:
+    type: prometheus_scrape
+    endpoints:
+      - http://127.0.0.1:18446/metrics
+      - http://127.0.0.1:18447/metrics
+    scrape_interval_secs: 30
+
+transforms:
+  metrics_runway_cache:
+    type: filter
+    inputs: [runway_cache_scrape]
+    condition: starts_with(string!(.name), "runway_cache_")

@@ -10,18 +10,26 @@ from atlas.atlas.core.telemetry.collectors import SERVICE_DOCTYPES
 from atlas.atlas.core.telemetry.datum import get_datum_url
 from atlas.metal_server.core.host_installation import throw_script_failure
 
+RUNWAY_CACHE_DOCTYPE = "Runway Cache Server"
+RUNWAY_CACHE_METRICS = {
+	"metrics_listen": "127.0.0.1:18446",
+	"data_metrics_listen": "127.0.0.1:18447",
+}
+
 
 class ServiceTelemetry:
-	"""Install the Datum agent on the VM of a service node or of the Cargo Server. The VM sends under its own name.
-
-	Pilot runs the Cargo site on the Cargo VM and sends only its own metrics, so the agent sends the machine
-	metrics and the journal of the VM, with no role file."""
+	"""Install the Datum agent on a service VM. Cargo sends machine metrics and logs without a role file."""
 
 	def __init__(self, node: Document) -> None:
 		self.node = node
 		is_cargo = node.doctype == "Cargo Server"
 		self.product = "cargo" if is_cargo else "atlas"
-		self.role = None if is_cargo else SERVICE_DOCTYPES[node.doctype]
+		if is_cargo:
+			self.role = None
+		elif node.doctype == RUNWAY_CACHE_DOCTYPE:
+			self.role = "runway_cache"
+		else:
+			self.role = SERVICE_DOCTYPES[node.doctype]
 		self.virtual_machine = frappe.get_doc("Virtual Machine", node.virtual_machine)
 
 	def configure(self) -> None:
@@ -63,18 +71,24 @@ def request_service_telemetry(node: Document) -> None:
 
 
 def configure_service_telemetry(doctype: str, name: str) -> None:
-	node = frappe.get_doc(doctype, name)
+	if not get_datum_url():
+		return
+
+	node = frappe.get_single(doctype) if doctype == RUNWAY_CACHE_DOCTYPE else frappe.get_doc(doctype, name)
 	if node.status == "Active":
 		ServiceTelemetry(node).configure()
 
 
 def renew_service_telemetry_credentials() -> None:
-	"""Queue a telemetry setup with a fresh Datum token for every active service node and the Cargo Server.
-	Runs daily."""
+	"""Queue a daily telemetry setup with a fresh token for each active service."""
+	if not get_datum_url():
+		return
+
 	for doctype in SERVICE_DOCTYPES:
 		for name in frappe.get_all(doctype, filters={"status": "Active"}, pluck="name"):
 			enqueue_service_telemetry(frappe.get_doc(doctype, name))
 
-	cargo_server = frappe.get_single("Cargo Server")
-	if cargo_server.status == "Active":
-		enqueue_service_telemetry(cargo_server)
+	for doctype in ("Cargo Server", RUNWAY_CACHE_DOCTYPE):
+		node = frappe.get_single(doctype)
+		if node.status == "Active":
+			enqueue_service_telemetry(node)

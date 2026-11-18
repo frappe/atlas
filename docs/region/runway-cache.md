@@ -57,3 +57,9 @@ Create the proxy through its normal Python creation API without `public_ipv4`. A
 Central keeps the normal `https://runway-cache-svc.<wildcard-domain>/configure` route. Give its process private mesh connectivity, Static DNS resolution, and development CA trust. Deliver Static DNS and CA trust explicitly to each owned VM. Static DNS delivery selects the systemd-resolved stub for applications that read `/etc/resolv.conf`. Guest traffic still uses TLS directly to the cache VM's `internal-` name.
 
 This mode does not qualify the public proxy front. Qualify that front separately on a host with a public IP. Archive all development proxies before restoring site settings.
+
+## Metrics and alerts
+
+Set `datum_url` and pin a Runway release that supports `metrics_listen` and `data_metrics_listen` before provisioning. Atlas configures the endpoints on loopback ports 18446 and 18447. The [Datum agent](../operate/telemetry.md#service-node-telemetry) scrapes both endpoints every 30 seconds and sends the metrics under the Virtual Machine name. The daily service telemetry job renews its token.
+
+Send controller metrics from the controller host to regional Datum using the telemetry setup in Runway's monitoring guide. Sync definitions in Beacon Settings to load the Runway rules. Controller incidents appear under Atlas with a region and pool key. Disk incidents appear under the cache VM with a journal or spool key.
