@@ -60,6 +60,18 @@ cat <<'VECTOR'
 VECTOR
 fi
 
+if [ "$SERVICE" = "runway-cache" ]; then
+	metric_inputs="system, runway_cache"
+	cat <<VECTOR
+  runway_cache:
+    type: prometheus_scrape
+    endpoints:
+      - "http://${RUNWAY_CACHE_METRICS:?}/metrics"
+      - "http://${RUNWAY_CACHE_DATA_METRICS:?}/metrics"
+    scrape_interval_secs: 30
+VECTOR
+fi
+
 cat <<'VECTOR'
 
 transforms:

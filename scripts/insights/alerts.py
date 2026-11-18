@@ -589,7 +589,98 @@ P2_PLATFORM = Alert(
 	],
 )
 
-ALERTS = [P1, P2_HOSTS, P2_PLATFORM]
+# Central's fence expires 60 seconds after renewal (heartbeat every 15 seconds).
+# Age the last renewal against Datum's clock so a stopped controller still alerts.
+# Follow the latest renewal for a pool across controller host replacements.
+RUNWAY_OWNER_TTL = 60
+RUNWAY_OWNERSHIP = f"""SELECT argMax(resource_id, (samples.value, ts)) AS host,
+  toUnixTimestamp(now()) - max(samples.value) AS value, concat(region, ' / ', pool) AS detail
+FROM samples
+WHERE metric = 'runway_controller_ownership_renewal_timestamp_seconds'
+  AND ts > now() - INTERVAL 1 HOUR
+GROUP BY labels['region'] AS region, labels['pool'] AS pool
+HAVING value >= {RUNWAY_OWNER_TTL}"""
+
+# Reconciliation runs every 3 seconds; guest preparation defaults to a 90-second
+# call budget. Allow five minutes for provisioning, registration and job start.
+RUNWAY_WAIT_SECONDS = 300
+# Central sweeps every 10 seconds. Allow ten minutes for asynchronous VM
+# termination, guest stop and GitHub removal confirmation across several retries.
+RUNWAY_CLEANUP_SECONDS = 600
+# Five routing decisions avoid paging on a single unsupported action. More than
+# a quarter falling back across an hour warrants checking setup and the allowlist.
+RUNWAY_FALLBACK_PERCENT = 25
+RUNWAY_FALLBACK_MIN_DECISIONS = 5
+
+
+def runway_pool_age(metric: str, seconds: int) -> str:
+	"""Use recent controller readings, even when the controller is off Atlas."""
+	return f"""SELECT argMax(resource_id, ts) AS host, argMax(samples.value, ts) AS value,
+  concat(region, ' / ', pool) AS detail
+FROM samples
+WHERE metric = '{metric}' AND ts > now() - INTERVAL 5 MINUTE
+GROUP BY labels['region'] AS region, labels['pool'] AS pool
+HAVING value >= {seconds}"""
+
+
+def runway_cache_disk(percent: int) -> str:
+	"""Reuse the service disk floors for Runway's journal and spool mounts."""
+	return f"""SELECT resource_id AS host, area AS detail,
+  argMaxIf(samples.value, ts, metric = 'runway_cache_filesystem_available_bytes') * 100
+    / nullIf(argMaxIf(samples.value, ts, metric = 'runway_cache_filesystem_size_bytes'), 0) AS value
+FROM samples
+WHERE metric IN ('runway_cache_filesystem_available_bytes', 'runway_cache_filesystem_size_bytes')
+  AND resource_id = 'runway-cache' AND ts > now() - INTERVAL 5 MINUTE
+GROUP BY resource_id, labels['area'] AS area
+HAVING value < {percent}"""
+
+
+RUNWAY_FALLBACK = f"""SELECT resource_id AS host, concat(region, ' / ', pool) AS detail,
+  sumIf(increase, metric = 'runway_cache_fallback_total') * 100 / nullIf(sum(increase), 0) AS value
+FROM (
+  SELECT resource_id, labels['region'] AS region, labels['pool'] AS pool, metric, {GROWTH} AS increase
+  FROM samples
+  WHERE metric IN ('runway_cache_fallback_total', 'runway_cache_routed_total')
+    AND ts > now() - INTERVAL 1 HOUR
+  GROUP BY resource_id, region, pool, metric
+)
+GROUP BY resource_id, region, pool
+HAVING sum(increase) >= {RUNWAY_FALLBACK_MIN_DECISIONS} AND value > {RUNWAY_FALLBACK_PERCENT}"""
+
+# Keep Runway's checks on the same schedules and webhook without growing the
+# existing alerts past the Insights SQL size limit. Metal disk checks stay in P1/P2 Hosts.
+P1_RUNWAY = Alert(
+	"critical-runway",
+	"Atlas P1 Runway",
+	P1.icon,
+	P1.cron,
+	[
+		Check("Runway ownership renewal age, seconds", f"under {RUNWAY_OWNER_TTL}", RUNWAY_OWNERSHIP),
+		Check(
+			"Runway unserved demand without progress, seconds",
+			f"under {RUNWAY_WAIT_SECONDS}",
+			runway_pool_age("runway_controller_no_progress_seconds", RUNWAY_WAIT_SECONDS),
+		),
+		Check("Runway cache disk free, %", f"at least {DISK_FREE_CRITICAL}", runway_cache_disk(DISK_FREE_CRITICAL)),
+	],
+)
+P2_RUNWAY = Alert(
+	"warning-runway",
+	"Atlas P2 Runway",
+	P2_PLATFORM.icon,
+	P2_PLATFORM.cron,
+	[
+		Check(
+			"Runway lease cleanup age, seconds",
+			f"under {RUNWAY_CLEANUP_SECONDS}",
+			runway_pool_age("runway_controller_cleanup_oldest_seconds", RUNWAY_CLEANUP_SECONDS),
+		),
+		Check("Runway cache fallbacks, % in the last hour", f"at most {RUNWAY_FALLBACK_PERCENT}", RUNWAY_FALLBACK),
+		Check("Runway cache disk free, %", f"at least {DISK_FREE_WARNING}", runway_cache_disk(DISK_FREE_WARNING)),
+	],
+)
+
+ALERTS = [P1, P2_HOSTS, P2_PLATFORM, P1_RUNWAY, P2_RUNWAY]
 
 # The query is the Atlas instance that pushes to this Datum, so alerts from several regions stay apart.
 ATLAS_INSTANCE = f"""SELECT argMax(resource_id, ts) AS atlas FROM samples

@@ -11,6 +11,12 @@ from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.host_installation import throw_script_failure
 
 TELEMETRY_INSTALL_TIMEOUT_SECONDS = 600
+RUNWAY_CACHE_DOCTYPE = "Runway Cache Server"
+RUNWAY_CACHE_RESOURCE = "runway-cache"
+RUNWAY_CACHE_METRICS = {
+	"metrics_listen": "127.0.0.1:18446",
+	"data_metrics_listen": "127.0.0.1:18447",
+}
 
 
 class ServiceTelemetry:
@@ -18,7 +24,11 @@ class ServiceTelemetry:
 
 	def __init__(self, node: Document) -> None:
 		self.node = node
-		self.service = SERVICE_DOCTYPES[node.doctype]
+		if node.doctype == RUNWAY_CACHE_DOCTYPE:
+			self.service = self.resource = RUNWAY_CACHE_RESOURCE
+		else:
+			self.service = SERVICE_DOCTYPES[node.doctype]
+			self.resource = node.name
 		self.virtual_machine = frappe.get_doc("Virtual Machine", node.virtual_machine)
 
 	def configure(self) -> None:
@@ -39,8 +49,16 @@ class ServiceTelemetry:
 			"install-service-telemetry.sh",
 			data={
 				"DATUM_URL": get_datum_url(),
-				"DATUM_TOKEN": issue_datum_token(self.node.name, HOST_TOKEN_LIFETIME),
+				"DATUM_TOKEN": issue_datum_token(self.resource, HOST_TOKEN_LIFETIME),
 				"SERVICE": self.service,
+				**(
+					{
+						"RUNWAY_CACHE_METRICS": RUNWAY_CACHE_METRICS["metrics_listen"],
+						"RUNWAY_CACHE_DATA_METRICS": RUNWAY_CACHE_METRICS["data_metrics_listen"],
+					}
+					if self.service == RUNWAY_CACHE_RESOURCE
+					else {}
+				),
 			},
 			timeout_seconds=TELEMETRY_INSTALL_TIMEOUT_SECONDS,
 		)
@@ -76,13 +94,20 @@ def request_service_telemetry(node: Document) -> None:
 
 
 def configure_service_telemetry(doctype: str, name: str) -> None:
-	node = frappe.get_doc(doctype, name)
-	if node.status == "Active":
+	node = frappe.get_single(doctype) if doctype == RUNWAY_CACHE_DOCTYPE else frappe.get_doc(doctype, name)
+	if node.status == "Active" and get_datum_url():
 		ServiceTelemetry(node).configure()
 
 
 def renew_service_telemetry_credentials() -> None:
 	"""Queue a telemetry setup with a fresh Datum token for every active service node. Runs daily."""
+	if not get_datum_url():
+		return
+
 	for doctype in SERVICE_DOCTYPES:
 		for name in frappe.get_all(doctype, filters={"status": "Active"}, pluck="name"):
 			enqueue_service_telemetry(frappe.get_doc(doctype, name))
+
+	cache = frappe.get_single(RUNWAY_CACHE_DOCTYPE)
+	if cache.status == "Active":
+		enqueue_service_telemetry(cache)
