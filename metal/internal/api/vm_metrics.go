@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v5"
 
+	"github.com/frappe/atlas/metal/internal/guestagent"
 	"github.com/frappe/atlas/metal/internal/metrics"
 )
 
@@ -28,6 +29,8 @@ type virtualMachineMetricsSample struct {
 	Compute   computeUsageResponse `json:"compute"`
 	Disk      diskUsageResponse    `json:"disk"`
 	Network   networkUsageResponse `json:"network"`
+	// Guest has system state unreachable and zero values when the guest agent did not answer.
+	Guest guestagent.Usage `json:"guest"`
 }
 
 type computeUsageResponse struct {
@@ -123,8 +126,13 @@ func (s *Server) getVirtualMachineMetrics(c *echo.Context) error {
 }
 
 func toVirtualMachineMetrics(sample metrics.Sample) virtualMachineMetricsSample {
+	guest := guestagent.Usage{SystemState: guestagent.SystemStateUnreachable}
+	if sample.Guest != nil {
+		guest = *sample.Guest
+	}
 	return virtualMachineMetricsSample{
-		Up: sample.Up,
+		Up:    sample.Up,
+		Guest: guest,
 		Compute: computeUsageResponse{
 			CPUMicroseconds: sample.CPUTimeMicroseconds,
 			MemoryBytes:     sample.MemoryBytes,

@@ -6,17 +6,31 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
 )
 
+// netstatFields are the protocol counters that the host charts read. The other counters, and the
+// IPv6 counters of snmp6, stay on the host.
+var netstatFields = map[string][]string{
+	"Ip":    {"Forwarding"},
+	"IpExt": {"InOctets", "OutOctets"},
+	"Icmp":  {"InMsgs", "OutMsgs", "InErrors"},
+	"Udp":   {"InDatagrams", "OutDatagrams", "InErrors", "NoPorts", "RcvbufErrors", "SndbufErrors"},
+	"Tcp":   {"InSegs", "OutSegs", "RetransSegs", "InErrs", "CurrEstab", "MaxConn", "ActiveOpens", "PassiveOpens"},
+	"TcpExt": {
+		"ListenOverflows", "ListenDrops", "TCPSynRetrans", "SyncookiesFailed", "SyncookiesRecv", "SyncookiesSent",
+	},
+}
+
 type netstatCollector struct {
 	procRoot string
 }
 
-// Collect reports every protocol counter in /proc/net/snmp, netstat, and snmp6,
-// and every socket count in sockstat and sockstat6.
+// Collect reports the netstatFields counters of /proc/net/snmp and netstat, and every socket
+// count in sockstat and sockstat6.
 func (collector netstatCollector) Collect(context.Context) ([]telemetry.Sample, error) {
 	var samples []telemetry.Sample
 	for _, file := range []string{"snmp", "netstat"} {
@@ -26,12 +40,6 @@ func (collector netstatCollector) Collect(context.Context) ([]telemetry.Sample, 
 		}
 		samples = append(samples, counters...)
 	}
-
-	ipv6, err := collector.snmp6()
-	if err != nil {
-		return samples, err
-	}
-	samples = append(samples, ipv6...)
 
 	for _, file := range []string{"sockstat", "sockstat6"} {
 		sockets, err := collector.sockstat(filepath.Join(collector.procRoot, "net", file))
@@ -59,42 +67,15 @@ func (collector netstatCollector) pairedTable(path string) ([]telemetry.Sample, 
 		}
 		protocol := strings.TrimSuffix(header[0], ":")
 		for column, field := range header[1:] {
+			if !slices.Contains(netstatFields[protocol], field) {
+				continue
+			}
 			value, err := parseNumber(values[column+1], path)
 			if err != nil {
 				return nil, err
 			}
 			samples = append(samples, gauge("system_netstat", value, telemetry.Labels{"protocol": protocol, "field": field}))
 		}
-	}
-	return samples, nil
-}
-
-// snmp6 reads "Ip6InReceives 1234" lines. The protocol prefix ends where the
-// field name starts with an upper-case letter after the digit 6.
-func (collector netstatCollector) snmp6() ([]telemetry.Sample, error) {
-	path := filepath.Join(collector.procRoot, "net", "snmp6")
-	lines, err := readFields(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	var samples []telemetry.Sample
-	for _, fields := range lines {
-		if len(fields) < 2 {
-			continue
-		}
-		protocol, field, found := strings.Cut(fields[0], "6")
-		if !found {
-			continue
-		}
-		value, err := parseNumber(fields[1], path)
-		if err != nil {
-			return nil, err
-		}
-		samples = append(samples, gauge("system_netstat", value, telemetry.Labels{"protocol": protocol + "6", "field": field}))
 	}
 	return samples, nil
 }

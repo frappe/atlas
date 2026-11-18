@@ -9,14 +9,14 @@ STATUS_CHART = "c-service-status"
 SERVICE_NODES = f"""service_nodes AS (
   SELECT labels['service'] AS service, labels['node'] AS node, labels['virtual_machine'] AS vm, labels['server'] AS server
   FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND ts = (
-    SELECT max(ts) FROM samples WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND ts > now() - INTERVAL 1 HOUR
+  WHERE resource_id = 'atlas' AND metric = 'atlas_service_node' AND ts = (
+    SELECT max(ts) FROM samples WHERE resource_id = 'atlas' AND metric = 'atlas_service_node' AND ts > now() - INTERVAL 1 HOUR
   )
 ),
 readiness AS (
   SELECT labels['node'] AS node, argMax(value, ts) AS ready_now, avg(value) * 100 AS ready_uptime, countIf(value = 0) AS failed_checks
   FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_ready' AND ts > {MONTH_START}
+  WHERE resource_id = 'atlas' AND metric = 'atlas_service_ready' AND ts > {MONTH_START}
   GROUP BY node
 ),
 {VM_DOWNTIME_THIS_MONTH}"""
@@ -69,12 +69,12 @@ STATUS_READINGS = [
 
 READINESS_DAILY = f"""SELECT toDate(ts) AS day, labels['node'] AS series, avg(value) * 100 AS value
 FROM samples
-WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_ready' AND ts > {DAYS}
+WHERE resource_id = 'atlas' AND metric = 'atlas_service_ready' AND ts > {DAYS}
 GROUP BY day, series"""
 
 FAILED_CHECKS = """SELECT toStartOfHour(ts) AS ts, labels['node'] AS series, countIf(value = 0) AS value
 FROM samples
-WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_ready' AND ts > now() - INTERVAL 7 DAY
+WHERE resource_id = 'atlas' AND metric = 'atlas_service_ready' AND ts > now() - INTERVAL 7 DAY
 GROUP BY ts, series"""
 
 

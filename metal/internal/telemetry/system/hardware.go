@@ -11,7 +11,7 @@ import (
 )
 
 // sensorFile matches hwmon attribute files such as temp1_input and fan2_max.
-var sensorFile = regexp.MustCompile(`^(temp|fan|in|curr|power|energy|humidity|pwm|freq|intrusion)(\d+)_(\w+)$`)
+var sensorFile = regexp.MustCompile(`^(temp|fan|in|power|intrusion)(\d+)_(\w+)$`)
 
 // sensorKinds gives the metric and the scale from the sysfs unit to the base unit.
 var sensorKinds = map[string]struct {
@@ -21,12 +21,7 @@ var sensorKinds = map[string]struct {
 	"temp":      {"system_hwmon_temperature_celsius", 0.001},
 	"fan":       {"system_hwmon_fan_rpm", 1},
 	"in":        {"system_hwmon_voltage_volts", 0.001},
-	"curr":      {"system_hwmon_current_amperes", 0.001},
 	"power":     {"system_hwmon_power_watts", 0.000001},
-	"energy":    {"system_hwmon_energy_joules", 0.000001},
-	"humidity":  {"system_hwmon_humidity_ratio", 0.00001},
-	"pwm":       {"system_hwmon_pwm", 1},
-	"freq":      {"system_hwmon_frequency_hertz", 1},
 	"intrusion": {"system_hwmon_intrusion", 1},
 }
 
@@ -45,8 +40,8 @@ func (collector hardwareCollector) Collect(context.Context) ([]telemetry.Sample,
 	return append(samples, collector.watchdogs()...), nil
 }
 
-// sensors reads every numeric hwmon attribute. Alarm, fault, and enable
-// attributes are flags, so they are not scaled.
+// sensors reads the input and the alarm and fault flags of each hwmon sensor. The limits, such as
+// max and crit, are fixed, and no reader uses them.
 func (collector hardwareCollector) sensors() []telemetry.Sample {
 	chips, _ := filepath.Glob(filepath.Join(collector.sysRoot, "class", "hwmon", "hwmon*"))
 
@@ -65,8 +60,11 @@ func (collector hardwareCollector) sensors() []telemetry.Sample {
 				continue
 			}
 			kind, attribute := sensorKinds[match[1]], match[3]
-			if !strings.HasSuffix(attribute, "alarm") && !strings.HasSuffix(attribute, "fault") &&
-				!strings.HasSuffix(attribute, "enable") && !strings.HasSuffix(attribute, "beep") {
+			isFlag := strings.HasSuffix(attribute, "alarm") || strings.HasSuffix(attribute, "fault")
+			if attribute != "input" && !isFlag {
+				continue
+			}
+			if !isFlag {
 				value *= kind.scale
 			}
 			sensor := readText(filepath.Join(chip, match[1]+match[2]+"_label"))
@@ -93,12 +91,14 @@ func (collector hardwareCollector) thermal() []telemetry.Sample {
 
 	devices, _ := filepath.Glob(filepath.Join(collector.sysRoot, "class", "thermal", "cooling_device*"))
 	for _, device := range devices {
-		labels := telemetry.Labels{"device": filepath.Base(device), "type": readText(filepath.Join(device, "type"))}
+		kind := readText(filepath.Join(device, "type"))
+		// Linux makes one Processor cooling device for each CPU. Throttles and temperatures show heat.
+		if kind == "Processor" {
+			continue
+		}
+		labels := telemetry.Labels{"device": filepath.Base(device), "type": kind}
 		if value, err := readNumber(filepath.Join(device, "cur_state")); err == nil {
 			samples = append(samples, gauge("system_cooling_device_current_state", value, labels))
-		}
-		if value, err := readNumber(filepath.Join(device, "max_state")); err == nil {
-			samples = append(samples, gauge("system_cooling_device_max_state", value, labels))
 		}
 	}
 	return samples

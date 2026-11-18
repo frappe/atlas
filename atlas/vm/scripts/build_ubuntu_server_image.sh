@@ -4,6 +4,7 @@ set -euo pipefail
 
 output=""
 kernel_output=""
+guest_agent=""
 architecture=""
 version=""
 minimal=false
@@ -16,12 +17,13 @@ while [[ $# -gt 0 ]]; do
 		--kernel-output) kernel_output=$2; shift 2 ;;
 		--architecture) architecture=$2; shift 2 ;;
 		--version) version=$2; shift 2 ;;
+		--guest-agent) guest_agent=$2; shift 2 ;;
 		--minimal) minimal=true; shift ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
 
-[[ -n $output && -n $kernel_output && -n $architecture && -n $version ]] || { echo "--output, --kernel-output, --architecture, and --version are required" >&2; exit 2; }
+[[ -n $output && -n $kernel_output && -n $guest_agent && -n $architecture && -n $version ]] || { echo "--output, --kernel-output, --guest-agent, --architecture, and --version are required" >&2; exit 2; }
 [[ $EUID -eq 0 ]] || { echo "run this builder with root permissions" >&2; exit 1; }
 
 case "$architecture" in

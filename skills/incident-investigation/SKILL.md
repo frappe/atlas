@@ -32,7 +32,7 @@ Copy this checklist into your notes and follow it:
 
 ### 1. Scope
 
-Call `list_failing_alert_checks` and `get_telemetry_freshness`. Call `find_resources` for each name, IP address, or tenant in the problem. Use `describe_host` or `describe_virtual_machine` when the resource state is needed.
+Call `get_telemetry_freshness`. Call `find_resources` for each name, IP address, or tenant in the problem. Use `describe_host` or `describe_virtual_machine` when the resource state is needed.
 
 Find the symptom, affected resources, first observed failure time in UTC, and current state: ongoing, recovered, intermittent, or unknown.
 

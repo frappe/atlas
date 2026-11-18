@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
@@ -13,7 +14,7 @@ type memoryCollector struct {
 }
 
 // Collect reports every /proc/meminfo field and every /proc/vmstat counter,
-// plus the memory summary that Pilot hosts also send.
+// plus the memory metrics that every machine sends.
 func (collector memoryCollector) Collect(context.Context) ([]telemetry.Sample, error) {
 	info, err := collector.meminfo()
 	if err != nil {
@@ -21,8 +22,10 @@ func (collector memoryCollector) Collect(context.Context) ([]telemetry.Sample, e
 	}
 
 	samples := memoryUsage(info)
-	for field, value := range info {
-		samples = append(samples, gauge("system_memory_info", value, telemetry.Labels{"field": field}))
+	for _, field := range memoryInfoFields {
+		if value, found := info[field]; found {
+			samples = append(samples, gauge("system_memory_info", value, telemetry.Labels{"field": field}))
+		}
 	}
 
 	counters, err := collector.vmstat()
@@ -57,25 +60,33 @@ func (collector memoryCollector) meminfo() (map[string]float64, error) {
 	return values, nil
 }
 
-// memoryUsage matches the Pilot shipper, which uses the psutil formulas.
+// memoryUsage reports the memory metrics of the telemetry contract.
 func memoryUsage(info map[string]float64) []telemetry.Sample {
-	total := info["MemTotal"]
-	if total == 0 {
+	if info["MemTotal"] == 0 {
 		return nil
 	}
-	used := total - info["MemFree"] - info["Buffers"] - info["Cached"]
 	return []telemetry.Sample{
-		gauge("system_memory_total_bytes", total, nil),
-		gauge("system_memory_free_bytes", info["MemFree"], nil),
-		gauge("system_memory_cached_bytes", info["Cached"], nil),
-		gauge("system_memory_used_bytes", used, nil),
+		gauge("system_memory_total_bytes", info["MemTotal"], nil),
+		gauge("system_memory_available_bytes", info["MemAvailable"], nil),
 		gauge("system_memory_swap_used_bytes", info["SwapTotal"]-info["SwapFree"], nil),
-		gauge("system_memory_usage_percent", (total-info["MemAvailable"])/total*100, nil),
 	}
 }
 
-// vmstat reports every /proc/vmstat value. Names that start with nr_ are
-// current counts; the rest only grow.
+// memoryInfoFields are the /proc/meminfo fields that the host charts read. The others stay on the host.
+var memoryInfoFields = []string{
+	"MemTotal", "MemFree", "Buffers", "Cached", "SwapCached", "SwapTotal", "SwapFree",
+	"Active", "Inactive", "Active_anon", "Inactive_anon", "Active_file", "Inactive_file", "Unevictable", "Mlocked",
+	"Dirty", "Writeback", "WritebackTmp", "NFS_Unstable", "Bounce", "AnonPages", "AnonHugePages", "Mapped",
+	"Shmem", "ShmemHugePages", "ShmemPmdMapped", "Slab", "SReclaimable", "SUnreclaim", "KernelStack",
+	"PageTables", "Percpu", "CommitLimit", "Committed_AS", "VmallocTotal", "VmallocUsed", "VmallocChunk",
+	"HardwareCorrupted", "HugePages_Total", "HugePages_Free", "HugePages_Rsvd", "HugePages_Surp",
+	"Hugepagesize", "DirectMap4k", "DirectMap2M", "DirectMap1G",
+}
+
+// vmstatFields are the /proc/vmstat counters that the host charts read. The others stay on the host.
+var vmstatFields = []string{"pgpgin", "pgpgout", "pswpin", "pswpout", "pgfault", "pgmajfault", "oom_kill"}
+
+// vmstat reports the vmstatFields counters of /proc/vmstat.
 func (collector memoryCollector) vmstat() ([]telemetry.Sample, error) {
 	path := filepath.Join(collector.procRoot, "vmstat")
 	lines, err := readFields(path)
@@ -85,7 +96,7 @@ func (collector memoryCollector) vmstat() ([]telemetry.Sample, error) {
 
 	var samples []telemetry.Sample
 	for _, fields := range lines {
-		if len(fields) < 2 {
+		if len(fields) < 2 || !slices.Contains(vmstatFields, fields[0]) {
 			continue
 		}
 		value, err := parseNumber(fields[1], path)

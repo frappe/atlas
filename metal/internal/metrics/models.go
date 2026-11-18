@@ -1,9 +1,13 @@
 // Package metrics collects and retains VM measurements on disk.
 package metrics
 
+import "github.com/frappe/atlas/metal/internal/guestagent"
+
 // Sample describes the current resource use of one virtual machine.
 type Sample struct {
 	Up bool `json:"up"`
+	// Guest is nil when the guest has no guest agent.
+	Guest *guestagent.Usage `json:"guest,omitempty"`
 	ComputeUsage
 	DiskUsage
 	NetworkUsage

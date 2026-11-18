@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network/traffic"
 	"github.com/frappe/atlas/metal/internal/telemetry"
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ type ManagerDependencies struct {
 	Storage   Storage
 	Snapshots Snapshots
 	Traffic   *traffic.Monitor
+	Metrics   *metrics.Store
 	Logger    *slog.Logger
 	Telemetry *telemetry.Registry
 }
@@ -54,6 +56,8 @@ type Manager struct {
 	storage              Storage
 	snapshots            Snapshots
 	traffic              *traffic.Monitor
+	metrics              *metrics.Store
+	slidingWindowUsage   *slidingWindowUsage
 	logger               *slog.Logger
 	telemetry            *telemetry.Registry
 	operationLocks       KeyedLocks
@@ -112,6 +116,8 @@ func NewManager(configuration ManagerConfig, dependencies ManagerDependencies) (
 		storage:              dependencies.Storage,
 		snapshots:            dependencies.Snapshots,
 		traffic:              dependencies.Traffic,
+		metrics:              dependencies.Metrics,
+		slidingWindowUsage:   newSlidingWindowUsage(),
 		logger:               dependencies.Logger,
 		telemetry:            dependencies.Telemetry,
 		sleepUploads:         make(map[string]*sleepUpload),
@@ -417,6 +423,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		Hostname:                        desired.Specification.Hostname,
 		Metadata:                        maps.Clone(desired.Specification.Metadata),
 		SleepAfterIdleSeconds:           desired.Specification.SleepAfterIdleSeconds,
+		CPUBurst:                        desired.Specification.CPUBurst,
 		MAC:                             observed.NetworkInterface.MACAddress,
 		PublicIPv4:                      desired.Specification.Network.PublicIPv4,
 		Routes:                          slices.Clone(desired.Specification.Network.Routes),

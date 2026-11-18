@@ -125,7 +125,8 @@ func (report smartReport) samples(device string) []telemetry.Sample {
 		samples = append(samples, gauge("system_smart_scsi_uncorrected_errors", counters.TotalUncorrectedErrors, telemetry.Labels{"device": device, "operation": operation}))
 	}
 	for _, attribute := range report.ATASmartAttributes.Table {
-		for field, value := range map[string]float64{"value": attribute.Value, "worst": attribute.Worst, "threshold": attribute.Threshold, "raw": attribute.Raw.Value} {
+		// The threshold is fixed, and no reader uses the worst value.
+		for field, value := range map[string]float64{"value": attribute.Value, "raw": attribute.Raw.Value} {
 			samples = append(samples, gauge("system_smart_attribute", value, telemetry.Labels{
 				"device": device, "id": strconv.Itoa(attribute.ID), "attribute": attribute.Name, "field": field,
 			}))

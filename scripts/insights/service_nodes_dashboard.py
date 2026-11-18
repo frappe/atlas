@@ -3,12 +3,15 @@ from host.dashboard import add_section_chart
 from platform_services_dashboard import SERVICE_TITLE
 from workbook import (
 	COUNT,
+	HOST,
 	LOOKBACK,
 	PERCENT,
 	SERVICE_NODE_IDS,
+	TITLES,
 	Layout,
 	Workbook,
 	dimension,
+	machine_usage_sql,
 	measure,
 	rate_sql,
 	table,
@@ -18,39 +21,40 @@ MILLISECONDS = {"decimals": 0, "suffix": " ms"}
 
 
 def pivot_sql(metrics: tuple[str, str], value: str, series: str = "''") -> str:
-	"""One row per node, push, and series, from two gauges of the same push, such as free and total bytes."""
+	"""One row per node, push, and series, from two gauges of the same push, such as available and size bytes."""
 	names = ", ".join(f"'{metric}'" for metric in metrics)
-	return f"""SELECT ts, resource_id AS host, {series} AS series, {value} AS value
-FROM samples
-WHERE metric IN ({names}) AND ts > now() - {LOOKBACK} AND resource_id IN ({SERVICE_NODE_IDS})
+	return f"""WITH {TITLES}
+SELECT s.ts AS ts, {HOST.format(alias="s")} AS host, {series} AS series, {value} AS value
+FROM samples AS s LEFT JOIN titles AS t ON t.server = s.resource_id
+WHERE s.metric IN ({names}) AND s.ts > now() - {LOOKBACK} AND s.resource_id IN ({SERVICE_NODE_IDS})
 GROUP BY ts, host, series"""
 
 
-CPU_BUSY = f"""SELECT ts, resource_id AS host, 'Busy' AS series,
-  (1 - sumIf(increase, mode = 'idle') / nullIf(sum(increase), 0)) * 100 AS value
-FROM (
-  SELECT ts, resource_id, labels['mode'] AS mode, greatest(value - lagInFrame(value, 1, value) OVER w, 0) AS increase
-  FROM samples
-  WHERE metric = 'service_cpu_seconds_total' AND ts > now() - {LOOKBACK} AND resource_id IN ({SERVICE_NODE_IDS})
-  WINDOW w AS (PARTITION BY resource_id, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
-)
-GROUP BY ts, host
-HAVING sum(increase) > 0"""
+def usage_sql(column: str, series: str) -> str:
+	"""One row per node and push: one column of the machine usage."""
+	return f"""WITH {TITLES}
+SELECT u.ts AS ts, {HOST.format(alias="u")} AS host, '{series}' AS series, u.{column} AS value
+FROM ({machine_usage_sql(f"ts > now() - {LOOKBACK}", SERVICE_NODE_IDS)}) AS u
+LEFT JOIN titles AS t ON t.server = u.resource_id
+WHERE u.{column} IS NOT NULL"""
+
 
 # Vector stamps each request counter with its request time, so one push holds several times. Sum them per minute.
-PROXY_MINUTES = f"""SELECT toStartOfMinute(ts) AS ts, resource_id AS host,
-  sumIf(increase, metric = 'service_proxy_requests_total') AS requests,
-  sumIf(increase, metric = 'service_proxy_requests_total' AND status_class = '5xx') AS server_errors,
-  sumIf(increase, metric = 'service_proxy_request_seconds_total') AS request_seconds,
-  sumIf(increase, metric = 'service_proxy_upstream_seconds_total') AS upstream_seconds,
-  sumIf(increase, metric = 'service_proxy_slow_requests_total') AS slow_requests
+PROXY_MINUTES = f"""WITH {TITLES}
+SELECT toStartOfMinute(d.ts) AS ts, {HOST.format(alias="d")} AS host,
+  sumIf(d.increase, d.metric = 'proxy_requests_total') AS requests,
+  sumIf(d.increase, d.metric = 'proxy_requests_total' AND d.status_class = '5xx') AS server_errors,
+  sumIf(d.increase, d.metric = 'proxy_request_seconds_total') AS request_seconds,
+  sumIf(d.increase, d.metric = 'proxy_upstream_seconds_total') AS upstream_seconds,
+  sumIf(d.increase, d.metric = 'proxy_slow_requests_total') AS slow_requests
 FROM (
   SELECT ts, resource_id, metric, labels['status_class'] AS status_class,
     greatest(value - lagInFrame(value, 1, value) OVER w, 0) AS increase
   FROM samples
-  WHERE metric LIKE 'service_proxy_%' AND ts > now() - {LOOKBACK} AND resource_id IN ({SERVICE_NODE_IDS})
+  WHERE metric IN ('proxy_requests_total', 'proxy_request_seconds_total', 'proxy_upstream_seconds_total', 'proxy_slow_requests_total')
+    AND ts > now() - {LOOKBACK} AND resource_id IN ({SERVICE_NODE_IDS})
   WINDOW w AS (PARTITION BY resource_id, metric, labels ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
-)
+) AS d LEFT JOIN titles AS t ON t.server = d.resource_id
 GROUP BY ts, host"""
 
 PROXY_LATENCY = f"""SELECT ts, host, pair.1 AS series, pair.2 AS value
@@ -64,63 +68,62 @@ WHERE requests > 0"""
 
 PROXY_SLOW = f"SELECT ts, host, 'Over 1 s' AS series, slow_requests AS value FROM ({PROXY_MINUTES})"
 
-# One row per node that Atlas runs now: its newest push, use, and the last day's OOM kills and proxy requests.
+# One row per node that Atlas runs now: its newest push, use, and the last day's proxy requests.
 NODES_NOW = f"""WITH nodes AS (
-  SELECT labels['node'] AS node, argMax(labels['service'], ts) AS service FROM samples
-  WHERE resource_id LIKE 'atlas-%' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo'
+  SELECT labels['node'] AS node, argMax(labels['service'], ts) AS service, argMax(labels['virtual_machine'], ts) AS vm
+  FROM samples
+  WHERE resource_id = 'atlas' AND metric = 'atlas_service_node' AND labels['service'] != 'cargo'
     AND ts > now() - INTERVAL 15 MINUTE
   GROUP BY node
 ),
 latest AS (
   SELECT resource_id, max(ts) AS last_ts,
-    (1 - argMaxIf(value, ts, metric = 'service_memory_available_bytes')
-      / nullIf(argMaxIf(value, ts, metric = 'service_memory_total_bytes'), 0)) * 100 AS memory_used,
-    argMaxIf(value, ts, metric = 'service_load5') / greatest(argMaxIf(value, ts, metric = 'service_logical_cpus'), 1) AS load_per_cpu
+    (1 - argMaxIf(value, ts, metric = 'system_memory_available_bytes')
+      / nullIf(argMaxIf(value, ts, metric = 'system_memory_total_bytes'), 0)) * 100 AS memory_used,
+    argMaxIf(value, ts, metric = 'system_load_average' AND labels['window'] = '5m')
+      / greatest(argMaxIf(value, ts, metric = 'system_cpu_count'), 1) AS load_per_cpu
   FROM samples
-  WHERE metric LIKE 'service_%' AND ts > now() - INTERVAL 1 DAY AND resource_id IN (SELECT node FROM nodes)
+  WHERE metric IN ('system_boot_time_seconds', 'system_memory_available_bytes', 'system_memory_total_bytes',
+      'system_load_average', 'system_cpu_count')
+    AND ts > now() - INTERVAL 1 DAY AND resource_id IN (SELECT vm FROM nodes)
   GROUP BY resource_id
 ),
 disks AS (
   SELECT resource_id, min(free) AS worst_disk_free FROM (
     SELECT resource_id, labels['mountpoint'] AS mountpoint,
-      argMaxIf(value, ts, metric = 'service_filesystem_free_bytes')
-        / nullIf(argMaxIf(value, ts, metric = 'service_filesystem_total_bytes'), 0) * 100 AS free
+      argMaxIf(value, ts, metric = 'system_filesystem_available_bytes')
+        / nullIf(argMaxIf(value, ts, metric = 'system_filesystem_size_bytes'), 0) * 100 AS free
     FROM samples
-    WHERE metric IN ('service_filesystem_free_bytes', 'service_filesystem_total_bytes') AND ts > now() - INTERVAL 15 MINUTE
-      AND resource_id IN (SELECT node FROM nodes)
+    WHERE metric IN ('system_filesystem_available_bytes', 'system_filesystem_size_bytes') AND ts > now() - INTERVAL 15 MINUTE
+      AND resource_id IN (SELECT vm FROM nodes)
     GROUP BY resource_id, mountpoint
   )
   GROUP BY resource_id
 ),
-growth AS (
-  SELECT resource_id, sumIf(increase, metric = 'service_memory_oom_kill_events_total') AS oom_kills,
-    sumIf(increase, metric = 'service_proxy_requests_total') AS requests,
-    sumIf(increase, metric = 'service_proxy_requests_total' AND status_class = '5xx') AS server_errors
+requests AS (
+  SELECT resource_id, sum(increase) AS requests, sumIf(increase, status_class = '5xx') AS server_errors
   FROM (
-    SELECT resource_id, metric, labels['status_class'] AS status_class, greatest(max(value) - min(value), 0) AS increase
+    SELECT resource_id, labels['status_class'] AS status_class, greatest(max(value) - min(value), 0) AS increase
     FROM samples
-    WHERE metric IN ('service_memory_oom_kill_events_total', 'service_proxy_requests_total') AND ts > now() - INTERVAL 1 DAY
-      AND resource_id IN (SELECT node FROM nodes)
-    GROUP BY resource_id, metric, labels
+    WHERE metric = 'proxy_requests_total' AND ts > now() - INTERVAL 1 DAY AND resource_id IN (SELECT vm FROM nodes)
+    GROUP BY resource_id, labels
   )
   GROUP BY resource_id
 )
 SELECT {SERVICE_TITLE} AS service, n.node AS node,
   if(l.resource_id = '', NULL, dateDiff('second', l.last_ts, now())) AS last_push_seconds,
   l.memory_used AS memory_used, l.load_per_cpu AS load_per_cpu, d.worst_disk_free AS worst_disk_free,
-  g.oom_kills AS oom_kills, g.requests AS requests, g.server_errors / nullIf(g.requests, 0) * 100 AS server_error_share
+  r.requests AS requests, r.server_errors / nullIf(r.requests, 0) * 100 AS server_error_share
 FROM nodes AS n
-LEFT JOIN latest AS l ON l.resource_id = n.node
-LEFT JOIN disks AS d ON d.resource_id = n.node
-LEFT JOIN growth AS g ON g.resource_id = n.node"""
+LEFT JOIN latest AS l ON l.resource_id = n.vm
+LEFT JOIN disks AS d ON d.resource_id = n.vm
+LEFT JOIN requests AS r ON r.resource_id = n.vm"""
 
 PROXY_CHARTS = [
 	Chart(
 		key="node-proxy-requests",
 		title="Proxy Requests by Status",
-		sql=rate_sql(
-			["service_proxy_requests_total"], "d.labels['status_class']", resources=SERVICE_NODE_IDS
-		),
+		sql=rate_sql(["proxy_requests_total"], "d.labels['status_class']", resources=SERVICE_NODE_IDS),
 		measure="Requests/s",
 		aggregation="avg",
 		number_format=PER_SECOND,
@@ -157,7 +160,7 @@ RESOURCE_CHARTS = [
 	Chart(
 		key="node-cpu",
 		title="CPU Busy",
-		sql=CPU_BUSY,
+		sql=usage_sql("cpu_busy", "Busy"),
 		measure="Busy",
 		aggregation="avg",
 		number_format=PERCENT,
@@ -165,11 +168,7 @@ RESOURCE_CHARTS = [
 	Chart(
 		key="node-memory",
 		title="Memory Used",
-		sql=pivot_sql(
-			("service_memory_available_bytes", "service_memory_total_bytes"),
-			"(1 - sumIf(value, metric = 'service_memory_available_bytes') / nullIf(sumIf(value, metric = 'service_memory_total_bytes'), 0)) * 100",
-			"'Used'",
-		),
+		sql=usage_sql("ram_used", "Used"),
 		measure="Used",
 		aggregation="avg",
 		number_format=PERCENT,
@@ -178,21 +177,21 @@ RESOURCE_CHARTS = [
 		key="node-disk-free",
 		title="Disk Free by Mount",
 		sql=pivot_sql(
-			("service_filesystem_free_bytes", "service_filesystem_total_bytes"),
-			"sumIf(value, metric = 'service_filesystem_free_bytes') / nullIf(sumIf(value, metric = 'service_filesystem_total_bytes'), 0) * 100",
-			"labels['mountpoint']",
+			("system_filesystem_available_bytes", "system_filesystem_size_bytes"),
+			"sumIf(s.value, s.metric = 'system_filesystem_available_bytes') / nullIf(sumIf(s.value, s.metric = 'system_filesystem_size_bytes'), 0) * 100",
+			"s.labels['mountpoint']",
 		),
 		measure="Free",
 		aggregation="min",
 		number_format=PERCENT,
-		info="Keep at least 25% of each disk free. The alerts warn under 25% and page under 10%.",
+		info="Keep at least 25% of each disk free. Beacon alerts under 25% and pages under 10%.",
 	),
 	Chart(
 		key="node-load",
 		title="Load per CPU, 5 min",
 		sql=pivot_sql(
-			("service_load5", "service_logical_cpus"),
-			"sumIf(value, metric = 'service_load5') / greatest(sumIf(value, metric = 'service_logical_cpus'), 1)",
+			("system_load_average", "system_cpu_count"),
+			"sumIf(s.value, s.metric = 'system_load_average' AND s.labels['window'] = '5m') / greatest(sumIf(s.value, s.metric = 'system_cpu_count'), 1)",
 			"'Load'",
 		),
 		measure="Load",
@@ -203,8 +202,8 @@ RESOURCE_CHARTS = [
 		key="node-network",
 		title="Network Traffic",
 		sql=rate_sql(
-			["service_network_receive_bytes_total", "service_network_transmit_bytes_total"],
-			"concat(if(d.metric = 'service_network_receive_bytes_total', 'recv ', 'trans '), d.labels['device'])",
+			["system_network_receive_bytes_total", "system_network_transmit_bytes_total"],
+			"concat(if(d.metric = 'system_network_receive_bytes_total', 'recv ', 'trans '), d.labels['interface'])",
 			scale="8",
 			resources=SERVICE_NODE_IDS,
 		),
@@ -214,31 +213,14 @@ RESOURCE_CHARTS = [
 	),
 	Chart(
 		key="node-network-errors",
-		title="Network Errors and Drops",
+		title="Network Errors",
 		sql=rate_sql(
-			[
-				"service_network_receive_errs_total",
-				"service_network_transmit_errs_total",
-				"service_network_transmit_packets_drop_total",
-			],
-			"concat(replaceRegexpOne(d.metric, '^service_network_(\\\\w+?)_(errs|packets_drop)_total$', '\\\\1 \\\\2 '), d.labels['device'])",
+			["system_network_receive_errors_total", "system_network_transmit_errors_total"],
+			"concat(if(d.metric = 'system_network_receive_errors_total', 'recv ', 'trans '), d.labels['interface'])",
 			per_second=False,
 			resources=SERVICE_NODE_IDS,
 		),
 		measure="Packets",
-		aggregation="sum",
-		number_format=COUNT,
-	),
-	Chart(
-		key="node-oom-kills",
-		title="OOM Kills",
-		sql=rate_sql(
-			["service_memory_oom_kill_events_total"],
-			"'OOM kills'",
-			per_second=False,
-			resources=SERVICE_NODE_IDS,
-		),
-		measure="Kills",
 		aggregation="sum",
 		number_format=COUNT,
 	),
@@ -260,14 +242,13 @@ def add_service_nodes_dashboard(workbook: Workbook) -> None:
 				measure("Memory Used %", "memory_used", "max"),
 				measure("Load per CPU", "load_per_cpu", "max"),
 				measure("Worst Disk Free %", "worst_disk_free", "min"),
-				measure("OOM Kills, last day", "oom_kills", "max", "Integer"),
 				measure("Proxy Requests, last day", "requests", "max", "Integer"),
 				measure("Proxy 5xx %", "server_error_share", "max"),
 			],
 			order="Worst Disk Free %",
 			direction="asc",
 		),
-		"Vector on each node pushes every 30 seconds. A node without a push has no telemetry installed, or cannot reach Datum.",
+		"The Datum agent on each node pushes every 30 seconds. A node without a push has no agent installed, or cannot reach Datum.",
 	)
 	proxy = [add_section_chart(folder, chart) for chart in PROXY_CHARTS]
 	resources = [add_section_chart(folder, chart) for chart in RESOURCE_CHARTS]

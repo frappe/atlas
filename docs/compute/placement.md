@@ -7,7 +7,7 @@ A **strategy** ranks hosts. The **capacity check** decides whether a host can ta
 ## How a host is chosen
 
 1. **Host pool.** A host qualifies when it is `Running` and has finished setup. It must also match the image architecture and have a capacity sample less than 2 minutes old. With **dedicated sleepy hosts** enabled, [sleepy VMs](sleepy-vms.md) and regular VMs use separate pools.
-2. **Fit.** Atlas subtracts work the sample cannot include yet: recent drafts, VMs created after the sample, and incoming migrations. **Memory and disk are hard limits.** CPU can be oversubscribed. It only affects ranking.
+2. **Fit.** Atlas subtracts work the sample cannot include yet: recent drafts, VMs created after the sample, and incoming migrations. **Memory and disk are hard limits.** Metal counts the full memory of each VM and keeps a host reserve. See [host capacity](../../metal/internal/host/SPEC.md#capacity). CPU can be oversubscribed. It only affects ranking.
 3. **Rank.** The selected strategy sorts the hosts that fit.
 4. **Lock and recheck.** Atlas takes a MariaDB named lock for the top host, rechecks committed capacity under `READ COMMITTED`, commits the draft, and releases the lock.
 

@@ -63,6 +63,10 @@ func (manager *Manager) reconcile(ctx context.Context, identifier string, remote
 	}
 
 	desired, observed, err := virtualMachine.records()
+	if virtualMachine.isRemoved(err) {
+		// A pass lists IDs before it starts; a delete can finish in between.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -127,6 +131,13 @@ func (manager *Manager) reconcileActive(
 	}
 
 	if desired.State == StateStopped {
+		// An inspect error falls through, because the hard stop can still kill an unresponsive process.
+		status, err := manager.runtime.Inspect(ctx, machine)
+		if err == nil && status.State == StateStopped && observed.State == StateStopped && observed.Error == nil &&
+			observed.Generation == desired.Generation && observed.RestartGeneration == desired.RestartGeneration {
+			observed.completeOperation()
+			return manager.store.writeObserved(desired.ID, observed)
+		}
 		return manager.reconcileHardStop(ctx, desired, machine, &observed, operationID)
 	}
 
@@ -506,6 +517,12 @@ func (manager *Manager) applyDesiredSpecification(
 			return err
 		}
 	}
+	// A failed grow keeps the disk change, and the guest grows the file system at its next boot.
+	if status.State == StateRunning {
+		if err := manager.runtime.GrowGuestRootFilesystem(ctx, machine); err != nil {
+			manager.logger.WarnContext(ctx, "guest root file system grow failed", "virtual_machine_id", desired.ID, "error", err)
+		}
+	}
 	return nil
 }
 
@@ -548,6 +565,7 @@ func (manager *Manager) reconcileDestroyed(
 	if err := manager.store.remove(desired.ID); err != nil {
 		return fmt.Errorf("remove virtual machine records: %w", err)
 	}
+	manager.slidingWindowUsage.forget(desired.ID)
 	return nil
 }
 

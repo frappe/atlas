@@ -4,6 +4,7 @@ import subprocess
 from functools import cached_property
 
 import frappe
+from frappe.utils import now_datetime
 
 from atlas.atlas.core.ssh import SSHRunner
 from atlas.service.core.warpgate.client import WarpgateClient, WarpgateError
@@ -12,6 +13,8 @@ ALL_HOSTS_ROLE = "all-hosts"
 HOST_ROLE_PREFIX = "host:"
 FAILURE_CACHE_KEY = "atlas:warpgate-sync-failure"
 FAILURE_REPEAT_SECONDS = 3600
+# The time of the last run that synced every host. Atlas telemetry sends its age.
+SYNCED_AT_CACHE_KEY = "atlas:warpgate-synced-at"
 # Root on the host trusts these keys, and Warpgate learns the host key, in one SSH call.
 TRUST_HOST_SCRIPT = """set -eu
 install -d -m 0700 /root/.ssh
@@ -130,6 +133,7 @@ class WarpgateTargetSync:
 		"""Fail the run so the scheduler logs it, at most once an hour for the same failure."""
 		if not failures:
 			frappe.cache.delete_value(FAILURE_CACHE_KEY)
+			frappe.cache.set_value(SYNCED_AT_CACHE_KEY, now_datetime())
 			return
 
 		message = "Warpgate target sync failed for " + "; ".join(failures)

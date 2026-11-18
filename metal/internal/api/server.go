@@ -59,6 +59,8 @@ type VirtualMachineManager interface {
 	EnableRescueMode(context.Context, string, vm.Image) error
 	DisableRescueMode(context.Context, string) error
 	SetCompute(context.Context, string, vm.Compute) error
+	ResetCPUBurst(context.Context, string) error
+	CPUBurstStatus(context.Context, string) (vm.CPUBurstStatus, error)
 	SetDisk(context.Context, string, int, vm.Disk) error
 	Resize(context.Context, string, vm.Compute, int) error
 	SetNetwork(context.Context, string, vm.NetworkConfiguration) error
@@ -190,7 +192,13 @@ func (s *Server) logRequest(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 
 		method, route := c.Request().Method, c.Path()
-		s.logger.Info("API request",
+		// Atlas syncs each host every 10 seconds, and metal_api_requests_total counts each sync,
+		// so only a failed sync logs at info.
+		level := slog.LevelInfo
+		if route == "/v1/sync" && status < http.StatusBadRequest {
+			level = slog.LevelDebug
+		}
+		s.logger.Log(c.Request().Context(), level, "API request",
 			"method", method, "path", route, "status", status, "duration", duration,
 			pathIdentifier(route, c.Param("id")),
 			"request_id", requestID(c.Request().Context()),

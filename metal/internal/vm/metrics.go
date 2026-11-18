@@ -43,6 +43,10 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (metrics
 			ReadOperations: usage.DiskReadOperations, WriteOperations: usage.DiskWriteOperations,
 		}
 	}
+	// A paused guest cannot answer, so asking it would only wait for the timeout.
+	if observed.State == StateRunning {
+		sample.Guest = manager.runtime.GetGuestUsage(ctx, RuntimeMachine{ID: desired.ID})
+	}
 
 	if manager.traffic != nil {
 		target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}

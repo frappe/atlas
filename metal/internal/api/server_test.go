@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +26,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 
 	"github.com/frappe/atlas/metal/internal/telemetry"
+	"github.com/labstack/echo/v5"
 )
 
 type fakeVM struct {
@@ -214,6 +217,14 @@ func (manager *fakeVirtualMachineManager) EnableRescueMode(context.Context, stri
 
 func (manager *fakeVirtualMachineManager) DisableRescueMode(context.Context, string) error {
 	return nil
+}
+
+func (manager *fakeVirtualMachineManager) ResetCPUBurst(context.Context, string) error {
+	return nil
+}
+
+func (manager *fakeVirtualMachineManager) CPUBurstStatus(context.Context, string) (vm.CPUBurstStatus, error) {
+	return vm.CPUBurstStatus{}, vm.ErrNotBurstable
 }
 
 func (manager *fakeVirtualMachineManager) RequestRestart(_ context.Context, id string) error {
@@ -764,6 +775,31 @@ func TestSetComputeRejectsAnUnsafeIdleTimeout(t *testing.T) {
 	do(t, srv, http.MethodPut, "/v1/vms/vm1/compute", body, http.StatusBadRequest)
 }
 
+// TestComputeRejectsInvalidBurstSettings checks that a burstable VM needs a
+// baseline within its CPU and a window within one day, and that a VM that is
+// not burstable keeps no burst values. Both limits themselves are accepted.
+func TestComputeRejectsInvalidBurstSettings(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	for name, burst := range map[string]string{
+		"no baseline":            `"is_burstable":true,"baseline_cpu_millicores":0,"sliding_window_minutes":60`,
+		"baseline above cpu":     `"is_burstable":true,"baseline_cpu_millicores":1001,"sliding_window_minutes":60`,
+		"no window":              `"is_burstable":true,"baseline_cpu_millicores":200,"sliding_window_minutes":0`,
+		"window above one day":   `"is_burstable":true,"baseline_cpu_millicores":200,"sliding_window_minutes":1441`,
+		"baseline without burst": `"is_burstable":false,"baseline_cpu_millicores":200`,
+		"window without burst":   `"is_burstable":false,"sliding_window_minutes":60`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"cpu_millicores":1000,"memory_mib":512,` + burst + `}`
+			do(t, srv, http.MethodPut, "/v1/vms/vm1/compute", body, http.StatusBadRequest)
+		})
+	}
+
+	limits := `{"cpu_millicores":1000,"memory_mib":512,"is_burstable":true,"baseline_cpu_millicores":1000,"sliding_window_minutes":1440}`
+	do(t, srv, http.MethodPut, "/v1/vms/vm1/compute", limits, http.StatusAccepted)
+}
+
 func TestSetNetworkStoresTheCompleteSpecification(t *testing.T) {
 	srv := newTestServer(t)
 	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
@@ -1311,5 +1347,28 @@ func TestMetricsHistoryQuery(t *testing.T) {
 	}
 	for _, query := range []string{"start=bad", "start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z", "max_samples=9", "max_samples=2001", "max_samples=all"} {
 		do(t, server, http.MethodGet, "/v1/vms/vm1/metrics?"+query, "", http.StatusBadRequest)
+	}
+}
+
+func TestOnlyAFailedHostSyncLogsAtInfo(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{
+		logger:    slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		telemetry: telemetry.NewRegistry(nil),
+	}
+	router := echo.New()
+	router.Use(server.logRequest)
+	status := http.StatusOK
+	router.POST("/v1/sync", func(c *echo.Context) error { return c.NoContent(status) })
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/sync", nil))
+	if output.Len() != 0 {
+		t.Fatalf("a successful sync logged at info: %s", output.String())
+	}
+
+	status = http.StatusInternalServerError
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/sync", nil))
+	if !strings.Contains(output.String(), `"status":500`) {
+		t.Fatalf("a failed sync did not log at info: %q", output.String())
 	}
 }
