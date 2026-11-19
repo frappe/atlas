@@ -23,14 +23,15 @@ T = TypeVar("T", bound="DnsRecordPayload")
 
 @_attrs_define
 class DnsRecordPayload:
-    """ The address of one regional service name, or the TXT values of its ACME challenge name.
+    """ The address of one regional service name, or the values of a TXT or CNAME record on it or a name under it.
 
         Attributes:
             address (None | str | Unset): Public address for a service name, WG Mesh address for its `internal-` name.
                 Required for A and AAAA.
             ttl (int | Unset): Record TTL in seconds. Default: 300.
             type_ (DnsRecordPayloadTypeType0 | None | Unset): Record type. Left out, Atlas picks A or AAAA from `address`.
-            values (list[str] | None | Unset): Unquoted TXT values for `_acme-challenge.<service name>`. Required for TXT.
+            values (list[str] | None | Unset): Unquoted TXT values, or the one target host name of a CNAME. Required for TXT
+                and CNAME.
      """
 
     address: None | str | Unset = UNSET

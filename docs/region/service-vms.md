@@ -45,18 +45,23 @@ PUT /api/atlas/dns-records/internal-s3-svc.<domain>
 {"address": "fdaa:1:0:0:0:0:0:7"}
 ```
 
-The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse. `DELETE` on the same path removes the A and AAAA records.
+The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse.
 
-### Prove a certificate with dns-01
+### Set TXT and CNAME records
 
-A tenant-0 caller that gets its own Let's Encrypt certificate for a public service name can publish the ACME dns-01 values as a TXT record on `_acme-challenge.<service name>`. Cargo uses this for one certificate that every Garage gateway serves.
+A tenant-0 caller can also set a TXT or CNAME record on a service name, or on any name under it. For example, Cargo publishes ACME dns-01 values on `_acme-challenge.s3-svc.<domain>`.
 
 ```http
 PUT /api/atlas/dns-records/_acme-challenge.s3-svc.<domain>
 {"type": "TXT", "values": ["<value>"], "ttl": 60}
+
+PUT /api/atlas/dns-records/gateway-1.s3-svc.<domain>
+{"type": "CNAME", "values": ["<host name>"]}
 ```
 
-Atlas accepts TXT only on `_acme-challenge.<label>.<domain>`, where the label is in `SERVICE_RECORD_LABELS`. It refuses `internal-` names. Each value is unquoted base64url of at most 255 characters, and a record holds at most 10 values. `DELETE` on the same path removes the TXT record.
+The last label before `<domain>` must be in `SERVICE_RECORD_LABELS`, with or without `internal-`. Atlas refuses every other name in the zone, such as `proxy.<domain>` and `*.<domain>`, because it owns them. A TXT value is unquoted printable ASCII of at most 255 characters, without quotes or backslashes, and a record holds at most 10 values. A CNAME takes one host name.
+
+`DELETE` on a service name, or on a name under it, removes its A, AAAA, TXT and CNAME records.
 
 Metal looks up `internal-<host>` before it opens an image or snapshot connection to object storage, or a telemetry connection to Datum. When the answer is a private address, Metal connects to that address and keeps the original host name for TLS and presigned URLs. When the answer is public, or the private connection fails, Metal uses the public address.
 
