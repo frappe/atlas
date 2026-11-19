@@ -690,7 +690,7 @@
       },
       "DnsRecordPayload": {
         "additionalProperties": false,
-        "description": "The address of one regional service name, or the values of a TXT or CNAME record on it or a name under it.",
+        "description": "The addresses of one regional service name, or the values of a TXT or CNAME record on it or a name under it.",
         "properties": {
           "address": {
             "anyOf": [
@@ -703,8 +703,42 @@
               }
             ],
             "default": null,
-            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Required for A and AAAA.",
+            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Send this or `addresses` for A and AAAA.",
             "title": "Address"
+          },
+          "addresses": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "ipvanyaddress",
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Every address of the name, all IPv4 or all IPv6. They replace the addresses the name had.",
+            "title": "Addresses"
+          },
+          "health_check_url": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "An HTTPS URL on a public service name. Route53 asks its host and path at each IPv4 address in `addresses` and leaves out an address that stops answering.",
+            "title": "Health Check Url"
           },
           "ttl": {
             "default": 300,
@@ -3639,7 +3673,7 @@
         ]
       },
       "put": {
-        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.",
+        "description": "Points a regional service name, such as `s3-svc.<domain>`, to public addresses, or its `internal-` name, such as `internal-s3-svc.<domain>`, to WG Mesh addresses. The addresses replace the ones the name had. With `health_check_url`, each IPv4 address gets a Route53 health check, and DNS answers with the addresses that pass. With `type` TXT or CNAME, sets `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.",
         "operationId": "set_dns_record",
         "parameters": [
           {
@@ -3667,7 +3701,11 @@
           "content": {
             "application/json": {
               "example": {
-                "address": "fdaa:1:0:0:0:0:0:7"
+                "addresses": [
+                  "203.0.113.7",
+                  "203.0.113.8"
+                ],
+                "health_check_url": "https://s3-admin-svc.example.com/health"
               },
               "schema": {
                 "$ref": "#/components/schemas/DnsRecordPayload"

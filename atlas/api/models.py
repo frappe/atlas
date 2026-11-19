@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import datetime
+from ipaddress import IPv4Address, IPv6Address
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -1436,14 +1437,24 @@ class HostAccessResponse(BaseModel):
 
 
 class DnsRecordPayload(StrictModel):
-	"""The address of one regional service name, or the values of a TXT or CNAME record on it or a name under it."""
+	"""The addresses of one regional service name, or the values of a TXT or CNAME record on it or a name under it."""
 
 	type: Literal["A", "AAAA", "TXT", "CNAME"] | None = Field(
 		default=None, description="Record type. Left out, Atlas picks A or AAAA from `address`."
 	)
 	address: IPvAnyAddress | None = Field(
 		default=None,
-		description="Public address for a service name, WG Mesh address for its `internal-` name. Required for A and AAAA.",
+		description="Public address for a service name, WG Mesh address for its `internal-` name. Send this or `addresses` for A and AAAA.",
+	)
+	addresses: list[IPvAnyAddress] | None = Field(
+		default=None,
+		min_length=1,
+		max_length=10,
+		description="Every address of the name, all IPv4 or all IPv6. They replace the addresses the name had.",
+	)
+	health_check_url: AnyHttpUrl | None = Field(
+		default=None,
+		description="An HTTPS URL on a public service name. Route53 asks its host and path at each IPv4 address in `addresses` and leaves out an address that stops answering.",
 	)
 	values: list[Annotated[str, StringConstraints(min_length=1, max_length=255)]] | None = Field(
 		default=None,
@@ -1453,23 +1464,44 @@ class DnsRecordPayload(StrictModel):
 	)
 	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
 
+	@property
+	def service_addresses(self) -> list[IPv4Address | IPv6Address]:
+		return self.addresses or [self.address]
+
 	@model_validator(mode="after")
 	def validate_record(self) -> DnsRecordPayload:
-		"""Require the field that the record type needs, and only that field."""
+		"""Require the fields that the record type needs, and only those fields."""
 		if self.type in ("TXT", "CNAME"):
-			if self.values is None or self.address is not None:
-				raise ValueError(f"A {self.type} record needs `values` and no `address`.")
-			if self.type == "TXT" and not all(map(is_text_value, self.values)):
-				raise ValueError("A TXT value takes printable ASCII without quotes or backslashes.")
-			if self.type == "CNAME" and (len(self.values) != 1 or not is_host_name(self.values[0])):
-				raise ValueError("A CNAME record needs one host name.")
-			return self
-
-		if self.address is None or self.values is not None:
-			raise ValueError("An A or AAAA record needs `address` and no `values`.")
-		if self.type and self.type != ("A" if self.address.version == 4 else "AAAA"):
-			raise ValueError(f"{self.address} does not suit an {self.type} record.")
+			self.validate_values()
+		else:
+			self.validate_addresses()
 		return self
+
+	def validate_values(self) -> None:
+		if (
+			self.values is None
+			or self.address is not None
+			or self.addresses is not None
+			or self.health_check_url
+		):
+			raise ValueError(f"A {self.type} record needs `values` and no addresses.")
+		if self.type == "TXT" and not all(map(is_text_value, self.values)):
+			raise ValueError("A TXT value takes printable ASCII without quotes or backslashes.")
+		if self.type == "CNAME" and (len(self.values) != 1 or not is_host_name(self.values[0])):
+			raise ValueError("A CNAME record needs one host name.")
+
+	def validate_addresses(self) -> None:
+		if self.values is not None or (self.address is None) == (self.addresses is None):
+			raise ValueError("An A or AAAA record needs `address` or `addresses`, and no `values`.")
+		addresses = self.service_addresses
+		versions = {address.version for address in addresses}
+		if len(versions) > 1 or len(set(addresses)) < len(addresses):
+			raise ValueError("`addresses` must be distinct, and all IPv4 or all IPv6.")
+		if self.type and self.type != ("A" if versions == {4} else "AAAA"):
+			raise ValueError(f"{addresses[0]} does not suit an {self.type} record.")
+		url = self.health_check_url
+		if url and (versions != {4} or url.scheme != "https" or url.port != 443):
+			raise ValueError("A health check needs an HTTPS URL on port 443 and IPv4 addresses.")
 
 
 def is_text_value(value: str) -> bool:

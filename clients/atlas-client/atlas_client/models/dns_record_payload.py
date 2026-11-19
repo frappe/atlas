@@ -23,11 +23,15 @@ T = TypeVar("T", bound="DnsRecordPayload")
 
 @_attrs_define
 class DnsRecordPayload:
-    """ The address of one regional service name, or the values of a TXT or CNAME record on it or a name under it.
+    """ The addresses of one regional service name, or the values of a TXT or CNAME record on it or a name under it.
 
         Attributes:
-            address (None | str | Unset): Public address for a service name, WG Mesh address for its `internal-` name.
-                Required for A and AAAA.
+            address (None | str | Unset): Public address for a service name, WG Mesh address for its `internal-` name. Send
+                this or `addresses` for A and AAAA.
+            addresses (list[str] | None | Unset): Every address of the name, all IPv4 or all IPv6. They replace the
+                addresses the name had.
+            health_check_url (None | str | Unset): An HTTPS URL on a public service name. Route53 asks its host and path at
+                each IPv4 address in `addresses` and leaves out an address that stops answering.
             ttl (int | Unset): Record TTL in seconds. Default: 300.
             type_ (DnsRecordPayloadTypeType0 | None | Unset): Record type. Left out, Atlas picks A or AAAA from `address`.
             values (list[str] | None | Unset): Unquoted TXT values, or the one target host name of a CNAME. Required for TXT
@@ -35,6 +39,8 @@ class DnsRecordPayload:
      """
 
     address: None | str | Unset = UNSET
+    addresses: list[str] | None | Unset = UNSET
+    health_check_url: None | str | Unset = UNSET
     ttl: int | Unset = 300
     type_: DnsRecordPayloadTypeType0 | None | Unset = UNSET
     values: list[str] | None | Unset = UNSET
@@ -49,6 +55,22 @@ class DnsRecordPayload:
             address = UNSET
         else:
             address = self.address
+
+        addresses: list[str] | None | Unset
+        if isinstance(self.addresses, Unset):
+            addresses = UNSET
+        elif isinstance(self.addresses, list):
+            addresses = self.addresses
+
+
+        else:
+            addresses = self.addresses
+
+        health_check_url: None | str | Unset
+        if isinstance(self.health_check_url, Unset):
+            health_check_url = UNSET
+        else:
+            health_check_url = self.health_check_url
 
         ttl = self.ttl
 
@@ -77,6 +99,10 @@ class DnsRecordPayload:
         })
         if address is not UNSET:
             field_dict["address"] = address
+        if addresses is not UNSET:
+            field_dict["addresses"] = addresses
+        if health_check_url is not UNSET:
+            field_dict["health_check_url"] = health_check_url
         if ttl is not UNSET:
             field_dict["ttl"] = ttl
         if type_ is not UNSET:
@@ -99,6 +125,34 @@ class DnsRecordPayload:
             return cast(None | str | Unset, data)
 
         address = _parse_address(d.pop("address", UNSET))
+
+
+        def _parse_addresses(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                addresses_type_0 = cast(list[str], data)
+
+                return addresses_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        addresses = _parse_addresses(d.pop("addresses", UNSET))
+
+
+        def _parse_health_check_url(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        health_check_url = _parse_health_check_url(d.pop("health_check_url", UNSET))
 
 
         ttl = d.pop("ttl", UNSET)
@@ -143,6 +197,8 @@ class DnsRecordPayload:
 
         dns_record_payload = cls(
             address=address,
+            addresses=addresses,
+            health_check_url=health_check_url,
             ttl=ttl,
             type_=type_,
             values=values,

@@ -15,7 +15,10 @@ DNS_PROVIDER_FAILED = {
 
 @dns_records.put("<name>")
 @api_docs(
-	request_example={"address": "fdaa:1:0:0:0:0:0:7"},
+	request_example={
+		"addresses": ["203.0.113.7", "203.0.113.8"],
+		"health_check_url": "https://s3-admin-svc.example.com/health",
+	},
 	responses={
 		204: {"description": "The name holds the record. Repeating the request is safe."},
 		400: {"description": "The name is not allowed, or the record does not suit the name."},
@@ -25,7 +28,7 @@ DNS_PROVIDER_FAILED = {
 def set_dns_record(name: str, payload: DnsRecordPayload) -> ApiResult[None]:
 	"""Set DNS record.
 
-	Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.
+	Points a regional service name, such as `s3-svc.<domain>`, to public addresses, or its `internal-` name, such as `internal-s3-svc.<domain>`, to WG Mesh addresses. The addresses replace the ones the name had. With `health_check_url`, each IPv4 address gets a Route53 health check, and DNS answers with the addresses that pass. With `type` TXT or CNAME, sets `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.
 	"""
 	require_tenant_zero_operator()
 	provider = get_dns_provider()
@@ -33,7 +36,8 @@ def set_dns_record(name: str, payload: DnsRecordPayload) -> ApiResult[None]:
 		if payload.type in ("TXT", "CNAME"):
 			provider.upsert_service_values(payload.type, name, payload.values, payload.ttl)
 		else:
-			provider.upsert_service_record(name, payload.address, payload.ttl)
+			health_check_url = str(payload.health_check_url) if payload.health_check_url else None
+			provider.set_service_addresses(name, payload.service_addresses, payload.ttl, health_check_url)
 	except DnsProviderError as error:
 		raise ApiError(str(error), code="dns_provider_error", status=502) from error
 	return ApiResult(None, status=204)
