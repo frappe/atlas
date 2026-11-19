@@ -3,7 +3,9 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
+from pydantic import ValidationError
 
+from atlas.api.models import DnsRecordPayload
 from atlas.api.routes.dns_records import set_dns_record
 from atlas.api.tests.test_support import TENANT_ID, api_request, error_body
 from atlas.atlas.core.dns_providers.route53 import Route53Error
@@ -33,3 +35,33 @@ class TestDnsRecordRoutes(UnitTestCase):
 
 		self.assertEqual(status, 502)
 		self.assertEqual(body["error"], {"code": "dns_provider_error", "message": "Throttling", "fields": []})
+
+
+class TestDnsRecordPayload(UnitTestCase):
+	def test_an_address_alone_keeps_the_address_record(self) -> None:
+		payload = DnsRecordPayload.model_validate({"address": "52.95.110.1"})
+
+		self.assertIsNone(payload.type)
+		self.assertEqual(str(payload.address), "52.95.110.1")
+
+	def test_a_txt_record_takes_values(self) -> None:
+		payload = DnsRecordPayload.model_validate({"type": "TXT", "values": ["a-B_9"], "ttl": 60})
+
+		self.assertEqual(payload.values, ["a-B_9"])
+
+	def test_records_that_do_not_suit_their_type_are_refused(self) -> None:
+		for body in (
+			{},
+			{"type": "TXT"},
+			{"type": "TXT", "values": []},
+			{"type": "TXT", "values": ["value"], "address": "52.95.110.1"},
+			{"type": "TXT", "values": ['"quoted"']},
+			{"type": "TXT", "values": ["a" * 256]},
+			{"type": "A"},
+			{"type": "A", "address": "2600:1f18::7"},
+			{"type": "AAAA", "address": "52.95.110.1"},
+			{"address": "52.95.110.1", "values": ["value"]},
+			{"type": "CNAME", "address": "52.95.110.1"},
+		):
+			with self.subTest(body=body), self.assertRaises(ValidationError):
+				DnsRecordPayload.model_validate(body)

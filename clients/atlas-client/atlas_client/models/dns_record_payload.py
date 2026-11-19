@@ -8,7 +8,9 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.dns_record_payload_type_type_0 import DnsRecordPayloadTypeType0
 from ..types import UNSET, Unset
+from typing import cast
 
 
 
@@ -21,34 +23,65 @@ T = TypeVar("T", bound="DnsRecordPayload")
 
 @_attrs_define
 class DnsRecordPayload:
-    """ The address of one regional service name.
+    """ The address of one regional service name, or the TXT values of its ACME challenge name.
 
         Attributes:
-            address (str): Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or
-                AAAA record.
+            address (None | str | Unset): Public address for a service name, WG Mesh address for its `internal-` name.
+                Required for A and AAAA.
             ttl (int | Unset): Record TTL in seconds. Default: 300.
+            type_ (DnsRecordPayloadTypeType0 | None | Unset): Record type. Left out, Atlas picks A or AAAA from `address`.
+            values (list[str] | None | Unset): Unquoted TXT values for `_acme-challenge.<service name>`. Required for TXT.
      """
 
-    address: str
+    address: None | str | Unset = UNSET
     ttl: int | Unset = 300
+    type_: DnsRecordPayloadTypeType0 | None | Unset = UNSET
+    values: list[str] | None | Unset = UNSET
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        address = self.address
+        address: None | str | Unset
+        if isinstance(self.address, Unset):
+            address = UNSET
+        else:
+            address = self.address
 
         ttl = self.ttl
+
+        type_: None | str | Unset
+        if isinstance(self.type_, Unset):
+            type_ = UNSET
+        elif isinstance(self.type_, DnsRecordPayloadTypeType0):
+            type_ = self.type_.value
+        else:
+            type_ = self.type_
+
+        values: list[str] | None | Unset
+        if isinstance(self.values, Unset):
+            values = UNSET
+        elif isinstance(self.values, list):
+            values = self.values
+
+
+        else:
+            values = self.values
 
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update({
-            "address": address,
         })
+        if address is not UNSET:
+            field_dict["address"] = address
         if ttl is not UNSET:
             field_dict["ttl"] = ttl
+        if type_ is not UNSET:
+            field_dict["type"] = type_
+        if values is not UNSET:
+            field_dict["values"] = values
 
         return field_dict
 
@@ -57,13 +90,61 @@ class DnsRecordPayload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        address = d.pop("address")
+        def _parse_address(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        address = _parse_address(d.pop("address", UNSET))
+
 
         ttl = d.pop("ttl", UNSET)
+
+        def _parse_type_(data: object) -> DnsRecordPayloadTypeType0 | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                type_type_0 = DnsRecordPayloadTypeType0(data)
+
+
+
+                return type_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DnsRecordPayloadTypeType0 | None | Unset, data)
+
+        type_ = _parse_type_(d.pop("type", UNSET))
+
+
+        def _parse_values(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                values_type_0 = cast(list[str], data)
+
+                return values_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        values = _parse_values(d.pop("values", UNSET))
+
 
         dns_record_payload = cls(
             address=address,
             ttl=ttl,
+            type_=type_,
+            values=values,
         )
 
         return dns_record_payload
