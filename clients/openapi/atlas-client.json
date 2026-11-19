@@ -690,7 +690,7 @@
       },
       "DnsRecordPayload": {
         "additionalProperties": false,
-        "description": "The address of one regional service name, or the TXT values of its ACME challenge name.",
+        "description": "The address of one regional service name, or the values of a TXT or CNAME record on it or a name under it.",
         "properties": {
           "address": {
             "anyOf": [
@@ -720,7 +720,8 @@
                 "enum": [
                   "A",
                   "AAAA",
-                  "TXT"
+                  "TXT",
+                  "CNAME"
                 ],
                 "type": "string"
               },
@@ -736,7 +737,8 @@
             "anyOf": [
               {
                 "items": {
-                  "pattern": "^[A-Za-z0-9_-]{1,255}$",
+                  "maxLength": 255,
+                  "minLength": 1,
                   "type": "string"
                 },
                 "maxItems": 10,
@@ -748,7 +750,7 @@
               }
             ],
             "default": null,
-            "description": "Unquoted TXT values for `_acme-challenge.<service name>`. Required for TXT.",
+            "description": "Unquoted TXT values, or the one target host name of a CNAME. Required for TXT and CNAME.",
             "title": "Values"
           }
         },
@@ -3542,7 +3544,7 @@
     },
     "/api/atlas/dns-records/{name}": {
       "delete": {
-        "description": "Removes the A and AAAA records of one regional service name, or the TXT record of its `_acme-challenge.` name.",
+        "description": "Removes the A, AAAA, TXT and CNAME records of one regional service name, or of a name under it.",
         "operationId": "remove_dns_record",
         "parameters": [
           {
@@ -3637,7 +3639,7 @@
         ]
       },
       "put": {
-        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT, sets the ACME dns-01 values of `_acme-challenge.<service name>`, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.",
+        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.",
         "operationId": "set_dns_record",
         "parameters": [
           {

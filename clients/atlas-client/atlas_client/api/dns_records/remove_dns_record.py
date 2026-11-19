@@ -111,8 +111,7 @@ def sync_detailed(
 ) -> Response[Any | ApiErrorResponse]:
     """ Remove DNS record
 
-     Removes the A and AAAA records of one regional service name, or the TXT record of its `_acme-
-    challenge.` name.
+     Removes the A, AAAA, TXT and CNAME records of one regional service name, or of a name under it.
 
     Args:
         name (str):
@@ -148,8 +147,7 @@ def sync(
 ) -> Any | ApiErrorResponse | None:
     """ Remove DNS record
 
-     Removes the A and AAAA records of one regional service name, or the TXT record of its `_acme-
-    challenge.` name.
+     Removes the A, AAAA, TXT and CNAME records of one regional service name, or of a name under it.
 
     Args:
         name (str):
@@ -180,8 +178,7 @@ async def asyncio_detailed(
 ) -> Response[Any | ApiErrorResponse]:
     """ Remove DNS record
 
-     Removes the A and AAAA records of one regional service name, or the TXT record of its `_acme-
-    challenge.` name.
+     Removes the A, AAAA, TXT and CNAME records of one regional service name, or of a name under it.
 
     Args:
         name (str):
@@ -217,8 +214,7 @@ async def asyncio(
 ) -> Any | ApiErrorResponse | None:
     """ Remove DNS record
 
-     Removes the A and AAAA records of one regional service name, or the TXT record of its `_acme-
-    challenge.` name.
+     Removes the A, AAAA, TXT and CNAME records of one regional service name, or of a name under it.
 
     Args:
         name (str):

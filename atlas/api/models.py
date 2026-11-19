@@ -1436,29 +1436,33 @@ class HostAccessResponse(BaseModel):
 
 
 class DnsRecordPayload(StrictModel):
-	"""The address of one regional service name, or the TXT values of its ACME challenge name."""
+	"""The address of one regional service name, or the values of a TXT or CNAME record on it or a name under it."""
 
-	type: Literal["A", "AAAA", "TXT"] | None = Field(
+	type: Literal["A", "AAAA", "TXT", "CNAME"] | None = Field(
 		default=None, description="Record type. Left out, Atlas picks A or AAAA from `address`."
 	)
 	address: IPvAnyAddress | None = Field(
 		default=None,
 		description="Public address for a service name, WG Mesh address for its `internal-` name. Required for A and AAAA.",
 	)
-	values: list[Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,255}$")]] | None = Field(
+	values: list[Annotated[str, StringConstraints(min_length=1, max_length=255)]] | None = Field(
 		default=None,
 		min_length=1,
 		max_length=10,
-		description="Unquoted TXT values for `_acme-challenge.<service name>`. Required for TXT.",
+		description="Unquoted TXT values, or the one target host name of a CNAME. Required for TXT and CNAME.",
 	)
 	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
 
 	@model_validator(mode="after")
 	def validate_record(self) -> DnsRecordPayload:
 		"""Require the field that the record type needs, and only that field."""
-		if self.type == "TXT":
+		if self.type in ("TXT", "CNAME"):
 			if self.values is None or self.address is not None:
-				raise ValueError("A TXT record needs `values` and no `address`.")
+				raise ValueError(f"A {self.type} record needs `values` and no `address`.")
+			if self.type == "TXT" and not all(map(is_text_value, self.values)):
+				raise ValueError("A TXT value takes printable ASCII without quotes or backslashes.")
+			if self.type == "CNAME" and (len(self.values) != 1 or not is_host_name(self.values[0])):
+				raise ValueError("A CNAME record needs one host name.")
 			return self
 
 		if self.address is None or self.values is not None:
@@ -1466,6 +1470,20 @@ class DnsRecordPayload(StrictModel):
 		if self.type and self.type != ("A" if self.address.version == 4 else "AAAA"):
 			raise ValueError(f"{self.address} does not suit an {self.type} record.")
 		return self
+
+
+def is_text_value(value: str) -> bool:
+	"""Whether Atlas can quote the value into a TXT record as it is."""
+	return all(" " <= character <= "~" and character not in '"\\' for character in value)
+
+
+def is_host_name(value: str) -> bool:
+	"""Whether the value is a DNS host name of letters, digits, hyphens and underscores."""
+	labels = value.removesuffix(".").split(".")
+	return len(value) <= 253 and all(
+		0 < len(label) <= 63 and label.replace("-", "").replace("_", "").isalnum() and label.isascii()
+		for label in labels
+	)
 
 
 class InvestigationPayload(StrictModel):

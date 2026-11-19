@@ -44,10 +44,12 @@ class TestDnsRecordPayload(UnitTestCase):
 		self.assertIsNone(payload.type)
 		self.assertEqual(str(payload.address), "52.95.110.1")
 
-	def test_a_txt_record_takes_values(self) -> None:
-		payload = DnsRecordPayload.model_validate({"type": "TXT", "values": ["a-B_9"], "ttl": 60})
+	def test_txt_and_cname_records_take_values(self) -> None:
+		txt = DnsRecordPayload.model_validate({"type": "TXT", "values": ["v=1; a-B_9"], "ttl": 60})
+		cname = DnsRecordPayload.model_validate({"type": "CNAME", "values": ["vm-1.example.net."]})
 
-		self.assertEqual(payload.values, ["a-B_9"])
+		self.assertEqual(txt.values, ["v=1; a-B_9"])
+		self.assertEqual(cname.values, ["vm-1.example.net."])
 
 	def test_records_that_do_not_suit_their_type_are_refused(self) -> None:
 		for body in (
@@ -56,12 +58,16 @@ class TestDnsRecordPayload(UnitTestCase):
 			{"type": "TXT", "values": []},
 			{"type": "TXT", "values": ["value"], "address": "52.95.110.1"},
 			{"type": "TXT", "values": ['"quoted"']},
+			{"type": "TXT", "values": ["back\\slash"]},
 			{"type": "TXT", "values": ["a" * 256]},
+			{"type": "CNAME", "values": ["a.example.net", "b.example.net"]},
+			{"type": "CNAME", "values": ["not a host"]},
+			{"type": "CNAME", "values": ["a..example.net"]},
 			{"type": "A"},
 			{"type": "A", "address": "2600:1f18::7"},
 			{"type": "AAAA", "address": "52.95.110.1"},
 			{"address": "52.95.110.1", "values": ["value"]},
-			{"type": "CNAME", "address": "52.95.110.1"},
+			{"type": "MX", "values": ["mail.example.net"]},
 		):
 			with self.subTest(body=body), self.assertRaises(ValidationError):
 				DnsRecordPayload.model_validate(body)

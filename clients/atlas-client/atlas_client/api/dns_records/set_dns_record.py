@@ -118,15 +118,15 @@ def sync_detailed(
     """ Set DNS record
 
      Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT, sets the ACME
-    dns-01 values of `_acme-challenge.<service name>`, such as `_acme-challenge.s3-svc.<domain>`. The
-    TTL defaults to 300 seconds.
+    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets
+    `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL
+    defaults to 300 seconds.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name, or the TXT values of
-            its ACME challenge name.
+        body (DnsRecordPayload): The address of one regional service name, or the values of a TXT
+            or CNAME record on it or a name under it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,15 +161,15 @@ def sync(
     """ Set DNS record
 
      Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT, sets the ACME
-    dns-01 values of `_acme-challenge.<service name>`, such as `_acme-challenge.s3-svc.<domain>`. The
-    TTL defaults to 300 seconds.
+    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets
+    `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL
+    defaults to 300 seconds.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name, or the TXT values of
-            its ACME challenge name.
+        body (DnsRecordPayload): The address of one regional service name, or the values of a TXT
+            or CNAME record on it or a name under it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,15 +199,15 @@ async def asyncio_detailed(
     """ Set DNS record
 
      Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT, sets the ACME
-    dns-01 values of `_acme-challenge.<service name>`, such as `_acme-challenge.s3-svc.<domain>`. The
-    TTL defaults to 300 seconds.
+    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets
+    `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL
+    defaults to 300 seconds.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name, or the TXT values of
-            its ACME challenge name.
+        body (DnsRecordPayload): The address of one regional service name, or the values of a TXT
+            or CNAME record on it or a name under it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -242,15 +242,15 @@ async def asyncio(
     """ Set DNS record
 
      Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT, sets the ACME
-    dns-01 values of `_acme-challenge.<service name>`, such as `_acme-challenge.s3-svc.<domain>`. The
-    TTL defaults to 300 seconds.
+    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT or CNAME, sets
+    `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL
+    defaults to 300 seconds.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name, or the TXT values of
-            its ACME challenge name.
+        body (DnsRecordPayload): The address of one regional service name, or the values of a TXT
+            or CNAME record on it or a name under it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

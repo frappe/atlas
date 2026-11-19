@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 # Regional services that tenant 0 may publish. Metal and Pilot dial `internal-<label>` over the mesh.
 SERVICE_RECORD_LABELS = ("s3-svc", "s3-admin-svc", "telemetry-svc", "telemetry-read-svc")
 INTERNAL_RECORD_PREFIX = "internal-"
-CHALLENGE_RECORD_PREFIX = "_acme-challenge."
+SERVICE_RECORD_TYPES = ("A", "AAAA", "TXT", "CNAME")
 
 
 class DnsProviderError(Exception):
@@ -139,26 +139,26 @@ class DnsProvider(ABC):
 		record_type, replaced_type = ("A", "AAAA") if address.version == 4 else ("AAAA", "A")
 		self.upsert_record(record_type, name, [str(address)], ttl, replaced_type)
 
-	def upsert_challenge_record(self, name: str, values: list[str], ttl: int) -> None:
-		"""Publish the ACME dns-01 values of one public service name."""
-		self._validate_challenge_record(name)
-		self.upsert_record("TXT", name, [f'"{value}"' for value in values], ttl)
+	def upsert_service_values(self, record_type: str, name: str, values: list[str], ttl: int) -> None:
+		"""Set a TXT or CNAME record on a service name, or on a name under it."""
+		self._validate_service_subtree(name)
+		if record_type == "TXT":
+			values = [f'"{value}"' for value in values]
+		self.upsert_record(record_type, name, values, ttl)
 
 	def remove_service_record(self, name: str) -> None:
-		"""Remove the A and AAAA records of one service name, or the TXT record of its challenge name."""
-		if name.startswith(CHALLENGE_RECORD_PREFIX):
-			self._validate_challenge_record(name)
-			self.remove_record("TXT", name)
-			return
+		"""Remove every record type that tenant 0 can set on a service name, or on a name under it."""
+		self._validate_service_subtree(name)
+		for record_type in SERVICE_RECORD_TYPES:
+			self.remove_record(record_type, name)
 
-		self._is_internal_service_record(name)
-		self.remove_record("A", name)
-		self.remove_record("AAAA", name)
-
-	def _validate_challenge_record(self, name: str) -> None:
-		service_name = name.removeprefix(CHALLENGE_RECORD_PREFIX)
-		if service_name == name or self._is_internal_service_record(service_name):
-			raise AtlasUserError(f"{name} is not an ACME challenge name of a public service.")
+	def _validate_service_subtree(self, name: str) -> None:
+		"""Atlas owns every other name in the zone, such as `proxy.<domain>` and `*.<domain>`."""
+		suffix = f".{self.domain_name}"
+		if not name.endswith(suffix):
+			raise AtlasUserError(f"{name} is not a service record name under {self.domain_name}.")
+		label = name.removesuffix(suffix).rpartition(".")[2]
+		self._is_internal_service_record(f"{label}{suffix}")
 
 	def _is_internal_service_record(self, name: str) -> bool:
 		label, _, domain = name.partition(".")
