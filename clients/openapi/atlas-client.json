@@ -690,13 +690,21 @@
       },
       "DnsRecordPayload": {
         "additionalProperties": false,
-        "description": "The address of one regional service name.",
+        "description": "The address of one regional service name, or the TXT values of its ACME challenge name.",
         "properties": {
           "address": {
-            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record.",
-            "format": "ipvanyaddress",
-            "title": "Address",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "ipvanyaddress",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Required for A and AAAA.",
+            "title": "Address"
           },
           "ttl": {
             "default": 300,
@@ -705,11 +713,45 @@
             "minimum": 60,
             "title": "Ttl",
             "type": "integer"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "A",
+                  "AAAA",
+                  "TXT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Record type. Left out, Atlas picks A or AAAA from `address`.",
+            "title": "Type"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[A-Za-z0-9_-]{1,255}$",
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Unquoted TXT values for `_acme-challenge.<service name>`. Required for TXT.",
+            "title": "Values"
           }
         },
-        "required": [
-          "address"
-        ],
         "title": "DnsRecordPayload",
         "type": "object"
       },
@@ -3500,7 +3542,7 @@
     },
     "/api/atlas/dns-records/{name}": {
       "delete": {
-        "description": "Removes the A and AAAA records of one regional service name.",
+        "description": "Removes the A and AAAA records of one regional service name, or the TXT record of its `_acme-challenge.` name.",
         "operationId": "remove_dns_record",
         "parameters": [
           {
@@ -3526,7 +3568,7 @@
         ],
         "responses": {
           "204": {
-            "description": "The name has no A or AAAA record. Removing twice is safe."
+            "description": "The name has no record left. Removing twice is safe."
           },
           "400": {
             "content": {
@@ -3595,7 +3637,7 @@
         ]
       },
       "put": {
-        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.",
+        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. With `type` TXT, sets the ACME dns-01 values of `_acme-challenge.<service name>`, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.",
         "operationId": "set_dns_record",
         "parameters": [
           {
@@ -3634,7 +3676,7 @@
         },
         "responses": {
           "204": {
-            "description": "The name points to the address. Repeating the request is safe."
+            "description": "The name holds the record. Repeating the request is safe."
           },
           "400": {
             "content": {
@@ -3644,7 +3686,7 @@
                 }
               }
             },
-            "description": "The name is not allowed, or the address does not suit the name."
+            "description": "The name is not allowed, or the record does not suit the name."
           },
           "401": {
             "content": {

@@ -1436,12 +1436,36 @@ class HostAccessResponse(BaseModel):
 
 
 class DnsRecordPayload(StrictModel):
-	"""The address of one regional service name."""
+	"""The address of one regional service name, or the TXT values of its ACME challenge name."""
 
-	address: IPvAnyAddress = Field(
-		description="Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record."
+	type: Literal["A", "AAAA", "TXT"] | None = Field(
+		default=None, description="Record type. Left out, Atlas picks A or AAAA from `address`."
+	)
+	address: IPvAnyAddress | None = Field(
+		default=None,
+		description="Public address for a service name, WG Mesh address for its `internal-` name. Required for A and AAAA.",
+	)
+	values: list[Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,255}$")]] | None = Field(
+		default=None,
+		min_length=1,
+		max_length=10,
+		description="Unquoted TXT values for `_acme-challenge.<service name>`. Required for TXT.",
 	)
 	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
+
+	@model_validator(mode="after")
+	def validate_record(self) -> DnsRecordPayload:
+		"""Require the field that the record type needs, and only that field."""
+		if self.type == "TXT":
+			if self.values is None or self.address is not None:
+				raise ValueError("A TXT record needs `values` and no `address`.")
+			return self
+
+		if self.address is None or self.values is not None:
+			raise ValueError("An A or AAAA record needs `address` and no `values`.")
+		if self.type and self.type != ("A" if self.address.version == 4 else "AAAA"):
+			raise ValueError(f"{self.address} does not suit an {self.type} record.")
+		return self
 
 
 class InvestigationPayload(StrictModel):

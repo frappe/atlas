@@ -358,3 +358,45 @@ class TestRoute53Provider(UnitTestCase):
 				provider.upsert_service_record(name, ip_address(address), 300)
 
 		provider.client.change_resource_record_sets.assert_not_called()
+
+	def test_challenge_record_publishes_quoted_values_for_a_public_service(self) -> None:
+		provider = _build_provider()
+
+		provider.upsert_challenge_record("_acme-challenge.s3-svc.example.com", ["value-1", "value-2"], 60)
+
+		record = provider.client.change_resource_record_sets.call_args.kwargs["ChangeBatch"]["Changes"][0][
+			"ResourceRecordSet"
+		]
+		self.assertEqual(
+			record,
+			{
+				"Name": "_acme-challenge.s3-svc.example.com",
+				"Type": "TXT",
+				"TTL": 60,
+				"ResourceRecords": [{"Value": '"value-1"'}, {"Value": '"value-2"'}],
+			},
+		)
+
+	def test_challenge_record_refuses_other_names(self) -> None:
+		provider = _build_provider()
+
+		for name in (
+			"s3-svc.example.com",
+			"_acme-challenge.example.com",
+			"_acme-challenge.proxy.example.com",
+			"_acme-challenge.internal-s3-svc.example.com",
+			"_acme-challenge.s3-svc.example.org",
+			"_verify.s3-svc.example.com",
+		):
+			with self.subTest(name=name), self.assertRaises(AtlasUserError):
+				provider.upsert_challenge_record(name, ["value"], 60)
+
+		provider.client.change_resource_record_sets.assert_not_called()
+
+	def test_removing_a_challenge_name_removes_only_its_txt_record(self) -> None:
+		provider = _build_provider()
+		provider.remove_record = MagicMock()
+
+		provider.remove_service_record("_acme-challenge.s3-admin-svc.example.com")
+
+		provider.remove_record.assert_called_once_with("TXT", "_acme-challenge.s3-admin-svc.example.com")
