@@ -294,17 +294,19 @@ def record_flow_run(run: FlowRun) -> None:
 
 def ensure_investigator_user() -> str:
 	"""Return the user that runs Central investigations, with only the investigator roles."""
-	if not frappe.db.exists("User", INVESTIGATOR_USER):
-		user = frappe.get_doc(
-			{
-				"doctype": "User",
-				"email": INVESTIGATOR_USER,
-				"first_name": "Atlas Investigator",
-				"user_type": "System User",
-				"send_welcome_email": 0,
-			}
-		)
-		user.flags.no_welcome_mail = True
-		user.insert(ignore_permissions=True)
-		user.add_roles(*INVESTIGATOR_ROLES)
-	return INVESTIGATOR_USER
+	if user := frappe.db.get_value("User", {"email": INVESTIGATOR_USER}):
+		return user
+
+	user = frappe.get_doc(
+		{
+			"doctype": "User",
+			"email": INVESTIGATOR_USER,
+			"first_name": "Atlas Investigator",
+			"user_type": "System User",
+			"send_welcome_email": 0,
+		}
+	)
+	user.flags.no_welcome_mail = True
+	user.insert(ignore_permissions=True)
+	user.add_roles(*INVESTIGATOR_ROLES)
+	return user.name
