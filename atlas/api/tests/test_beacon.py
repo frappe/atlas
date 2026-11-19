@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests import UnitTestCase
+from frappe.utils import get_url
 
 from atlas.api.routes.beacon import BeaconResourceList, list_beacon_resources
 from atlas.api.tests.test_support import TENANT_ID, api_request, call_route, route_response
@@ -29,9 +30,10 @@ class TestBeaconRoutes(UnitTestCase):
 		with api_request("GET", "/api/atlas/beacon/resources"):
 			status, body = call_route(list_beacon_resources)
 			etag = route_response(list_beacon_resources).headers["ETag"]
+			desk_url = get_url("/desk")
 
 		self.assertEqual(status, 200)
-		self.assertEqual(body["resources"][0], ATLAS)
+		self.assertEqual(body["resources"][0], {**ATLAS, "url": desk_url})
 
 		with api_request("GET", "/api/atlas/beacon/resources", headers={"If-None-Match": etag}):
 			self.assertEqual(route_response(list_beacon_resources).status_code, 304)
