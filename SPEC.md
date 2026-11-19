@@ -12,6 +12,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | [IPv6 router](services/ipv6-router/SPEC.md) | `services/ipv6-router/` | Public IPv6 translation |
 | [WG Mesh](services/wg-mesh/SPEC.md) | `services/wg-mesh/` | Private VM network |
 | [WG gateway](services/wg-gateway/SPEC.md) | `services/wg-gateway/` | Customer access to tenant VMs |
+| [OCI rootfs](services/oci-rootfs/SPEC.md) | `services/oci-rootfs/` | Root file system builder for OCI images |
 | [Control cluster](services/control-cluster/SPEC.md) | `services/control-cluster/` | Authentication and replication for service control daemons |
 
 `clients/` holds the generated [API clients](docs/interfaces/api-clients.md). `llm/` and `.greptile/` hold review rules. `.vitepress/` builds the docs site.
@@ -32,6 +33,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It holds one Frappe a
 | Atlas | Every pull request |
 | Metal | `metal/` |
 | WG Mesh | `services/wg-mesh/` |
+| OCI rootfs | `services/oci-rootfs/` |
 | Control cluster | `services/control-cluster/` |
 | WireGuard gateway | `services/wg-gateway/` and `services/control-cluster/` |
 | HTTP proxy | `services/http-proxy/` and the proxy API client |

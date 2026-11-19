@@ -54,7 +54,7 @@ public_ips = atlas_router.subrouter(
 images = atlas_router.subrouter(
 	"images",
 	name="Images",
-	description="Read and delete tenant virtual machine images.",
+	description="Import, read, and delete tenant virtual machine images.",
 )
 
 hosts = atlas_router.subrouter(

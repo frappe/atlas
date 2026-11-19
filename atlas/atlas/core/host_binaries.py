@@ -87,6 +87,16 @@ HOST_BINARIES = (
 		required_commands=BUILD_COMMANDS,
 		required_headers=BUILD_HEADERS,
 	),
+	HostBinary(
+		key="oci-rootfs",
+		label="OCI Rootfs",
+		module_directory="services/oci-rootfs",
+		artifact="dist/oci-rootfs-linux-amd64",
+		settings_field="oci_rootfs_binary_x86_64_file",
+		source_hash_field="oci_rootfs_source_hash",
+		binary_hash_field="oci_rootfs_binary_hash",
+		version_field="oci_rootfs_version",
+	),
 )
 
 
