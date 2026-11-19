@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from atlas.atlas.core.dns_providers import register
-from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError
+from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError, MultivalueRecord
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -263,7 +263,29 @@ class Route53Provider(DnsProvider):
 			return None
 		return record
 
+	@override
+	def get_multivalue_a_records(self, name: str) -> list[MultivalueRecord]:
+		"""Every health-checked multivalue A record of the name."""
+		return [
+			MultivalueRecord(
+				record["SetIdentifier"],
+				record["ResourceRecords"][0]["Value"],
+				record.get("HealthCheckId", ""),
+			)
+			for record in self._list_multivalue_a_records(name)
+		]
+
 	def _get_multivalue_a_record(self, name: str, identifier: str) -> dict | None:
+		return next(
+			(
+				record
+				for record in self._list_multivalue_a_records(name)
+				if record["SetIdentifier"] == identifier
+			),
+			None,
+		)
+
+	def _list_multivalue_a_records(self, name: str) -> list[dict]:
 		zone_id = self.create_zone(self.domain_name)
 		try:
 			result = self.client.list_resource_record_sets(
@@ -275,16 +297,13 @@ class Route53Provider(DnsProvider):
 		except (BotoCoreError, ClientError) as error:
 			raise Route53Error(f"Failed to list proxy records for {name}: {error}") from error
 
-		return next(
-			(
-				record
-				for record in result.get("ResourceRecordSets", [])
-				if record["Name"].rstrip(".") == name.rstrip(".")
-				and record["Type"] == "A"
-				and record.get("SetIdentifier") == identifier
-			),
-			None,
-		)
+		return [
+			record
+			for record in result.get("ResourceRecordSets", [])
+			if record["Name"].rstrip(".") == name.rstrip(".")
+			and record["Type"] == "A"
+			and "SetIdentifier" in record
+		]
 
 	def _validate_zone(self, zone_id: str, domain: str) -> None:
 		try:

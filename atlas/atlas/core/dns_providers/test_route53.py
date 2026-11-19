@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from botocore.exceptions import ClientError
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.dns_providers.base import MultivalueRecord
 from atlas.atlas.core.dns_providers.route53 import Route53Provider
 from atlas.atlas.core.exceptions import AtlasUserError
 
@@ -285,8 +286,8 @@ class TestRoute53Provider(UnitTestCase):
 	def test_service_records_point_to_public_and_private_addresses(self) -> None:
 		provider = _build_provider()
 
-		provider.upsert_service_record("s3-svc.example.com", ip_address("52.95.110.1"), 300)
-		provider.upsert_service_record("internal-s3-svc.example.com", ip_address("fdaa:1::7"), 300)
+		provider.set_service_addresses("s3-svc.example.com", [ip_address("52.95.110.1")], 300)
+		provider.set_service_addresses("internal-s3-svc.example.com", [ip_address("fdaa:1::7")], 300)
 
 		records = [
 			call.kwargs["ChangeBatch"]["Changes"][0]["ResourceRecordSet"]
@@ -320,7 +321,7 @@ class TestRoute53Provider(UnitTestCase):
 		}
 		provider.client.list_resource_record_sets.return_value = {"ResourceRecordSets": [old_record]}
 
-		provider.upsert_service_record("s3-svc.example.com", ip_address("2600:1f18::7"), 60)
+		provider.set_service_addresses("s3-svc.example.com", [ip_address("2600:1f18::7")], 60)
 
 		provider.client.change_resource_record_sets.assert_called_once_with(
 			HostedZoneId="Z123",
@@ -355,7 +356,7 @@ class TestRoute53Provider(UnitTestCase):
 			("internal-s3-svc.example.com", "::1"),
 		):
 			with self.subTest(name=name, address=address), self.assertRaises(AtlasUserError):
-				provider.upsert_service_record(name, ip_address(address), 300)
+				provider.set_service_addresses(name, [ip_address(address)], 300)
 
 		provider.client.change_resource_record_sets.assert_not_called()
 
@@ -409,9 +410,88 @@ class TestRoute53Provider(UnitTestCase):
 	def test_removing_a_service_name_removes_every_type_that_tenant_zero_sets(self) -> None:
 		provider = _build_provider()
 		provider.remove_record = MagicMock()
+		provider.remove_multivalue_records = MagicMock()
 
 		provider.remove_service_record("_acme-challenge.s3-admin-svc.example.com")
+
+		provider.remove_multivalue_records.assert_called_once_with("_acme-challenge.s3-admin-svc.example.com")
 
 		self.assertEqual(
 			[call.args[0] for call in provider.remove_record.call_args_list], ["A", "AAAA", "TXT", "CNAME"]
 		)
+
+	def test_a_service_name_holds_every_address_in_one_record(self) -> None:
+		provider = _build_provider()
+
+		provider.set_service_addresses(
+			"internal-s3-svc.example.com", [ip_address("fdaa:1::7"), ip_address("fdaa:1::8")], 300
+		)
+
+		record = provider.client.change_resource_record_sets.call_args.kwargs["ChangeBatch"]["Changes"][0]
+		self.assertEqual(
+			record["ResourceRecordSet"]["ResourceRecords"], [{"Value": "fdaa:1::7"}, {"Value": "fdaa:1::8"}]
+		)
+
+	def test_checked_addresses_add_the_new_and_remove_the_gone(self) -> None:
+		provider = _checked_provider([MultivalueRecord("52.95.110.1", "52.95.110.1", "health-old")])
+
+		provider.set_service_addresses(
+			"s3-svc.example.com",
+			[ip_address("52.95.110.2")],
+			300,
+			"https://s3-admin-svc.example.com/health",
+		)
+
+		provider.create_https_health_check.assert_called_once_with(
+			"52.95.110.2", "s3-admin-svc.example.com", "/health"
+		)
+		provider.upsert_multivalue_a_record.assert_called_once_with(
+			"s3-svc.example.com", "52.95.110.2", "52.95.110.2", "health-new", 300
+		)
+		provider.remove_multivalue_a_record.assert_called_once_with("s3-svc.example.com", "52.95.110.1")
+		provider.remove_health_check.assert_called_once_with("health-old")
+		self.assertEqual([call.args[0] for call in provider.remove_record.call_args_list], ["A", "AAAA"])
+
+	def test_an_address_that_stays_keeps_its_health_check(self) -> None:
+		provider = _checked_provider([MultivalueRecord("52.95.110.1", "52.95.110.1", "health-1")])
+
+		provider.set_service_addresses(
+			"s3-svc.example.com", [ip_address("52.95.110.1")], 300, "https://s3-admin-svc.example.com/health"
+		)
+
+		provider.create_https_health_check.assert_not_called()
+		provider.remove_health_check.assert_not_called()
+
+	def test_plain_addresses_remove_the_checked_records(self) -> None:
+		provider = _checked_provider([MultivalueRecord("52.95.110.1", "52.95.110.1", "health-1")])
+
+		provider.set_service_addresses("s3-svc.example.com", [ip_address("52.95.110.1")], 300)
+
+		provider.remove_health_check.assert_called_once_with("health-1")
+
+	def test_a_health_check_is_only_for_a_public_service_name(self) -> None:
+		provider = _checked_provider([])
+
+		for name, address, url in (
+			("internal-s3-svc.example.com", "fdaa:1::7", "https://s3-admin-svc.example.com/health"),
+			("s3-svc.example.com", "52.95.110.1", "https://internal-s3-admin-svc.example.com/health"),
+			("s3-svc.example.com", "52.95.110.1", "https://proxy.example.com/health"),
+		):
+			with self.subTest(name=name, url=url), self.assertRaises(AtlasUserError):
+				provider.set_service_addresses(name, [ip_address(address)], 300, url)
+
+		provider.create_https_health_check.assert_not_called()
+
+
+def _checked_provider(records: list[MultivalueRecord]) -> Route53Provider:
+	provider = _build_provider()
+	provider.get_multivalue_a_records = MagicMock(return_value=records)
+	provider.create_https_health_check = MagicMock(return_value="health-new")
+	for method in (
+		"upsert_multivalue_a_record",
+		"remove_multivalue_a_record",
+		"remove_health_check",
+		"remove_record",
+	):
+		setattr(provider, method, MagicMock())
+	return provider

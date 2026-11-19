@@ -30,7 +30,7 @@ class TestDnsRecordRoutes(UnitTestCase):
 			api_request("PUT", PATH, tenant_id=0, send_tenant_header=True, json=PAYLOAD),
 			patch("atlas.api.routes.dns_records.get_dns_provider") as get_dns_provider,
 		):
-			get_dns_provider.return_value.upsert_service_record.side_effect = Route53Error("Throttling")
+			get_dns_provider.return_value.set_service_addresses.side_effect = Route53Error("Throttling")
 			status, body = error_body(set_dns_record, name="internal-s3-svc.example.com")
 
 		self.assertEqual(status, 502)
@@ -43,6 +43,38 @@ class TestDnsRecordPayload(UnitTestCase):
 
 		self.assertIsNone(payload.type)
 		self.assertEqual(str(payload.address), "52.95.110.1")
+
+	def test_addresses_take_a_health_check(self) -> None:
+		payload = DnsRecordPayload.model_validate(
+			{
+				"addresses": ["52.95.110.1", "52.95.110.2"],
+				"health_check_url": "https://s3-admin-svc.example.com/health",
+			}
+		)
+
+		self.assertEqual(
+			[str(address) for address in payload.service_addresses], ["52.95.110.1", "52.95.110.2"]
+		)
+
+	def test_the_route_sends_every_address_and_the_health_check(self) -> None:
+		body = {"addresses": ["52.95.110.1"], "health_check_url": "https://s3-admin-svc.example.com/health"}
+		with (
+			api_request(
+				"PUT",
+				"/api/atlas/dns-records/s3-svc.example.com",
+				tenant_id=0,
+				send_tenant_header=True,
+				json=body,
+			),
+			patch("atlas.api.routes.dns_records.get_dns_provider") as get_dns_provider,
+		):
+			set_dns_record(name="s3-svc.example.com")
+
+		name, addresses, ttl, url = get_dns_provider.return_value.set_service_addresses.call_args.args
+		self.assertEqual(
+			(name, [str(address) for address in addresses], ttl), ("s3-svc.example.com", ["52.95.110.1"], 300)
+		)
+		self.assertEqual(url, "https://s3-admin-svc.example.com/health")
 
 	def test_txt_and_cname_records_take_values(self) -> None:
 		txt = DnsRecordPayload.model_validate({"type": "TXT", "values": ["v=1; a-B_9"], "ttl": 60})
@@ -68,6 +100,18 @@ class TestDnsRecordPayload(UnitTestCase):
 			{"type": "AAAA", "address": "52.95.110.1"},
 			{"address": "52.95.110.1", "values": ["value"]},
 			{"type": "MX", "values": ["mail.example.net"]},
+			{"address": "52.95.110.1", "addresses": ["52.95.110.2"]},
+			{"addresses": []},
+			{"addresses": ["52.95.110.1", "52.95.110.1"]},
+			{"addresses": ["52.95.110.1", "fdaa:1::7"]},
+			{"type": "AAAA", "addresses": ["52.95.110.1"]},
+			{"addresses": ["fdaa:1::7"], "health_check_url": "https://s3-admin-svc.example.com/health"},
+			{"addresses": ["52.95.110.1"], "health_check_url": "http://s3-admin-svc.example.com/health"},
+			{
+				"addresses": ["52.95.110.1"],
+				"health_check_url": "https://s3-admin-svc.example.com:8443/health",
+			},
+			{"type": "TXT", "values": ["value"], "addresses": ["52.95.110.1"]},
 		):
 			with self.subTest(body=body), self.assertRaises(ValidationError):
 				DnsRecordPayload.model_validate(body)

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from ipaddress import IPv4Address, IPv6Address
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from urllib.parse import SplitResult, urlsplit
 
 import frappe
 
@@ -16,6 +17,12 @@ if TYPE_CHECKING:
 SERVICE_RECORD_LABELS = ("s3-svc", "s3-admin-svc", "telemetry-svc", "telemetry-read-svc")
 INTERNAL_RECORD_PREFIX = "internal-"
 SERVICE_RECORD_TYPES = ("A", "AAAA", "TXT", "CNAME")
+
+
+class MultivalueRecord(NamedTuple):
+	identifier: str
+	ip_address: str
+	health_check_id: str
 
 
 class DnsProviderError(Exception):
@@ -97,6 +104,11 @@ class DnsProvider(ABC):
 		...
 
 	@abstractmethod
+	def get_multivalue_a_records(self, name: str) -> list[MultivalueRecord]:
+		"""Every health-checked multivalue A record of the name."""
+		...
+
+	@abstractmethod
 	def remove_multivalue_a_record(
 		self,
 		name: str,
@@ -129,15 +141,58 @@ class DnsProvider(ABC):
 		"""Remove the TXT record for the name, if it exists."""
 		self.remove_record("TXT", name)
 
-	def upsert_service_record(self, name: str, address: IPv4Address | IPv6Address, ttl: int) -> None:
-		"""Point a service name to its public address, or its `internal-` name to its mesh address."""
-		if self._is_internal_service_record(name):
+	def set_service_addresses(
+		self,
+		name: str,
+		addresses: list[IPv4Address | IPv6Address],
+		ttl: int,
+		health_check_url: str | None = None,
+	) -> None:
+		"""Point a service name to public addresses, or its `internal-` name to mesh addresses. With
+		`health_check_url`, each address gets its own health-checked record."""
+		internal = self._is_internal_service_record(name)
+		for address in addresses:
+			self._validate_service_address(name, address, internal)
+
+		if not health_check_url:
+			self.remove_multivalue_records(name)
+			record_type, replaced_type = ("A", "AAAA") if addresses[0].version == 4 else ("AAAA", "A")
+			self.upsert_record(record_type, name, [str(address) for address in addresses], ttl, replaced_type)
+			return
+
+		url = urlsplit(health_check_url)
+		if internal or not url.hostname or self._is_internal_service_record(url.hostname):
+			raise AtlasUserError(f"{name} can only be checked on a public service name.")
+		self.set_checked_addresses(name, [str(address) for address in addresses], ttl, url)
+
+	def set_checked_addresses(self, name: str, addresses: list[str], ttl: int, url: SplitResult) -> None:
+		"""Add the new records before removing the old, so the name keeps answering. Route53 refuses
+		a plain record beside multivalue ones, so a plain one goes first."""
+		self.remove_record("A", name)
+		self.remove_record("AAAA", name)
+		existing = {record.ip_address for record in self.get_multivalue_a_records(name)}
+		for address in addresses:
+			if address not in existing:
+				health_check_id = self.create_https_health_check(address, url.hostname, url.path or "/")
+				self.upsert_multivalue_a_record(name, address, address, health_check_id, ttl)
+		self.remove_multivalue_records(name, keep=set(addresses))
+
+	def remove_multivalue_records(self, name: str, keep: set[str] = frozenset()) -> None:
+		"""Remove the name's health-checked records, and their health checks, except the kept addresses."""
+		for record in self.get_multivalue_a_records(name):
+			if record.ip_address not in keep:
+				self.remove_multivalue_a_record(name, record.identifier)
+				if record.health_check_id:
+					self.remove_health_check(record.health_check_id)
+
+	def _validate_service_address(
+		self, name: str, address: IPv4Address | IPv6Address, internal: bool
+	) -> None:
+		if internal:
 			if address not in MESH_NETWORK:
 				raise AtlasUserError(f"{name} needs a WG Mesh address in {MESH_NETWORK}.")
 		elif not address.is_global or address.is_multicast:
 			raise AtlasUserError(f"{name} needs a public address.")
-		record_type, replaced_type = ("A", "AAAA") if address.version == 4 else ("AAAA", "A")
-		self.upsert_record(record_type, name, [str(address)], ttl, replaced_type)
 
 	def upsert_service_values(self, record_type: str, name: str, values: list[str], ttl: int) -> None:
 		"""Set a TXT or CNAME record on a service name, or on a name under it."""
@@ -149,6 +204,7 @@ class DnsProvider(ABC):
 	def remove_service_record(self, name: str) -> None:
 		"""Remove every record type that tenant 0 can set on a service name, or on a name under it."""
 		self._validate_service_subtree(name)
+		self.remove_multivalue_records(name)
 		for record_type in SERVICE_RECORD_TYPES:
 			self.remove_record(record_type, name)
 
