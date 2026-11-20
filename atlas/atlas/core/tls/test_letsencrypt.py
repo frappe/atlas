@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from cryptography.hazmat.primitives.asymmetric import ec
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.dns_providers import DnsRecord
 from atlas.atlas.core.tls.acme import DnsChallenge, Order
 from atlas.atlas.core.tls.certificate import create_private_key
 from atlas.atlas.core.tls.letsencrypt import (
@@ -107,8 +108,8 @@ class TestLetsEncryptIssuance(_LetsEncryptCase):
 		self.assertIsInstance(account_key, ec.EllipticCurvePrivateKey)
 		self.client.register_account.assert_called_once_with("owner@example.com")
 		self.client.create_order.assert_called_once_with(["*.example.com"])
-		self.dns_provider.upsert_record.assert_called_once_with(
-			"TXT", "_acme-challenge.example.com", ['"challenge-value"'], ttl=60
+		self.dns_provider.upsert_records.assert_called_once_with(
+			[DnsRecord("_acme-challenge.example.com", "TXT", ["challenge-value"], 60)]
 		)
 		self.client.submit_challenge.assert_called_once_with("https://acme.test/challenge/1")
 		self.client.wait_for_authorization.assert_called_once_with("https://acme.test/authz/1")
@@ -119,7 +120,7 @@ class TestLetsEncryptIssuance(_LetsEncryptCase):
 	def test_the_challenge_record_is_removed_after_a_successful_issuance(self) -> None:
 		self._issue()
 
-		self.dns_provider.remove_txt_record.assert_called_once_with("_acme-challenge.example.com")
+		self.dns_provider.get_records.assert_called_once_with("_acme-challenge.example.com", "TXT")
 
 	def test_the_challenge_record_is_removed_after_a_failed_order(self) -> None:
 		self.client.finalize_order.side_effect = RuntimeError("order failed")
@@ -127,7 +128,7 @@ class TestLetsEncryptIssuance(_LetsEncryptCase):
 		with self.assertRaises(RuntimeError):
 			self.issuer.issue_wildcard_certificate()
 
-		self.dns_provider.remove_txt_record.assert_called_once_with("_acme-challenge.example.com")
+		self.dns_provider.get_records.assert_called_once_with("_acme-challenge.example.com", "TXT")
 
 	def test_issuance_without_an_email_is_refused(self) -> None:
 		self.issuer.settings.letsencrypt_email = ""

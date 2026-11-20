@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from atlas.atlas.core.dns_providers import register
-from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError, MultivalueRecord
+from atlas.atlas.core.dns_providers.base import DnsProvider, DnsProviderError, DnsRecord, HealthCheck
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -42,10 +42,8 @@ class Route53Provider(DnsProvider):
 	def bootstrap(self) -> None:
 		"""Set up the Route53 resources used by Atlas."""
 		self.settings.route53_dns_zone_id = self.create_zone(self.domain_name)
-		self.upsert_cname_record(
-			f"*.{self.domain_name}",
-			f"proxy.{self.domain_name}",
-			ttl=3600,
+		self.upsert_records(
+			[DnsRecord(f"*.{self.domain_name}", "CNAME", [f"proxy.{self.domain_name}"], 3600)]
 		)
 
 		self.settings.is_dns_setup_completed = 1
@@ -106,51 +104,71 @@ class Route53Provider(DnsProvider):
 		return self._zone_id(result["HostedZone"]["Id"])
 
 	@override
-	def upsert_record(
-		self,
-		record_type: str,
-		name: str,
-		values: list[str],
-		ttl: int = 300,
-		replaced_type: str | None = None,
-	) -> None:
-		"""Create or update the record, and remove the `replaced_type` record of the name in one change batch."""
-		replaced_record = self._get_record(replaced_type, name) if replaced_type else None
-		self._change_record("UPSERT", record_type, name, values, ttl, replaced_record)
+	def get_records(
+		self, name: str, record_type: str | None = None, identifier: str | None = None
+	) -> list[DnsRecord]:
+		"""Return the record sets of the name, filtered by type and identifier when given."""
+		records = [self._to_dns_record(record_set) for record_set in self._list_record_sets(name)]
+		return [
+			record
+			for record in records
+			if record_type in (None, record.record_type) and identifier in (None, record.identifier)
+		]
 
 	@override
-	def remove_record(self, record_type: str, name: str) -> None:
-		"""Remove the record for the name and type, if it exists."""
-		existing = self._get_record(record_type, name)
-		if existing is None:
-			return
-		values = [record["Value"] for record in existing["ResourceRecords"]]
-		self._change_record("DELETE", record_type, name, values, existing["TTL"])
+	def upsert_records(self, records: list[DnsRecord], replaced: list[DnsRecord] | None = None) -> None:
+		"""Create or update the records, and remove the replaced records in the same change batch."""
+		changes = [("DELETE", record) for record in replaced or []] + [
+			("UPSERT", record) for record in records
+		]
+		self._change_records(changes)
 
 	@override
-	def create_https_health_check(self, ip_address: str, domain: str, path: str) -> str:
-		"""Create the HTTPS health check for one proxy."""
+	def remove_records(self, records: list[DnsRecord]) -> None:
+		"""Remove the records in one change batch. An empty list does nothing."""
+		self._change_records([("DELETE", record) for record in records])
+
+	@override
+	def get_health_check(self, health_check_id: str) -> HealthCheck | None:
+		"""Return what the health check asks, or None when it is gone."""
+		try:
+			result = self.client.get_health_check(HealthCheckId=health_check_id)
+		except ClientError as error:
+			if error.response.get("Error", {}).get("Code") == "NoSuchHealthCheck":
+				return None
+			raise Route53Error(f"Failed to get health check {health_check_id}: {error}") from error
+		except BotoCoreError as error:
+			raise Route53Error(f"Failed to get health check {health_check_id}: {error}") from error
+
+		configuration = result["HealthCheck"]["HealthCheckConfig"]
+		return HealthCheck(
+			configuration.get("FullyQualifiedDomainName", ""), configuration.get("ResourcePath", "/")
+		)
+
+	@override
+	def create_health_check(self, address: str, health_check: HealthCheck) -> str:
+		"""Create an HTTPS health check on the address and return its ID."""
 		try:
 			result = self.client.create_health_check(
 				CallerReference=str(uuid4()),
 				HealthCheckConfig={
-					"IPAddress": ip_address,
+					"IPAddress": address,
 					"Port": 443,
 					"Type": "HTTPS",
-					"ResourcePath": path,
-					"FullyQualifiedDomainName": domain,
+					"ResourcePath": health_check.path,
+					"FullyQualifiedDomainName": health_check.host,
 					"RequestInterval": 30,
 					"FailureThreshold": 2,
 					"EnableSNI": True,
 				},
 			)
 		except (BotoCoreError, ClientError) as error:
-			raise Route53Error(f"Failed to create health check for {domain}: {error}") from error
+			raise Route53Error(f"Failed to create health check for {health_check.host}: {error}") from error
 		return result["HealthCheck"]["Id"]
 
 	@override
 	def remove_health_check(self, health_check_id: str) -> None:
-		"""Remove one proxy health check."""
+		"""Remove one health check. A missing check is not an error."""
 		try:
 			self.client.delete_health_check(HealthCheckId=health_check_id)
 		except ClientError as error:
@@ -160,150 +178,67 @@ class Route53Provider(DnsProvider):
 		except BotoCoreError as error:
 			raise Route53Error(f"Failed to remove health check {health_check_id}: {error}") from error
 
-	@override
-	def upsert_multivalue_a_record(
-		self,
-		name: str,
-		identifier: str,
-		ip_address: str,
-		health_check_id: str,
-		ttl: int = 120,
-	) -> None:
-		"""Create or update one health-checked multivalue A record."""
-		self._change_multivalue_a_record("UPSERT", name, identifier, ip_address, health_check_id, ttl)
-
-	@override
-	def remove_multivalue_a_record(
-		self,
-		name: str,
-		identifier: str,
-	) -> None:
-		"""Remove one health-checked multivalue A record."""
-		record = self._get_multivalue_a_record(name, identifier)
-		if record is None:
+	def _change_records(self, changes: list[tuple[str, DnsRecord]]) -> None:
+		if not changes:
 			return
+
+		batch = [
+			{"Action": action, "ResourceRecordSet": self._to_record_set(record)} for action, record in changes
+		]
 		try:
 			self.client.change_resource_record_sets(
-				HostedZoneId=self.create_zone(self.domain_name),
-				ChangeBatch={"Changes": [{"Action": "DELETE", "ResourceRecordSet": record}]},
+				HostedZoneId=self.create_zone(self.domain_name), ChangeBatch={"Changes": batch}
 			)
 		except (BotoCoreError, ClientError) as error:
-			raise Route53Error(f"Failed to delete proxy record {name}: {error}") from error
+			names = ", ".join(sorted({record.name for _, record in changes}))
+			raise Route53Error(f"Failed to change the records of {names}: {error}") from error
 
-	def _change_record(
-		self,
-		action: str,
-		record_type: str,
-		name: str,
-		values: list[str],
-		ttl: int,
-		replaced_record: dict | None = None,
-	) -> None:
-		zone_id = self.create_zone(self.domain_name)
-		record = {
-			"Name": name,
-			"Type": record_type,
-			"TTL": ttl,
-			"ResourceRecords": [{"Value": value} for value in values],
-		}
-		changes = [{"Action": action, "ResourceRecordSet": record}]
-		if replaced_record:
-			changes.append({"Action": "DELETE", "ResourceRecordSet": replaced_record})
-
+	def _list_record_sets(self, name: str) -> list[dict]:
+		"""Route53 lists record sets in name order, so the name's sets come first from `StartRecordName`.
+		It stores names in lowercase."""
+		paginator = self.client.get_paginator("list_resource_record_sets")
+		record_sets = []
 		try:
-			self.client.change_resource_record_sets(HostedZoneId=zone_id, ChangeBatch={"Changes": changes})
-		except (BotoCoreError, ClientError) as error:
-			raise Route53Error(f"Failed to {action.lower()} {record_type} record {name}: {error}") from error
-
-	def _change_multivalue_a_record(
-		self,
-		action: str,
-		name: str,
-		identifier: str,
-		ip_address: str,
-		health_check_id: str,
-		ttl: int,
-	) -> None:
-		zone_id = self.create_zone(self.domain_name)
-		record = {
-			"Name": name,
-			"Type": "A",
-			"SetIdentifier": identifier,
-			"MultiValueAnswer": True,
-			"TTL": ttl,
-			"ResourceRecords": [{"Value": ip_address}],
-			"HealthCheckId": health_check_id,
-		}
-		try:
-			self.client.change_resource_record_sets(
-				HostedZoneId=zone_id,
-				ChangeBatch={"Changes": [{"Action": action, "ResourceRecordSet": record}]},
-			)
-		except (BotoCoreError, ClientError) as error:
-			raise Route53Error(f"Failed to {action.lower()} proxy record {name}: {error}") from error
-
-	def _get_record(self, record_type: str, name: str) -> dict | None:
-		zone_id = self.create_zone(self.domain_name)
-		try:
-			result = self.client.list_resource_record_sets(
-				HostedZoneId=zone_id,
-				StartRecordName=name,
-				StartRecordType=record_type,
-				MaxItems="1",
-			)
+			for page in paginator.paginate(
+				HostedZoneId=self.create_zone(self.domain_name), StartRecordName=name
+			):
+				for record_set in page.get("ResourceRecordSets", []):
+					if record_set["Name"].rstrip(".") != name.rstrip(".").lower():
+						return record_sets
+					if "ResourceRecords" in record_set:
+						record_sets.append(record_set)
 		except (BotoCoreError, ClientError) as error:
 			raise Route53Error(f"Failed to list records for {name}: {error}") from error
+		return record_sets
 
-		records = result.get("ResourceRecordSets", [])
-		if not records:
-			return None
-
-		record = records[0]
-		if record["Type"] != record_type or record["Name"].rstrip(".") != name.rstrip("."):
-			return None
-		return record
-
-	@override
-	def get_multivalue_a_records(self, name: str) -> list[MultivalueRecord]:
-		"""Every health-checked multivalue A record of the name."""
-		return [
-			MultivalueRecord(
-				record["SetIdentifier"],
-				record["ResourceRecords"][0]["Value"],
-				record.get("HealthCheckId", ""),
-			)
-			for record in self._list_multivalue_a_records(name)
-		]
-
-	def _get_multivalue_a_record(self, name: str, identifier: str) -> dict | None:
-		return next(
-			(
-				record
-				for record in self._list_multivalue_a_records(name)
-				if record["SetIdentifier"] == identifier
-			),
-			None,
+	@staticmethod
+	def _to_dns_record(record_set: dict) -> DnsRecord:
+		values = [record["Value"] for record in record_set["ResourceRecords"]]
+		if record_set["Type"] == "TXT":
+			values = [value.removeprefix('"').removesuffix('"') for value in values]
+		return DnsRecord(
+			name=record_set["Name"].rstrip("."),
+			record_type=record_set["Type"],
+			values=values,
+			ttl=record_set["TTL"],
+			identifier=record_set.get("SetIdentifier"),
+			health_check_id=record_set.get("HealthCheckId"),
 		)
 
-	def _list_multivalue_a_records(self, name: str) -> list[dict]:
-		zone_id = self.create_zone(self.domain_name)
-		try:
-			result = self.client.list_resource_record_sets(
-				HostedZoneId=zone_id,
-				StartRecordName=name,
-				StartRecordType="A",
-				MaxItems="100",
-			)
-		except (BotoCoreError, ClientError) as error:
-			raise Route53Error(f"Failed to list proxy records for {name}: {error}") from error
-
-		return [
-			record
-			for record in result.get("ResourceRecordSets", [])
-			if record["Name"].rstrip(".") == name.rstrip(".")
-			and record["Type"] == "A"
-			and "SetIdentifier" in record
-		]
+	@staticmethod
+	def _to_record_set(record: DnsRecord) -> dict:
+		values = [f'"{value}"' for value in record.values] if record.record_type == "TXT" else record.values
+		record_set = {
+			"Name": record.name,
+			"Type": record.record_type,
+			"TTL": record.ttl,
+			"ResourceRecords": [{"Value": value} for value in values],
+		}
+		if record.identifier:
+			record_set |= {"SetIdentifier": record.identifier, "MultiValueAnswer": True}
+		if record.health_check_id:
+			record_set["HealthCheckId"] = record.health_check_id
+		return record_set
 
 	def _validate_zone(self, zone_id: str, domain: str) -> None:
 		try:

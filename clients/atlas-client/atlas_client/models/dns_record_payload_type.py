@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-class DnsRecordPayloadTypeType0(StrEnum):
+class DnsRecordPayloadType(StrEnum):
     A = "A"
     AAAA = "AAAA"
     CNAME = "CNAME"

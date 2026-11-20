@@ -35,44 +35,17 @@ Cargo also starts as `Not Provisioned`. See [Cargo recovery](cargo.md#operate-an
 
 ## Publish a service address
 
-A tenant-0 caller, such as Cargo, can set an A or AAAA record for a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
+A tenant-0 caller, such as Cargo, can set the records of a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
 
 ```http
 PUT /api/atlas/dns-records/s3-svc.<domain>
-{"address": "203.0.113.7", "ttl": 300}
+{"type": "A", "values": ["203.0.113.7"], "health_check": {"host": "s3-admin-svc.<domain>", "path": "/health"}}
 
 PUT /api/atlas/dns-records/internal-s3-svc.<domain>
-{"address": "fdaa:1:0:0:0:0:0:7"}
+{"type": "AAAA", "values": ["fdaa:1:0:0:0:0:0:7"]}
 ```
 
-The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse.
-
-### Publish several addresses
-
-Send `addresses` instead of `address` to point a name at several machines, such as every Garage gateway. They replace the addresses the name had, and must be all IPv4 or all IPv6. Without a health check, one record answers with every address.
-
-```http
-PUT /api/atlas/dns-records/s3-svc.<domain>
-{"addresses": ["203.0.113.7", "203.0.113.8"], "health_check_url": "https://s3-admin-svc.<domain>/health"}
-```
-
-With `health_check_url`, each IPv4 address gets a health-checked multivalue record. Route53 asks the URL's host and path over HTTPS at each address every 30 seconds, and stops answering with an address after 2 failures. The host must be a public service name. Atlas keeps no state: it reads the name's records back from Route53, adds the new addresses first, then removes the gone ones with their health checks. An address that stays keeps its health check, even when the URL changes. `DELETE` also removes these records and their health checks.
-
-### Set TXT and CNAME records
-
-A tenant-0 caller can also set a TXT or CNAME record on a service name, or on any name under it. For example, Cargo publishes ACME dns-01 values on `_acme-challenge.s3-svc.<domain>`.
-
-```http
-PUT /api/atlas/dns-records/_acme-challenge.s3-svc.<domain>
-{"type": "TXT", "values": ["<value>"], "ttl": 60}
-
-PUT /api/atlas/dns-records/gateway-1.s3-svc.<domain>
-{"type": "CNAME", "values": ["<host name>"]}
-```
-
-The last label before `<domain>` must be in `SERVICE_RECORD_LABELS`, with or without `internal-`. Atlas refuses every other name in the zone, such as `proxy.<domain>` and `*.<domain>`, because it owns them. A TXT value is unquoted printable ASCII of at most 255 characters, without quotes or backslashes, and a record holds at most 10 values. A CNAME takes one host name.
-
-`DELETE` on a service name, or on a name under it, removes its A, AAAA, TXT and CNAME records.
+The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs public addresses. Its `internal-` name needs WG Mesh addresses in `fdaa::/16`. TXT and CNAME records can also go on one label under either name, such as `_acme-challenge.s3-svc.<domain>`. `health_check` gives each public address its own Route53 check. `DELETE` on the same path removes every record of the name.
 
 Metal looks up `internal-<host>` before it opens an image or snapshot connection to object storage, or a telemetry connection to Datum. When the answer is a private address, Metal connects to that address and keeps the original host name for TLS and presigned URLs. When the answer is public, or the private connection fails, Metal uses the public address.
 
