@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import frappe
 
+from atlas.atlas.core.dns_providers import DnsRecord
 from atlas.metal_server.core.atlas_peer import write_private_file
 from atlas.service.core.warpgate.client import WarpgateClient, WarpgateError
 
@@ -28,8 +29,8 @@ def publish_warpgate_ui(settings: AtlasSettings) -> None:
 	if not settings.warpgate_url or not is_warpgate_ui_installed():
 		return
 
-	settings.dns_provider_controller.upsert_cname_record(
-		f"warpgate.{settings.wildcard_domain}", frappe.local.site
+	settings.dns_provider_controller.upsert_records(
+		[DnsRecord(f"warpgate.{settings.wildcard_domain}", "CNAME", [frappe.local.site])]
 	)
 	install_warpgate_certificate(settings)
 

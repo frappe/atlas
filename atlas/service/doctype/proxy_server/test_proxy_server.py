@@ -155,7 +155,7 @@ class TestProxyServerCreate(UnitTestCase):
 		):
 			proxy_server_module.ProxyServer.remove_dns_record(proxy_server)
 
-		provider.remove_multivalue_a_record.assert_called_once_with("proxy.example.com", "proxy-001")
+		provider.get_records.assert_any_call("proxy.example.com", "A", "proxy-001")
 		provider.remove_health_check.assert_called_once_with("health-1")
 
 	def test_dns_cleanup_always_removes_the_node_record(self) -> None:
@@ -175,7 +175,8 @@ class TestProxyServerCreate(UnitTestCase):
 		):
 			proxy_server_module.ProxyServer.remove_dns_record(proxy_server)
 
-		provider.remove_a_record.assert_called_once_with("proxy-001.example.com")
+		provider.get_records.assert_called_once_with("proxy-001.example.com", "A")
+		provider.remove_records.assert_called_once_with(provider.get_records.return_value)
 
 	def test_a_sixth_proxy_is_refused(self) -> None:
 		proxy_server = MagicMock()

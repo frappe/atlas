@@ -690,55 +690,19 @@
       },
       "DnsRecordPayload": {
         "additionalProperties": false,
-        "description": "The addresses of one regional service name, or the values of a TXT or CNAME record on it or a name under it.",
+        "description": "The records of one regional service name, or of one name under it.",
         "properties": {
-          "address": {
+          "health_check": {
             "anyOf": [
               {
-                "format": "ipvanyaddress",
-                "type": "string"
+                "$ref": "#/components/schemas/HealthCheck"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Send this or `addresses` for A and AAAA.",
-            "title": "Address"
-          },
-          "addresses": {
-            "anyOf": [
-              {
-                "items": {
-                  "format": "ipvanyaddress",
-                  "type": "string"
-                },
-                "maxItems": 10,
-                "minItems": 1,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Every address of the name, all IPv4 or all IPv6. They replace the addresses the name had.",
-            "title": "Addresses"
-          },
-          "health_check_url": {
-            "anyOf": [
-              {
-                "format": "uri",
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "An HTTPS URL on a public service name. Route53 asks its host and path at each IPv4 address in `addresses` and leaves out an address that stops answering.",
-            "title": "Health Check Url"
+            "description": "Give each address of a public A or AAAA name its own health check. DNS leaves out an unhealthy address while another address is healthy."
           },
           "ttl": {
             "default": 300,
@@ -749,45 +713,31 @@
             "type": "integer"
           },
           "type": {
-            "anyOf": [
-              {
-                "enum": [
-                  "A",
-                  "AAAA",
-                  "TXT",
-                  "CNAME"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "description": "Record type.",
+            "enum": [
+              "A",
+              "AAAA",
+              "TXT",
+              "CNAME"
             ],
-            "default": null,
-            "description": "Record type. Left out, Atlas picks A or AAAA from `address`.",
-            "title": "Type"
+            "title": "Type",
+            "type": "string"
           },
           "values": {
-            "anyOf": [
-              {
-                "items": {
-                  "maxLength": 255,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "maxItems": 10,
-                "minItems": 1,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Unquoted TXT values, or the one target host name of a CNAME. Required for TXT and CNAME.",
-            "title": "Values"
+            "description": "Addresses for A and AAAA, unquoted values for TXT, or one host name for CNAME. They replace the values the name had.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Values",
+            "type": "array"
           }
         },
+        "required": [
+          "type",
+          "values"
+        ],
         "title": "DnsRecordPayload",
         "type": "object"
       },
@@ -979,6 +929,26 @@
           }
         },
         "title": "FirewallUpdatePayload",
+        "type": "object"
+      },
+      "HealthCheck": {
+        "additionalProperties": false,
+        "description": "An HTTPS check on port 443 that asks `host` and `path` at one address.",
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "path": {
+            "default": "/",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "title": "HealthCheck",
         "type": "object"
       },
       "HostAccessGrantPayload": {
@@ -3578,7 +3548,7 @@
     },
     "/api/atlas/dns-records/{name}": {
       "delete": {
-        "description": "Removes the A, AAAA, TXT and CNAME records of one regional service name, or of a name under it.",
+        "description": "Removes every record of a regional service name, or of one name under it, and its health checks.",
         "operationId": "remove_dns_record",
         "parameters": [
           {
@@ -3604,7 +3574,7 @@
         ],
         "responses": {
           "204": {
-            "description": "The name has no record left. Removing twice is safe."
+            "description": "The name has no records left. Removing twice is safe."
           },
           "400": {
             "content": {
@@ -3673,7 +3643,7 @@
         ]
       },
       "put": {
-        "description": "Points a regional service name, such as `s3-svc.<domain>`, to public addresses, or its `internal-` name, such as `internal-s3-svc.<domain>`, to WG Mesh addresses. The addresses replace the ones the name had. With `health_check_url`, each IPv4 address gets a Route53 health check, and DNS answers with the addresses that pass. With `type` TXT or CNAME, sets `values` on a service name or a name under it, such as `_acme-challenge.s3-svc.<domain>`. The TTL defaults to 300 seconds.",
+        "description": "Sets the A, AAAA, TXT or CNAME records of a regional service name, such as `s3-svc.<domain>`, its `internal-` name, or one name under either, such as `_acme-challenge.s3-svc.<domain>`. The values replace the values the name had.",
         "operationId": "set_dns_record",
         "parameters": [
           {
@@ -3701,11 +3671,15 @@
           "content": {
             "application/json": {
               "example": {
-                "addresses": [
+                "health_check": {
+                  "host": "s3-admin-svc.example.com",
+                  "path": "/health"
+                },
+                "type": "A",
+                "values": [
                   "203.0.113.7",
                   "203.0.113.8"
-                ],
-                "health_check_url": "https://s3-admin-svc.example.com/health"
+                ]
               },
               "schema": {
                 "$ref": "#/components/schemas/DnsRecordPayload"
@@ -3716,7 +3690,7 @@
         },
         "responses": {
           "204": {
-            "description": "The name holds the record. Repeating the request is safe."
+            "description": "The name holds the records. Repeating the request is safe."
           },
           "400": {
             "content": {
@@ -3726,7 +3700,7 @@
                 }
               }
             },
-            "description": "The name is not allowed, or the record does not suit the name."
+            "description": "The name is not allowed, or the values do not suit the name or the type."
           },
           "401": {
             "content": {

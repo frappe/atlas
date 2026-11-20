@@ -251,10 +251,10 @@ class WireguardGatewayServer(Document):
 	def remove_dns_records(self) -> None:
 		"""Remove the regional and node records. A record that is already gone is not an error."""
 		provider = frappe.get_single("Atlas Settings").dns_provider_controller
-		provider.remove_multivalue_a_record(self.get_regional_domain(), self.name)
+		provider.remove_records(provider.get_records(self.get_regional_domain(), "A", self.name))
 		if self.dns_health_check_id:
 			provider.remove_health_check(self.dns_health_check_id)
-		provider.remove_a_record(self.get_domain())
+		provider.remove_records(provider.get_records(self.get_domain(), "A"))
 
 	def enqueue_provisioning(self, enqueue_after_commit: bool = True) -> None:
 		frappe.enqueue_doc(

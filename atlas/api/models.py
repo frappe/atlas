@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import datetime
-from ipaddress import IPv4Address, IPv6Address
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -16,7 +15,6 @@ from pydantic import (
 	ConfigDict,
 	Discriminator,
 	Field,
-	IPvAnyAddress,
 	StringConstraints,
 	Tag,
 	model_validator,
@@ -24,6 +22,7 @@ from pydantic import (
 
 from atlas.api.core.base import ListQuery, PatchPayload, StrictModel
 from atlas.api.core.errors import ApiErrorField
+from atlas.atlas.core.dns_providers import HealthCheck
 from atlas.atlas.core.tags import (
 	MAXIMUM_TAG_KEY_LENGTH,
 	MAXIMUM_TAG_VALUE_LENGTH,
@@ -1437,84 +1436,18 @@ class HostAccessResponse(BaseModel):
 
 
 class DnsRecordPayload(StrictModel):
-	"""The addresses of one regional service name, or the values of a TXT or CNAME record on it or a name under it."""
+	"""The records of one regional service name, or of one name under it."""
 
-	type: Literal["A", "AAAA", "TXT", "CNAME"] | None = Field(
-		default=None, description="Record type. Left out, Atlas picks A or AAAA from `address`."
-	)
-	address: IPvAnyAddress | None = Field(
-		default=None,
-		description="Public address for a service name, WG Mesh address for its `internal-` name. Send this or `addresses` for A and AAAA.",
-	)
-	addresses: list[IPvAnyAddress] | None = Field(
-		default=None,
+	type: Literal["A", "AAAA", "TXT", "CNAME"] = Field(description="Record type.")
+	values: list[str] = Field(
 		min_length=1,
 		max_length=10,
-		description="Every address of the name, all IPv4 or all IPv6. They replace the addresses the name had.",
-	)
-	health_check_url: AnyHttpUrl | None = Field(
-		default=None,
-		description="An HTTPS URL on a public service name. Route53 asks its host and path at each IPv4 address in `addresses` and leaves out an address that stops answering.",
-	)
-	values: list[Annotated[str, StringConstraints(min_length=1, max_length=255)]] | None = Field(
-		default=None,
-		min_length=1,
-		max_length=10,
-		description="Unquoted TXT values, or the one target host name of a CNAME. Required for TXT and CNAME.",
+		description="Addresses for A and AAAA, unquoted values for TXT, or one host name for CNAME. They replace the values the name had.",
 	)
 	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
-
-	@property
-	def service_addresses(self) -> list[IPv4Address | IPv6Address]:
-		return self.addresses or [self.address]
-
-	@model_validator(mode="after")
-	def validate_record(self) -> DnsRecordPayload:
-		"""Require the fields that the record type needs, and only those fields."""
-		if self.type in ("TXT", "CNAME"):
-			self.validate_values()
-		else:
-			self.validate_addresses()
-		return self
-
-	def validate_values(self) -> None:
-		if (
-			self.values is None
-			or self.address is not None
-			or self.addresses is not None
-			or self.health_check_url
-		):
-			raise ValueError(f"A {self.type} record needs `values` and no addresses.")
-		if self.type == "TXT" and not all(map(is_text_value, self.values)):
-			raise ValueError("A TXT value takes printable ASCII without quotes or backslashes.")
-		if self.type == "CNAME" and (len(self.values) != 1 or not is_host_name(self.values[0])):
-			raise ValueError("A CNAME record needs one host name.")
-
-	def validate_addresses(self) -> None:
-		if self.values is not None or (self.address is None) == (self.addresses is None):
-			raise ValueError("An A or AAAA record needs `address` or `addresses`, and no `values`.")
-		addresses = self.service_addresses
-		versions = {address.version for address in addresses}
-		if len(versions) > 1 or len(set(addresses)) < len(addresses):
-			raise ValueError("`addresses` must be distinct, and all IPv4 or all IPv6.")
-		if self.type and self.type != ("A" if versions == {4} else "AAAA"):
-			raise ValueError(f"{addresses[0]} does not suit an {self.type} record.")
-		url = self.health_check_url
-		if url and (versions != {4} or url.scheme != "https" or url.port != 443):
-			raise ValueError("A health check needs an HTTPS URL on port 443 and IPv4 addresses.")
-
-
-def is_text_value(value: str) -> bool:
-	"""Whether Atlas can quote the value into a TXT record as it is."""
-	return all(" " <= character <= "~" and character not in '"\\' for character in value)
-
-
-def is_host_name(value: str) -> bool:
-	"""Whether the value is a DNS host name of letters, digits, hyphens and underscores."""
-	labels = value.removesuffix(".").split(".")
-	return len(value) <= 253 and all(
-		0 < len(label) <= 63 and label.replace("-", "").replace("_", "").isalnum() and label.isascii()
-		for label in labels
+	health_check: HealthCheck | None = Field(
+		default=None,
+		description="Give each address of a public A or AAAA name its own health check. DNS leaves out an unhealthy address while another address is healthy.",
 	)
 
 

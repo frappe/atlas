@@ -8,10 +8,12 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..models.dns_record_payload_type_type_0 import DnsRecordPayloadTypeType0
+from ..models.dns_record_payload_type import DnsRecordPayloadType
 from ..types import UNSET, Unset
 from typing import cast
 
+if TYPE_CHECKING:
+  from ..models.health_check import HealthCheck
 
 
 
@@ -23,92 +25,55 @@ T = TypeVar("T", bound="DnsRecordPayload")
 
 @_attrs_define
 class DnsRecordPayload:
-    """ The addresses of one regional service name, or the values of a TXT or CNAME record on it or a name under it.
+    """ The records of one regional service name, or of one name under it.
 
         Attributes:
-            address (None | str | Unset): Public address for a service name, WG Mesh address for its `internal-` name. Send
-                this or `addresses` for A and AAAA.
-            addresses (list[str] | None | Unset): Every address of the name, all IPv4 or all IPv6. They replace the
-                addresses the name had.
-            health_check_url (None | str | Unset): An HTTPS URL on a public service name. Route53 asks its host and path at
-                each IPv4 address in `addresses` and leaves out an address that stops answering.
+            type_ (DnsRecordPayloadType): Record type.
+            values (list[str]): Addresses for A and AAAA, unquoted values for TXT, or one host name for CNAME. They replace
+                the values the name had.
+            health_check (HealthCheck | None | Unset): Give each address of a public A or AAAA name its own health check.
+                DNS leaves out an unhealthy address while another address is healthy.
             ttl (int | Unset): Record TTL in seconds. Default: 300.
-            type_ (DnsRecordPayloadTypeType0 | None | Unset): Record type. Left out, Atlas picks A or AAAA from `address`.
-            values (list[str] | None | Unset): Unquoted TXT values, or the one target host name of a CNAME. Required for TXT
-                and CNAME.
      """
 
-    address: None | str | Unset = UNSET
-    addresses: list[str] | None | Unset = UNSET
-    health_check_url: None | str | Unset = UNSET
+    type_: DnsRecordPayloadType
+    values: list[str]
+    health_check: HealthCheck | None | Unset = UNSET
     ttl: int | Unset = 300
-    type_: DnsRecordPayloadTypeType0 | None | Unset = UNSET
-    values: list[str] | None | Unset = UNSET
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        address: None | str | Unset
-        if isinstance(self.address, Unset):
-            address = UNSET
+        from ..models.health_check import HealthCheck # noqa: PLC0415
+        type_ = self.type_.value
+
+        values = self.values
+
+
+
+        health_check: dict[str, Any] | None | Unset
+        if isinstance(self.health_check, Unset):
+            health_check = UNSET
+        elif isinstance(self.health_check, HealthCheck):
+            health_check = self.health_check.to_dict()
         else:
-            address = self.address
-
-        addresses: list[str] | None | Unset
-        if isinstance(self.addresses, Unset):
-            addresses = UNSET
-        elif isinstance(self.addresses, list):
-            addresses = self.addresses
-
-
-        else:
-            addresses = self.addresses
-
-        health_check_url: None | str | Unset
-        if isinstance(self.health_check_url, Unset):
-            health_check_url = UNSET
-        else:
-            health_check_url = self.health_check_url
+            health_check = self.health_check
 
         ttl = self.ttl
-
-        type_: None | str | Unset
-        if isinstance(self.type_, Unset):
-            type_ = UNSET
-        elif isinstance(self.type_, DnsRecordPayloadTypeType0):
-            type_ = self.type_.value
-        else:
-            type_ = self.type_
-
-        values: list[str] | None | Unset
-        if isinstance(self.values, Unset):
-            values = UNSET
-        elif isinstance(self.values, list):
-            values = self.values
-
-
-        else:
-            values = self.values
 
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update({
+            "type": type_,
+            "values": values,
         })
-        if address is not UNSET:
-            field_dict["address"] = address
-        if addresses is not UNSET:
-            field_dict["addresses"] = addresses
-        if health_check_url is not UNSET:
-            field_dict["health_check_url"] = health_check_url
+        if health_check is not UNSET:
+            field_dict["health_check"] = health_check
         if ttl is not UNSET:
             field_dict["ttl"] = ttl
-        if type_ is not UNSET:
-            field_dict["type"] = type_
-        if values is not UNSET:
-            field_dict["values"] = values
 
         return field_dict
 
@@ -116,92 +81,43 @@ class DnsRecordPayload:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.health_check import HealthCheck # noqa: PLC0415
         d = dict(src_dict)
-        def _parse_address(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        address = _parse_address(d.pop("address", UNSET))
+        type_ = DnsRecordPayloadType(d.pop("type"))
 
 
-        def _parse_addresses(data: object) -> list[str] | None | Unset:
+
+
+        values = cast(list[str], d.pop("values"))
+
+
+        def _parse_health_check(data: object) -> HealthCheck | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
             try:
-                if not isinstance(data, list):
+                if not isinstance(data, dict):
                     raise TypeError()
-                addresses_type_0 = cast(list[str], data)
+                health_check_type_0 = HealthCheck.from_dict(data)
 
-                return addresses_type_0
+
+
+                return health_check_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(list[str] | None | Unset, data)
+            return cast(HealthCheck | None | Unset, data)
 
-        addresses = _parse_addresses(d.pop("addresses", UNSET))
-
-
-        def _parse_health_check_url(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        health_check_url = _parse_health_check_url(d.pop("health_check_url", UNSET))
+        health_check = _parse_health_check(d.pop("health_check", UNSET))
 
 
         ttl = d.pop("ttl", UNSET)
 
-        def _parse_type_(data: object) -> DnsRecordPayloadTypeType0 | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                type_type_0 = DnsRecordPayloadTypeType0(data)
-
-
-
-                return type_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(DnsRecordPayloadTypeType0 | None | Unset, data)
-
-        type_ = _parse_type_(d.pop("type", UNSET))
-
-
-        def _parse_values(data: object) -> list[str] | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, list):
-                    raise TypeError()
-                values_type_0 = cast(list[str], data)
-
-                return values_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(list[str] | None | Unset, data)
-
-        values = _parse_values(d.pop("values", UNSET))
-
-
         dns_record_payload = cls(
-            address=address,
-            addresses=addresses,
-            health_check_url=health_check_url,
-            ttl=ttl,
             type_=type_,
             values=values,
+            health_check=health_check,
+            ttl=ttl,
         )
 
         return dns_record_payload

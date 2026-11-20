@@ -9,6 +9,7 @@ import frappe
 import requests
 from frappe import _
 
+from atlas.atlas.core.dns_providers import DnsRecord, HealthCheck
 from atlas.atlas.core.ssh import SSHRunner, wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.proxy.configuration import ProxyConfiguration
@@ -160,8 +161,8 @@ class ProxyServerProvisioner:
 			frappe.throw(_("Proxy Server {0} has no public IPv4 address.").format(self.proxy_server.name))
 
 		settings = frappe.get_single("Atlas Settings")
-		settings.dns_provider_controller.upsert_a_record(
-			self.proxy_server.get_domain(), address, ttl=NODE_DNS_TTL_SECONDS
+		settings.dns_provider_controller.upsert_records(
+			[DnsRecord(self.proxy_server.get_domain(), "A", [address], NODE_DNS_TTL_SECONDS)]
 		)
 		self.save_progress(save)
 
@@ -174,22 +175,26 @@ class ProxyServerProvisioner:
 		settings = frappe.get_single("Atlas Settings")
 		provider = settings.dns_provider_controller
 		if not self.proxy_server.dns_health_check_id:
-			self.proxy_server.dns_health_check_id = provider.create_https_health_check(
-				address,
-				self.proxy_server.get_domain(),
-				"/healthz",
+			self.proxy_server.dns_health_check_id = provider.create_health_check(
+				address, HealthCheck(self.proxy_server.get_domain(), "/healthz")
 			)
-		provider.upsert_multivalue_a_record(
-			f"proxy.{settings.wildcard_domain}",
-			self.proxy_server.name,
-			address,
-			self.proxy_server.dns_health_check_id,
-			ttl=REGIONAL_DNS_TTL_SECONDS,
-		)
-		provider.upsert_cname_record(
-			f"*.{settings.wildcard_domain}",
-			f"proxy.{settings.wildcard_domain}",
-			ttl=WILDCARD_DNS_TTL_SECONDS,
+		provider.upsert_records(
+			[
+				DnsRecord(
+					f"proxy.{settings.wildcard_domain}",
+					"A",
+					[address],
+					REGIONAL_DNS_TTL_SECONDS,
+					identifier=self.proxy_server.name,
+					health_check_id=self.proxy_server.dns_health_check_id,
+				),
+				DnsRecord(
+					f"*.{settings.wildcard_domain}",
+					"CNAME",
+					[f"proxy.{settings.wildcard_domain}"],
+					WILDCARD_DNS_TTL_SECONDS,
+				),
+			]
 		)
 		self.save_progress(save)
 

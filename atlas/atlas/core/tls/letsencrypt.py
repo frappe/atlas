@@ -11,6 +11,7 @@ import frappe
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from atlas.atlas.core.dns_providers import DnsRecord
 from atlas.atlas.core.tls.acme import AcmeClient, DnsChallenge
 from atlas.atlas.core.tls.certificate import (
 	create_certificate_request,
@@ -133,7 +134,7 @@ class LetsEncrypt:
 	) -> None:
 		"""Publish every TXT value, then let the server check each authorization."""
 		for record_name, values in self._group_values(challenges).items():
-			self._dns_provider.upsert_record("TXT", record_name, [f'"{value}"' for value in values], ttl=60)
+			self._dns_provider.upsert_records([DnsRecord(record_name, "TXT", values, 60)])
 
 		time.sleep(self.DNS_PROPAGATION_DELAY)
 
@@ -146,7 +147,7 @@ class LetsEncrypt:
 		"""Remove the challenge records. A failure here must not hide an issuance failure."""
 		for record_name in self._group_values(challenges):
 			try:
-				self._dns_provider.remove_txt_record(record_name)
+				self._dns_provider.remove_records(self._dns_provider.get_records(record_name, "TXT"))
 			except Exception:
 				frappe.log_error(title=f"Unable to remove ACME record {record_name}")
 
