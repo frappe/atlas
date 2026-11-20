@@ -135,15 +135,7 @@ class DnsProvider(ABC):
 			else:
 				records.append(DnsRecord(name, record_type, values, ttl))
 
-			# A and AAAA replace each other, and a CNAME cannot share its name with a TXT record.
-			group = ("A", "AAAA") if record_type in ("A", "AAAA") else ("TXT", "CNAME")
-			upserted = {(record.record_type, record.identifier) for record in records}
-			replaced = [
-				record
-				for record in existing
-				if record.record_type in group and (record.record_type, record.identifier) not in upserted
-			]
-			self.upsert_records(records, replaced)
+			self.upsert_records(records, self._get_replaced_records(existing, record_type, records))
 		finally:
 			self._remove_unused_health_checks(name, existing + records)
 
@@ -155,6 +147,19 @@ class DnsProvider(ABC):
 			self.remove_records(records)
 		finally:
 			self._remove_unused_health_checks(name, records)
+
+	@staticmethod
+	def _get_replaced_records(
+		existing: list[DnsRecord], record_type: str, records: list[DnsRecord]
+	) -> list[DnsRecord]:
+		"""Return the existing records that the new records do not overwrite but must replace. A and AAAA replace each other, and a CNAME cannot share its name with a TXT record."""
+		group = ("A", "AAAA") if record_type in ("A", "AAAA") else ("TXT", "CNAME")
+		upserted = {(record.record_type, record.identifier) for record in records}
+		return [
+			record
+			for record in existing
+			if record.record_type in group and (record.record_type, record.identifier) not in upserted
+		]
 
 	def _get_reusable_health_checks(
 		self, existing: list[DnsRecord], record_type: str, health_check: HealthCheck
@@ -217,14 +222,14 @@ class DnsProvider(ABC):
 			raise AtlasUserError(str(error)) from error
 
 		version = 4 if record_type == "A" else 6
-		if len(set(addresses)) < len(addresses) or any(address.version != version for address in addresses):
+		if len(set(addresses)) < len(addresses) or {address.version for address in addresses} != {version}:
 			raise AtlasUserError(f"An {record_type} record takes distinct IPv{version} addresses.")
 
-		for address in addresses:
-			if is_internal and address not in MESH_NETWORK:
+		if is_internal:
+			if not all(address in MESH_NETWORK for address in addresses):
 				raise AtlasUserError(f"{name} needs WG Mesh addresses in {MESH_NETWORK}.")
-			if not is_internal and (not address.is_global or address.is_multicast):
-				raise AtlasUserError(f"{name} needs public addresses.")
+		elif not all(address.is_global and not address.is_multicast for address in addresses):
+			raise AtlasUserError(f"{name} needs public addresses.")
 
 	def _validate_health_check(
 		self, name: str, record_type: str, health_check: HealthCheck, is_internal: bool
