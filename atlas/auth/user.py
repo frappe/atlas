@@ -11,31 +11,31 @@ ATLAS_ADMIN_ROLE = "Atlas Admin"
 def ensure_tenant_user(tenant: str) -> str:
 	"""Return the user of one tenant claim, and create it on first use."""
 	if tenant == CENTRAL_TENANT:
-		name, first_name = CENTRAL_TENANT_USER, "Every Tenant"
+		email, first_name = CENTRAL_TENANT_USER, "Every Tenant"
 	else:
 		tenant_id = int(tenant)
-		name, first_name = f"tenant-{tenant_id}@atlas.local", f"Tenant {tenant_id}"
+		email, first_name = f"tenant-{tenant_id}@atlas.local", f"Tenant {tenant_id}"
 
-	if frappe.db.exists("User", name):
-		return name
+	if user := frappe.db.get_value("User", {"email": email}):
+		return user
 
 	try:
-		_insert_api_user(name, first_name)
+		user = _insert_api_user(email, first_name)
 		# The authentication hook runs before any route work, so this commit holds only the new
 		# user. Frappe rolls a read request back, and the user must outlive the request.
 		frappe.db.commit()  # nosemgrep
-	except frappe.DuplicateEntryError:
+	except (frappe.DuplicateEntryError, frappe.UniqueValidationError):
 		frappe.db.rollback()
+		user = frappe.db.get_value("User", {"email": email})
 
-	return name
+	return user
 
 
-def _insert_api_user(name: str, first_name: str) -> None:
-	frappe.get_doc(
+def _insert_api_user(email: str, first_name: str) -> str:
+	user = frappe.get_doc(
 		{
 			"doctype": "User",
-			"name": name,
-			"email": name,
+			"email": email,
 			"first_name": first_name,
 			"user_type": "Website User",
 			"enabled": 1,
@@ -43,3 +43,4 @@ def _insert_api_user(name: str, first_name: str) -> None:
 			"roles": [{"role": ATLAS_ADMIN_ROLE}],
 		}
 	).insert(ignore_permissions=True)
+	return user.name
