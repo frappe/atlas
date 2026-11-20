@@ -9,6 +9,7 @@ from frappe.tests import UnitTestCase
 
 import atlas.service.core.wg_gateway.configuration as configuration
 import atlas.service.core.wg_gateway.provisioning as provisioning
+from atlas.atlas.core.dns_providers import DnsRecord, HealthCheck
 from atlas.service.core.wg_gateway.configuration import GatewayConfiguration
 from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner
 
@@ -149,15 +150,19 @@ class TestGatewayProvisioning(UnitTestCase):
 	def test_the_node_joins_the_health_checked_regional_name(self) -> None:
 		provisioner = self.provisioner(gateway())
 		provider = provisioner.settings.dns_provider_controller
-		provider.create_https_health_check.return_value = "check-1"
+		provider.create_health_check.return_value = "check-1"
 
 		provisioner.update_regional_dns_record()
 
-		provider.create_https_health_check.assert_called_once_with(
-			"151.115.112.94", "wireguard-001.par-1.example.com", "/readyz"
+		provider.create_health_check.assert_called_once_with(
+			"151.115.112.94", HealthCheck("wireguard-001.par-1.example.com", "/readyz")
 		)
-		provider.upsert_multivalue_a_record.assert_called_once_with(
-			"wireguard.par-1.example.com", "wireguard-001", "151.115.112.94", "check-1", ttl=120
+		provider.upsert_records.assert_called_once_with(
+			[
+				DnsRecord(
+					"wireguard.par-1.example.com", "A", ["151.115.112.94"], 120, "wireguard-001", "check-1"
+				)
+			]
 		)
 
 	def test_a_node_becomes_a_member_before_the_other_nodes_receive_the_list(self) -> None:

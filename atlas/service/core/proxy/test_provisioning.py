@@ -7,6 +7,7 @@ import frappe
 from frappe.tests import UnitTestCase
 
 import atlas.service.core.proxy.provisioning as provisioning
+from atlas.atlas.core.dns_providers import DnsRecord, HealthCheck
 from atlas.atlas.core.ssh import SSHResult
 from atlas.service.core.proxy.provisioning import ProxyServerProvisioner
 
@@ -276,8 +277,8 @@ class TestDNSRecord(UnitTestCase):
 
 		provisioner.update_dns_record()
 
-		self.provider.upsert_a_record.assert_called_once_with(
-			"proxy-001.example.com", "203.0.113.9", ttl=3600
+		self.provider.upsert_records.assert_called_once_with(
+			[DnsRecord("proxy-001.example.com", "A", ["203.0.113.9"], 3600)]
 		)
 
 	def test_a_missing_address_fails_loudly(self) -> None:
@@ -286,7 +287,7 @@ class TestDNSRecord(UnitTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			provisioner.update_dns_record()
 
-		self.provider.upsert_a_record.assert_not_called()
+		self.provider.upsert_records.assert_not_called()
 
 	def test_an_archived_proxy_does_not_restore_its_record(self) -> None:
 		proxy_server, provisioner = self.build(status="Archived", public_ipv4="203.0.113.9")
@@ -294,21 +295,21 @@ class TestDNSRecord(UnitTestCase):
 		provisioner.update_dns_record()
 
 		self.assertIs(provisioner.proxy_server, proxy_server)
-		self.provider.upsert_a_record.assert_not_called()
+		self.provider.upsert_records.assert_not_called()
 
 	def test_the_global_record_has_a_health_check(self) -> None:
 		proxy_server, provisioner = self.build(public_ipv4="203.0.113.9")
-		self.provider.create_https_health_check.return_value = "health-1"
+		self.provider.create_health_check.return_value = "health-1"
 
 		provisioner.update_global_dns_record()
 
-		self.provider.create_https_health_check.assert_called_once_with(
-			"203.0.113.9", "proxy-001.example.com", "/healthz"
+		self.provider.create_health_check.assert_called_once_with(
+			"203.0.113.9", HealthCheck("proxy-001.example.com", "/healthz")
 		)
-		self.provider.upsert_multivalue_a_record.assert_called_once_with(
-			"proxy.example.com", "proxy-001", "203.0.113.9", "health-1", ttl=120
-		)
-		self.provider.upsert_cname_record.assert_called_once_with(
-			"*.example.com", "proxy.example.com", ttl=3600
+		self.provider.upsert_records.assert_called_once_with(
+			[
+				DnsRecord("proxy.example.com", "A", ["203.0.113.9"], 120, "proxy-001", "health-1"),
+				DnsRecord("*.example.com", "CNAME", ["proxy.example.com"], 3600),
+			]
 		)
 		self.assertEqual(proxy_server.dns_health_check_id, "health-1")

@@ -35,17 +35,17 @@ Cargo also starts as `Not Provisioned`. See [Cargo recovery](cargo.md#operate-an
 
 ## Publish a service address
 
-A tenant-0 caller, such as Cargo, can set an A or AAAA record for a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
+A tenant-0 caller, such as Cargo, can set the records of a regional service. Atlas sends the change to the DNS provider at once and returns the provider error as `502 dns_provider_error`.
 
 ```http
 PUT /api/atlas/dns-records/s3-svc.<domain>
-{"address": "203.0.113.7", "ttl": 300}
+{"type": "A", "values": ["203.0.113.7"], "health_check": {"host": "s3-admin-svc.<domain>", "path": "/health"}}
 
 PUT /api/atlas/dns-records/internal-s3-svc.<domain>
-{"address": "fdaa:1:0:0:0:0:0:7"}
+{"type": "AAAA", "values": ["fdaa:1:0:0:0:0:0:7"]}
 ```
 
-The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs a public address. Its `internal-` name needs a WG Mesh address in `fdaa::/16`. `ttl` is optional, from 60 to 86400 seconds, with a default of 300. Setting an A record removes the AAAA record of the name in the same change, and the reverse. `DELETE` on the same path removes the A and AAAA records.
+The label must be in `SERVICE_RECORD_LABELS` in `atlas/atlas/core/dns_providers/base.py`. A service name needs public addresses. Its `internal-` name needs WG Mesh addresses in `fdaa::/16`. TXT and CNAME records can also go on one label under either name, such as `_acme-challenge.s3-svc.<domain>`. `health_check` gives each public address its own Route53 check. `DELETE` on the same path removes every record of the name.
 
 Metal looks up `internal-<host>` before it opens an image or snapshot connection to object storage, or a telemetry connection to Datum. When the answer is a private address, Metal connects to that address and keeps the original host name for TLS and presigned URLs. When the answer is public, or the private connection fails, Metal uses the public address.
 

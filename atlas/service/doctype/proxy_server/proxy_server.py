@@ -238,14 +238,10 @@ class ProxyServer(Document):
 		settings = frappe.get_single("Atlas Settings")
 		provider = settings.dns_provider_controller
 		if self.dns_health_check_id:
-			provider.remove_multivalue_a_record(
-				f"proxy.{settings.wildcard_domain}",
-				self.name,
-			)
-		if self.dns_health_check_id:
+			provider.remove_records(provider.get_records(f"proxy.{settings.wildcard_domain}", "A", self.name))
 			provider.remove_health_check(self.dns_health_check_id)
 			self.dns_health_check_id = None
-		provider.remove_a_record(self.get_domain())
+		provider.remove_records(provider.get_records(self.get_domain(), "A"))
 
 	def validate_is_reachable(self) -> None:
 		"""Reject an action that needs a running virtual machine."""

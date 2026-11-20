@@ -117,13 +117,15 @@ def sync_detailed(
 ) -> Response[Any | ApiErrorResponse]:
     """ Set DNS record
 
-     Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.
+     Sets the A, AAAA, TXT or CNAME records of a regional service name, such as `s3-svc.<domain>`, its
+    `internal-` name, or one name under either, such as `_acme-challenge.s3-svc.<domain>`. The values
+    replace the values the name had.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name.
+        body (DnsRecordPayload): The records of one regional service name, or of one name under
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,13 +159,15 @@ def sync(
 ) -> Any | ApiErrorResponse | None:
     """ Set DNS record
 
-     Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.
+     Sets the A, AAAA, TXT or CNAME records of a regional service name, such as `s3-svc.<domain>`, its
+    `internal-` name, or one name under either, such as `_acme-challenge.s3-svc.<domain>`. The values
+    replace the values the name had.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name.
+        body (DnsRecordPayload): The records of one regional service name, or of one name under
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,13 +196,15 @@ async def asyncio_detailed(
 ) -> Response[Any | ApiErrorResponse]:
     """ Set DNS record
 
-     Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.
+     Sets the A, AAAA, TXT or CNAME records of a regional service name, such as `s3-svc.<domain>`, its
+    `internal-` name, or one name under either, such as `_acme-challenge.s3-svc.<domain>`. The values
+    replace the values the name had.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name.
+        body (DnsRecordPayload): The records of one regional service name, or of one name under
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -232,13 +238,15 @@ async def asyncio(
 ) -> Any | ApiErrorResponse | None:
     """ Set DNS record
 
-     Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-`
-    name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.
+     Sets the A, AAAA, TXT or CNAME records of a regional service name, such as `s3-svc.<domain>`, its
+    `internal-` name, or one name under either, such as `_acme-challenge.s3-svc.<domain>`. The values
+    replace the values the name had.
 
     Args:
         name (str):
         x_tenant_id (int):
-        body (DnsRecordPayload): The address of one regional service name.
+        body (DnsRecordPayload): The records of one regional service name, or of one name under
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

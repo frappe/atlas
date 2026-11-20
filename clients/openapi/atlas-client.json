@@ -690,13 +690,19 @@
       },
       "DnsRecordPayload": {
         "additionalProperties": false,
-        "description": "The address of one regional service name.",
+        "description": "The records of one regional service name, or of one name under it.",
         "properties": {
-          "address": {
-            "description": "Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record.",
-            "format": "ipvanyaddress",
-            "title": "Address",
-            "type": "string"
+          "health_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthCheck"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Give each address of a public A or AAAA name its own health check. DNS leaves out an unhealthy address while another address is healthy."
           },
           "ttl": {
             "default": 300,
@@ -705,10 +711,32 @@
             "minimum": 60,
             "title": "Ttl",
             "type": "integer"
+          },
+          "type": {
+            "description": "Record type.",
+            "enum": [
+              "A",
+              "AAAA",
+              "TXT",
+              "CNAME"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "values": {
+            "description": "Addresses for A and AAAA, unquoted values for TXT, or one host name for CNAME. They replace the values the name had.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Values",
+            "type": "array"
           }
         },
         "required": [
-          "address"
+          "type",
+          "values"
         ],
         "title": "DnsRecordPayload",
         "type": "object"
@@ -901,6 +929,26 @@
           }
         },
         "title": "FirewallUpdatePayload",
+        "type": "object"
+      },
+      "HealthCheck": {
+        "additionalProperties": false,
+        "description": "An HTTPS check on port 443 that asks `host` and `path` at one address.",
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "path": {
+            "default": "/",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "title": "HealthCheck",
         "type": "object"
       },
       "HostAccessGrantPayload": {
@@ -3500,7 +3548,7 @@
     },
     "/api/atlas/dns-records/{name}": {
       "delete": {
-        "description": "Removes the A and AAAA records of one regional service name.",
+        "description": "Removes every record of a regional service name, or of one name under it, and its health checks.",
         "operationId": "remove_dns_record",
         "parameters": [
           {
@@ -3526,7 +3574,7 @@
         ],
         "responses": {
           "204": {
-            "description": "The name has no A or AAAA record. Removing twice is safe."
+            "description": "The name has no records left. Removing twice is safe."
           },
           "400": {
             "content": {
@@ -3595,7 +3643,7 @@
         ]
       },
       "put": {
-        "description": "Points a regional service name, such as `s3-svc.<domain>`, to a public address, or its `internal-` name, such as `internal-s3-svc.<domain>`, to its WG Mesh address. The TTL defaults to 300 seconds.",
+        "description": "Sets the A, AAAA, TXT or CNAME records of a regional service name, such as `s3-svc.<domain>`, its `internal-` name, or one name under either, such as `_acme-challenge.s3-svc.<domain>`. The values replace the values the name had.",
         "operationId": "set_dns_record",
         "parameters": [
           {
@@ -3623,7 +3671,15 @@
           "content": {
             "application/json": {
               "example": {
-                "address": "fdaa:1:0:0:0:0:0:7"
+                "health_check": {
+                  "host": "s3-admin-svc.example.com",
+                  "path": "/health"
+                },
+                "type": "A",
+                "values": [
+                  "203.0.113.7",
+                  "203.0.113.8"
+                ]
               },
               "schema": {
                 "$ref": "#/components/schemas/DnsRecordPayload"
@@ -3634,7 +3690,7 @@
         },
         "responses": {
           "204": {
-            "description": "The name points to the address. Repeating the request is safe."
+            "description": "The name holds the records. Repeating the request is safe."
           },
           "400": {
             "content": {
@@ -3644,7 +3700,7 @@
                 }
               }
             },
-            "description": "The name is not allowed, or the address does not suit the name."
+            "description": "The name is not allowed, or the values do not suit the name or the type."
           },
           "401": {
             "content": {

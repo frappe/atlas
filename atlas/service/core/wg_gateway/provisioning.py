@@ -10,6 +10,7 @@ import frappe
 import requests
 from frappe import _
 
+from atlas.atlas.core.dns_providers import DnsRecord, HealthCheck
 from atlas.atlas.core.ssh import SSHRunner, wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.service.core.service_package import WG_GATEWAY_PACKAGE
@@ -147,8 +148,8 @@ class WireGuardGatewayProvisioner:
 
 	def update_dns_record(self) -> None:
 		"""Point the node name, the endpoint that devices connect to, at its public IPv4 address."""
-		self.settings.dns_provider_controller.upsert_a_record(
-			self.gateway.get_domain(), self.gateway.public_ipv4, ttl=NODE_DNS_TTL_SECONDS
+		self.settings.dns_provider_controller.upsert_records(
+			[DnsRecord(self.gateway.get_domain(), "A", [self.gateway.public_ipv4], NODE_DNS_TTL_SECONDS)]
 		)
 
 	def wait_for_ssh(self) -> None:
@@ -276,16 +277,21 @@ class WireGuardGatewayProvisioner:
 		"""Add this node to the regional API name. The check needs a ready cluster member, not only a tunnel."""
 		provider = self.settings.dns_provider_controller
 		if not self.gateway.dns_health_check_id:
-			self.gateway.dns_health_check_id = provider.create_https_health_check(
-				self.gateway.public_ipv4, self.gateway.get_domain(), "/readyz"
+			self.gateway.dns_health_check_id = provider.create_health_check(
+				self.gateway.public_ipv4, HealthCheck(self.gateway.get_domain(), "/readyz")
 			)
 			self.save()
-		provider.upsert_multivalue_a_record(
-			self.gateway.get_regional_domain(),
-			self.gateway.name,
-			self.gateway.public_ipv4,
-			self.gateway.dns_health_check_id,
-			ttl=REGIONAL_DNS_TTL_SECONDS,
+		provider.upsert_records(
+			[
+				DnsRecord(
+					self.gateway.get_regional_domain(),
+					"A",
+					[self.gateway.public_ipv4],
+					REGIONAL_DNS_TTL_SECONDS,
+					identifier=self.gateway.name,
+					health_check_id=self.gateway.dns_health_check_id,
+				)
+			]
 		)
 
 	def save(self) -> None:

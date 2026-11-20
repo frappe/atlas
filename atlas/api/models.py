@@ -15,7 +15,6 @@ from pydantic import (
 	ConfigDict,
 	Discriminator,
 	Field,
-	IPvAnyAddress,
 	StringConstraints,
 	Tag,
 	model_validator,
@@ -23,6 +22,7 @@ from pydantic import (
 
 from atlas.api.core.base import ListQuery, PatchPayload, StrictModel
 from atlas.api.core.errors import ApiErrorField
+from atlas.atlas.core.dns_providers import HealthCheck
 from atlas.atlas.core.tags import (
 	MAXIMUM_TAG_KEY_LENGTH,
 	MAXIMUM_TAG_VALUE_LENGTH,
@@ -1436,12 +1436,19 @@ class HostAccessResponse(BaseModel):
 
 
 class DnsRecordPayload(StrictModel):
-	"""The address of one regional service name."""
+	"""The records of one regional service name, or of one name under it."""
 
-	address: IPvAnyAddress = Field(
-		description="Public address for a service name, WG Mesh address for its `internal-` name. Atlas sets an A or AAAA record."
+	type: Literal["A", "AAAA", "TXT", "CNAME"] = Field(description="Record type.")
+	values: list[str] = Field(
+		min_length=1,
+		max_length=10,
+		description="Addresses for A and AAAA, unquoted values for TXT, or one host name for CNAME. They replace the values the name had.",
 	)
 	ttl: int = Field(default=300, ge=60, le=86_400, description="Record TTL in seconds.")
+	health_check: HealthCheck | None = Field(
+		default=None,
+		description="Give each address of a public A or AAAA name its own health check. DNS leaves out an unhealthy address while another address is healthy.",
+	)
 
 
 class InvestigationPayload(StrictModel):
