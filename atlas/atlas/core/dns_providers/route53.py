@@ -194,8 +194,7 @@ class Route53Provider(DnsProvider):
 			raise Route53Error(f"Failed to change the records of {names}: {error}") from error
 
 	def _list_record_sets(self, name: str) -> list[dict]:
-		"""Route53 lists record sets in name order, so the name's sets come first from `StartRecordName`.
-		It stores names in lowercase."""
+		"""Route53 lists record sets in name order, so the name's sets come first from `StartRecordName`. It stores names in lowercase."""
 		paginator = self.client.get_paginator("list_resource_record_sets")
 		record_sets = []
 		try:

@@ -121,8 +121,7 @@ class DnsProvider(ABC):
 		ttl: int,
 		health_check: HealthCheck | None = None,
 	) -> None:
-		"""Validate a tenant-0 request, then set the records of a service name or one label under it.
-		Atlas code calls `upsert_records` directly, without these checks."""
+		"""Validate a tenant-0 request, then set the records of a service name or one label under it. Atlas code calls `upsert_records` directly, without these checks."""
 		self._validate_dns_request(name, record_type, values, health_check)
 
 		existing = self.get_records(name)
@@ -171,8 +170,7 @@ class DnsProvider(ABC):
 		}
 
 	def _remove_unused_health_checks(self, name: str, records: list[DnsRecord]) -> None:
-		"""Remove the checks of these records that no record of the name uses now. Reading the name again
-		keeps a check when a failed change reached the provider anyway, such as after a timeout."""
+		"""Remove the checks of these records that no record of the name uses now. Reading the name again keeps a check when a failed change reached the provider anyway, such as after a timeout."""
 		health_check_ids = {record.health_check_id for record in records if record.health_check_id}
 		if not health_check_ids:
 			return
@@ -190,8 +188,7 @@ class DnsProvider(ABC):
 			self._validate_health_check(name, record_type, health_check, is_internal)
 
 	def _validate_dns_name(self, name: str, record_type: str | None = None) -> bool:
-		"""Return whether the name is an `internal-` name. Atlas owns every other name in the zone, such as
-		`proxy.<domain>` and `*.<domain>`."""
+		"""Return whether the name is an `internal-` name. Atlas owns every other name in the zone, such as `proxy.<domain>` and `*.<domain>`."""
 		match = re.fullmatch(SERVICE_NAME_PATTERN + re.escape(self.domain_name), name)
 		if not match or match["service"] not in SERVICE_RECORD_LABELS:
 			raise AtlasUserError(f"{name} is not a service record name under {self.domain_name}.")

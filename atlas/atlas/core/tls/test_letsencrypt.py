@@ -121,6 +121,7 @@ class TestLetsEncryptIssuance(_LetsEncryptCase):
 		self._issue()
 
 		self.dns_provider.get_records.assert_called_once_with("_acme-challenge.example.com", "TXT")
+		self.dns_provider.remove_records.assert_called_once_with(self.dns_provider.get_records.return_value)
 
 	def test_the_challenge_record_is_removed_after_a_failed_order(self) -> None:
 		self.client.finalize_order.side_effect = RuntimeError("order failed")
@@ -129,6 +130,7 @@ class TestLetsEncryptIssuance(_LetsEncryptCase):
 			self.issuer.issue_wildcard_certificate()
 
 		self.dns_provider.get_records.assert_called_once_with("_acme-challenge.example.com", "TXT")
+		self.dns_provider.remove_records.assert_called_once_with(self.dns_provider.get_records.return_value)
 
 	def test_issuance_without_an_email_is_refused(self) -> None:
 		self.issuer.settings.letsencrypt_email = ""
