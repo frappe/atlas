@@ -9,7 +9,7 @@ from atlas.api.tests.test_support import TENANT_ID, api_request, error_body
 from atlas.atlas.core.dns_providers.route53 import Route53Error
 
 PATH = "/api/atlas/dns-records/internal-s3-svc.example.com"
-PAYLOAD = {"address": "fdaa:1::7"}
+PAYLOAD = {"type": "AAAA", "values": ["fdaa:1::7"]}
 
 
 class TestDnsRecordRoutes(UnitTestCase):
@@ -28,7 +28,7 @@ class TestDnsRecordRoutes(UnitTestCase):
 			api_request("PUT", PATH, tenant_id=0, send_tenant_header=True, json=PAYLOAD),
 			patch("atlas.api.routes.dns_records.get_dns_provider") as get_dns_provider,
 		):
-			get_dns_provider.return_value.upsert_service_record.side_effect = Route53Error("Throttling")
+			get_dns_provider.return_value.upsert_dns_records.side_effect = Route53Error("Throttling")
 			status, body = error_body(set_dns_record, name="internal-s3-svc.example.com")
 
 		self.assertEqual(status, 502)

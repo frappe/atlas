@@ -23,6 +23,7 @@ from .create_virtual_machine_payload_metadata import CreateVirtualMachinePayload
 from .create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags
 from .disk_update_payload import DiskUpdatePayload
 from .dns_record_payload import DnsRecordPayload
+from .dns_record_payload_type import DnsRecordPayloadType
 from .download_image_artifact import DownloadImageArtifact
 from .firewall_payload import FirewallPayload
 from .firewall_response import FirewallResponse
@@ -31,6 +32,7 @@ from .firewall_rule_payload_protocol import FirewallRulePayloadProtocol
 from .firewall_rule_response import FirewallRuleResponse
 from .firewall_rule_response_protocol import FirewallRuleResponseProtocol
 from .firewall_update_payload import FirewallUpdatePayload
+from .health_check import HealthCheck
 from .host_access_grant_payload import HostAccessGrantPayload
 from .host_access_response import HostAccessResponse
 from .host_access_revoke_payload import HostAccessRevokePayload
@@ -125,6 +127,7 @@ __all__ = (
     "CreateVirtualMachinePayloadTags",
     "DiskUpdatePayload",
     "DnsRecordPayload",
+    "DnsRecordPayloadType",
     "DownloadImageArtifact",
     "FirewallPayload",
     "FirewallResponse",
@@ -133,6 +136,7 @@ __all__ = (
     "FirewallRuleResponse",
     "FirewallRuleResponseProtocol",
     "FirewallUpdatePayload",
+    "HealthCheck",
     "HostAccessGrantPayload",
     "HostAccessResponse",
     "HostAccessRevokePayload",
