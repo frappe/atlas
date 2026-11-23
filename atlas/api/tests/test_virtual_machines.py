@@ -114,7 +114,6 @@ def build_metal_information() -> SimpleNamespace:
 		observed=SimpleNamespace(
 			state="stopped",
 			sleep_state="sleeping",
-			last_request_at="2026-09-01T10:00:00Z",
 			is_in_rescue_mode=False,
 			disk=SimpleNamespace(used_mib=8123),
 			network=SimpleNamespace(mac="52:54:00:12:34:56"),
@@ -165,7 +164,6 @@ class TestVirtualMachineViews(UnitTestCase):
 		self.assertEqual(detail.desired_state, "running")
 		self.assertEqual(detail.current_state, "stopped")
 		self.assertEqual(detail.sleep_state, "sleeping")
-		self.assertEqual(detail.last_request_at, 1788256800)
 		self.assertEqual(detail.network.public_ipv4, "203.0.113.10")
 		self.assertEqual(detail.network.mesh_ipv6, "fdaa:1::5")
 		self.assertEqual(detail.network.mac, "52:54:00:12:34:56")
@@ -183,12 +181,10 @@ class TestVirtualMachineViews(UnitTestCase):
 	def test_an_awake_vm_has_no_sleep_state(self) -> None:
 		information = build_metal_information()
 		information.observed.sleep_state = ""
-		information.observed.last_request_at = ""
 
 		detail = VirtualMachineDetailResponse.from_document_and_metal(build_virtual_machine(), information)
 
 		self.assertIsNone(detail.sleep_state)
-		self.assertIsNone(detail.last_request_at)
 
 	def test_detail_requires_the_default_route_for_ipv4_internet_access(self) -> None:
 		information = build_metal_information()

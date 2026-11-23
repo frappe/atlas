@@ -1003,7 +1003,6 @@ class VirtualMachineDetailResponse(BaseModel):
 					"desired_state": "running",
 					"current_state": "running",
 					"sleep_state": None,
-					"last_request_at": 1788834165,
 					"error": None,
 					"compute": {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0},
 					"disk": {"size_mib": 20480, "throughput_mibps": 0, "iops": 0, "used_mib": 8123},
@@ -1051,9 +1050,6 @@ class VirtualMachineDetailResponse(BaseModel):
 		default=None,
 		description="`sleeping`, `deep-sleeping` or `coma` while the VM sleeps, or null when it is awake or unavailable.",
 	)
-	last_request_at: int | None = Field(
-		default=None, description="Last incoming request that keeps the VM awake, as Unix seconds, or null."
-	)
 	error: str | None = Field(description="Current host-reported error, or null.")
 	compute: VirtualMachineCompute = Field(description="Compute configuration.")
 	disk: VirtualMachineDisk = Field(description="Disk configuration and usage.")
@@ -1084,9 +1080,6 @@ class VirtualMachineDetailResponse(BaseModel):
 			desired_state=desired.state if desired else None,
 			current_state=get_current_state(virtual_machine, observed.state if observed else None),
 			sleep_state=observed.sleep_state or None if observed else None,
-			last_request_at=(
-				to_unix_timestamp(observed.last_request_at) if observed and observed.last_request_at else None
-			),
 			error=observed.error.message if observed and observed.error else None,
 			compute=VirtualMachineCompute(
 				cpu_millicores=virtual_machine.cpu_millicores,
