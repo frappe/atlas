@@ -81,14 +81,11 @@ class TestStateWebhookConfiguration(UnitTestCase):
 		self.assertEqual(get_doc.call_count, 2)
 		self.assertEqual([document.webhook_doctype for document in saved], ["Virtual Machine State"] * 2)
 		self.assertEqual([document.webhook_docevent for document in saved], ["on_update", "on_trash"])
-		self.assertEqual(
-			[document.condition for document in saved],
-			[
-				'doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("sleep_state")'
-				' or doc.has_value_changed("server")',
-				None,
-			],
+		update_condition = (
+			'doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("sleep_state")'
+			' or doc.has_value_changed("server")'
 		)
+		self.assertEqual([document.condition for document in saved], [update_condition, None])
 		self.assertEqual([document.is_dynamic_url for document in saved], [0, 0])
 		self.assertEqual([document.background_jobs_queue for document in saved], [None, None])
 		self.assertEqual([document.enabled for document in saved], [0, 0])
