@@ -8,7 +8,10 @@ MAXIMUM_RETRIES = 3
 DELIVERIES = {
 	"on_update": (
 		"vm.state",
-		'doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("server")',
+		(
+			'doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("server")'
+			' or doc.has_value_changed("sleep_state")'
+		),
 	),
 	"on_trash": ("vm.state.deleted", None),
 }
@@ -47,6 +50,7 @@ def configure_state_webhooks(
 					"virtual_machine": "{{ doc.virtual_machine }}",
 					"server": "{{ doc.server }}",
 					"status": "{{ doc.status }}",
+					"sleep_state": "{{ doc.sleep_state }}",
 					"observed_at": "{{ doc.synced_at }}",
 				}
 			)
