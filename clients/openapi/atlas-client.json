@@ -2385,7 +2385,6 @@
             "is_privileged": false,
             "is_rescue_mode_enabled": false,
             "is_termination_protected": false,
-            "last_request_at": 1788834165,
             "network": {
               "firewall": {
                 "enabled": false,
@@ -2512,19 +2511,6 @@
             "description": "Whether deletion is blocked.",
             "title": "Is Termination Protected",
             "type": "boolean"
-          },
-          "last_request_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Last incoming request that keeps the VM awake, as Unix seconds, or null.",
-            "title": "Last Request At"
           },
           "network": {
             "$ref": "#/components/schemas/VirtualMachineNetwork",
