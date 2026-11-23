@@ -83,13 +83,25 @@ class TestStateWebhookConfiguration(UnitTestCase):
 		self.assertEqual([document.webhook_docevent for document in saved], ["on_update", "on_trash"])
 		self.assertEqual(
 			[document.condition for document in saved],
-			['doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("server")', None],
+			[
+				'doc.is_new() or doc.has_value_changed("status") or doc.has_value_changed("sleep_state")'
+				' or doc.has_value_changed("server")',
+				None,
+			],
 		)
 		self.assertEqual([document.is_dynamic_url for document in saved], [0, 0])
 		self.assertEqual([document.background_jobs_queue for document in saved], [None, None])
 		self.assertEqual([document.enabled for document in saved], [0, 0])
 		configuration_lock.assert_called_once_with("configure_state_webhooks")
 		commit.assert_not_called()
+
+	def test_the_update_body_reports_the_sleep_state(self) -> None:
+		_, saved, _, _, _ = self._configure(existing=False)
+		body = frappe.parse_json(saved[0].webhook_json)
+
+		self.assertEqual(body["event"], "vm.state")
+		self.assertEqual(body["status"], "{{ doc.status }}")
+		self.assertEqual(body["sleep_state"], "{{ doc.sleep_state or '' }}")
 
 	def test_the_trash_body_reports_the_removal(self) -> None:
 		_, saved, _, _, _ = self._configure(existing=False)

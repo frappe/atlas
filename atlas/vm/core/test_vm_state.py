@@ -10,8 +10,10 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 from atlas.vm.core import vm_state
 
 
-def stored_row(name: str, status: str = "stopped", server: str = "metal-1") -> frappe._dict:
-	return frappe._dict(name=name, status=status, server=server)
+def stored_row(
+	name: str, status: str = "stopped", server: str = "metal-1", sleep_state: str | None = None
+) -> frappe._dict:
+	return frappe._dict(name=name, status=status, server=server, sleep_state=sleep_state)
 
 
 class TestVirtualMachineState(UnitTestCase):
@@ -80,6 +82,23 @@ class TestVirtualMachineState(UnitTestCase):
 		calls["update"].assert_called_once()
 		self.assertEqual(list(calls["update"].call_args.args[0]), ["vm-00001"])
 		self.assertEqual(calls["commit"].call_count, 2)
+
+	def test_a_changed_sleep_state_is_saved_as_a_document(self) -> None:
+		calls = self.store(
+			names=["vm-00001", "vm-00002"],
+			stored=[
+				stored_row("vm-00001", sleep_state="sleeping"),
+				stored_row("vm-00002", sleep_state="sleeping"),
+			],
+			reported={
+				"vm-00001": {"status": "stopped", "sleep_state": "sleeping"},
+				"vm-00002": {"status": "stopped", "sleep_state": "deep-sleeping"},
+			},
+		)
+
+		# The sleep state is in the vm.state webhook body, so a change must run the webhook.
+		self.assertEqual([document.sleep_state for document in calls["saved"]], ["deep-sleeping"])
+		self.assertEqual(list(calls["update"].call_args.args[0]), ["vm-00001"])
 
 	def test_an_unreported_virtual_machine_keeps_its_stored_state(self) -> None:
 		calls = self.store(

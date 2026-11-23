@@ -21,8 +21,8 @@ HOST_REPORT_REPEAT_SECONDS = 3600
 def store_reported_states(server_name: str, reported: object) -> None:
 	"""Store the reported virtual machine states of one host.
 
-	A new or changed status is saved as a document, so its webhook runs. The other
-	reported values change often, so all rows with an unchanged status share one update.
+	A new or changed status or sleep state is saved as a document, so its webhook runs. The other
+	reported values change often, so all rows with an unchanged state share one update.
 	READ COMMITTED lets the update write rows that the sleep job changed during the Metal call.
 	"""
 	states = get_reported_states(reported)
@@ -34,7 +34,9 @@ def store_reported_states(server_name: str, reported: object) -> None:
 	stored = {
 		row.name: row
 		for row in frappe.get_all(
-			"Virtual Machine State", filters={"name": ["in", names]}, fields=["name", "status", "server"]
+			"Virtual Machine State",
+			filters={"name": ["in", names]},
+			fields=["name", "status", "sleep_state", "server"],
 		)
 	}
 	synced_at = now_datetime()
@@ -46,7 +48,12 @@ def store_reported_states(server_name: str, reported: object) -> None:
 			continue
 
 		row = stored.get(name)
-		if row and row.status == state.status and row.server == server_name:
+		if (
+			row
+			and row.status == state.status
+			and (row.sleep_state or "") == state.sleep_state
+			and row.server == server_name
+		):
 			unchanged[name] = state
 			continue
 
