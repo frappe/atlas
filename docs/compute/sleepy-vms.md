@@ -44,6 +44,7 @@ All other UDP counts as a request, so a VM that calls another UDP service can st
 | Observed state | `stopped`. Firecracker is not running. |
 | Sleep state | `sleeping`. See the values below. |
 | Atlas list | Shows the last reported state, `stopped`. |
+| Atlas VM API and state updates | `sleep_state` holds the sleep state. The VM API also gives `last_request_at`. |
 
 Metal reports the sleep state as `observed.sleep_state`. Atlas shows it as **Sleep State** on the VM. The sleep state tells where Metal keeps the saved state:
 

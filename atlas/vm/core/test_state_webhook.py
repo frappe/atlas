@@ -147,6 +147,12 @@ class TestStateWebhookCondition(IntegrationTestCase):
 
 		self.assertTrue(self.meets_condition(state))
 
+	def test_a_sleep_state_change_sends_a_delivery(self) -> None:
+		state = self.load_saved_state()
+		state.sleep_state = "deep-sleeping"
+
+		self.assertTrue(self.meets_condition(state))
+
 	def test_a_server_change_sends_a_delivery(self) -> None:
 		state = self.load_saved_state()
 		state.server = str(uuid7())
