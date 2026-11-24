@@ -18,6 +18,7 @@ from atlas.api.core.errors import (
 from atlas.api.models import (
 	ImageDownloadQuery,
 	ImageDownloadResponse,
+	ImageImportPayload,
 	ImageListQuery,
 	ImageResponse,
 	TerminationProtectionPayload,
@@ -25,6 +26,7 @@ from atlas.api.models import (
 from atlas.api.router import images
 from atlas.atlas.core.tags import find_names_with_tags, read_tags_for
 from atlas.auth.identity import get_current_tenant_id
+from atlas.vm.core.oci_image_import import OCIImageImportService
 
 if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
@@ -82,6 +84,25 @@ def list_images(query: ImageListQuery) -> Page[ImageResponse]:
 	)
 	tags = read_tags_for("Virtual Machine Image", [row.name for row in rows])
 	return build_page([ImageResponse.from_document(row, tags[row.name]) for row in rows], query)
+
+
+@images.post("import")
+@api_docs(
+	request_example={"reference": "nginx:1.29-alpine", "title": "Nginx"},
+	responses={
+		202: {"description": "The build runs. Poll the image route until it is available or failed."},
+		409: {"description": "The tenant has too many builds running."},
+	},
+)
+def import_image(payload: ImageImportPayload) -> ApiResult[ImageResponse]:
+	"""Import OCI image.
+
+	Builds an image of the calling tenant from a public OCI image in an allowed registry. Only tenant 0 can set `image_type` to `system`, which shares the image with every tenant. A second request for the same image digest returns the image that already has it. The image boots with its own entrypoint, and metadata keys named `env.<NAME>` set its environment.
+	"""
+	image_id = OCIImageImportService().request(
+		payload.reference, get_current_tenant_id(), payload.title, payload.image_type
+	)
+	return ApiResult(ImageResponse.from_document(get_owned_image(image_id)), status=202)
 
 
 @images.get("<image_id>")
