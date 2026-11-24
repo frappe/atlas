@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import ConfigError, load, load_auth
-from .peers import PEERS_KIND, PeerState, get_identity, validate_device
+from .peers import DEVICE_MTU, PEERS_KIND, PeerState, get_identity, validate_device
 
 SCOPES = frozenset({"*", "peers:*", "peers:read", "peers:update"})
 PEER_KEY_EXAMPLE = "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="
@@ -83,7 +83,9 @@ class PeerSettings(BaseModel):
 		examples=[NODE_KEY_EXAMPLE], description="Public key of that node. Empty when that node was archived."
 	)
 	mtu: int = Field(
-		examples=[1320], description="Interface MTU of the peer. Larger packets are dropped silently."
+		default=DEVICE_MTU,
+		examples=[DEVICE_MTU],
+		description="Interface MTU of the peer. Larger packets are dropped silently.",
 	)
 
 

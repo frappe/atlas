@@ -321,6 +321,15 @@
               "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
             ]
           },
+          "mtu": {
+            "type": "integer",
+            "title": "Mtu",
+            "description": "Interface MTU of the peer. Larger packets are dropped silently.",
+            "default": 1320,
+            "examples": [
+              1320
+            ]
+          },
           "node_id": {
             "type": "string",
             "title": "Node Id",
@@ -461,6 +470,15 @@
             "description": "Public key of that node. Empty when that node was archived.",
             "examples": [
               "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+            ]
+          },
+          "mtu": {
+            "type": "integer",
+            "title": "Mtu",
+            "description": "Interface MTU of the peer. Larger packets are dropped silently.",
+            "default": 1320,
+            "examples": [
+              1320
             ]
           }
         },
