@@ -1002,6 +1002,7 @@ class VirtualMachineDetailResponse(BaseModel):
 					"public_ipv6": None,
 					"desired_state": "running",
 					"current_state": "running",
+					"sleep_state": None,
 					"error": None,
 					"compute": {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0},
 					"disk": {"size_mib": 20480, "throughput_mibps": 0, "iops": 0, "used_mib": 8123},
@@ -1045,6 +1046,10 @@ class VirtualMachineDetailResponse(BaseModel):
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
 	desired_state: str | None = Field(description="State requested from the host, or null when unavailable.")
 	current_state: str = Field(description="Current state reported by the host or managed by Atlas.")
+	sleep_state: str | None = Field(
+		default=None,
+		description="`sleeping`, `deep-sleeping` or `coma` while the VM sleeps, or null when it is awake or unavailable.",
+	)
 	error: str | None = Field(description="Current host-reported error, or null.")
 	compute: VirtualMachineCompute = Field(description="Compute configuration.")
 	disk: VirtualMachineDisk = Field(description="Disk configuration and usage.")
@@ -1074,6 +1079,7 @@ class VirtualMachineDetailResponse(BaseModel):
 			is_rescue_mode_enabled=desired.is_rescue_mode_enabled if desired else None,
 			desired_state=desired.state if desired else None,
 			current_state=get_current_state(virtual_machine, observed.state if observed else None),
+			sleep_state=observed.sleep_state or None if observed else None,
 			error=observed.error.message if observed and observed.error else None,
 			compute=VirtualMachineCompute(
 				cpu_millicores=virtual_machine.cpu_millicores,
