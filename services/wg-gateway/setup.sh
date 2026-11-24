@@ -48,8 +48,9 @@ sysctl -q -p /etc/sysctl.d/90-atlas-wg-gateway.conf
 step "create the WireGuard interface"
 install -d -m 0750 "$state_dir"
 
-# A customer tunnel packet fits eth0: its MTU minus the outer IPv4 (20), UDP (8), and WireGuard (32) headers.
-wireguard_mtu=$(( $(cat /sys/class/net/eth0/mtu) - 60 ))
+# Device packets leave by the IPv4 default route, which keeps 1380 when eth0 carries a jumbo mesh MTU.
+# Subtract the outer IPv4 (20), UDP (8), and WireGuard (32) headers.
+wireguard_mtu=1320
 ip link add wg0 type wireguard 2>/dev/null || true
 ip link set wg0 mtu "$wireguard_mtu"
 ip link set wg0 up
