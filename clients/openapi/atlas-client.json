@@ -2402,6 +2402,7 @@
             },
             "public_ipv4": null,
             "public_ipv6": null,
+            "sleep_state": null,
             "tags": {
               "env": "prod"
             },
@@ -2536,6 +2537,19 @@
               }
             ],
             "description": "Attached public IPv6 allocation, or null."
+          },
+          "sleep_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "`sleeping`, `deep-sleeping` or `coma` while the VM sleeps, or null when it is awake or unavailable.",
+            "title": "Sleep State"
           },
           "tags": {
             "additionalProperties": {

@@ -53,6 +53,8 @@ class VirtualMachineDetailResponse:
             is_in_rescue_mode (bool | None | Unset): Whether the last boot used the rescue image, or null when unavailable.
             is_rescue_mode_enabled (bool | None | Unset): Whether the next cold boot uses the rescue image, or null when
                 unavailable.
+            sleep_state (None | str | Unset): `sleeping`, `deep-sleeping` or `coma` while the VM sleeps, or null when it is
+                awake or unavailable.
      """
 
     architecture: VirtualMachineDetailResponseArchitecture
@@ -74,6 +76,7 @@ class VirtualMachineDetailResponse:
     tenant_id: int
     is_in_rescue_mode: bool | None | Unset = UNSET
     is_rescue_mode_enabled: bool | None | Unset = UNSET
+    sleep_state: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -143,6 +146,12 @@ class VirtualMachineDetailResponse:
         else:
             is_rescue_mode_enabled = self.is_rescue_mode_enabled
 
+        sleep_state: None | str | Unset
+        if isinstance(self.sleep_state, Unset):
+            sleep_state = UNSET
+        else:
+            sleep_state = self.sleep_state
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -169,6 +178,8 @@ class VirtualMachineDetailResponse:
             field_dict["is_in_rescue_mode"] = is_in_rescue_mode
         if is_rescue_mode_enabled is not UNSET:
             field_dict["is_rescue_mode_enabled"] = is_rescue_mode_enabled
+        if sleep_state is not UNSET:
+            field_dict["sleep_state"] = sleep_state
 
         return field_dict
 
@@ -299,6 +310,16 @@ class VirtualMachineDetailResponse:
         is_rescue_mode_enabled = _parse_is_rescue_mode_enabled(d.pop("is_rescue_mode_enabled", UNSET))
 
 
+        def _parse_sleep_state(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        sleep_state = _parse_sleep_state(d.pop("sleep_state", UNSET))
+
+
         virtual_machine_detail_response = cls(
             architecture=architecture,
             compute=compute,
@@ -319,6 +340,7 @@ class VirtualMachineDetailResponse:
             tenant_id=tenant_id,
             is_in_rescue_mode=is_in_rescue_mode,
             is_rescue_mode_enabled=is_rescue_mode_enabled,
+            sleep_state=sleep_state,
         )
 
 
