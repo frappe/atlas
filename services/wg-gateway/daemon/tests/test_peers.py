@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from atlas_control.config import AuthConfig, ClusterConfig
 from fastapi import HTTPException
 
 from gatewayd.config import ConfigError, GatewayConfig, Node, load
-from gatewayd.peers import PEERS_KIND, PeerState, validate_device
+from gatewayd.peers import DEVICE_MTU, PEERS_KIND, PeerState, validate_device
 
 KEY_A = "A" * 43 + "="
 KEY_B = "B" * 43 + "="
@@ -54,6 +55,7 @@ def test_credentials_carry_the_node_tenant_and_client_in_the_address(tmp_path):
 	assert credentials["allowed_ips"] == ["fdaa:2:0:2a::/64"]
 	assert credentials["endpoint"] == "wireguard-007.par-1.example.com:51821"
 	assert credentials["public_key"] == "node-7-public"
+	assert credentials["mtu"] == DEVICE_MTU
 
 
 def test_a_new_device_goes_to_the_node_with_the_fewest_devices(tmp_path):
@@ -230,3 +232,13 @@ def test_a_client_number_must_fit_one_hextet():
 	validate_device(1, 65535, KEY_A)
 	with pytest.raises(HTTPException):
 		validate_device(1, 65536, KEY_A)
+
+
+def test_devices_get_the_mtu_that_setup_gives_wg0():
+	setup = (Path(__file__).parents[2] / "setup.sh").read_text()
+	lines = [line for line in setup.splitlines() if line.startswith(("outside_mesh_mtu=", "wireguard_mtu="))]
+	script = "\n".join([*lines, 'echo "$wireguard_mtu"'])
+
+	result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+
+	assert int(result.stdout) == DEVICE_MTU

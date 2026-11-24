@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 from typing import cast
 
 
@@ -30,6 +31,7 @@ class PeerSettings:
             allowed_ips (list[str]): The VM addresses of the tenant. The peer puts them in its own AllowedIPs.
             endpoint (str): Node that serves the peer. Empty when that node was archived.
             public_key (str): Public key of that node. Empty when that node was archived.
+            mtu (int | Unset): Interface MTU of the peer. Larger packets are dropped silently. Default: 1320.
      """
 
     tenant_id: int
@@ -38,6 +40,7 @@ class PeerSettings:
     allowed_ips: list[str]
     endpoint: str
     public_key: str
+    mtu: int | Unset = 1320
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -59,6 +62,8 @@ class PeerSettings:
 
         public_key = self.public_key
 
+        mtu = self.mtu
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -70,6 +75,8 @@ class PeerSettings:
             "endpoint": endpoint,
             "public_key": public_key,
         })
+        if mtu is not UNSET:
+            field_dict["mtu"] = mtu
 
         return field_dict
 
@@ -91,6 +98,8 @@ class PeerSettings:
 
         public_key = d.pop("public_key")
 
+        mtu = d.pop("mtu", UNSET)
+
         peer_settings = cls(
             tenant_id=tenant_id,
             client_id=client_id,
@@ -98,6 +107,7 @@ class PeerSettings:
             allowed_ips=allowed_ips,
             endpoint=endpoint,
             public_key=public_key,
+            mtu=mtu,
         )
 
 

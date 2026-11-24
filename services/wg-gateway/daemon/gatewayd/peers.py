@@ -14,6 +14,7 @@ from .config import GatewayConfig, Node
 PEERS_KIND = "peers"
 CLIENT_PREFIX = 0xFDAC
 MESH_PREFIX = 0xFDAA
+DEVICE_MTU = 1320
 TENANT_LIMIT = (1 << 32) - 1
 CLIENT_LIMIT = (1 << 16) - 1
 NODE_LIMIT = (1 << 16) - 1
@@ -203,6 +204,7 @@ class PeerState:
 			"allowed_ips": [str(ipaddress.IPv6Network((tenant_network, 64)))],
 			"endpoint": f"{node.endpoint}:{node.listen_port}" if node else "",
 			"public_key": node.public_key if node else "",
+			"mtu": DEVICE_MTU,
 		}
 
 	def render_wireguard(self, state: dict[str, Any]) -> str:
