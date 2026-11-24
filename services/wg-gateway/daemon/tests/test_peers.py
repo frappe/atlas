@@ -55,6 +55,7 @@ def test_credentials_carry_the_node_tenant_and_client_in_the_address(tmp_path):
 	assert credentials["allowed_ips"] == ["fdaa:2:0:2a::/64"]
 	assert credentials["endpoint"] == "wireguard-007.par-1.example.com:51821"
 	assert credentials["public_key"] == "node-7-public"
+	assert credentials["mtu"] == DEVICE_MTU
 
 
 def test_a_new_device_goes_to_the_node_with_the_fewest_devices(tmp_path):
