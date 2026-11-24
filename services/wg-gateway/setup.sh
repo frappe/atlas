@@ -48,9 +48,8 @@ sysctl -q -p /etc/sysctl.d/90-atlas-wg-gateway.conf
 step "create the WireGuard interface"
 install -d -m 0750 "$state_dir"
 
-# Device packets leave by the IPv4 default route, which keeps 1380 when eth0 carries a jumbo mesh MTU.
-# Subtract the outer IPv4 (20), UDP (8), and WireGuard (32) headers.
-wireguard_mtu=1320
+outside_mesh_mtu=1380
+wireguard_mtu=$((outside_mesh_mtu - 20 - 8 - 32))
 ip link add wg0 type wireguard 2>/dev/null || true
 ip link set wg0 mtu "$wireguard_mtu"
 ip link set wg0 up

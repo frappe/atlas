@@ -14,7 +14,6 @@ from .config import GatewayConfig, Node
 PEERS_KIND = "peers"
 CLIENT_PREFIX = 0xFDAC
 MESH_PREFIX = 0xFDAA
-# Matches wg0 in setup.sh, because the device path is not known to carry more.
 DEVICE_MTU = 1320
 TENANT_LIMIT = (1 << 32) - 1
 CLIENT_LIMIT = (1 << 16) - 1
