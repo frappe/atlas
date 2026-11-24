@@ -30,6 +30,7 @@ The answer holds the WireGuard settings of the device:
 | `allowed_ips` | `["fdaa:1:0:2a::/64"]` | The VM addresses of the tenant. |
 | `endpoint` | `wireguard-002.par-1.example.com:51820` | The node that serves the device. |
 | `public_key` | `<node public key>` | Public key of that node. |
+| `mtu` | `1320` | Interface MTU of the device. Set it as `MTU` in the device `[Interface]`. |
 
 The `tenant_id` is from 1 to 4,294,967,295, and the `client_id` is from 1 to 65,535.
 
