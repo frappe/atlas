@@ -82,6 +82,9 @@ class PeerSettings(BaseModel):
 	public_key: str = Field(
 		examples=[NODE_KEY_EXAMPLE], description="Public key of that node. Empty when that node was archived."
 	)
+	mtu: int = Field(
+		examples=[1320], description="Interface MTU of the peer. Larger packets are dropped silently."
+	)
 
 
 class ListedPeer(PeerSettings):
