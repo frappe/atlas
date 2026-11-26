@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replace metald and atlas-wg-mesh on a provisioned host and set its coordination address.
+# Replace metald, atlas-wg-mesh and the pinned Firecracker on a provisioned host and set its coordination address.
 
 set -eu
 # A failed command inside $(...) also stops the script.
@@ -36,6 +36,15 @@ case "${VM_MESH_MTU:-}" in
 	;;
 *) vm_mtu_line="vm_mtu = $VM_MESH_MTU" ;;
 esac
+# An older Atlas, or a Metald Update created before the Firecracker setting, sends no release.
+firecracker_version=${FIRECRACKER_VERSION:-}
+if [ -n "$firecracker_version" ]; then
+	: "${FIRECRACKER_DOWNLOAD_URL:?FIRECRACKER_DOWNLOAD_URL is required with FIRECRACKER_VERSION}"
+	: "${FIRECRACKER_SHA256:?FIRECRACKER_SHA256 is required with FIRECRACKER_VERSION}"
+fi
+firecracker_binary=/usr/bin/firecracker
+jailer_binary=/usr/bin/jailer
+firecracker_replaced=""
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "upgrade-metald must run as root" >&2
@@ -168,6 +177,10 @@ restore_previous() {
 	fi
 	mv -f "$metald_binary.previous" "$metald_binary"
 	mv -f "$mesh_binary.previous" "$mesh_binary"
+	if [ -n "$firecracker_replaced" ]; then
+		mv -f "$firecracker_binary.previous" "$firecracker_binary"
+		mv -f "$jailer_binary.previous" "$jailer_binary"
+	fi
 	# Restore only these lines. configure-metald-telemetry.sh can change the rest of the file meanwhile.
 	exec 8>"$config_file.lock"
 	flock 8
@@ -188,15 +201,44 @@ restore_previous() {
 step "download metald and atlas-wg-mesh"
 staged_metald=""
 staged_mesh=""
-trap 'rm -f "$staged_metald" "$staged_mesh"' EXIT
+staged_firecracker=""
+staged_jailer=""
+release_directory=""
+trap 'rm -f "$staged_metald" "$staged_mesh" "$staged_firecracker" "$staged_jailer"; rm -rf "$release_directory"' EXIT
 staged_metald=$(stage "$METALD_DOWNLOAD_URL" "$METALD_SHA256" "$metald_binary")
 staged_mesh=$(stage "$WG_MESH_DOWNLOAD_URL" "$WG_MESH_SHA256" "$mesh_binary")
+
+if [ -n "$firecracker_version" ]; then
+	step "download firecracker $firecracker_version"
+	release_directory=$(mktemp -d)
+	curl -fsSL -o "$release_directory/release.tgz" "$FIRECRACKER_DOWNLOAD_URL"
+	release_hash=$(sha256sum "$release_directory/release.tgz" | cut -d' ' -f1)
+	if [ "$release_hash" != "$FIRECRACKER_SHA256" ]; then
+		echo "the file at $FIRECRACKER_DOWNLOAD_URL has hash $release_hash, expected $FIRECRACKER_SHA256" >&2
+		exit 1
+	fi
+	tar -xzf "$release_directory/release.tgz" -C "$release_directory"
+	released=$release_directory/release-$firecracker_version-x86_64
+	if [ "$("$released/firecracker-$firecracker_version-x86_64" --version | head -1)" != "Firecracker $firecracker_version" ]; then
+		echo "the file at $FIRECRACKER_DOWNLOAD_URL is not firecracker $firecracker_version" >&2
+		exit 1
+	fi
+	staged_firecracker=$(mktemp "$firecracker_binary.staged.XXXXXX")
+	staged_jailer=$(mktemp "$jailer_binary.staged.XXXXXX")
+	install -m 0755 "$released/firecracker-$firecracker_version-x86_64" "$staged_firecracker"
+	install -m 0755 "$released/jailer-$firecracker_version-x86_64" "$staged_jailer"
+	if cmp -s "$staged_firecracker" "$firecracker_binary" && cmp -s "$staged_jailer" "$jailer_binary"; then
+		rm -f "$staged_firecracker" "$staged_jailer"
+		staged_firecracker=""
+		staged_jailer=""
+	fi
+fi
 
 new_version=$(reported_version "$staged_metald")
 current_version=$(reported_version "$metald_binary")
 
 # A repeated upgrade after a success changes nothing.
-if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" &&
+if cmp -s "$staged_metald" "$metald_binary" && cmp -s "$staged_mesh" "$mesh_binary" && [ -z "$staged_firecracker" ] &&
 	grep -qxF "$coordination_line" "$config_file" &&
 	[ "$(config_line cpu_template_disabled)" = "$cpu_template_line" ] &&
 	[ "$(config_line vm_mtu)" = "$vm_mtu_line" ] &&
@@ -228,6 +270,10 @@ new_patches=${new_patches# }
 step "back up the running binaries"
 cp -a "$metald_binary" "$metald_binary.previous"
 cp -a "$mesh_binary" "$mesh_binary.previous"
+if [ -n "$staged_firecracker" ]; then
+	cp -a "$firecracker_binary" "$firecracker_binary.previous"
+	cp -a "$jailer_binary" "$jailer_binary.previous"
+fi
 
 step "set the coordination address to $COORDINATION_LISTEN_ADDRESS"
 # configure-metald-telemetry.sh edits the same file under this lock.
@@ -249,6 +295,13 @@ exec 8>&-
 step "install the new binaries"
 mv -f "$staged_mesh" "$mesh_binary"
 mv -f "$staged_metald" "$metald_binary"
+# Running VMs keep the binary that jailer copied into their jail. They use the new one at their next start.
+if [ -n "$staged_firecracker" ]; then
+	echo "    replacing $("$firecracker_binary" --version | head -1) with Firecracker $firecracker_version"
+	mv -f "$staged_jailer" "$jailer_binary"
+	mv -f "$staged_firecracker" "$firecracker_binary"
+	firecracker_replaced=yes
+fi
 
 # Restart rather than stop and start. systemd keeps its descriptor store across a
 # restart even when the unit does not set FileDescriptorStorePreserve=yes.
@@ -267,7 +320,7 @@ if [ "$remaining_virtual_machine_count" -lt "$virtual_machine_count" ]; then
 	exit 1
 fi
 
-step "running metald $new_version and atlas-wg-mesh $(reported_version "$mesh_binary")"
+step "running metald $new_version, atlas-wg-mesh $(reported_version "$mesh_binary") and $("$firecracker_binary" --version | head -1)"
 echo "    $remaining_virtual_machine_count virtual machines run"
 
 if [ "$(unit_property FileDescriptorStorePreserve)" != "yes" ]; then

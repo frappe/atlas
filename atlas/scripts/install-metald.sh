@@ -135,7 +135,15 @@ else
 	trap 'rm -rf "$download_directory"' EXIT
 	archive=firecracker-$firecracker_version-$architecture.tgz
 	curl -fsSL -o "$download_directory/$archive" \
-		"https://github.com/frappe/firecracker/releases/download/$firecracker_version/$archive"
+		"${FIRECRACKER_DOWNLOAD_URL:-https://github.com/frappe/firecracker/releases/download/$firecracker_version/$archive}"
+	# Atlas sends the hash of the release that Atlas Settings pins.
+	if [ -n "${FIRECRACKER_SHA256:-}" ]; then
+		archive_hash=$(sha256sum "$download_directory/$archive" | cut -d' ' -f1)
+		if [ "$archive_hash" != "$FIRECRACKER_SHA256" ]; then
+			echo "the firecracker release has hash $archive_hash, expected $FIRECRACKER_SHA256" >&2
+			exit 1
+		fi
+	fi
 	tar -xzf "$download_directory/$archive" -C "$download_directory"
 
 	binary_directory=$download_directory/release-$firecracker_version-$architecture
