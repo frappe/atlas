@@ -291,7 +291,7 @@ func (services *fakeRuntimeServices) ApplyPrivilegedAddresses(
 	return nil
 }
 
-func (services *fakeRuntimeServices) SyncPeerState(_ context.Context, unicast bool) error {
+func (services *fakeRuntimeServices) SyncPeerState(_ context.Context, unicast bool, _ []string) error {
 	services.unicast = unicast
 	services.peerSyncs++
 	return nil
@@ -355,9 +355,9 @@ type fakeWireGuardManager struct {
 	peers []network.WireGuardPeer
 }
 
-func (manager *fakeWireGuardManager) Apply(_ context.Context, peers []network.WireGuardPeer) error {
+func (manager *fakeWireGuardManager) Apply(_ context.Context, peers []network.WireGuardPeer, _ int) ([]string, error) {
 	manager.peers = append([]network.WireGuardPeer(nil), peers...)
-	return nil
+	return nil, nil
 }
 
 type fakeCapacityProvider struct{}

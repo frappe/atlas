@@ -10,7 +10,7 @@ This package converges one VM network and applies the host WireGuard peer set. I
 | --- | --- |
 | `LinuxAllocator` | Implements `vm.Network`. Reads and converges one VM's namespace, links, routes, firewall, and traffic control. |
 | `Mesh` | Registers VM addresses through the WG Mesh command. |
-| `WireGuardManager` | Replaces the managed peers of one WireGuard interface. |
+| `WireGuardManager` | Owns the mesh tunnels `wg1` to `wgN`, their peers, and the peer routes. |
 | `traffic.Monitor` | Owns TAP attachments, samples, packet events, and the event reader. |
 
 ## Convergence invariants
@@ -30,7 +30,7 @@ This package converges one VM network and applies the host WireGuard peer set. I
 
 ## Host sync boundary
 
-`EnsureHost` applies uplink and WireGuard interfaces. `EnsureHooks` runs on every host sync and calls `EnsureHost` again when a restart of `wg0` or the uplink removed a mesh hook. The WG Mesh command refuses an uplink change until an operator resets the mesh. `ApplyPrivilegedAddresses` and `WireGuardManager.Apply` each replace a complete set. `Apply` drops this host from its peer set, changes only previously managed peers, and rejects missing, invalid, or duplicate mesh addresses. `SyncPeerState` replaces the BPF peer map.
+`EnsureHost` applies uplink and WireGuard interfaces. `EnsureHooks` runs on every host sync and calls `EnsureHost` again when a restart of `wg0` or the uplink removed a mesh hook. The WG Mesh command refuses an uplink change until an operator resets the mesh. `ApplyPrivilegedAddresses` and `WireGuardManager.Apply` each replace a complete set. `Apply` drops this host from its peer set and rejects missing, invalid, or duplicate mesh addresses. `SyncPeerState` replaces the BPF peer map. `Apply` does not change `wg0`. It creates `wg1` to `wgN` for the tunnel count in the sync request, deletes higher tunnels, sets the peers on each tunnel, routes each peer over the tunnels with a multipath route, and returns their names for `SyncPeerState`.
 
 ## Validation
 
