@@ -136,6 +136,9 @@ func (runtime *fakeRuntime) Restore(context.Context, RuntimeMachine) error {
 func (runtime *fakeRuntime) RestorePaused(context.Context, RuntimeMachine) error {
 	runtime.restoresPaused++
 	if runtime.restoreError != nil {
+		if runtime.restoreFailureState != "" {
+			runtime.state = runtime.restoreFailureState
+		}
 		return runtime.restoreError
 	}
 	runtime.state = StatePaused
