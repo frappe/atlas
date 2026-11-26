@@ -239,7 +239,8 @@ func (manager *Manager) reconcileSavedState(
 		observed.SleepState = SleepStateSleeping
 	}
 
-	if status.State != StateStopped {
+	// Firecracker exits when a restore fails. The unit stays failed, and the saved state stays on disk.
+	if status.State != StateStopped && status.State != StateFailed {
 		return status, false, &TransitionError{DesiredState: desired.State, ObservedState: status.State}
 	}
 

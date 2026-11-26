@@ -33,6 +33,7 @@ func TestRepeatedSleepRestoreFailuresColdBootTheExistingDisk(t *testing.T) {
 				manager, runtime, storage, _ := sleepRestoreManager(t, state)
 				releases := storage.releases
 				runtime.restoreError = errors.New("snapshot load failed")
+				runtime.restoreFailureState = StateFailed
 				if err := manager.SetPowerState(t.Context(), "vm-1", resultState); err != nil {
 					t.Fatal(err)
 				}
