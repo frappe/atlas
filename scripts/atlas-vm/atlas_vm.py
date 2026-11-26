@@ -43,7 +43,7 @@ KERNEL_SHA256 = "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d
 BOOT_ARGUMENTS = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw"
 VM_NAME = "atlas"
 BENCH_NAME = "atlas"
-FIRECRACKER_VERSION = "v1.18.0-hotfix.1"
+FIRECRACKER_VERSION = "v1.17.0"
 HOST_ADDRESS = "172.16.100.1"
 VM_ADDRESS = "172.16.100.2"
 FORWARD_PORTS = (80, 443)
@@ -928,7 +928,7 @@ WantedBy=multi-user.target
 				*CURL_PROGRESS,
 				"-o",
 				str(archive),
-				f"https://github.com/frappe/firecracker/releases/download/{version}/firecracker-{version}-x86_64.tgz",
+				f"https://github.com/firecracker-microvm/firecracker/releases/download/{version}/firecracker-{version}-x86_64.tgz",
 			]
 		)
 		run(["tar", "-xzf", str(archive), "-C", str(self.paths.downloads)])
