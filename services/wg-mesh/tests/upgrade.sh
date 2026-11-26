@@ -79,7 +79,8 @@ cat "$work/before"
 step "upgrade to the new build"
 in_namespace "$new" configure --uplink uplink0 --wireguard wg0 --controller fdaa:1::ffff:ffff:ffff:ffff
 map_counts > "$work/after"
-if ! diff -u "$work/before" "$work/after"; then
+# A map that the new build adds has no state to keep.
+if ! awk 'NR == FNR { kept[$1]; next } $1 in kept' "$work/before" "$work/after" | diff -u "$work/before" -; then
 	echo "error: the upgrade changed the map entry counts" >&2
 	exit 1
 fi
