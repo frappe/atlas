@@ -98,7 +98,7 @@ func TestInstallMigratedSleepStatePreservesIdentityAndLocalValidation(t *testing
 				t.Fatalf("retry identity = %+v, %v", saved, err)
 			}
 			runtime.configuration.FirecrackerBin = "/incompatible/firecracker"
-			if _, err := runtime.SavedState(t.Context(), machine); !errors.Is(err, errSavedStateIncompatible) {
+			if _, err := runtime.SavedState(t.Context(), machine); !errors.Is(err, vm.ErrSavedStateIncompatible) {
 				t.Fatalf("local compatibility check was weakened: %v", err)
 			}
 		})
@@ -186,12 +186,12 @@ func TestLoadSavedStateReportsAnIncompatibleFirecracker(t *testing.T) {
 	savedStateFixture(t, configuration, requirement)
 
 	requirement.FirecrackerCompatibility = "firecracker:1:cpu:abc"
-	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, errSavedStateIncompatible) {
-		t.Fatalf("error = %v, want errSavedStateIncompatible", err)
+	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, vm.ErrSavedStateIncompatible) {
+		t.Fatalf("error = %v, want vm.ErrSavedStateIncompatible", err)
 	}
 
 	requirement.SpecificationGeneration = 3
-	if _, err := configuration.loadSavedState(requirement); errors.Is(err, errSavedStateIncompatible) {
+	if _, err := configuration.loadSavedState(requirement); errors.Is(err, vm.ErrSavedStateIncompatible) {
 		t.Fatalf("error = %v, a generation mismatch must stay a hard error", err)
 	}
 }
@@ -210,8 +210,8 @@ func TestLoadSavedStateReportsUnknownMetadataAsIncompatible(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, errSavedStateIncompatible) {
-		t.Fatalf("error = %v, want errSavedStateIncompatible", err)
+	if _, err := configuration.loadSavedState(requirement); !errors.Is(err, vm.ErrSavedStateIncompatible) {
+		t.Fatalf("error = %v, want vm.ErrSavedStateIncompatible", err)
 	}
 }
 
@@ -231,7 +231,7 @@ func TestLoadSavedStateChecksKnownFieldsBeforeUnknownFields(t *testing.T) {
 	}
 
 	requirement.SpecificationGeneration = 3
-	if _, err := configuration.loadSavedState(requirement); err == nil || errors.Is(err, errSavedStateIncompatible) {
+	if _, err := configuration.loadSavedState(requirement); err == nil || errors.Is(err, vm.ErrSavedStateIncompatible) {
 		t.Fatalf("error = %v, want a hard generation error", err)
 	}
 }
@@ -261,7 +261,7 @@ func TestLoadSavedStateRejectsMalformedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := configuration.loadSavedState(requirement)
-	if err == nil || errors.Is(err, errSavedStateIncompatible) {
+	if err == nil || errors.Is(err, vm.ErrSavedStateIncompatible) {
 		t.Fatalf("error = %v, want a hard decode error", err)
 	}
 }
