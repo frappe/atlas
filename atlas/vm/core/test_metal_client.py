@@ -278,7 +278,7 @@ class TestMetalClientPaths(UnitTestCase):
 			"atlas.vm.core.metal_client.requests.Session.request",
 			return_value=build_response(200, {"capacity": {}}),
 		) as request:
-			client.sync([], [], [], [], unicast=True)
+			client.sync([], [], [], [], unicast=True, wireguard_tunnel_count=16)
 
 		self.assertEqual(
 			request.call_args.kwargs["json"],
@@ -288,6 +288,7 @@ class TestMetalClientPaths(UnitTestCase):
 				"privileged_vm_addresses": [],
 				"wireguard_gateway_routes": [],
 				"unicast": True,
+				"wireguard_tunnel_count": 16,
 			},
 		)
 
@@ -481,6 +482,7 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 				["fdaa:1::1"],
 				[{"destination": "fdac:1:1::/48", "via": "fdaa:1::7"}],
 				unicast=False,
+				wireguard_tunnel_count=16,
 			)
 
 		self.assertEqual(result, {"capacity": {}})
@@ -493,6 +495,7 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 				"privileged_vm_addresses": ["fdaa:1::1"],
 				"wireguard_gateway_routes": [{"destination": "fdac:1:1::/48", "via": "fdaa:1::7"}],
 				"unicast": False,
+				"wireguard_tunnel_count": 16,
 			},
 		)
 
@@ -511,7 +514,7 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 			"snapshot_upload": lambda: client.start_snapshot_upload("image-1", {}),
 			"sleep_offload": lambda: client.offload_sleep_state("VM-00001", {}),
 			"sleep_refresh": lambda: client.refresh_sleep_state("VM-00001", {}),
-			"sync": lambda: client.sync([], [], [], [], unicast=False),
+			"sync": lambda: client.sync([], [], [], [], unicast=False, wireguard_tunnel_count=16),
 		}
 
 		for operation_name, write_operation in write_operations.items():

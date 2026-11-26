@@ -41,6 +41,7 @@ OBJECT_STORAGE_FIELDS = (
 	"object_storage_region",
 )
 # S3 signature version 4 limits a signed URL to seven days.
+WIREGUARD_TUNNEL_LIMIT = 32
 MINIMUM_SIGNED_URL_EXPIRY_SECONDS = 3600
 MAXIMUM_SIGNED_URL_EXPIRY_SECONDS = 604800
 
@@ -167,6 +168,7 @@ class AtlasSettings(Document):
 		wireguard_ip_address: DF.Data | None
 		wireguard_private_key: DF.Password | None
 		wireguard_public_key: DF.Data | None
+		wireguard_tunnel_count: DF.Int
 	# end: auto-generated types
 
 	@property
@@ -270,6 +272,7 @@ class AtlasSettings(Document):
 		self._validate_sleepy_vm_overcommit_factor()
 		self._validate_vm_migration_network_change()
 		self._validate_signed_url_expiry()
+		self._validate_wireguard_tunnel_count()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
 			if frappe.db.exists("Virtual Machine") or frappe.db.exists(
@@ -335,6 +338,10 @@ class AtlasSettings(Document):
 		expiry = self.object_storage_signed_url_expiry
 		if expiry and not MINIMUM_SIGNED_URL_EXPIRY_SECONDS <= expiry <= MAXIMUM_SIGNED_URL_EXPIRY_SECONDS:
 			frappe.throw(_("Signed URL Expiry must be from one hour to seven days (3600 to 604800 seconds)."))
+
+	def _validate_wireguard_tunnel_count(self) -> None:
+		if not 1 <= self.wireguard_tunnel_count <= WIREGUARD_TUNNEL_LIMIT:
+			frappe.throw(_("WireGuard Tunnels must be from 1 to {0}.").format(WIREGUARD_TUNNEL_LIMIT))
 
 	def _validate_sleepy_vm_overcommit_factor(self) -> None:
 		factor = flt(self.sleepy_vm_overcommit_factor)
