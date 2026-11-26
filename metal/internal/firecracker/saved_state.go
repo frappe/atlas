@@ -26,11 +26,7 @@ const (
 	savedStateMetadataFileName     = "metadata.json"
 )
 
-var (
-	errSavedStateNotFound = errors.New("saved VM state not found")
-	// errSavedStateIncompatible marks state that a changed Firecracker build or CPU template cannot resume.
-	errSavedStateIncompatible = errors.New("saved VM state is incompatible with this Firecracker")
-)
+var errSavedStateNotFound = errors.New("saved VM state not found")
 
 type savedStateRequirement struct {
 	VirtualMachineID         string
@@ -163,7 +159,7 @@ func loadSavedState(directory string, requirement savedStateRequirement) (savedS
 		return savedState{}, fmt.Errorf("read saved state metadata: %w", err)
 	}
 	metadata, decodeErr := decodeSavedStateMetadata(data)
-	if decodeErr != nil && !errors.Is(decodeErr, errSavedStateIncompatible) {
+	if decodeErr != nil && !errors.Is(decodeErr, vm.ErrSavedStateIncompatible) {
 		return savedState{}, decodeErr
 	}
 	if err := metadata.validate(requirement); err != nil {
@@ -275,7 +271,7 @@ func (metadata savedStateMetadata) validateIdentity(requirement savedStateRequir
 	case metadata.RestartGeneration != requirement.RestartGeneration:
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
 	case requirement.MigratedShape == nil && metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
-		return fmt.Errorf("%w: saved state Firecracker compatibility %q does not match %q", errSavedStateIncompatible, metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
+		return fmt.Errorf("%w: saved state Firecracker compatibility %q does not match %q", vm.ErrSavedStateIncompatible, metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
 	}
 	return nil
 }
@@ -325,7 +321,7 @@ func decodeSavedStateMetadata(data []byte) (savedStateMetadata, error) {
 		// A newer build can add a field. Return the known fields, so validate still checks them.
 		var known savedStateMetadata
 		if json.Unmarshal(data, &known) == nil {
-			return known, fmt.Errorf("%w: decode saved state metadata: %w", errSavedStateIncompatible, err)
+			return known, fmt.Errorf("%w: decode saved state metadata: %w", vm.ErrSavedStateIncompatible, err)
 		}
 		return savedStateMetadata{}, fmt.Errorf("decode saved state metadata: %w", err)
 	}

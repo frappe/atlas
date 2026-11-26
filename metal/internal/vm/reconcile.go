@@ -285,7 +285,11 @@ func (manager *Manager) restoreSavedState(
 		restore = manager.runtime.RestorePaused
 	}
 	if err := manager.runOperation(ctx, desired.ID, observed, operationID, phaseRestoreState, func() error {
-		if err := manager.restoreSleepArtifacts(ctx, desired, machine, *observed); err != nil {
+		err := manager.restoreSleepArtifacts(ctx, desired, machine, *observed)
+		if errors.Is(err, ErrSavedStateIncompatible) {
+			return manager.coldBootSleepingDisk(ctx, machine, observed, resultState, err)
+		}
+		if err != nil {
 			return err
 		}
 		if err := restore(ctx, machine); err != nil {
@@ -325,6 +329,11 @@ func (manager *Manager) recoverSleepRestore(ctx context.Context, machine Runtime
 	if manager.countRestoreFailure(machine.ID) < maximumRestoreAttempts {
 		return cause
 	}
+	return manager.coldBootSleepingDisk(ctx, machine, observed, resultState, cause)
+}
+
+// coldBootSleepingDisk discards the saved memory and boots the existing disk.
+func (manager *Manager) coldBootSleepingDisk(ctx context.Context, machine RuntimeMachine, observed *ObservedRecord, resultState State, cause error) error {
 	hasDisk, err := manager.storage.HasDisk(ctx, machine.ID)
 	if err != nil {
 		return errors.Join(cause, err)
