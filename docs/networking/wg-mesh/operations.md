@@ -98,6 +98,8 @@ The command validates the complete file before it changes the peer map.
 
 The command attaches or detaches the egress hook after it writes the peer map.
 
+Metal adds `--tunnel wg1 --tunnel wg2 ...`. The command attaches the WireGuard hook to each tunnel and then writes `mesh_tunnels`.
+
 ## Synchronize a virtual machine
 
 Use one command for the complete virtual machine state:
