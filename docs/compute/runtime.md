@@ -2,6 +2,8 @@
 
 Metal prepares the guest and controls it through Firecracker's local API. systemd owns the VM process.
 
+Metal uses the [Frappe Firecracker build](https://github.com/frappe/firecracker/releases). It is upstream Firecracker with multi-buffer virtio-block requests on Sync drives. Its snapshots do not restore on an upstream binary. Metal matches the binary before each local restore, and Atlas matches it before each migration. Do not downgrade a host to an upstream binary while it holds a migrated sleep checkpoint, because Metal does not check that checkpoint's binary at wake.
+
 ## Start a guest
 
 1. Prepare the disk and network.
