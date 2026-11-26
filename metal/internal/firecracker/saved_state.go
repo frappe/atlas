@@ -184,6 +184,10 @@ func loadSavedState(directory string, requirement savedStateRequirement) (savedS
 }
 
 func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.RuntimeMachine) (savedState, error) {
+	compatibility, err := runtime.runningFirecrackerCompatibility(machine.ID)
+	if err != nil {
+		return savedState{}, err
+	}
 	tapMAC, err := platform.RunInNetworkNamespace(ctx, filepath.Base(machine.NetworkInterface.NetworkNamespacePath),
 		"cat", filepath.Join("/sys/class/net", machine.NetworkInterface.TapName, "address"))
 	if err != nil {
@@ -210,7 +214,7 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		UserID:                   machine.UserID,
 		SpecificationGeneration:  machine.SpecificationGeneration,
 		RestartGeneration:        machine.RestartGeneration,
-		FirecrackerCompatibility: runtime.firecrackerCompatibility(),
+		FirecrackerCompatibility: compatibility,
 		CreatedAt:                time.Now().UTC(),
 		StateFileName:            memorySnapshotStateFileName,
 		MemoryFileName:           memorySnapshotMemoryFileName,
@@ -235,7 +239,9 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 	if err := os.Rename(pending, published); err != nil {
 		return savedState{}, fmt.Errorf("publish saved VM state: %w", err)
 	}
-	return runtime.configuration.loadSavedState(runtime.newMachine(machine).savedStateRequirement())
+	requirement := runtime.newMachine(machine).savedStateRequirement()
+	requirement.FirecrackerCompatibility = compatibility
+	return runtime.configuration.loadSavedState(requirement)
 }
 
 func (runtime *Runtime) removeSavedState(id string) error {

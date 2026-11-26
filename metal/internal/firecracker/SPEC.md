@@ -26,7 +26,7 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - Each launch discards the previous jail. The chroot base and kernel stay on the same file system because the kernel is hard linked. Jailer arguments in the systemd `EnvironmentFile` cannot contain spaces.
 - The console master remains open while its VM runs. Startup adopts masters from the systemd descriptor store. See the [console package](../console/SPEC.md).
 - Firecracker gets whole vCPUs rounded up from millicores. systemd applies the exact CPU quota. The API limit is 32000 millicores.
-- A VM-local memory snapshot requires a matching Firecracker build. Binary size and modification time identify that build. Migration delegates build compatibility to Firecracker.
+- A VM-local memory snapshot requires a matching Firecracker build. Binary size and modification time identify that build. When a VM runs an older jailed binary, a save records that binary. The next inspection then removes the state, and the VM cold boots. Migration delegates build compatibility to Firecracker.
 - Shared warm images and VM-local snapshot matching include the configured CPU template digest.
 - `cpu_templates_test.go` checks profile selection, required host features, and instruction masks. Native Firecracker verification is required for each supported hardware combination.
 - `SaveAndStop` writes VM-local state to temporary files, publishes it with one atomic rename, then stops Firecracker and removes the previous restore's jail copies. A running VM with an existing valid snapshot conflicts. A paused VM with one terminates Firecracker. A stopped VM with one is complete.

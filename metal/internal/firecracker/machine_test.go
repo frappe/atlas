@@ -41,6 +41,30 @@ func TestCPUTemplateSeparatesMemorySnapshotCompatibility(t *testing.T) {
 	}
 }
 
+func TestSavedStateCompatibilityNamesTheJailedBuild(t *testing.T) {
+	root := t.TempDir()
+	runtime := &Runtime{configuration: Config{MachinesDir: root, FirecrackerBin: filepath.Join(root, "firecracker")}}
+	jailedPath := filepath.Join(runtime.configuration.chrootRoot("vm-1"), "firecracker")
+	if err := os.MkdirAll(filepath.Dir(jailedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, build := range []struct{ jailed, want string }{{"v1.17", "match"}, {"v1.16", "mismatch"}} {
+		if err := os.WriteFile(runtime.configuration.FirecrackerBin, []byte("v1.17"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(jailedPath, []byte(build.jailed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		compatibility, err := runtime.runningFirecrackerCompatibility("vm-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matches := compatibility == runtime.firecrackerCompatibility(); matches != (build.want == "match") {
+			t.Fatalf("jailed %s: compatibility %q, want %s", build.jailed, compatibility, build.want)
+		}
+	}
+}
+
 func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 	units := &stubUnits{active: false} // inactive reports stopped
 	m := testMachine(units, fcSocket(t, nil), time.Minute)
