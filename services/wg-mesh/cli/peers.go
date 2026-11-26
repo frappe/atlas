@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -25,14 +26,16 @@ var syncPeersCommand = &cobra.Command{
 	Short: "load the peers from the WireGuard peer state",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, arguments []string) error {
-		return syncPeers(arguments[0], peersUnicast)
+		return syncPeers(arguments[0], peersUnicast, peersTunnels)
 	},
 }
 
 var peersUnicast bool
+var peersTunnels []string
 
 func init() {
 	syncPeersCommand.Flags().BoolVar(&peersUnicast, "unicast", false, "carry NDP in IPv4 packets")
+	syncPeersCommand.Flags().StringArrayVar(&peersTunnels, "tunnel", nil, "WireGuard interface that mesh tunnels spread over, once for each interface")
 	peersCommand.AddCommand(syncPeersCommand)
 	rootCommand.AddCommand(peersCommand)
 }
@@ -45,8 +48,8 @@ type peerState struct {
 	MAC            string `json:"private_network_mac_address"`
 }
 
-// syncPeers replaces the peer map and its NDP transport mode together.
-func syncPeers(path string, unicast bool) error {
+// syncPeers replaces the peer map, its NDP transport mode, and the mesh tunnels together.
+func syncPeers(path string, unicast bool, tunnels []string) error {
 	peers, err := readPeerState(path)
 	if err != nil {
 		return err
@@ -76,13 +79,61 @@ func syncPeers(path string, unicast bool) error {
 	if err := setUnicastNDP(uplink, unicast); err != nil {
 		return errors.Join(err, writePeerArray(current), setUnicastNDP(uplink, wasUnicast))
 	}
+	if err := setMeshTunnels(tunnels); err != nil {
+		return errors.Join(err, writePeerArray(current), setUnicastNDP(uplink, wasUnicast))
+	}
 
 	mode := "multicast"
 	if unicast {
 		mode = "unicast"
 	}
-	fmt.Printf("Atlas WG Mesh holds %d peers in %s mode\n", len(peers), mode)
+	fmt.Printf("Atlas WG Mesh holds %d peers in %s mode over %d tunnels\n", len(peers), mode, len(tunnels))
 	return nil
+}
+
+func setMeshTunnels(names []string) error {
+	if len(names) > meshTunnelLimit {
+		return fmt.Errorf("mesh tunnels hold at most %d interfaces", meshTunnelLimit)
+	}
+
+	tunnels := meshTunnels{Count: uint32(len(names))}
+	for index, name := range names {
+		device, err := net.InterfaceByName(name)
+		if err != nil {
+			return fmt.Errorf("mesh tunnel %s: %w", name, err)
+		}
+		if err := attachHook(name, wireGuardProgram, "ingress"); err != nil {
+			return err
+		}
+		tunnels.IfIndex[index] = uint32(device.Index)
+	}
+
+	return writeMap("mesh_tunnels", uint32(0), tunnels)
+}
+
+func readMeshTunnels(directory string) ([]string, error) {
+	tunnelMap, err := openPinnedMap(filepath.Join(directory, "mesh_tunnels"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer tunnelMap.Close()
+
+	var tunnels meshTunnels
+	if err := tunnelMap.Lookup(uint32(0), &tunnels); err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, tunnels.Count)
+	for _, ifindex := range tunnels.IfIndex[:min(tunnels.Count, meshTunnelLimit)] {
+		// Metal recreates a deleted tunnel and writes its new index at the next sync.
+		if device, err := net.InterfaceByIndex(int(ifindex)); err == nil {
+			names = append(names, device.Name)
+		}
+	}
+	return names, nil
 }
 
 // readPeerState converts the peer state file into peers.
