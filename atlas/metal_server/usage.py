@@ -81,6 +81,7 @@ def sync_server(
 			privileged_vm_addresses,
 			get_wireguard_gateway_routes(),
 			unicast,
+			frappe.db.get_single_value("Atlas Settings", "wireguard_tunnel_count"),
 		)
 		values = get_usage_values(response.get("capacity"))
 		store_reported_states(server_name, response.get("virtual_machines"))
