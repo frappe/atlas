@@ -10,7 +10,7 @@ IMAGE_BUILDER=$SCRIPT_DIR/../../atlas/vm/scripts/build_ubuntu_server_image.sh
 WORKDIR=${METALD_WORKDIR:-/tmp/metald}
 BULK=${METALD_BULK_DIR:-$WORKDIR}
 POOL=${METALD_POOL:-metal}
-FC_VER=${METALD_FC_VERSION:-v1.17.0}
+FC_VER=${METALD_FC_VERSION:-v1.18.0-hotfix.1}
 LISTEN=${METALD_LISTEN:-127.0.0.1:8080}
 COORDINATION_LISTEN=${METALD_COORDINATION_LISTEN:-127.0.0.1:9001}
 ATLAS_COMMON_NAME=${METALD_ATLAS_COMMON_NAME:-atlas.metal.test}
@@ -48,7 +48,7 @@ step "Firecracker and Jailer ($FC_VER)"
 if [[ ! -x $BIN/firecracker || ! -x $BIN/jailer ]]; then
 	echo "    downloading firecracker-$FC_VER-$ARCH.tgz"
 	curl -fL --progress-bar -o "$WORKDIR/fc.tgz" \
-		"https://github.com/firecracker-microvm/firecracker/releases/download/$FC_VER/firecracker-$FC_VER-$ARCH.tgz"
+		"https://github.com/frappe/firecracker/releases/download/$FC_VER/firecracker-$FC_VER-$ARCH.tgz"
 	tar -xzf "$WORKDIR/fc.tgz" -C "$WORKDIR"
 	cp "$WORKDIR/release-$FC_VER-$ARCH/firecracker-$FC_VER-$ARCH" "$BIN/firecracker"
 	cp "$WORKDIR/release-$FC_VER-$ARCH/jailer-$FC_VER-$ARCH" "$BIN/jailer"

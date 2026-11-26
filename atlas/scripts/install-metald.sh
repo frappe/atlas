@@ -14,7 +14,7 @@ set -eu
 : "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
-firecracker_version=${FIRECRACKER_VERSION:-v1.17.0}
+firecracker_version=${FIRECRACKER_VERSION:-v1.18.0-hotfix.1}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
 mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
@@ -120,7 +120,7 @@ if [ -x /usr/bin/firecracker ] && [ -x /usr/bin/jailer ]; then
 	skip "firecracker $(/usr/bin/firecracker --version | head -1)"
 else
 	architecture=$(uname -m)
-	releases=https://api.github.com/repos/firecracker-microvm/firecracker/releases
+	releases=https://api.github.com/repos/frappe/firecracker/releases
 	if [ "$firecracker_version" = "latest" ]; then
 		firecracker_version=$(curl -fsSL "$releases/latest" |
 			sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
@@ -135,7 +135,7 @@ else
 	trap 'rm -rf "$download_directory"' EXIT
 	archive=firecracker-$firecracker_version-$architecture.tgz
 	curl -fsSL -o "$download_directory/$archive" \
-		"https://github.com/firecracker-microvm/firecracker/releases/download/$firecracker_version/$archive"
+		"https://github.com/frappe/firecracker/releases/download/$firecracker_version/$archive"
 	tar -xzf "$download_directory/$archive" -C "$download_directory"
 
 	binary_directory=$download_directory/release-$firecracker_version-$architecture
