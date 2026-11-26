@@ -51,9 +51,9 @@ func (dependencies *testHostDependencies) ApplyPrivilegedAddresses(_ context.Con
 	return nil
 }
 
-func (dependencies *testHostDependencies) Apply(_ context.Context, peers []network.WireGuardPeer) error {
+func (dependencies *testHostDependencies) Apply(_ context.Context, peers []network.WireGuardPeer, _ int) ([]string, error) {
 	dependencies.wireGuardPeers = append([]network.WireGuardPeer(nil), peers...)
-	return nil
+	return nil, nil
 }
 
 func (dependencies *testHostDependencies) SetImagePolicies(_ context.Context, images []vm.Image) error {
@@ -61,7 +61,7 @@ func (dependencies *testHostDependencies) SetImagePolicies(_ context.Context, im
 	return nil
 }
 
-func (dependencies *testHostDependencies) SyncPeerState(_ context.Context, unicast bool) error {
+func (dependencies *testHostDependencies) SyncPeerState(_ context.Context, unicast bool, _ []string) error {
 	dependencies.unicast = unicast
 	dependencies.peerSyncs++
 	return nil

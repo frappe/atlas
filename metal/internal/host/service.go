@@ -21,6 +21,8 @@ type DesiredState struct {
 	WireGuardGatewayRoutes []vm.Route
 	// UnicastEnabled selects the unicast NDP transport.
 	UnicastEnabled bool
+	// WireGuardTunnelCount is the number of mesh tunnels wg1 to wgN.
+	WireGuardTunnelCount int
 }
 
 // SyncResult contains what the controller reads back from one sync exchange.
@@ -49,13 +51,13 @@ type Capacity struct {
 type Mesh interface {
 	EnsureHooks(context.Context) error
 	ApplyPrivilegedAddresses(context.Context, []string) error
-	SyncPeerState(ctx context.Context, unicast bool) error
+	SyncPeerState(ctx context.Context, unicast bool, tunnels []string) error
 	PrivateNetworkMAC() (string, error)
 }
 
 // WireGuardManager replaces controller-owned WireGuard peers.
 type WireGuardManager interface {
-	Apply(context.Context, []network.WireGuardPeer) error
+	Apply(context.Context, []network.WireGuardPeer, int) ([]string, error)
 }
 
 // ImagePolicyStore replaces controller-owned image policies.
@@ -148,7 +150,8 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 	if service.mesh == nil && desired.UnicastEnabled {
 		return SyncResult{}, fmt.Errorf("enable unicast transport: Atlas WG Mesh is disabled")
 	}
-	if err := service.wireGuard.Apply(ctx, desired.WireGuardPeers); err != nil {
+	tunnels, err := service.wireGuard.Apply(ctx, desired.WireGuardPeers, desired.WireGuardTunnelCount)
+	if err != nil {
 		return SyncResult{}, fmt.Errorf("apply WireGuard peers: %w", err)
 	}
 	// The mesh reads the peer state that WireGuard.Apply just wrote.
@@ -159,7 +162,7 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 		if err := service.mesh.ApplyPrivilegedAddresses(ctx, desired.PrivilegedVirtualMachineAddresses); err != nil {
 			return SyncResult{}, fmt.Errorf("apply privileged virtual machine addresses: %w", err)
 		}
-		if err := service.mesh.SyncPeerState(ctx, desired.UnicastEnabled); err != nil {
+		if err := service.mesh.SyncPeerState(ctx, desired.UnicastEnabled, tunnels); err != nil {
 			return SyncResult{}, fmt.Errorf("sync mesh peer state: %w", err)
 		}
 	}

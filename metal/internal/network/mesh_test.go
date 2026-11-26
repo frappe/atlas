@@ -132,7 +132,7 @@ func TestMeshUsesConvergentHostCommands(t *testing.T) {
 	if err := mesh.EnsureHost(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := mesh.SyncPeerState(ctx, true); err != nil {
+	if err := mesh.SyncPeerState(ctx, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := mesh.ApplyPrivilegedAddresses(ctx, []string{"fdaa:1::1", "fdaa:1::2"}); err != nil {
@@ -156,7 +156,7 @@ func TestMeshUsesConvergentHostCommands(t *testing.T) {
 
 func TestMeshSelectsMulticastWithoutTheFlag(t *testing.T) {
 	mesh, callsPath := recordingMesh(t)
-	if err := mesh.SyncPeerState(context.Background(), false); err != nil {
+	if err := mesh.SyncPeerState(context.Background(), false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := readCalls(t, callsPath)[0]; got != "peers sync /var/lib/metal/wireguard-peers.json" {
