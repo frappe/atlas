@@ -58,9 +58,9 @@ Each method checks permissions and local state before delegating long work.
 
 ### Roll out a build
 
-A Metald Update moves Metal Servers to one pinned metald and Atlas WG Mesh build. [Roll out metald and WG Mesh](../operate/roll-out-metald.md) gives the steps with screenshots. This section explains how the update works.
+A Metald Update moves Metal Servers to one pinned metald, Atlas WG Mesh and Firecracker build. [Roll out metald and WG Mesh](../operate/roll-out-metald.md) gives the steps with screenshots. This section explains how the update works.
 
-A new update pins the versions, binaries, and hashes from Atlas Settings, so later builds do not change it.
+A new update pins the versions, binaries, and hashes from Atlas Settings, so later builds do not change it. The **Firecracker** section of Atlas Settings sets the release. An update without a Firecracker release leaves Firecracker unchanged.
 
 | Status | What happens |
 | --- | --- |
@@ -75,7 +75,7 @@ Only one update can be Running or Paused. A step runs every 5 seconds and contin
 
 1. Starts one upgrade SSH Task per server in the current batch.
 2. Waits **Wait Minutes** after the last upgrade.
-3. Checks current and earlier batches. Each server must report the pinned `metald` and Atlas WG Mesh versions and must have synchronized within 2 minutes.
+3. Checks current and earlier batches. Each server must report the pinned `metald`, Atlas WG Mesh and Firecracker versions and must have synchronized within 2 minutes.
 4. Starts the next batch or completes the update.
 
 A failed upgrade or check pauses the update. [When a server fails](../operate/roll-out-metald.md#when-a-server-fails) explains how to continue or go back to an earlier build.
@@ -91,6 +91,8 @@ The **Diagnostics** menu runs fixed read-only scripts over SSH and shows the scr
 ### Upgrade on one host
 
 `upgrade-metald.sh` replaces `metald` and `atlas-wg-mesh` together. It checks the hashes, keeps the running binaries as `.previous`, restarts `metal.service`, and waits up to 120 seconds for the status `ready <version>`. If the service does not become ready or a VM unit stops, it restores the previous binaries. It keeps the new binaries when the new build has a [metald patch](../develop/metal.md#change-stored-state-with-a-patch) that the host has not applied, because the previous build cannot read the patched state. A repeated upgrade to the running build changes nothing.
+
+With a pinned Firecracker release, the script also downloads the release tarball, checks its hash, and replaces `firecracker` and `jailer`. A running VM keeps the binary in its jail until its next start. A rollback restores both binaries.
 
 If the script reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
 
