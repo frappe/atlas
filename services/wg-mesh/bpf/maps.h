@@ -39,7 +39,7 @@ struct config
 	__u8 public_mac[ETH_ALEN];
 };
 
-/* The most mesh tunnels that one host can have. Must match meshTunnelLimit in cli/bpf.go and tunnelLimit in metal/internal/network/wireguard.go. */
+/* The most mesh tunnels that one host can have. It must be a power of two. Must match meshTunnelLimit in cli/bpf.go and tunnelLimit in metal/internal/network/wireguard.go. */
 #define MESH_TUNNEL_LIMIT 32
 
 /* The WireGuard interfaces wg1 to wgN. Each one has a peer for every other host, so any of them can carry a packet to any host. */
@@ -168,14 +168,17 @@ static __always_inline __u32 pick_mesh_tunnel_interface(__u32 flow_hash)
 {
 	__u32 key = 0;
 	struct mesh_tunnels *tunnels = bpf_map_lookup_elem(&mesh_tunnels, &key);
+	__u32 count = tunnels ? tunnels->count : 0;
 	__u32 index;
 
-	if (!tunnels || !tunnels->count)
+	/* User space can write a count above the limit. */
+	if (!count || count > MESH_TUNNEL_LIMIT)
 		return 0;
 
-	index = flow_hash % tunnels->count;
-	/* The verifier rejects the program without this check. User space can also write a count above the limit. */
-	return index < MESH_TUNNEL_LIMIT ? tunnels->ifindex[index] : 0;
+	/* The verifier does not bound a remainder. The barrier keeps clang from removing the mask that bounds it. */
+	index = flow_hash % count;
+	barrier_var(index);
+	return tunnels->ifindex[index & (MESH_TUNNEL_LIMIT - 1)];
 }
 
 /* Whether the address belongs to the VM on this interface. */
