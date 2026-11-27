@@ -630,6 +630,9 @@ class TestServer(UnitTestCase):
 				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
 				"CPU_TEMPLATE_DISABLED": "false",
 				"VM_MESH_MTU": "1380",
+				"FIRECRACKER_VERSION": "v1.18.0-hotfix.1",
+				"FIRECRACKER_DOWNLOAD_URL": "https://atlas.test/firecracker.tgz",
+				"FIRECRACKER_SHA256": "firecracker-release-sha256",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(
@@ -797,6 +800,9 @@ class TestServer(UnitTestCase):
 				"COORDINATION_LISTEN_ADDRESS": "10.0.0.7:9001",
 				"CPU_TEMPLATE_DISABLED": "true",
 				"VM_MESH_MTU": "1380",
+				"FIRECRACKER_VERSION": "v1.18.0-hotfix.1",
+				"FIRECRACKER_DOWNLOAD_URL": "https://atlas.test/firecracker.tgz",
+				"FIRECRACKER_SHA256": "firecracker-release-sha256",
 			},
 		)
 
@@ -1338,6 +1344,9 @@ class TestServer(UnitTestCase):
 				metald_binary_hash="metald-binary-sha256",
 				wg_mesh_binary_x86_64_file="wg-mesh-file",
 				wg_mesh_binary_hash="wg-mesh-binary-sha256",
+				firecracker_version="v1.18.0-hotfix.1",
+				firecracker_release_x86_64_url="https://atlas.test/firecracker.tgz",
+				firecracker_release_hash="firecracker-release-sha256",
 				wildcard_domain="example.test",
 				region_id=1,
 				private_network_mtu=1500,

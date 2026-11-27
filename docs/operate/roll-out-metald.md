@@ -1,10 +1,11 @@
 # Roll out metald and WG Mesh
 
-Use a Metald Update to install a new metald and Atlas WG Mesh build on the Metal Servers. The two binaries always roll out together. VMs, consoles, and mesh traffic keep running during the upgrade.
+Use a Metald Update to install a new metald and Atlas WG Mesh build on the Metal Servers. The two binaries always roll out together. The update also installs the Firecracker release that Atlas Settings pins. VMs, consoles, and mesh traffic keep running during the upgrade.
 
 ## Before you start
 
 - Deploy the Atlas release that contains the build. Atlas builds metald and Atlas WG Mesh during migration and shows their versions in **Atlas Settings**.
+- To change Firecracker, set the version, release URL, and SHA-256 in the **Firecracker** section of **Atlas Settings**.
 - Check that no other Metald Update is **Running** or **Paused**. Only one update can run at a time.
 
 ## 1. Create the update
@@ -17,7 +18,7 @@ To upgrade every running server, create a **Metald Update** from its list instea
 
 ## 2. Set the batches
 
-The new update is a Draft. It pins the metald and WG Mesh versions from **Atlas Settings**, so a later build does not change it.
+The new update is a Draft. It pins the metald, WG Mesh and Firecracker versions from **Atlas Settings**, so a later build does not change it.
 
 Set the rollout fields (1). Check the servers (2), then click **Plan Rollout** (3).
 

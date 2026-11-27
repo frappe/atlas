@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import cached_property
 from math import isfinite
 from typing import TYPE_CHECKING
@@ -44,6 +45,11 @@ OBJECT_STORAGE_FIELDS = (
 WIREGUARD_TUNNEL_LIMIT = 32
 MINIMUM_SIGNED_URL_EXPIRY_SECONDS = 3600
 MAXIMUM_SIGNED_URL_EXPIRY_SECONDS = 604800
+FIRECRACKER_RELEASE_FIELDS = (
+	"firecracker_version",
+	"firecracker_release_x86_64_url",
+	"firecracker_release_hash",
+)
 
 DEFAULT_VM_MESH_MTU = 1380
 # WireGuard over IPv4 (60), the outer mesh IPv6 header (40), the gateway header (16) and 4 spare bytes.
@@ -79,6 +85,9 @@ class AtlasSettings(Document):
 		default_metal_machine_image: DF.Autocomplete | None
 		default_metal_machine_size: DF.Autocomplete | None
 		dns_provider: DF.Literal["Route53"]
+		firecracker_release_hash: DF.Data | None
+		firecracker_release_x86_64_url: DF.Data | None
+		firecracker_version: DF.Data | None
 		http_proxy_package_file: DF.Link | None
 		http_proxy_package_hash: DF.Data | None
 		investigation_model: DF.Link | None
@@ -273,6 +282,7 @@ class AtlasSettings(Document):
 		self._validate_vm_migration_network_change()
 		self._validate_signed_url_expiry()
 		self._validate_wireguard_tunnel_count()
+		self._validate_firecracker_release()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
 			if frappe.db.exists("Virtual Machine") or frappe.db.exists(
@@ -342,6 +352,19 @@ class AtlasSettings(Document):
 	def _validate_wireguard_tunnel_count(self) -> None:
 		if not 1 <= self.wireguard_tunnel_count <= WIREGUARD_TUNNEL_LIMIT:
 			frappe.throw(_("WireGuard Tunnels must be from 1 to {0}.").format(WIREGUARD_TUNNEL_LIMIT))
+
+	def _validate_firecracker_release(self) -> None:
+		values = [self.get(field) for field in FIRECRACKER_RELEASE_FIELDS]
+		if not any(values):
+			return
+		if not all(values):
+			frappe.throw(_("Set the Firecracker version, release URL and SHA-256 together, or none of them."))
+		if not re.fullmatch(r"v[0-9A-Za-z.-]+", self.firecracker_version):
+			frappe.throw(_("Firecracker Version must look like v1.18.0."))
+		if not re.fullmatch(r"https://\S+\.tgz", self.firecracker_release_x86_64_url):
+			frappe.throw(_("Firecracker Release URL must be an https URL of a .tgz file."))
+		if not re.fullmatch(r"[0-9a-f]{64}", self.firecracker_release_hash):
+			frappe.throw(_("Firecracker Release SHA-256 must be 64 lowercase hexadecimal characters."))
 
 	def _validate_sleepy_vm_overcommit_factor(self) -> None:
 		factor = flt(self.sleepy_vm_overcommit_factor)

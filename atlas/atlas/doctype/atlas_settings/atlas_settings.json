@@ -35,6 +35,12 @@
   "wg_mesh_version",
   "atlas_tls_private_key",
   "atlas_tls_certificate",
+  "firecracker_section",
+  "firecracker_version",
+  "column_break_firecracker",
+  "firecracker_release_hash",
+  "firecracker_release_url_section",
+  "firecracker_release_x86_64_url",
   "jwks_data_section",
   "central_jwks_url",
   "jwt_signing_key_id",
@@ -479,6 +485,38 @@
    "hidden": 1,
    "label": "Atlas TLS Certificate",
    "read_only": 1
+  },
+  {
+   "fieldname": "firecracker_section",
+   "fieldtype": "Section Break",
+   "label": "Firecracker"
+  },
+  {
+   "default": "v1.18.0-hotfix.1",
+   "fieldname": "firecracker_version",
+   "fieldtype": "Data",
+   "label": "Firecracker Version"
+  },
+  {
+   "fieldname": "column_break_firecracker",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "c41fc81d90b98055eb044645a8a96334ae7b9da080e5f490158ea5250e3f63f5",
+   "fieldname": "firecracker_release_hash",
+   "fieldtype": "Data",
+   "label": "Firecracker Release SHA-256"
+  },
+  {
+   "fieldname": "firecracker_release_url_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "https://github.com/frappe/firecracker/releases/download/v1.18.0-hotfix.1/firecracker-v1.18.0-hotfix.1-x86_64.tgz",
+   "description": "The release tarball. A Metald Update installs firecracker and jailer from it.",
+   "fieldname": "firecracker_release_x86_64_url",
+   "fieldtype": "Data",
+   "label": "Firecracker Release URL (x86_64)"
   },
   {
    "fieldname": "metal_tls_ca_private_key",
@@ -1090,7 +1128,7 @@
  "issingle": 1,
  "link_display_mode": "Search",
  "links": [],
- "modified": "2026-11-26 15:31:35.126488",
+ "modified": "2026-11-26 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",
