@@ -3,9 +3,12 @@ package network
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +22,8 @@ type fakeWireGuardCommands struct {
 	runArguments    [][]string
 	outputFailure   error
 	routeShowOutput string
+	links           string
+	tunnelPeers     string
 }
 
 func (commands *fakeWireGuardCommands) Run(_ context.Context, name string, arguments ...string) error {
@@ -42,8 +47,14 @@ func (commands *fakeWireGuardCommands) Output(_ context.Context, name string, ar
 	if commands.outputFailure != nil {
 		return "", commands.outputFailure
 	}
+	if name == "wg" && arguments[len(arguments)-1] == "peers" {
+		return commands.tunnelPeers, nil
+	}
 	if name == "wg" {
 		return "local-key\n", nil
+	}
+	if len(arguments) >= 2 && arguments[0] == "-o" && arguments[1] == "link" {
+		return "7: wg0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 8940 qdisc noqueue state UNKNOWN\n" + commands.links, nil
 	}
 	if len(arguments) >= 2 && arguments[0] == "-6" && arguments[1] == "route" {
 		return commands.routeShowOutput, nil
@@ -70,20 +81,40 @@ func TestValidateWireGuardPeersRejectsDuplicateIdentity(t *testing.T) {
 	}
 }
 
+var localPeer = WireGuardPeer{Node: "node-1", MeshAddress: "fdab:1::1", PublicKey: "local-key", Address: "192.0.2.1:51820"}
+
+func TestTunnelPortsSpreadEveryHostPairOverBothBondLinks(t *testing.T) {
+	bondLink := func(source, destination int) int {
+		ports := (source>>8 ^ source ^ destination>>8 ^ destination) & 0xff
+		return ports >> 1 & 1
+	}
+	for first := 1; first <= 30; first++ {
+		for second := first + 1; second <= 30; second++ {
+			links := map[int]bool{}
+			for index := range 16 {
+				links[bondLink(tunnelPort(fmt.Sprintf("fdab:1::%x", first), index), tunnelPort(fmt.Sprintf("fdab:1::%x", second), index))] = true
+			}
+			if len(links) != 2 {
+				t.Fatalf("hosts %d and %d use one bond link", first, second)
+			}
+		}
+	}
+}
+
 func TestWireGuardManagerPersistsAppliedPeers(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "wireguard-peers.json")
 	commands := &fakeWireGuardCommands{}
 	manager := newWireGuardManager(WireGuardConfig{InterfaceName: "wg0", StatePath: statePath}, commands)
 	peer := WireGuardPeer{Node: "node-2", MeshAddress: "fdab:1::2", PublicKey: "key-2", Address: "192.0.2.2:51820"}
 
-	if err := manager.Apply(context.Background(), []WireGuardPeer{peer}); err != nil {
+	if _, err := manager.Apply(context.Background(), []WireGuardPeer{localPeer, peer}, 2); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := loadWireGuardPeers(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stored) != 1 || stored[0] != peer {
+	if len(stored) != 1 || !reflect.DeepEqual(stored[0], peer) {
 		t.Fatalf("stored peers = %+v", stored)
 	}
 	information, err := os.Stat(statePath)
@@ -108,7 +139,7 @@ func TestWireGuardManagerSerializesApplication(t *testing.T) {
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			if err := manager.Apply(context.Background(), peers); err != nil {
+			if _, err := manager.Apply(context.Background(), append(peers, localPeer), 2); err != nil {
 				t.Errorf("Apply: %v", err)
 			}
 		}()
@@ -126,16 +157,45 @@ func TestWireGuardManagerInstallsPeerRoutes(t *testing.T) {
 	manager := newWireGuardManager(WireGuardConfig{InterfaceName: "wg0", StatePath: statePath}, commands)
 	peer := WireGuardPeer{Node: "node-2", MeshAddress: "fdab:1::2", PublicKey: "key-2", Address: "192.0.2.2:51820"}
 
-	if err := manager.Apply(context.Background(), []WireGuardPeer{peer}); err != nil {
+	if _, err := manager.Apply(context.Background(), []WireGuardPeer{localPeer, peer}, 2); err != nil {
 		t.Fatal(err)
 	}
 
 	runs := recordedWireGuardRuns(commands)
-	if !wireGuardRunRecorded(runs, []string{"wg", "set", "wg0", "peer", "key-2", "endpoint", "192.0.2.2:51820", "allowed-ips", "fdab:1::2/128", "persistent-keepalive", "25"}) {
-		t.Fatalf("runs = %v, want a wg set call for the peer", runs)
+	if !wireGuardRunRecorded(runs, []string{"ip", "-6", "route", "replace", "fdab:1::2/128", "nexthop", "via", "fe80::1", "dev", "wg1", "onlink", "nexthop", "via", "fe80::1", "dev", "wg2", "onlink"}) {
+		t.Fatalf("runs = %v, want a multipath route over the tunnels", runs)
 	}
-	if !wireGuardRunRecorded(runs, []string{"ip", "-6", "route", "replace", "fdab:1::2/128", "dev", "wg0"}) {
-		t.Fatalf("runs = %v, want a route replace for the peer address", runs)
+}
+
+func TestWireGuardManagerCreatesTunnelsAndRemovesStaleOnes(t *testing.T) {
+	commands := &fakeWireGuardCommands{links: "9: wg1: <UP> mtu 8940\n10: wg3: <UP> mtu 8940\n", tunnelPeers: "stale-key\n"}
+	manager := newWireGuardManager(WireGuardConfig{InterfaceName: "wg0", StatePath: filepath.Join(t.TempDir(), "wireguard-peers.json")}, commands)
+	peer := WireGuardPeer{Node: "node-2", MeshAddress: "fdab:1::2", PublicKey: "key-2", Address: "192.0.2.2:51820"}
+
+	tunnels, err := manager.Apply(context.Background(), []WireGuardPeer{localPeer, peer}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runs := recordedWireGuardRuns(commands)
+	if !slices.Equal(tunnels, []string{"wg1", "wg2"}) {
+		t.Fatalf("tunnels = %v, want wg1 and wg2", tunnels)
+	}
+	for _, want := range [][]string{
+		{"ip", "link", "add", "dev", "wg2", "type", "wireguard"},
+		{"ip", "link", "set", "dev", "wg2", "mtu", "8940", "up"},
+		{"ip", "link", "set", "dev", "wg1", "mtu", "8940", "up"},
+		{"ip", "link", "del", "dev", "wg3"},
+		{"wg", "set", "wg2", "private-key", "/etc/wireguard/wg0.key", "listen-port", strconv.Itoa(tunnelPort("fdab:1::1", 1)),
+			"peer", "key-2", "endpoint", "192.0.2.2:" + strconv.Itoa(tunnelPort("fdab:1::2", 1)), "allowed-ips", "fdab:1::2/128", "persistent-keepalive", "25",
+			"peer", "stale-key", "remove"},
+	} {
+		if !wireGuardRunRecorded(runs, want) {
+			t.Fatalf("runs = %v, want %v", runs, want)
+		}
+	}
+	if wireGuardRunRecorded(runs, []string{"ip", "link", "add", "dev", "wg1", "type", "wireguard"}) {
+		t.Fatalf("runs = %v, want the existing wg1 kept", runs)
 	}
 }
 

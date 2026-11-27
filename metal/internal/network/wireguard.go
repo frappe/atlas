@@ -2,12 +2,16 @@ package network
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +22,16 @@ import (
 // peerKeepaliveSeconds keeps a NAT mapping open between peers that are otherwise
 // idle, so a peer behind NAT stays reachable.
 const peerKeepaliveSeconds = "25"
+
+// Mesh tunnel K listens on tunnelBasePort + 4*(K-1), plus 2 when bit K-1 of
+// the host's port bits is set. The bond hash XORs both ports, and bit 1 picks
+// the link, so a host pair spreads its tunnels over both links.
+const (
+	tunnelBasePort = 51840
+	tunnelLimit    = 32
+)
+
+var wireGuardLinkPattern = regexp.MustCompile(`(?m)^\d+: (wg\d+): .* mtu (\d+)`)
 
 // ErrInvalidPeers reports an invalid desired WireGuard peer set.
 var ErrInvalidPeers = errors.New("network: invalid WireGuard peers")
@@ -59,11 +73,15 @@ func NewWireGuardManager(configuration WireGuardConfig) (*WireGuardManager, erro
 	return newWireGuardManager(configuration, hostWireGuardCommands{}), nil
 }
 
-// Apply replaces the managed peer set with the explicit desired peer set.
-func (manager *WireGuardManager) Apply(ctx context.Context, desired []WireGuardPeer) error {
+// Apply creates the mesh tunnels wg1 to wgN, sets the desired peers on them,
+// and routes each peer over them. It returns the tunnel names. Atlas owns wg0.
+func (manager *WireGuardManager) Apply(ctx context.Context, desired []WireGuardPeer, tunnelCount int) ([]string, error) {
 	desired = append([]WireGuardPeer(nil), desired...)
 	if err := validateWireGuardPeers(desired); err != nil {
-		return err
+		return nil, err
+	}
+	if tunnelCount < 1 || tunnelCount > tunnelLimit {
+		return nil, fmt.Errorf("%w: tunnel count %d is not from 1 to %d", ErrInvalidPeers, tunnelCount, tunnelLimit)
 	}
 
 	manager.mutex.Lock()
@@ -71,23 +89,109 @@ func (manager *WireGuardManager) Apply(ctx context.Context, desired []WireGuardP
 
 	current, err := loadWireGuardPeers(manager.configuration.StatePath)
 	if err != nil {
-		return fmt.Errorf("load managed WireGuard peers: %w", err)
+		return nil, fmt.Errorf("load managed WireGuard peers: %w", err)
 	}
 
 	localPublicKey, err := manager.commands.Output(ctx, "wg", "show", manager.configuration.InterfaceName, "public-key")
 	if err != nil {
-		return fmt.Errorf("read local WireGuard public key: %w", err)
+		return nil, fmt.Errorf("read local WireGuard public key: %w", err)
 	}
 	localPublicKey = strings.TrimSpace(localPublicKey)
 
 	managedDesired := withoutLocalPeer(desired, localPublicKey)
-	if err := manager.reconcile(ctx, current, managedDesired); err != nil {
-		return err
+	if len(managedDesired) == len(desired) {
+		return nil, fmt.Errorf("%w: the peers do not include this host", ErrInvalidPeers)
+	}
+	local := slices.IndexFunc(desired, func(peer WireGuardPeer) bool { return peer.PublicKey == localPublicKey })
+	tunnels, err := manager.ensureTunnels(ctx, tunnelCount)
+	if err != nil {
+		return nil, err
+	}
+	for index, name := range tunnels {
+		if err := manager.setTunnelPeers(ctx, name, index, desired[local].MeshAddress, managedDesired); err != nil {
+			return nil, err
+		}
+	}
+	if err := manager.reconcile(ctx, current, managedDesired, tunnels); err != nil {
+		return nil, err
 	}
 	if err := saveWireGuardPeers(manager.configuration.StatePath, managedDesired); err != nil {
-		return fmt.Errorf("save managed WireGuard peers: %w", err)
+		return nil, fmt.Errorf("save managed WireGuard peers: %w", err)
+	}
+	return tunnels, nil
+}
+
+// ensureTunnels creates the missing tunnels with the wg0 MTU and deletes those
+// above the count.
+func (manager *WireGuardManager) ensureTunnels(ctx context.Context, count int) ([]string, error) {
+	output, err := manager.commands.Output(ctx, "ip", "-o", "link", "show", "type", "wireguard")
+	if err != nil {
+		return nil, fmt.Errorf("list WireGuard links: %w", err)
+	}
+	mtus := make(map[string]string)
+	for _, match := range wireGuardLinkPattern.FindAllStringSubmatch(output, -1) {
+		mtus[match[1]] = match[2]
+	}
+	if mtus[manager.configuration.InterfaceName] == "" {
+		return nil, fmt.Errorf("WireGuard interface %s is missing", manager.configuration.InterfaceName)
+	}
+
+	tunnels := make([]string, count)
+	for index := range tunnels {
+		tunnels[index] = fmt.Sprintf("wg%d", index+1)
+		if mtus[tunnels[index]] == "" {
+			if err := manager.commands.Run(ctx, "ip", "link", "add", "dev", tunnels[index], "type", "wireguard"); err != nil {
+				return nil, fmt.Errorf("create mesh tunnel %s: %w", tunnels[index], err)
+			}
+		}
+		if err := manager.commands.Run(ctx, "ip", "link", "set", "dev", tunnels[index], "mtu", mtus[manager.configuration.InterfaceName], "up"); err != nil {
+			return nil, fmt.Errorf("start mesh tunnel %s: %w", tunnels[index], err)
+		}
+	}
+
+	for name := range mtus {
+		number, _ := strconv.Atoi(strings.TrimPrefix(name, "wg"))
+		if number > count {
+			if err := manager.commands.Run(ctx, "ip", "link", "del", "dev", name); err != nil {
+				return nil, fmt.Errorf("delete mesh tunnel %s: %w", name, err)
+			}
+		}
+	}
+	return tunnels, nil
+}
+
+// setTunnelPeers sets the key, port and peers of one tunnel, and removes every
+// other peer from it.
+func (manager *WireGuardManager) setTunnelPeers(ctx context.Context, name string, index int, localMeshAddress string, peers []WireGuardPeer) error {
+	present, err := manager.commands.Output(ctx, "wg", "show", name, "peers")
+	if err != nil {
+		return fmt.Errorf("list peers of %s: %w", name, err)
+	}
+
+	arguments := []string{"set", name, "private-key", "/etc/wireguard/" + manager.configuration.InterfaceName + ".key", "listen-port", strconv.Itoa(tunnelPort(localMeshAddress, index))}
+	desiredKeys := make(map[string]bool, len(peers))
+	for _, peer := range peers {
+		host, _, _ := net.SplitHostPort(peer.Address)
+		endpoint := net.JoinHostPort(host, strconv.Itoa(tunnelPort(peer.MeshAddress, index)))
+		arguments = append(arguments, "peer", peer.PublicKey, "endpoint", endpoint, "allowed-ips", peer.MeshAddress+"/128", "persistent-keepalive", peerKeepaliveSeconds)
+		desiredKeys[peer.PublicKey] = true
+	}
+	for _, key := range strings.Fields(present) {
+		if !desiredKeys[key] {
+			arguments = append(arguments, "peer", key, "remove")
+		}
+	}
+
+	if err := manager.commands.Run(ctx, "wg", arguments...); err != nil {
+		return fmt.Errorf("set peers of %s: %w", name, err)
 	}
 	return nil
+}
+
+func tunnelPort(meshAddress string, index int) int {
+	digest := sha256.Sum256([]byte(meshAddress))
+	bits := binary.BigEndian.Uint32(digest[:4])
+	return tunnelBasePort + 4*index + 2*int(bits>>index&1)
 }
 
 // newWireGuardManager builds a manager over the given command runner.
@@ -95,43 +199,23 @@ func newWireGuardManager(configuration WireGuardConfig, commands wireGuardComman
 	return &WireGuardManager{configuration: configuration, commands: commands}
 }
 
-// reconcile removes peers that disappeared or changed key or mesh address, then
-// configures every desired peer. `wg set` updates an endpoint in place, but it
-// cannot move a node to a new public key.
-func (manager *WireGuardManager) reconcile(ctx context.Context, current, desired []WireGuardPeer) error {
+// reconcile removes the routes of peers that disappeared or changed mesh
+// address, then routes every desired peer over the tunnels.
+func (manager *WireGuardManager) reconcile(ctx context.Context, current, desired []WireGuardPeer, tunnels []string) error {
 	currentByNode := wireGuardPeersByNode(current)
 	desiredByNode := wireGuardPeersByNode(desired)
 
 	for node, peer := range currentByNode {
 		replacement, found := desiredByNode[node]
-		if !found || replacement.PublicKey != peer.PublicKey || replacement.MeshAddress != peer.MeshAddress {
-			if err := manager.commands.Run(ctx, "wg", "set", manager.configuration.InterfaceName, "peer", peer.PublicKey, "remove"); err != nil {
-				return fmt.Errorf("remove WireGuard peer %q: %w", node, err)
-			}
+		if !found || replacement.MeshAddress != peer.MeshAddress {
 			if err := manager.removePeerRoute(ctx, peer); err != nil {
 				return err
 			}
 		}
 	}
 
-	for node, peer := range desiredByNode {
-		if err := manager.commands.Run(
-			ctx,
-			"wg",
-			"set",
-			manager.configuration.InterfaceName,
-			"peer",
-			peer.PublicKey,
-			"endpoint",
-			peer.Address,
-			"allowed-ips",
-			peer.MeshAddress+"/128",
-			"persistent-keepalive",
-			peerKeepaliveSeconds,
-		); err != nil {
-			return fmt.Errorf("configure WireGuard peer %q: %w", node, err)
-		}
-		if err := manager.replacePeerRoute(ctx, peer); err != nil {
+	for _, peer := range desiredByNode {
+		if err := manager.replacePeerRoute(ctx, peer, tunnels); err != nil {
 			return err
 		}
 	}
@@ -139,9 +223,14 @@ func (manager *WireGuardManager) reconcile(ctx context.Context, current, desired
 	return nil
 }
 
-// replacePeerRoute points one peer mesh address at the WireGuard interface.
-func (manager *WireGuardManager) replacePeerRoute(ctx context.Context, peer WireGuardPeer) error {
-	if err := manager.commands.Run(ctx, "ip", "-6", "route", "replace", peer.MeshAddress+"/128", "dev", manager.configuration.InterfaceName); err != nil {
+// replacePeerRoute gives each tunnel an on-link gateway because Linux rejects
+// device-only IPv6 multipath routes. WireGuard ignores the gateway.
+func (manager *WireGuardManager) replacePeerRoute(ctx context.Context, peer WireGuardPeer, tunnels []string) error {
+	arguments := []string{"-6", "route", "replace", peer.MeshAddress + "/128"}
+	for _, name := range tunnels {
+		arguments = append(arguments, "nexthop", "via", "fe80::1", "dev", name, "onlink")
+	}
+	if err := manager.commands.Run(ctx, "ip", arguments...); err != nil {
 		return fmt.Errorf("route WireGuard peer %s: %w", peer.MeshAddress, err)
 	}
 	return nil
@@ -157,7 +246,7 @@ func (manager *WireGuardManager) removePeerRoute(ctx context.Context, peer WireG
 		return nil
 	}
 
-	if err := manager.commands.Run(ctx, "ip", "-6", "route", "del", peer.MeshAddress+"/128", "dev", manager.configuration.InterfaceName); err != nil {
+	if err := manager.commands.Run(ctx, "ip", "-6", "route", "del", peer.MeshAddress+"/128"); err != nil {
 		return fmt.Errorf("unroute WireGuard peer %s: %w", peer.MeshAddress, err)
 	}
 	return nil

@@ -102,6 +102,10 @@ if [ "$is_interface_changed" = true ]; then
 fi
 systemctl is-active "wg-quick@$interface" >/dev/null
 
+# Linux picks the mesh tunnel of each host-to-host flow from its TCP or UDP ports.
+echo "net.ipv6.fib_multipath_hash_policy = 1" > /etc/sysctl.d/90-atlas-mesh-tunnels.conf
+sysctl -q -w net.ipv6.fib_multipath_hash_policy=1
+
 step "Atlas peer ($ATLAS_WIREGUARD_ADDRESS)"
 if [ -n "$previous_atlas_public_key" ] && [ "$previous_atlas_public_key" != "$ATLAS_WIREGUARD_PUBLIC_KEY" ]; then
 	wg set "$interface" peer "$previous_atlas_public_key" remove

@@ -5,9 +5,11 @@
 
 #include "maps.h"
 
-/* Add the outer IPv6 header, and the gateway address for a tunnel to a gateway. Linux then routes the packet to wg0. */
+/* Add the outer IPv6 header, and the gateway address for a tunnel to a gateway. */
 static __always_inline int add_mesh_tunnel(struct __sk_buff *packet, struct config *config, const struct in6_addr *host, __u32 inner_length, const struct in6_addr *gateway)
 {
+	/* Pick the tunnel from the inner flow hash first, because BPF_F_INVALIDATE_HASH below clears the hash. */
+	__u32 tunnel = pick_mesh_tunnel_interface(bpf_get_hash_recalc(packet));
 	__u32 gateway_length = gateway ? sizeof(*gateway) : 0;
 	struct ipv6hdr outer = {
 		.version = 6,
@@ -26,7 +28,8 @@ static __always_inline int add_mesh_tunnel(struct __sk_buff *packet, struct conf
 	if (gateway && bpf_skb_store_bytes(packet, ETH_HLEN + sizeof(outer), gateway, sizeof(*gateway), 0))
 		return TC_ACT_SHOT;
 
-	return TC_ACT_OK;
+	/* WireGuard picks the peer from the outer destination. It has no link layer, so the kernel strips the Ethernet header on redirect. */
+	return tunnel ? bpf_redirect(tunnel, 0) : TC_ACT_OK;
 }
 
 /* Replace the packet with a neighbor solicitation. The destination host answers through proxy NDP, and the uplink hook learns its location. */

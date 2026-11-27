@@ -20,7 +20,7 @@ For the Linux interface beneath these hooks, read the [kernel's BPF program and 
 ```mermaid
 flowchart LR
     VM[VM interface] -->|ingress| VH[VM hook<br/>bpf/vm.h]
-    WG[wg0] -->|ingress| WH[WireGuard hook<br/>bpf/wireguard.h]
+    WG[wg0 and wg1 to wgN] -->|ingress| WH[WireGuard hook<br/>bpf/wireguard.h]
     UP[Private uplink] -->|ingress, egress| UH[Uplink hook<br/>bpf/uplink.h]
     PUB[Public interface] -->|ingress| PH[Public hook<br/>bpf/uplink.h]
     HV[mesh-tunnel veth] -->|ingress| HH[Host hook<br/>bpf/host.h]
@@ -35,6 +35,7 @@ flowchart LR
 | `privileged_vms` | Tenant-0 addresses that can reach every tenant. |
 | `controller_address` | The Atlas tenant-0 address. The VM hook passes traffic to it to Linux, which routes it through `wg0`. |
 | `peer_list` | Peer IPv4, MAC, and WireGuard addresses. |
+| `mesh_tunnels` | The mesh tunnel interfaces `wg1` to `wgN`. |
 | `discovery_limits` | NDP request limit for each VM interface. |
 | `gateways` | Interfaces of the gateway VMs on this host. |
 | `gateway_routes` | VM and destination prefix to gateway address. |
@@ -44,6 +45,18 @@ flowchart LR
 | `build_hash` | Hash of the active BPF object. |
 
 A `remote_vms` entry stays until eviction or a valid `NOT_HERE` removes it. Only the host stored for a VM can remove that entry.
+
+## Mesh tunnels
+
+One WireGuard peer carries about 10 Gbit/s, because the kernel encrypts and decrypts each peer on one CPU at a time. To use more of the host link, each host has the mesh tunnel interfaces `wg1` to `wgN` next to `wg0`. Atlas Settings sets N. Metal creates and deletes the mesh tunnel interfaces at each host sync. Atlas sets up `wg0` once, and it carries only the traffic to and from Atlas.
+
+Each mesh tunnel interface uses the `wg0` key, has all peers, and listens on its own port. `wgN` on one host sends only to the `wgN` port of another host.
+
+The VM hook hashes the inner flow before it adds the outer header. Then it redirects the packet to the mesh tunnel interface for that hash. A flow uses one mesh tunnel interface while the tunnel list stays the same, so tunnels with different delays do not reorder its packets.
+
+Metal routes host-to-host traffic over the same interfaces with a multipath route. `net.ipv6.fib_multipath_hash_policy=1` makes Linux pick the interface from the TCP or UDP ports of each flow.
+
+Metal calculates the ports. Tunnel `wgK` listens on `51840 + 4*(K-1)`, plus 2 when bit K-1 of a hash of the host WireGuard address is 1. The highest port is 51966. The bond selects a link from the XOR of the UDP ports, so the hash bits spread the tunnels of most host pairs over both links. Two hosts with equal or opposite hash bits use one link.
 
 ## VM hook rules
 

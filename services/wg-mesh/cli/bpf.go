@@ -30,6 +30,9 @@ const (
 // Must match PEER_LIMIT in bpf/maps.h.
 const peerLimit = 256
 
+// Must match MESH_TUNNEL_LIMIT in bpf/maps.h.
+const meshTunnelLimit = 32
+
 //go:embed atlas-wg-mesh.bpf.o
 var bpfObject []byte
 
@@ -42,6 +45,12 @@ type hostConfig struct {
 	WireGuardIPv6 [16]byte
 	UplinkMAC     [6]byte
 	PublicMAC     [6]byte
+}
+
+// meshTunnels matches struct mesh_tunnels in bpf/maps.h.
+type meshTunnels struct {
+	Count   uint32
+	IfIndex [meshTunnelLimit]uint32
 }
 
 // peer matches struct peer in bpf/maps.h.

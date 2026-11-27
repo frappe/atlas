@@ -25,6 +25,8 @@ type syncRequest struct {
 	WireGuardGatewayRoutes []routeRequest `json:"wireguard_gateway_routes"`
 	// Unicast selects the unicast NDP transport. The transport builds its peer set from the WireGuard peers.
 	Unicast bool `json:"unicast"`
+	// WireGuardTunnelCount is the number of mesh tunnels wg1 to wgN on each host.
+	WireGuardTunnelCount int `json:"wireguard_tunnel_count"`
 }
 
 // wireGuardPeerRequest is one desired WireGuard peer.
@@ -131,6 +133,7 @@ func (s *Server) exchangeControllerState(c *echo.Context) error {
 		PrivilegedVirtualMachineAddresses: request.PrivilegedVMAddresses,
 		WireGuardGatewayRoutes:            toRouteSpecifications(request.WireGuardGatewayRoutes),
 		UnicastEnabled:                    request.Unicast,
+		WireGuardTunnelCount:              request.WireGuardTunnelCount,
 	})
 	if err != nil {
 		return synchronizationFailure(err)
