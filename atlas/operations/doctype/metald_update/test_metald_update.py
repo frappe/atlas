@@ -66,6 +66,9 @@ class TestMetaldUpdate(IntegrationTestCase):
 			"wg_mesh_version": "2.0.0",
 			"wg_mesh_binary_x86_64_file": "test-wg-mesh-binary",
 			"wg_mesh_binary_hash": "wg-mesh-hash",
+			"firecracker_version": None,
+			"firecracker_release_x86_64_url": None,
+			"firecracker_release_hash": None,
 		}.items():
 			frappe.db.set_single_value("Atlas Settings", field, value)
 
@@ -159,6 +162,27 @@ class TestMetaldUpdate(IntegrationTestCase):
 		)
 		with self.assertRaises(frappe.ValidationError):
 			update.start()
+
+	def test_a_pinned_firecracker_release_needs_an_upgrade_where_it_differs(self) -> None:
+		old_firecracker = insert_server("test-plan-old-firecracker")
+		current = insert_server("test-plan-firecracker-current")
+		frappe.db.set_single_value(
+			"Atlas Settings",
+			{
+				"firecracker_version": "v1.18.0-hotfix.1",
+				"firecracker_release_x86_64_url": "https://example.com/firecracker.tgz",
+				"firecracker_release_hash": "0" * 64,
+			},
+		)
+		update = self.create_update([old_firecracker, current])
+
+		update = self.plan(
+			update, {old_firecracker: TARGET, current: TARGET | {"firecracker_version": "v1.18.0-hotfix.1"}}
+		)
+
+		self.assertEqual(update.firecracker_release_hash, "0" * 64)
+		self.assertEqual([row.status for row in update.servers], ["Pending", "Skipped"])
+		self.assertIn("Firecracker v1.16.1", update.get_version_problem(TARGET))
 
 	def test_planning_completes_an_update_whose_servers_need_no_upgrade(self) -> None:
 		servers = [insert_server("test-plan-done-a"), insert_server("test-plan-done-b")]

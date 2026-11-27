@@ -127,6 +127,7 @@ class HostInstallation:
 				"ATLAS_MESH_ADDRESS": settings.wireguard_ip_address,
 				"CPU_TEMPLATE_DISABLED": "true" if self.server.is_cpu_template_disabled else "false",
 				"VM_MESH_MTU": str(settings.vm_mesh_mtu),
+				**get_firecracker_release_environment(settings),
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
@@ -241,7 +242,7 @@ class HostInstallation:
 			)
 
 	def upgrade_metald(self, build: Document | None = None, run_in_background: bool = False) -> SSHTask:
-		"""Install a metald and Atlas WG Mesh build, set the coordination address, and restart metald."""
+		"""Install a metald, Atlas WG Mesh and Firecracker build, set the coordination address, and restart metald."""
 		build = build or self.server.settings
 		if not build.metald_binary_x86_64_file or not build.wg_mesh_binary_x86_64_file:
 			frappe.throw(_("The build has no metald or Atlas WG Mesh binary."))
@@ -258,6 +259,7 @@ class HostInstallation:
 				"COORDINATION_LISTEN_ADDRESS": MetalClient.get_coordination_address(self.server),
 				"CPU_TEMPLATE_DISABLED": "true" if self.server.is_cpu_template_disabled else "false",
 				"VM_MESH_MTU": str(self.server.settings.vm_mesh_mtu),
+				**get_firecracker_release_environment(build),
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=run_in_background,
@@ -272,6 +274,15 @@ class HostInstallation:
 	def wireguard_ip_address(self) -> str:
 		"""Return the host mesh address for this server."""
 		return get_wireguard_ip_address(UUID(self.server.name), self.server.settings.region_id)
+
+
+def get_firecracker_release_environment(build: Document) -> dict[str, str]:
+	"""Return the pinned Firecracker release for a host script. Without a pin, the host keeps its Firecracker."""
+	return {
+		"FIRECRACKER_VERSION": build.firecracker_version or "",
+		"FIRECRACKER_DOWNLOAD_URL": build.firecracker_release_x86_64_url or "",
+		"FIRECRACKER_SHA256": build.firecracker_release_hash or "",
+	}
 
 
 def throw_script_failure(message: str, result: "SSHResult | None") -> None:

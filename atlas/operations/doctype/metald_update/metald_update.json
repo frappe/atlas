@@ -18,6 +18,10 @@
   "wg_mesh_version",
   "wg_mesh_binary_x86_64_file",
   "wg_mesh_binary_hash",
+  "column_break_firecracker",
+  "firecracker_version",
+  "firecracker_release_x86_64_url",
+  "firecracker_release_hash",
   "rollout_section",
   "canary_size",
   "column_break_batch",
@@ -111,6 +115,28 @@
    "read_only": 1
   },
   {
+   "fieldname": "column_break_firecracker",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "firecracker_version",
+   "fieldtype": "Data",
+   "label": "Firecracker Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "firecracker_release_x86_64_url",
+   "fieldtype": "Data",
+   "label": "Firecracker Release URL (x86_64)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "firecracker_release_hash",
+   "fieldtype": "Data",
+   "label": "Firecracker Release SHA-256",
+   "read_only": 1
+  },
+  {
    "fieldname": "rollout_section",
    "fieldtype": "Section Break",
    "label": "Rollout Config"
@@ -167,7 +193,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-13 12:18:59.914017",
+ "modified": "2026-11-26 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Operations",
  "name": "Metald Update",

@@ -12,6 +12,7 @@ from frappe.utils import add_to_date, get_datetime, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
+from atlas.atlas.doctype.atlas_settings.atlas_settings import FIRECRACKER_RELEASE_FIELDS
 from atlas.metal_server.core.host_installation import HostInstallation, get_failure_reason
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 
@@ -25,7 +26,7 @@ VERSION_READ_TIMEOUT_SECONDS = 120
 
 
 class MetaldUpdate(Document):
-	"""Move Metal Servers to one pinned metald and Atlas WG Mesh build in batches."""
+	"""Move Metal Servers to one pinned metald, Atlas WG Mesh and Firecracker build in batches."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -40,6 +41,9 @@ class MetaldUpdate(Document):
 		batch_size: DF.Int
 		canary_size: DF.Int
 		current_batch: DF.Int
+		firecracker_release_hash: DF.Data | None
+		firecracker_release_x86_64_url: DF.Data | None
+		firecracker_version: DF.Data | None
 		metald_binary_hash: DF.Data | None
 		metald_binary_x86_64_file: DF.Link | None
 		metald_version: DF.Data | None
@@ -153,7 +157,11 @@ class MetaldUpdate(Document):
 
 	def get_version_problem(self, versions: dict[str, str | None]) -> str | None:
 		"""Return why the versions on a server differ from the pinned build, or None."""
-		for field, label in (("metald_version", "metald"), ("wg_mesh_version", "Atlas WG Mesh")):
+		checks = [("metald_version", "metald"), ("wg_mesh_version", "Atlas WG Mesh")]
+		# An update created before the Firecracker setting pins no release, so planning and checks ignore Firecracker.
+		if self.firecracker_version:
+			checks.append(("firecracker_version", "Firecracker"))
+		for field, label in checks:
 			if not versions[field]:
 				return _("The server does not report its {0} version.").format(label)
 			if versions[field] != self.get(field):
@@ -194,6 +202,7 @@ class MetaldUpdate(Document):
 			"wg_mesh_version",
 			"wg_mesh_binary_x86_64_file",
 			"wg_mesh_binary_hash",
+			*FIRECRACKER_RELEASE_FIELDS,
 		):
 			self.set(field, settings.get(field))
 
