@@ -280,8 +280,14 @@ func TestMigrationRestoreLoadsPausedAndRetainsBackingMemory(t *testing.T) {
 }
 
 func TestSavedSnapshotCapturesShapeAndGatewayMACWithoutHostProbes(t *testing.T) {
-	configuration := Config{MachinesDir: t.TempDir(), FirecrackerBin: "/no/such/firecracker"}
+	root := t.TempDir()
+	configuration := Config{MachinesDir: root, FirecrackerBin: filepath.Join(root, "firecracker")}
 	input := vm.RuntimeMachine{ID: "vm-1", UserID: uint32(os.Getuid()), GroupID: uint32(os.Getgid()), Specification: vm.Specification{CPUMillicores: 1000, MemoryMiB: 1, DiskMiB: 4}}
+	writeSavedStateFile(t, configuration.FirecrackerBin, 16)
+	if err := os.MkdirAll(configuration.chrootRoot(input.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeSavedStateFile(t, filepath.Join(configuration.chrootRoot(input.ID), "firecracker"), 16)
 	input.NetworkInterface = vm.NetworkInterface{NetworkNamespacePath: "/run/netns/source-vm", TapName: "tap0"}
 	commands := t.TempDir()
 	if err := os.WriteFile(filepath.Join(commands, "ip"), []byte("#!/bin/sh\n[ \"$*\" = 'netns exec source-vm cat /sys/class/net/tap0/address' ] || exit 1\nprintf '02:11:22:33:44:55\\n'\n"), 0o755); err != nil {

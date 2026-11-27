@@ -148,7 +148,7 @@ func (runtime *Runtime) hasSavedState(input vm.RuntimeMachine) (bool, error) {
 		return true, nil
 	case errors.Is(err, errSavedStateNotFound):
 		return false, nil
-	case errors.Is(err, errSavedStateIncompatible):
+	case errors.Is(err, vm.ErrSavedStateIncompatible):
 		return false, runtime.removeSavedState(input.ID)
 	}
 	return false, fmt.Errorf("validate saved VM state: %w", err)

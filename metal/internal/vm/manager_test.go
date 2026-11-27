@@ -39,6 +39,7 @@ type fakeRuntime struct {
 	inspectError   error
 	onInspect      func()
 	restoreError   error
+	installError   error
 	// restoreFailureState is the state a failed saved-state restore leaves behind.
 	restoreFailureState State
 	saveError           error
@@ -73,6 +74,9 @@ func (runtime *fakeRuntime) SavedState(context.Context, RuntimeMachine) (SavedSt
 }
 
 func (runtime *fakeRuntime) InstallSavedState(_ context.Context, _ RuntimeMachine, directory, identity string) error {
+	if runtime.installError != nil {
+		return runtime.installError
+	}
 	runtime.hasSavedState = true
 	runtime.savedDirectory = directory
 	runtime.savedIdentity = identity
@@ -136,6 +140,9 @@ func (runtime *fakeRuntime) Restore(context.Context, RuntimeMachine) error {
 func (runtime *fakeRuntime) RestorePaused(context.Context, RuntimeMachine) error {
 	runtime.restoresPaused++
 	if runtime.restoreError != nil {
+		if runtime.restoreFailureState != "" {
+			runtime.state = runtime.restoreFailureState
+		}
 		return runtime.restoreError
 	}
 	runtime.state = StatePaused

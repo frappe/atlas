@@ -155,6 +155,8 @@ A download or artifact validation failure leaves the VM asleep and reports `obse
 
 If runtime restore fails after artifact preparation, Metal checks whether the guest already reached the requested state. If not, it keeps the saved memory and tries again. After 3 failed attempts since metald started, it removes the failed runtime and saved memory, then cold-boots the existing disk. This keeps the disk but loses processes and unsaved memory. A VM in coma must recover its disk first.
 
+If the downloaded memory comes from another Firecracker build or CPU template, Metal does not retry. It discards the memory and cold-boots the existing disk at once.
+
 Cancellation and timeout errors retry without a cold boot. Metal logs the fallback and prevents later retries from loading the old remote memory. Cleanup and cold-boot failures report `observed.error`.
 
 An explicit stop, restart, or shape change recovers an offloaded disk before it discards saved memory. [Migration](migration.md#move-an-offloaded-vm) moves an offloaded VM without waking it or downloading its snapshots.
