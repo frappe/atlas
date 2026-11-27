@@ -3,7 +3,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.auth.user import ATLAS_ADMIN_ROLE, CENTRAL_TENANT_USER, ensure_tenant_user
+from atlas.auth.user import ATLAS_ADMIN_ROLE, CENTRAL_TENANT_USER, _insert_api_user, ensure_tenant_user
 
 TENANT_ID = "4242"
 
@@ -27,10 +27,12 @@ class TestTenantUser(IntegrationTestCase):
 		insert.assert_not_called()
 
 	def test_a_concurrent_first_request_does_not_fail(self) -> None:
-		with patch(
-			"atlas.auth.user._insert_api_user",
-			side_effect=frappe.DuplicateEntryError("User", f"tenant-{TENANT_ID}@atlas.local"),
-		):
+		def insert_in_another_request(email: str, first_name: str) -> None:
+			_insert_api_user(email, first_name)
+			frappe.db.commit()  # nosemgrep
+			raise frappe.DuplicateEntryError("User", email)
+
+		with patch("atlas.auth.user._insert_api_user", side_effect=insert_in_another_request):
 			self.assertEqual(ensure_tenant_user(TENANT_ID), f"tenant-{TENANT_ID}@atlas.local")
 
 	def test_the_central_claim_creates_the_every_tenant_user(self) -> None:
