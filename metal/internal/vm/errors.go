@@ -26,6 +26,9 @@ var ErrNotEnoughSamples = errors.New("vm: not enough samples")
 // ErrNotBurstable indicates that a VM has no CPU burst settings to measure against.
 var ErrNotBurstable = errors.New("vm: not burstable")
 
+// ErrSavedStateIncompatible marks saved state that a changed Firecracker build or CPU template cannot resume.
+var ErrSavedStateIncompatible = errors.New("vm: saved state is incompatible with this Firecracker")
+
 // TransitionError reports a missing state transition.
 type TransitionError struct {
 	DesiredState  State

@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -234,6 +235,24 @@ func (runtime *Runtime) firecrackerCompatibility() string {
 		compatibility += fmt.Sprintf(":cpu:%x", sha256.Sum256(runtime.configuration.CPUTemplate))
 	}
 	return compatibility
+}
+
+// runningFirecrackerCompatibility identifies the build that runs a VM. The jailer copies
+// the binary at launch, so a VM that started before a binary upgrade runs the old build.
+func (runtime *Runtime) runningFirecrackerCompatibility(id string) (string, error) {
+	jailedPath := filepath.Join(runtime.configuration.chrootRoot(id), filepath.Base(runtime.configuration.FirecrackerBin))
+	jailed, err := os.ReadFile(jailedPath)
+	if err != nil {
+		return "", fmt.Errorf("read jailed Firecracker binary: %w", err)
+	}
+	installed, err := os.ReadFile(runtime.configuration.FirecrackerBin)
+	if err != nil {
+		return "", fmt.Errorf("read Firecracker binary: %w", err)
+	}
+	if !bytes.Equal(jailed, installed) {
+		return fmt.Sprintf("%s:sha256:%x", jailedPath, sha256.Sum256(jailed)), nil
+	}
+	return runtime.firecrackerCompatibility(), nil
 }
 
 // hasMatchingMemorySnapshot reports whether CPU and memory match the warm image

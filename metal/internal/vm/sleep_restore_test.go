@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -33,6 +34,7 @@ func TestRepeatedSleepRestoreFailuresColdBootTheExistingDisk(t *testing.T) {
 				manager, runtime, storage, _ := sleepRestoreManager(t, state)
 				releases := storage.releases
 				runtime.restoreError = errors.New("snapshot load failed")
+				runtime.restoreFailureState = StateFailed
 				if err := manager.SetPowerState(t.Context(), "vm-1", resultState); err != nil {
 					t.Fatal(err)
 				}
@@ -59,6 +61,26 @@ func TestRepeatedSleepRestoreFailuresColdBootTheExistingDisk(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAnIncompatibleRemoteCheckpointColdBootsTheDisk(t *testing.T) {
+	for _, state := range []SleepState{SleepStateDeepSleeping, SleepStateComa} {
+		t.Run(string(state), func(t *testing.T) {
+			manager, runtime, _, _ := sleepRestoreManager(t, state)
+			runtime.hasSavedState = false
+			runtime.installError = fmt.Errorf("%w: old build", ErrSavedStateIncompatible)
+			if err := wakeTestSleep(t.Context(), manager); err != nil {
+				t.Fatal(err)
+			}
+			information, err := manager.Information(t.Context(), "vm-1")
+			if err != nil || information.State != StateRunning || information.SleepState != SleepStateAwake || information.Error != nil {
+				t.Fatalf("wake did not cold boot: %+v, %v", information, err)
+			}
+			if runtime.coldStarts != 1 || runtime.restores != 0 {
+				t.Fatalf("wake restored incompatible memory: %+v", runtime)
+			}
+		})
 	}
 }
 
