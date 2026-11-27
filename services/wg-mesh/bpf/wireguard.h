@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0 */
-/* TC ingress on wg0, after decryption: deliver tunnels, and repair stale locations with NOT_HERE. */
+/* TC ingress on wg0 and on each mesh tunnel interface, after decryption: deliver tunnels, and repair stale locations with NOT_HERE. */
 #ifndef ATLAS_WIREGUARD_H
 #define ATLAS_WIREGUARD_H
 

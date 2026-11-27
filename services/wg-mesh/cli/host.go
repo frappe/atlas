@@ -127,6 +127,10 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 	if err != nil {
 		return err
 	}
+	tunnels, err := readMeshTunnels(installedDirectory)
+	if err != nil {
+		return err
+	}
 
 	if err := prepareHost(uplinkName, wireGuardName); err != nil {
 		return err
@@ -143,7 +147,7 @@ func configureHost(uplinkName, wireGuardName string, controller *[16]byte) error
 		return err
 	}
 
-	hooks := hostHooks(config, wireGuardName, vmInterfaces)
+	hooks := hostHooks(config, wireGuardName, vmInterfaces, tunnels)
 	if err := replaceHooks(hooks, candidate.hash, oldHash, oldHashError == nil); err != nil {
 		candidate.cleanup()
 		return err
@@ -232,7 +236,7 @@ type programHook struct {
 }
 
 // hostHooks returns each live mesh hook once. The egress hook exists only in unicast mode.
-func hostHooks(config hostConfig, wireGuardName string, vmInterfaces map[[16]byte]string) []programHook {
+func hostHooks(config hostConfig, wireGuardName string, vmInterfaces map[[16]byte]string, tunnels []string) []programHook {
 	uplinkName := deviceName(config.UplinkIfIndex)
 	wanted := []programHook{
 		{interfaceName: uplinkName, program: uplinkIngressProgram, direction: "ingress"},
@@ -247,6 +251,10 @@ func hostHooks(config hostConfig, wireGuardName string, vmInterfaces map[[16]byt
 
 	for _, name := range vmInterfaces {
 		wanted = append(wanted, programHook{interfaceName: name, program: vmProgram, direction: "ingress"})
+	}
+
+	for _, name := range tunnels {
+		wanted = append(wanted, programHook{interfaceName: name, program: wireGuardProgram, direction: "ingress"})
 	}
 
 	seen := make(map[string]bool)
@@ -371,8 +379,16 @@ func resetHost(force bool) error {
 		return fmt.Errorf("%d local VMs remain: remove them or use --force", len(vms))
 	}
 
+	tunnels, err := readMeshTunnels(mapDirectory(mapLayoutVersion))
+	if err != nil {
+		return err
+	}
+
 	uplinkName := deviceName(config.UplinkIfIndex)
 	interfaces := map[string]bool{uplinkName: true, deviceName(config.PublicIfIndex): true, interfaceWithAddress(config.WireGuardIPv6): true, tunnelVethName: true}
+	for _, name := range tunnels {
+		interfaces[name] = true
+	}
 	for address, ifindex := range vms {
 		interfaces[deviceName(ifindex)] = true
 		_ = ignoreMissing(runCommand("ip", "-6", "neigh", "del", "proxy", netip.AddrFrom16(address).String(), "dev", uplinkName))

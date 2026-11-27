@@ -39,6 +39,17 @@ struct config
 	__u8 public_mac[ETH_ALEN];
 };
 
+/* The most mesh tunnels that one host can have. It must be a power of two. Must match meshTunnelLimit in cli/bpf.go and tunnelLimit in metal/internal/network/wireguard.go. */
+#define MESH_TUNNEL_LIMIT 32
+
+/* The WireGuard interfaces wg1 to wgN. Each one has a peer for every other host, so any of them can carry a packet to any host. */
+struct mesh_tunnels
+{
+	/* Zero means no tunnels, and Linux routes the packet. */
+	__u32 count;
+	__u32 ifindex[MESH_TUNNEL_LIMIT];
+};
+
 /* A mesh peer. ipv4 is its address on the uplink network. Peers fill the low indexes, and a zero ipv4 ends the list. */
 struct peer
 {
@@ -88,6 +99,8 @@ MAP(gateways, BPF_MAP_TYPE_HASH, __u32, __u8, 4096);
 MAP(local_vms, BPF_MAP_TYPE_HASH, struct in6_addr, __u32, 4096);
 /* The Atlas controller address. It is a peer of this host's wg0, so Linux routes it. A zero address means none. */
 MAP(controller_address, BPF_MAP_TYPE_ARRAY, __u32, struct in6_addr, 1);
+/* Key 0 only. Metal writes it with "wg-mesh peers sync --tunnel" at each host sync. Until then it is zero, and Linux routes the packet. */
+MAP(mesh_tunnels, BPF_MAP_TYPE_ARRAY, __u32, struct mesh_tunnels, 1);
 /* Tenant-0 addresses that may talk to every tenant. */
 MAP(privileged_vms, BPF_MAP_TYPE_HASH, struct in6_addr, __u8, 4096);
 /* Remote VM address to the WireGuard address of its host, learned from NDP. */
@@ -145,6 +158,27 @@ static __always_inline int is_controller(const struct in6_addr *address)
 	struct in6_addr *controller = bpf_map_lookup_elem(&controller_address, &key);
 
 	return controller && is_same_address(controller, address);
+}
+
+/*
+ * The tunnel for a flow hash, or 0 for none.
+ * A flow stays on one tunnel while the list is the same, so tunnels with different delays do not reorder its packets.
+ */
+static __always_inline __u32 pick_mesh_tunnel_interface(__u32 flow_hash)
+{
+	__u32 key = 0;
+	struct mesh_tunnels *tunnels = bpf_map_lookup_elem(&mesh_tunnels, &key);
+	__u32 count = tunnels ? tunnels->count : 0;
+	__u32 index;
+
+	/* User space can write a count above the limit. */
+	if (!count || count > MESH_TUNNEL_LIMIT)
+		return 0;
+
+	/* The verifier does not bound a remainder. The barrier keeps clang from removing the mask that bounds it. */
+	index = flow_hash % count;
+	barrier_var(index);
+	return tunnels->ifindex[index & (MESH_TUNNEL_LIMIT - 1)];
 }
 
 /* Whether the address belongs to the VM on this interface. */

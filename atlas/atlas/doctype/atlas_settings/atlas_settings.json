@@ -44,10 +44,11 @@
   "networking_tab",
   "private_network_config_section",
   "private_network_cidr",
-  "is_migration_on_wireguard",
+  "wireguard_tunnel_count",
   "column_break_jzip",
   "private_network_mtu",
   "is_unicast_network_enabled",
+  "is_migration_on_wireguard",
   "atlas_wireguard_peer_connectivity_section",
   "wireguard_ip_address",
   "column_break_uuos",
@@ -270,6 +271,16 @@
    "fieldname": "is_migration_on_wireguard",
    "fieldtype": "Check",
    "label": "Migrate VM over WireGuard",
+   "show_description_on_click": 1
+  },
+  {
+   "default": "16",
+   "description": "Number of mesh tunnels to each host. Metal applies a change at the next host sync.",
+   "fieldname": "wireguard_tunnel_count",
+   "fieldtype": "Int",
+   "label": "WireGuard Tunnels",
+   "non_negative": 1,
+   "reqd": 1,
    "show_description_on_click": 1
   },
   {
@@ -1079,7 +1090,7 @@
  "issingle": 1,
  "link_display_mode": "Search",
  "links": [],
- "modified": "2026-10-31 01:37:03.934302",
+ "modified": "2026-11-26 15:31:35.126488",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

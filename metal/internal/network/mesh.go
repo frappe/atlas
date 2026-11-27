@@ -102,11 +102,14 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 // Check the mesh registrar interface at compile time.
 var _ meshRegistrar = (*Mesh)(nil)
 
-// SyncPeerState replaces the BPF peer map and its NDP transport mode.
-func (mesh *Mesh) SyncPeerState(ctx context.Context, unicast bool) error {
+// SyncPeerState replaces the BPF peer map, its NDP transport mode, and the mesh tunnel interfaces.
+func (mesh *Mesh) SyncPeerState(ctx context.Context, unicast bool, tunnels []string) error {
 	arguments := []string{"peers", "sync", mesh.wireGuardStatePath}
 	if unicast {
 		arguments = append(arguments, "--unicast")
+	}
+	for _, name := range tunnels {
+		arguments = append(arguments, "--tunnel", name)
 	}
 	return platform.Run(ctx, mesh.commandPath, arguments...)
 }
